@@ -479,17 +479,26 @@ mod imp {
             req: tonic::Request<pb::CallSpaceToolRequest>,
         ) -> R<pb::CallSpaceToolResponse> {
             let r = req.into_inner();
-            if cua_spaces::contract::tool(&r.name).is_none() {
+            let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
+            if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
                 return Err(st(Error::NotFound(format!("Spaces tool {}", r.name))));
             }
             let args: serde_json::Value = if r.arguments_json.trim().is_empty() {
                 serde_json::json!({})
             } else {
+                // Never quote the arguments: agent_keys.set carries a key.
                 serde_json::from_str(&r.arguments_json)
-                    .map_err(|e| st(Error::InvalidArgument(format!("arguments_json: {e}"))))?
+                    .map_err(|_| st(Error::InvalidArgument("arguments_json is not JSON".into())))?
             };
-            let server = self.mcp();
-            let out = server.call(&r.name, args).await;
+            // The app's Settings → Agents methods: not contract tools, so no
+            // MCP server lists or forwards them to an agent.
+            let out = if app_method {
+                cua_spaces::agents::keys::app_tool(&r.name, args).unwrap_or_else(|| {
+                    cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                })
+            } else {
+                self.mcp().call(&r.name, args).await
+            };
             ok(pb::CallSpaceToolResponse {
                 content_json: serde_json::Value::Array(out.content).to_string(),
                 structured_json: out.structured.map(|s| s.to_string()).unwrap_or_default(),

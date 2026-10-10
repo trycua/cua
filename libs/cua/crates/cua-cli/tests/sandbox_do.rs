@@ -32,7 +32,10 @@ async fn direct_with(h: &Home, url: &str, name: &str, token: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandbox_lifecycle_exec_and_compat_aliases() {
     let env = fixtures::start_env(Some("t"), None).await;
-    let h = Home::new();
+    let mut h = Home::new();
+    // No local containers: this machine's own Docker Spaces must not show up
+    // in a "local" listing (the test runs next to real Spaces on dev Macs).
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
     direct(&h, &env.url, "dev").await;
 
     // `ls` lists everything with its location (no Fleet credentials here:

@@ -185,6 +185,35 @@ impl Drive {
         }
     }
 
+    /// Deletes the drive's own bookkeeping in the home of `agent`, an
+    /// agent that no longer exists: the sync manifest, a lease, folder
+    /// markers (every `.cua-` name under `agents/<agent>/`). Its files stay;
+    /// once they are deleted the folder is gone, which the reserved names
+    /// would otherwise prevent. Returns the keys deleted.
+    pub async fn forget_agent_home(&self, agent: &str) -> Result<Vec<String>> {
+        let home = crate::path::agent_home(agent)?;
+        let b = self.backend();
+        let mut gone = vec![];
+        for m in b.list(&home).await? {
+            let Some(rel) = m.key.strip_prefix(&home) else {
+                continue;
+            };
+            if !is_internal(rel) {
+                continue;
+            }
+            match b.delete(&m.key, Condition::None).await {
+                Ok(()) | Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+            self.notify(Change::Delete(m.key.clone()));
+            gone.push(m.key);
+        }
+        if !gone.is_empty() {
+            self.log("user", "forget_agent_home", &home, &gone.join(", "));
+        }
+        Ok(gone)
+    }
+
     fn log(&self, principal: &str, action: &str, path: &str, detail: &str) {
         if let Err(e) = self.inner.audit.append(principal, action, path, detail) {
             // The audit log failing must be loud, but a read should not fail
@@ -1101,6 +1130,51 @@ mod tests {
                 .tag(),
             "invalid_argument"
         );
+    }
+
+    #[tokio::test]
+    async fn a_removed_agents_home_can_be_deleted_down_to_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = drive(dir.path());
+        let b = d.backend();
+        let user = d.session(Context::user());
+        user.write("agents/gone/notes.md", b"n".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        for k in [
+            "agents/gone/.cua-manifest.json",
+            "agents/gone/.cua-lease",
+            "agents/gone/sub/.cua-keep",
+            "agents/kept/.cua-manifest.json",
+        ] {
+            b.put(k, b"{}".to_vec(), Condition::None).await.unwrap();
+        }
+        // The user cannot touch the reserved names themselves.
+        assert_eq!(
+            user.delete("agents/gone/.cua-manifest.json", Condition::None)
+                .await
+                .unwrap_err()
+                .tag(),
+            "invalid_argument"
+        );
+        let mut gone = d.forget_agent_home("gone").await.unwrap();
+        gone.sort();
+        assert_eq!(
+            gone,
+            [
+                "agents/gone/.cua-lease",
+                "agents/gone/.cua-manifest.json",
+                "agents/gone/sub/.cua-keep"
+            ]
+        );
+        // Its own files stay until the user deletes them; then nothing is left.
+        user.delete("agents/gone/notes.md", Condition::None)
+            .await
+            .unwrap();
+        assert!(b.list("agents/gone/").await.unwrap().is_empty());
+        // Another agent's home is untouched.
+        assert_eq!(b.list("agents/kept/").await.unwrap().len(), 1);
+        assert!(d.forget_agent_home("../x").await.is_err());
     }
 
     #[tokio::test]

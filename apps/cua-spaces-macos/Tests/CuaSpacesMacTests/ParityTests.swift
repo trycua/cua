@@ -46,6 +46,7 @@ struct ParityTests {
     @Test("drive-storage") func driveStorage() throws { try check("drive-storage", runDriveStorage) }
     @Test("notifications") func notifications() throws { try check("notifications", runNotifications) }
     @Test("about") func about() throws { try check("about", runAbout) }
+    @Test("agent-keys") func agentKeys() throws { try check("agent-keys", runAgentKeys) }
     @Test("your-cloud") func yourCloud() throws { try check("your-cloud", runYourCloud) }
     @Test("launch-at-login") func launchAtLogin() throws { try check("launch-at-login", runLaunchAtLogin) }
     @Test("telemetry-funnel") func telemetryFunnel() throws { try check("telemetry-funnel", runTelemetry) }
@@ -320,7 +321,8 @@ struct ParityTests {
             return .start(id: id, name: a["name"] as! String, os: os(a["os"] as! String),
                           provider: (a["provider"] as! String) == "cloud" ? .cloud : .local,
                           now: Int64(a["now"] as! Int), image: a["image"] as? String, kind: kind,
-                          hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false)
+                          hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false,
+                          host: a["host"] as? String, hostName: a["hostName"] as? String)
         case "progress":
             return .progress(id: id, phase: a["phase"] as! String,
                              fraction: (a["fraction"] as? NSNumber)?.doubleValue,
@@ -2107,6 +2109,9 @@ struct ParityTests {
         switch s {
         case let .feature(feature): return ["type": "feature", "feature": feature]
         case let .step(step, ok): return ["type": "step", "step": step, "ok": ok]
+        case let .signInFailed(kind): return ["type": "sign-in-failed", "errorKind": kind]
+        case let .launched(eligible):
+            return ["type": "launched", "onboardingEligible": eligible.map { $0 as Any } ?? NSNull()]
         case let .onboardingPage(page, action, choice):
             return ["type": "onboarding-page", "page": page, "action": action, "choice": choice]
         case let .spaceWizard(action): return ["type": "space-wizard", "action": action]
@@ -2134,7 +2139,8 @@ struct ParityTests {
     /// `run_telemetry`: the usage events each reducer step means, through
     /// the Swift bindings the app's models call.
     func runTelemetry(_ f: [String: Any]) throws -> [Any] {
-        var frames: [Any] = [["at": "launch", "signals": signals(appTelemetryLaunched())]]
+        let eligible = (f["launch"] as? [String: Any])?["onboardingEligible"] as? Bool
+        var frames: [Any] = [["at": "launch", "signals": signals(appTelemetryLaunched(onboardingEligible: eligible))]]
         for run in ["onboarding", "skipping", "no-usage-data"] {
             var st = appOnboardingInitial(installerMode: nil, identity: nil)
             for a in f[run] as! [[String: Any]] {
@@ -2184,6 +2190,43 @@ struct ParityTests {
         case .terms: "terms"
         case .issue: "issue"
         }
+    }
+
+    /// Settings → Agents (`run_agent_keys`): the section for each input, the
+    /// add or replace sheet, the Remove question and the variable names.
+    func runAgentKeys(_ f: [String: Any]) throws -> [Any] {
+        var frames: [Any] = []
+        for case let step as [String: Any] in f["sections"] as! [Any] {
+            let v = appAgentKeysView(input: try appAgentKeysInputFromJson(json: text(step["input"])))
+            let rows = v.rows.map { r in
+                "\(r.title) | \(r.env) | \(r.provider) | \(r.status) | \(r.actionLabel) | \(r.removeLabel ?? "-") | added \(r.addedMs.map(String.init) ?? "-") | \(r.detail)"
+            }
+            frames.append(["step": step["step"] as! String, "section": [
+                "title": v.title, "intro": v.intro, "rows": rows,
+                "addOther": "\(v.addOtherLabel) (\(v.otherHelp))",
+                "notice": opt(v.notice), "canEdit": v.canEdit, "added": v.addedLabel,
+            ] as [String: Any]])
+        }
+        let saved = try appAgentKeysInputFromJson(json: text(f["saved"]))
+        for case let step as [String: Any] in f["forms"] as! [Any] {
+            let v = appAgentKeyForm(input: saved, form: try appAgentKeyFormInputFromJson(json: text(step["form"])))
+            frames.append(["step": step["step"] as! String, "form": [
+                "title": v.title, "lede": v.lede,
+                "name": "\(v.nameLabel ?? "-") / \(v.namePlaceholder ?? "-") / \(v.nameError ?? "-")",
+                "value": "\(v.valueLabel) / \(v.valuePlaceholder) / \(v.valueHelp)",
+                "buttons": "\(v.saveLabel) \(v.canSave ? "on" : "off") | \(v.cancelLabel)",
+                "sets": "\(v.provider) \(v.env ?? "-")",
+            ] as [String: Any]])
+        }
+        for case let step as [String: Any] in f["removes"] as! [Any] {
+            let c = appAgentKeyRemoveConfirm(input: saved, env: step["env"] as! String)
+            frames.append(["step": step["step"] as! String,
+                           "confirm": opt(c.map { "\($0.title) | \($0.message) | \($0.confirmLabel) | \($0.cancelLabel)" })])
+        }
+        for case let name as String in f["names"] as! [Any] {
+            frames.append(["name": name, "problem": opt(appAgentKeyNameProblem(name: name))])
+        }
+        return frames
     }
 
     func runAbout(_ f: [String: Any]) throws -> [Any] {

@@ -10,6 +10,7 @@ import SwiftUI
 /// sections, search, selection fallback and dimming are the core's.
 public struct MainWindow: View {
     @Bindable var model: AppModel
+    @Environment(\.openSettings) private var openSettings
 
     public init(model: AppModel) {
         self.model = model
@@ -42,6 +43,12 @@ public struct MainWindow: View {
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .help(chrome.newSpaceLabel)
+            }
+            if model.settings.experiments.webUi {
+                ToolbarItem(placement: .primaryAction) {
+                    OpenWebUIButton(model: model, label: "New UI")
+                        .help("Open New UI (preview)")
+                }
             }
         }
         .sheet(isPresented: $model.showingNewSpace) {
@@ -99,7 +106,10 @@ public struct MainWindow: View {
         case .keyvault(let selection):
             KeyvaultDetail(keyvault: model.keyvault, selection: selection)
         case .agents:
-            AgentsPageView(model: model.persistent)
+            AgentsPageView(model: model.persistent, openAgentKeys: {
+                model.settingsTab = .agents
+                openSettings()
+            })
                 .onAppear {
                     model.recordFeature("agents_page_open")
                     let id = model.sidebar.thisMachine?.id

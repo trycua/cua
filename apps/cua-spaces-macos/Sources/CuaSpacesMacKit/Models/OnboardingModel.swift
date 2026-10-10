@@ -99,11 +99,16 @@ public final class OnboardingModel {
 
     /// The first page showed: Welcome's usage-data switch starts from the
     /// machine's setting (Settings, Privacy; `cua telemetry off`).
+    /// Each time Welcome shows (Back included), `welcome-shown`: on a
+    /// machine that already showed the usage notice, the core counts the
+    /// run now (once per run), not only when Welcome is left.
     public func shown() {
-        guard !shownOnce else { return }
-        shownOnce = true
-        if let x = currentExperiments?() { send(.experimentsLoaded(experiments: x)) }
-        if let t = telemetry?.status() { send(.telemetryLoaded(telemetry: t)) }
+        if !shownOnce {
+            shownOnce = true
+            if let x = currentExperiments?() { send(.experimentsLoaded(experiments: x)) }
+            if let t = telemetry?.status() { send(.telemetryLoaded(telemetry: t)) }
+        }
+        if state.step == .welcome { send(.welcomeShown) }
     }
 
     /// Welcome's "Share anonymous usage data" switch.
@@ -350,6 +355,15 @@ public final class OnboardingModel {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         try? Data("{\"completed\":true,\"mode\":\"\(mode)\"}".utf8).write(to: url, options: .atomic)
+    }
+
+    /// The account became known after the first run started (the launch
+    /// reads it once the keychain allows): a first run still on Welcome
+    /// starts from it, as if it had been known from the start.
+    public func adoptIdentity(_ identity: String?) {
+        host.identity = identity
+        guard !completed, state.step == .welcome, state.identity != identity else { return }
+        state.identity = identity
     }
 
     /// Shows the flow again (Settings).

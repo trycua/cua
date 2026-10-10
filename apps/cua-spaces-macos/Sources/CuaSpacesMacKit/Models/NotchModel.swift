@@ -4,6 +4,7 @@
 import AppKit
 import CuaSDK
 import CuaSpacesFFI
+import CuaSpacesNotchUI
 import Foundation
 import Observation
 

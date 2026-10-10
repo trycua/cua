@@ -10,21 +10,24 @@
 # EdDSA signature with the app's SUPublicEDKey and Sparkle's sign_update).
 # Nothing is uploaded. CI runs it when CUA_SPACES_SPARKLE_ED_PRIVATE_KEY is
 # set; it proves the secret matches the public key the app ships.
+# Given a built Electron app as well, a third release (0.0.3) is the Sparkle
+# cutover item (make-appcast.sh --electron).
 #
-#   CUA_SPACES_SPARKLE_ED_PRIVATE_KEY=... scripts/appcast-dry-run.sh "path/Cua Spaces.app"
+#   CUA_SPACES_SPARKLE_ED_PRIVATE_KEY=... scripts/appcast-dry-run.sh "path/Cua Spaces.app" ["electron/Cua Spaces.app"]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-app="${1:?usage: appcast-dry-run.sh <path/Cua Spaces.app>}"
+app="${1:?usage: appcast-dry-run.sh <path/Cua Spaces.app> [<electron/Cua Spaces.app>]}"
+electron_app="${2:-}"
 [ -n "${CUA_SPACES_SPARKLE_ED_PRIVATE_KEY:-}" ] || { echo "CUA_SPACES_SPARKLE_ED_PRIVATE_KEY is not set" >&2; exit 2; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 run="${GITHUB_RUN_NUMBER:-1}"
 base="https://example.invalid/cua-spaces-dry-run"
 
-release() { # release VERSION BUILD -> the disk image
+release() { # release VERSION BUILD [APP] -> the disk image
   local stage="$work/stage-$1"
   mkdir -p "$stage"
-  ditto "$app" "$stage/Cua Spaces.app"
+  ditto "${3:-$app}" "$stage/Cua Spaces.app"
   local plist="$stage/Cua Spaces.app/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${1%%-*}" -c "Set :CFBundleVersion $2" "$plist"
   /usr/libexec/PlistBuddy -c "Delete :CuaVersion" "$plist" 2>/dev/null || true
@@ -49,4 +52,20 @@ printf '## %s\n\n- Dry run.\n' "$stable" > "$work/stable.md"
   --url "$base/v$beta/$(basename "$beta_dmg")" --version "$beta"
 "$here/scripts/verify-appcast.sh" --appcast "$work/appcast.xml" --dmg "$stable_dmg" \
   --url "$base/v$stable/$(basename "$stable_dmg")" --version "$stable"
+if [ -n "$electron_app" ]; then
+  cutover="0.0.3"
+  cutover_dmg="$(release "$cutover" "0.0.3.$run" "$electron_app")"
+  printf '## %s\n\n- Dry run: the Electron app.\n' "$cutover" > "$work/cutover.md"
+  "$here/scripts/make-appcast.sh" --dmg "$cutover_dmg" --version "$cutover" --download-base "$base/v$cutover/" \
+    --previous "$work/appcast.xml" --notes "$work/cutover.md" --out "$work/appcast-cutover.xml" --electron
+  "$here/scripts/verify-appcast.sh" --appcast "$work/appcast-cutover.xml" --dmg "$cutover_dmg" \
+    --url "$base/v$cutover/$(basename "$cutover_dmg")" --version "$cutover" --electron
+  # Without the switch the Electron image is refused.
+  if "$here/scripts/verify-appcast.sh" --appcast "$work/appcast-cutover.xml" --dmg "$cutover_dmg" \
+    --url "$base/v$cutover/$(basename "$cutover_dmg")" --version "$cutover" >/dev/null; then
+    echo "FAIL an Electron image passed as the Swift app" >&2
+    exit 1
+  fi
+  cp "$work/appcast-cutover.xml" "$work/appcast.xml"
+fi
 echo "appcast dry run passed: $(grep -c '<item>' "$work/appcast.xml") items"

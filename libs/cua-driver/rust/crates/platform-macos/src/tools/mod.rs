@@ -598,18 +598,26 @@ fn point_within_rect([rx, ry, rw, rh]: [f64; 4], x: f64, y: f64) -> bool {
     rw > 0.0 && rh > 0.0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
+/// Default long-edge cap for screenshots; see [`DriverConfig::max_image_dimension`].
+pub const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 1366;
+
 /// Runtime-mutable driver configuration persisted across calls within a session.
 pub struct DriverConfig {
-    /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
-    /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
+    /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom:
     /// the long edge is downscaled to this before encoding.
+    ///
+    /// Default 1366. High-resolution Claude models read images up to 2576 px
+    /// at ~w*h/750 tokens each, so a 1568x882 capture costs ~1.8k tokens and a
+    /// 1366x768 one ~1.4k; Anthropic's computer-use guidance names 1366x768 as
+    /// a lower-cost size with strong performance. Callers that need more
+    /// detail use `zoom` or a per-call/session `max_image_dimension`.
     pub max_image_dimension: u32,
 }
 
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
-            max_image_dimension: 1568,
+            max_image_dimension: DEFAULT_MAX_IMAGE_DIMENSION,
         }
     }
 }

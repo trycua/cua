@@ -89,6 +89,15 @@ pub struct PendingCreate {
     /// GPU acceleration was asked for.
     #[serde(default)]
     pub gpu: bool,
+    /// A create on one of your machines: that machine's relay id (the
+    /// `host:<machine>` of the create's `on`). The machine lists the Space
+    /// it is creating as a record of its own, which [`compose`] folds into
+    /// this row.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// That machine's name, for the row and for a failure that names it.
+    #[serde(default)]
+    pub host_name: Option<String>,
 }
 
 /// One delete in flight (or done, until the registry drops the Space).
@@ -176,6 +185,13 @@ pub enum CreateAction {
         /// GPU acceleration was asked for (the create's `gpu` option).
         #[serde(default)]
         gpu: bool,
+        /// The machine it runs on, when it is one of yours (the create's
+        /// `host:<machine>`): its relay id.
+        #[serde(default)]
+        host: Option<String>,
+        /// That machine's name.
+        #[serde(default)]
+        host_name: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -311,7 +327,7 @@ pub fn is_deleting(state: &CreatesState, id: &str) -> bool {
 pub fn pending_name(name: &str, os: SpaceOs) -> String {
     let name = name.trim();
     if !name.is_empty() {
-        // As the registry row will show it ("cua-e2e-mac" as "Cua E2e Mac").
+        // As the registry row will show it: as typed.
         return super::display_name(name);
     }
     match os {
@@ -550,9 +566,9 @@ pub fn phase_label(phase: &str) -> &'static str {
 }
 
 /// The end of every stall message ([`stall_error`]): progress that arrives
-/// after it clears the row again.
-pub const STALL_HINT: &str =
-    "Dismiss it and try again; if it happens again, run `cua doctor` in Terminal.";
+/// after it clears the row again. A failure the SDK reported never ends
+/// with it ([`failure_text`]).
+pub const STALL_HINT: &str = "Dismiss it and try again.";
 
 /// How long phase `i` of [`PHASES`] may go without moving (a new phase, or
 /// a new fraction) before the row fails: ten times what it usually takes,
@@ -569,16 +585,232 @@ pub fn stall_limit_secs(family: CreateFamily, i: usize) -> f64 {
     (expected_seconds(family).get(i).copied().unwrap_or(0.0) * 10.0).clamp(floor, 6000.0) + 60.0
 }
 
+/// [`stall_limit_secs`] for `p`. A create on another of your machines (relay
+/// or direct) reports nothing while that machine downloads the image and
+/// boots it (the host's own create is one call), so "preparing" there may
+/// take as long as the family's whole download, not the few seconds it
+/// takes here; otherwise its row failed at "Starting... 1%" while the host
+/// was still pulling.
+fn stall_limit(p: &PendingCreate, i: usize) -> f64 {
+    let elsewhere = matches!(p.provider, SpaceProvider::Relay | SpaceProvider::Direct);
+    if elsewhere && PHASES.get(i) == Some(&"preparing") {
+        let pull = PHASES.iter().position(|ph| *ph == "pulling").unwrap_or(1);
+        return stall_limit_secs(family(p), pull) + stall_limit_secs(family(p), i);
+    }
+    stall_limit_secs(family(p), i)
+}
+
 /// The error of a create stuck in `phase` for `secs`: what stalled, for how
 /// long, and what to do.
 pub fn stall_error(phase: &str, secs: f64) -> String {
-    let what = phase_label(phase).trim_end_matches('\u{2026}');
+    stall_text(phase, secs, None, None)
+}
+
+/// [`stall_error`], naming how far a stopped download got when its bytes
+/// are known.
+fn stall_text(phase: &str, secs: f64, done: Option<u64>, total: Option<u64>) -> String {
     let mins = (secs / 60.0).round().max(1.0) as u64;
-    format!("{what} made no progress for {mins} min. {STALL_HINT}")
+    let what = match phase {
+        "pulling" => match transfer_text(done, total, None) {
+            Some(at) => format!(
+                "The image download stopped at {at}: nothing arrived for {mins} min. \
+                 Check your internet connection."
+            ),
+            None => format!(
+                "The image download made no progress for {mins} min. Check your internet \
+                 connection."
+            ),
+        },
+        "waiting_for_services" => format!(
+            "The Space booted, but its service did not answer for {mins} min. The image is \
+             downloaded now, so another try is usually quick."
+        ),
+        _ => format!(
+            "{} made no progress for {mins} min. If it keeps happening, run `cua doctor` in \
+             Terminal.",
+            phase_label(phase).trim_end_matches('\u{2026}')
+        ),
+    };
+    format!("{what} {STALL_HINT}")
 }
 
 fn is_stalled(p: &PendingCreate) -> bool {
     p.error.as_deref().is_some_and(|e| e.ends_with(STALL_HINT))
+}
+
+/// A `Duration`'s debug form (`120s`, `1.5s`, `250ms`, `0ns`) in seconds.
+fn debug_duration_secs(t: &str) -> Option<f64> {
+    let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+    let (n, unit) = t.split_at(split);
+    let n: f64 = n.parse().ok()?;
+    let scale = match unit {
+        "s" => 1.0,
+        "ms" => 1e-3,
+        "\u{b5}s" | "us" => 1e-6,
+        "ns" => 1e-9,
+        _ => return None,
+    };
+    Some(n * scale)
+}
+
+/// "2 min", "45 s".
+fn short_duration(secs: f64) -> String {
+    if secs >= 90.0 {
+        format!("{} min", (secs / 60.0).round() as u64)
+    } else {
+        format!("{} s", secs.round() as u64)
+    }
+}
+
+/// The SDK's disk refusal ("not enough disk space to pull ...: it needs
+/// about 30.0 GB and cua keeps 5.0 GB free, but only 12.0 GB is available
+/// on /Users/me/.lume (...)") in plain words, with its numbers when present.
+fn disk_text(raw: &str) -> String {
+    let fix = "Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.";
+    let numbers = (|| {
+        let rest = &raw[raw.find("it needs about ")? + "it needs about ".len()..];
+        let (need, rest) = rest.split_once(" and cua keeps ")?;
+        let (keep, rest) = rest.split_once(" free, but only ")?;
+        let (avail, _) = rest.split_once(" is available")?;
+        Some((need.trim(), keep.trim(), avail.trim()))
+    })();
+    match numbers {
+        Some((need, keep, avail)) => format!(
+            "Not enough disk space: this Space needs about {need}, plus {keep} kept free, and \
+             only {avail} is available. {fix}"
+        ),
+        None => format!("Not enough disk space for this Space. {fix}"),
+    }
+}
+
+/// Who a failure is about: the machine that runs the Space (by name, or
+/// "The Mac running this Space" when the name is not known) when it is
+/// another of yours, else "This Mac". Never this Mac for a create that ran
+/// elsewhere.
+fn machine_subject(provider: Option<SpaceProvider>, host_name: Option<&str>) -> String {
+    match host_name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_string(),
+        None if matches!(provider, Some(SpaceProvider::Relay | SpaceProvider::Direct)) => {
+            "The Mac running this Space".into()
+        }
+        None => "This Mac".into(),
+    }
+}
+
+/// What a failed create shows for the SDK's `raw` error, naming the cause
+/// when it is a known one: no disk space, the Space's service not
+/// answering in time (the image is cached now, so a retry is quick), a
+/// relay host that refused the sign-in, GPU acceleration that could not
+/// be turned on. `phase` is where it failed, `provider` where it ran and
+/// `gpu` whether GPU acceleration was asked for, when known. Anything else
+/// is the SDK's words ([`crate::errors::plain_error`]).
+pub fn failure_text(
+    raw: &str,
+    phase: Option<&str>,
+    provider: Option<SpaceProvider>,
+    gpu: bool,
+) -> String {
+    failure_text_on(raw, phase, provider, None, gpu)
+}
+
+/// [`failure_text`] for a create on one of your machines named `host_name`:
+/// the causes that are about the Mac that runs the Space (Local Network
+/// access, Apple's two macOS VMs) name that machine, not this Mac.
+pub fn failure_text_on(
+    raw: &str,
+    phase: Option<&str>,
+    provider: Option<SpaceProvider>,
+    host_name: Option<&str>,
+    gpu: bool,
+) -> String {
+    let plain = crate::errors::plain_error(raw);
+    let l = plain.to_ascii_lowercase();
+    if l.contains("not enough disk space")
+        || l.contains("insufficient disk")
+        || l.contains("insufficient_disk")
+        || l.contains("no space left on device")
+    {
+        return disk_text(&plain);
+    }
+    // macOS Local Network privacy: the process that runs the VM (this
+    // app's daemon, or a host's cua-spacesd service) may not reach the
+    // guest on vmnet. The SDK says "Local Network access is not available:
+    // ... cannot reach the VM at 192.168.64.x (No route to host)"; older
+    // ones only the bare `EHOSTUNREACH` to a vmnet address.
+    let vmnet = l.contains("192.168.64.");
+    if l.contains("local network access")
+        || (vmnet && (l.contains("no route to host") || l.contains("os error 65")))
+    {
+        let who = machine_subject(provider, host_name);
+        return format!(
+            "{who} can't reach its new VM because Cua doesn't have Local Network access there. \
+             On that Mac, open System Settings > Privacy & Security > Local Network, turn on Cua \
+             Spaces (or cua-spacesd), then try again."
+        );
+    }
+    // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
+    // of virtual machines exceeds the limit"): Apple's two macOS VMs per Mac.
+    if l.contains("virtualmachinelimitexceeded")
+        || ((l.contains("virtual machine") || l.contains("vms"))
+            && l.contains("limit")
+            && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
+    {
+        return format!(
+            "{} is already running two macOS VMs, the most Apple's macOS license allows at once. \
+             Stop one, then try again; the image is downloaded now, so it is quicker.",
+            machine_subject(provider, host_name)
+        );
+    }
+    if gpu && (l.contains("gpu") || l.contains("paravirtual")) {
+        return format!(
+            "GPU acceleration could not be turned on here ({plain}). Create the Space again \
+             with GPU acceleration off."
+        );
+    }
+    if l.contains("unauthenticated") {
+        return if provider == Some(SpaceProvider::Relay) {
+            "Your other Mac did not accept the sign-in: its Cua sign-in may have expired or \
+             belong to another account. Open Cua Spaces on that Mac, sign in again, then try \
+             again."
+                .into()
+        } else {
+            format!(
+                "The new Space's service did not accept the app's token ({plain}). Try again; if \
+                 it keeps happening, run `cua doctor` in Terminal."
+            )
+        };
+    }
+    let spacesd = "cua-spacesd did not answer within ";
+    let timed_out =
+        l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
+    if let Some(at) = l.find(spacesd) {
+        let token = l[at + spacesd.len()..]
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        let within = debug_duration_secs(token)
+            .filter(|s| *s >= 5.0)
+            .map(|s| format!(" within {}", short_duration(s)));
+        return match within {
+            Some(within) => format!(
+                "The Space booted, but its service did not answer{within}. The image is \
+                 downloaded now, so trying again usually works."
+            ),
+            None => "The Space booted, but the time allowed for creating it ran out before its \
+                     service answered. The image is downloaded now, so trying again usually \
+                     works."
+                .into(),
+        };
+    }
+    match phase {
+        Some("waiting_for_services") if timed_out => "The Space booted, but its service did not \
+             answer in time. The image is downloaded now, so trying again usually works."
+            .into(),
+        Some("pulling") if timed_out => "The image download did not finish in the time \
+             allowed. Check your internet connection, then try again."
+            .into(),
+        _ => plain,
+    }
 }
 
 /// The platform a create will run ([`crate::model::run_arch`] over the
@@ -606,6 +838,8 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
             kind,
             host_arch,
             gpu,
+            host: machine,
+            host_name: machine_name,
         } => {
             if *os == SpaceOs::Unknown || next.pending.iter().any(|p| &p.id == id) {
                 return next;
@@ -644,6 +878,8 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 bytes_per_second: None,
                 cancelling: false,
                 gpu: *gpu,
+                host: machine.clone().filter(|h| !h.trim().is_empty()),
+                host_name: machine_name.clone().filter(|h| !h.trim().is_empty()),
             };
             p.permille = permille_at(&p, Some(*now));
             next.pending.push(p);
@@ -740,10 +976,10 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 if let (Some(at), Some(i)) =
                     (p.phase_at, PHASES.iter().position(|ph| *ph == p.phase))
                 {
-                    let limit = stall_limit_secs(family(p), i);
+                    let limit = stall_limit(p, i);
                     let stuck = (*now - at) as f64 / 1000.0;
                     if stuck > limit {
-                        p.error = Some(stall_error(&p.phase, stuck));
+                        p.error = Some(stall_text(&p.phase, stuck, p.bytes_done, p.bytes_total));
                     }
                 }
             }
@@ -777,7 +1013,13 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 p.error = Some(match credit {
                     Some(n) => n.text,
                     None if error.trim().is_empty() => "Could not create the Space".into(),
-                    None => crate::errors::plain_error(error),
+                    None => failure_text_on(
+                        error,
+                        Some(&p.phase),
+                        Some(p.provider),
+                        p.host_name.as_deref(),
+                        p.gpu,
+                    ),
                 });
             }
         }
@@ -911,7 +1153,9 @@ pub fn pending_space(p: &PendingCreate) -> Space {
     let failed = p.error.is_some();
     let where_ = match p.provider {
         SpaceProvider::Cloud => "Cua Cloud",
-        _ => "This Mac",
+        SpaceProvider::Local => "This Mac",
+        // Created on another of your machines: not this Mac.
+        SpaceProvider::Relay | SpaceProvider::Direct => "Another machine",
     };
     let label = if failed {
         "Failed".to_string()
@@ -970,7 +1214,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         kind: p.kind,
         arch: p.arch.clone(),
         host: None,
-        host_name: None,
+        host_name: p.host_name.clone(),
         power: None,
         cloud: None,
         cloud_place: None,
@@ -978,13 +1222,53 @@ pub fn pending_space(p: &PendingCreate) -> Space {
     }
 }
 
+/// How far a machine's clock may be behind this one's when a record it
+/// lists is compared with the moment a create here started.
+const HOST_CLOCK_SKEW_MS: i64 = 5 * 60_000;
+
+/// Whether `listed` is the record a machine keeps of the Space `p` is
+/// creating there.
+///
+/// A machine lists the Space it creates for you as soon as it takes the
+/// create, before the Space is up, as a record with no OS yet, not
+/// answering ("Stopped, Linux on gamma-4"), under the name the create asked
+/// for (or its own for an unnamed one). While `p` is in flight, or after it
+/// failed, that record is the same Space as `p`'s row: it must not be a
+/// second tile next to it. It is not a record of an older Space: one that
+/// was already there when the create started (when the machine says when it
+/// added it) stays.
+fn is_hosts_record_of(listed: &Space, p: &PendingCreate) -> bool {
+    let Some(host) = p.host.as_deref() else {
+        return false;
+    };
+    // A finished create hands over to the registry's own row of that Space.
+    if p.space_id.is_some()
+        || listed.provider != Some(SpaceProvider::Relay)
+        || listed.host.as_deref() != Some(host)
+    {
+        return false;
+    }
+    if listed
+        .started_at
+        .is_some_and(|at| at < p.started_at - HOST_CLOCK_SKEW_MS)
+    {
+        return false;
+    }
+    // Its name; an unnamed create is named by the machine, so any record
+    // there that is not up yet is the one.
+    let unnamed = p.name == pending_name("", p.os);
+    listed.name == p.name || (unnamed && listed.status == SpaceStatus::Suspended)
+}
+
 /// The registry's Spaces plus a row per pending create (finished creates
-/// the registry already lists are left out, so a Space never shows twice).
-/// A Space being deleted shows Deleting; one whose delete finished is left
-/// out even while the registry still lists it.
+/// the registry already lists are left out, so a Space never shows twice;
+/// nor does the record a machine lists of the Space it is creating for you,
+/// [`is_hosts_record_of`]). A Space being deleted shows Deleting; one whose
+/// delete finished is left out even while the registry still lists it.
 pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
     let mut out: Vec<Space> = registry
         .iter()
+        .filter(|s| !state.pending.iter().any(|p| is_hosts_record_of(s, p)))
         .filter_map(|s| match state.deleting.iter().find(|d| d.id == s.id) {
             Some(d) if d.done => None,
             Some(_) => Some(deleting_space(s)),
@@ -1015,6 +1299,8 @@ mod tests {
             kind: None,
             host_arch: None,
             gpu: false,
+            host: None,
+            host_name: None,
         }
     }
 
@@ -1041,6 +1327,8 @@ mod tests {
             kind,
             host_arch: Some("aarch64".into()),
             gpu: false,
+            host: None,
+            host_name: None,
         }
     }
 
@@ -1449,8 +1737,8 @@ mod tests {
             .expect("a stalled phase fails");
         assert_eq!(
             err,
-            "Starting services made no progress for 4 min. Dismiss it and try again; \
-             if it happens again, run `cua doctor` in Terminal."
+            "The Space booted, but its service did not answer for 4 min. The image is \
+             downloaded now, so another try is usually quick. Dismiss it and try again."
         );
         assert_eq!(err, stall_error("waiting_for_services", limit + 1.0));
         // More ticks leave the error alone.
@@ -1514,7 +1802,7 @@ mod tests {
             p.pending[0]
                 .error
                 .as_deref()
-                .is_some_and(|e| e.starts_with("Downloading image made no progress")),
+                .is_some_and(|e| e.starts_with("The image download made no progress")),
             "{:?}",
             p.pending[0].error
         );
@@ -1591,7 +1879,7 @@ mod tests {
         let s = reduce(&s, &progress("pending:m", "waiting_for_services", None));
         assert_eq!(s.pending[0].permille, band_of(&s.pending[0]).0);
         assert_eq!(pending_name("  ", SpaceOs::Macos), "macOS Space");
-        assert_eq!(pending_name("cua-e2e-mac", SpaceOs::Macos), "Cua E2e Mac");
+        assert_eq!(pending_name("cua-e2e-mac", SpaceOs::Macos), "cua-e2e-mac");
     }
 
     #[test]
@@ -1783,6 +2071,566 @@ mod tests {
             crate::spaces::sidebar::detail(&pending_space(&s.pending[0]))
                 .credit_notice
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn a_stopped_download_says_how_far_it_got() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start("pending:m", "", SpaceOs::Macos),
+        );
+        let s = reduce(
+            &s,
+            &CreateAction::Progress {
+                id: "pending:m".into(),
+                phase: "pulling".into(),
+                fraction: None,
+                now: Some(1_000),
+                bytes_done: Some(4_509_715_660),
+                bytes_total: Some(23_729_694_310),
+                bytes_per_second: Some(1_000_000.0),
+            },
+        );
+        let limit_ms = (stall_limit_secs(CreateFamily::Macos, 1) * 1000.0) as i64;
+        let s = reduce(
+            &s,
+            &CreateAction::Tick {
+                now: 1_000 + limit_ms + 1_000,
+            },
+        );
+        let err = s.pending[0].error.clone().unwrap();
+        assert!(
+            err.starts_with("The image download stopped at 4.2 of 22.1 GB: nothing arrived for"),
+            "{err}"
+        );
+        assert!(err.ends_with("Check your internet connection. Dismiss it and try again."));
+        assert!(is_stalled(&s.pending[0]));
+        // Other phases keep `cua doctor` as the last resort.
+        assert_eq!(
+            stall_error("booting", 300.0),
+            "Booting made no progress for 5 min. If it keeps happening, run `cua doctor` in \
+             Terminal. Dismiss it and try again."
+        );
+    }
+
+    #[test]
+    fn a_failure_names_its_cause_when_it_is_known() {
+        let disk = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB \
+                    and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume \
+                    (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
+        assert_eq!(
+            failure_text(disk, Some("preparing"), Some(SpaceProvider::Local), false),
+            "Not enough disk space: this Space needs about 30.0 GB, plus 5.0 GB kept free, and \
+             only 12.4 GB is available. Free up space on this Mac (or run `cua cache prune` in \
+             Terminal), then try again."
+        );
+        assert_eq!(
+            failure_text("not enough disk space", None, None, false),
+            "Not enough disk space for this Space. Free up space on this Mac (or run `cua cache \
+             prune` in Terminal), then try again."
+        );
+        // The Space's service missed what was left of the budget.
+        let spacesd = |t: &str| {
+            format!(
+                "timed out: sandbox cua-mac-1: cua-spacesd did not answer within {t} \
+                 (connection refused); see `cua sb logs cua-mac-1`"
+            )
+        };
+        assert_eq!(
+            failure_text(&spacesd("120s"), Some("waiting_for_services"), None, false),
+            "The Space booted, but its service did not answer within 2 min. The image is \
+             downloaded now, so trying again usually works."
+        );
+        assert_eq!(
+            failure_text(&spacesd("45.2s"), None, None, false),
+            "The Space booted, but its service did not answer within 45 s. The image is \
+             downloaded now, so trying again usually works."
+        );
+        for spent in ["0ns", "1.2s", "350ms"] {
+            assert_eq!(
+                failure_text(&spacesd(spent), Some("waiting_for_services"), None, false),
+                "The Space booted, but the time allowed for creating it ran out before its \
+                 service answered. The image is downloaded now, so trying again usually works.",
+                "{spent}"
+            );
+        }
+        assert_eq!(
+            failure_text(
+                "timed out: waiting",
+                Some("waiting_for_services"),
+                None,
+                false
+            ),
+            "The Space booted, but its service did not answer in time. The image is downloaded \
+             now, so trying again usually works."
+        );
+        assert_eq!(
+            failure_text(
+                "sandbox 'x' was not ready after 600s: pull",
+                Some("pulling"),
+                None,
+                false
+            ),
+            "The image download did not finish in the time allowed. Check your internet \
+             connection, then try again."
+        );
+        // Local Network privacy on the Mac that runs the VM.
+        let sdk = "Local Network access is not available: cua cannot reach the VM at \
+                   192.168.64.45:3211 (No route to host (os error 65)). macOS blocks an app's \
+                   local network connections until they are allowed";
+        assert_eq!(
+            failure_text(sdk, Some("booting"), Some(SpaceProvider::Relay), false),
+            "The Mac running this Space can't reach its new VM because Cua doesn't have Local \
+             Network access there. On that Mac, open System Settings > Privacy & Security > \
+             Local Network, turn on Cua Spaces (or cua-spacesd), then try again."
+        );
+        for raw in [
+            sdk,
+            "host: create failed: connect 192.168.64.7:3211: No route to host (os error 65)",
+        ] {
+            assert!(
+                failure_text(raw, None, Some(SpaceProvider::Local), false)
+                    .starts_with("This Mac can't reach its new VM"),
+                "{raw}"
+            );
+        }
+        // A LAN address with no route is not this (a machine is down).
+        let lan = "connect 10.0.0.9:7400: No route to host (os error 65)";
+        assert_eq!(failure_text(lan, None, None, false), lan);
+        // Apple's two-macOS-VM limit, however Lume words it.
+        for raw in [
+            "lume API 500: The number of virtual machines exceeds the limit.",
+            "Error Domain=VZErrorDomain Code=6 virtualMachineLimitExceeded",
+            "booting: the maximum number of VMs has been reached (limit 2)",
+        ] {
+            assert!(
+                failure_text(raw, Some("booting"), Some(SpaceProvider::Local), false)
+                    .starts_with("This Mac is already running two macOS VMs"),
+                "{raw}"
+            );
+        }
+        // A relay host that refused the sign-in.
+        let unauth = "unauthenticated: token rejected";
+        assert!(
+            failure_text(unauth, Some("preparing"), Some(SpaceProvider::Relay), false)
+                .starts_with("Your other Mac did not accept the sign-in")
+        );
+        assert!(
+            failure_text(unauth, None, Some(SpaceProvider::Local), false)
+                .starts_with("The new Space's service did not accept the app's token")
+        );
+        // GPU acceleration, only when it was asked for.
+        let gpu = "invalid request: GPU acceleration: Needs a Mac with Apple silicon";
+        assert_eq!(
+            failure_text(gpu, Some("preparing"), None, true),
+            format!(
+                "GPU acceleration could not be turned on here ({gpu}). Create the Space again \
+                 with GPU acceleration off."
+            )
+        );
+        assert_eq!(failure_text(gpu, None, None, false), gpu);
+        // Anything else is the SDK's words (a dead daemon in plain words).
+        assert_eq!(failure_text(" boom \n", None, None, false), "boom");
+        assert_eq!(
+            failure_text(
+                "transport: Connection refused (os error 61)",
+                None,
+                None,
+                false
+            ),
+            crate::errors::DAEMON_NOT_RUNNING
+        );
+        // None of them reads as a stall (progress would clear it).
+        for raw in [disk, unauth, gpu, &spacesd("0ns")] {
+            assert!(
+                !failure_text(raw, None, None, true).ends_with(STALL_HINT),
+                "{raw}"
+            );
+        }
+        // The row carries it, with where it failed and where it ran.
+        let s = reduce(
+            &CreatesState::default(),
+            &start("pending:w", "", SpaceOs::Macos),
+        );
+        let s = reduce(&s, &progress("pending:w", "waiting_for_services", None));
+        let s = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: spacesd("0ns"),
+                error_variant: String::new(),
+            },
+        );
+        assert!(
+            s.pending[0]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("The Space booted, but the time allowed"))
+        );
+        assert_eq!(
+            crate::wizard::create_failed_text("not enough disk space"),
+            "Could not create the Space: Not enough disk space for this Space. Free up space on \
+             this Mac (or run `cua cache prune` in Terminal), then try again."
+        );
+    }
+
+    #[test]
+    fn a_create_on_another_machine_waits_for_its_download_and_says_where() {
+        let relay = |os| CreateAction::Start {
+            id: "pending:r".into(),
+            name: String::new(),
+            os,
+            provider: SpaceProvider::Relay,
+            now: 0,
+            image: None,
+            kind: None,
+            host_arch: Some("arm64".into()),
+            gpu: false,
+            host: None,
+            host_name: None,
+        };
+        let s = reduce(&CreatesState::default(), &relay(SpaceOs::Macos));
+        assert_eq!(
+            compose(&[], &s)[0].detail,
+            "Another machine \u{b7} Starting\u{2026}"
+        );
+        // The host pulls 22 GB without reporting: no stall at 5 min, nor
+        // at the local preparing limit.
+        let local_limit = stall_limit_secs(CreateFamily::Macos, 0);
+        let s5 = reduce(
+            &s,
+            &CreateAction::Tick {
+                now: ((local_limit + 60.0) * 1000.0) as i64,
+            },
+        );
+        assert_eq!(s5.pending[0].error, None);
+        let limit = stall_limit(&s.pending[0], 0);
+        assert!(limit >= stall_limit_secs(CreateFamily::Macos, 1), "{limit}");
+        let late = reduce(
+            &s,
+            &CreateAction::Tick {
+                now: ((limit + 1.0) * 1000.0) as i64,
+            },
+        );
+        assert!(late.pending[0].error.is_some());
+        // Here, preparing keeps its own limit.
+        let mut here = s.pending[0].clone();
+        here.provider = SpaceProvider::Local;
+        assert_eq!(stall_limit(&here, 0), local_limit);
+    }
+
+    // ---- a machine's record of the Space it is creating ----
+
+    const GAMMA: &str = "96fedb7e1be65c3d31fa18587febde2c";
+    const GAMMA_NAME: &str = "gamma-4 Mac Studio";
+    const SKEW_BASE: i64 = 1_790_000_000_000;
+
+    fn start_on(
+        id: &str,
+        name: &str,
+        os: SpaceOs,
+        provider: SpaceProvider,
+        host: Option<&str>,
+    ) -> CreateAction {
+        CreateAction::Start {
+            id: id.into(),
+            name: name.into(),
+            os,
+            provider,
+            now: SKEW_BASE,
+            image: Some("ghcr.io/trycua/macos:26".into()),
+            kind: Some(SpaceKind::Vm),
+            host_arch: Some("arm64".into()),
+            gpu: false,
+            host: host.map(str::to_string),
+            host_name: host.map(|_| GAMMA_NAME.to_string()),
+        }
+    }
+
+    /// A create on gamma-4 through the relay.
+    fn relay_start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
+        start_on(id, name, os, SpaceProvider::Relay, Some(GAMMA))
+    }
+
+    /// The row a machine lists for a Space it is still creating: no OS
+    /// yet, not answering, so it reads "Stopped, Linux on <machine>".
+    fn hosts_record(id: &str, name: &str, host: &str, added_at_ms: Option<i64>) -> Space {
+        let mut s = crate::spaces::row_to_space(
+            &crate::model::SpaceRow {
+                id: id.into(),
+                name: name.into(),
+                provider: "relay".into(),
+                spacesd_version: String::new(),
+                features: vec![],
+                added_at: None,
+                os: None,
+                os_name: None,
+                os_pretty_name: None,
+                image: None,
+                image_digest: None,
+                kind: None,
+                arch: None,
+                reachable: false,
+                error: None,
+                host: Some(host.into()),
+                host_name: Some(GAMMA_NAME.into()),
+                power: None,
+                power_state: None,
+                cloud: None,
+                cloud_place: None,
+                cloud_delete: None,
+            },
+            SKEW_BASE,
+        );
+        s.started_at = added_at_ms;
+        s
+    }
+
+    fn names(rows: &[Space]) -> Vec<&str> {
+        rows.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_relay_create_and_its_machines_record_of_it_are_one_row() {
+        let ghost = hosts_record(
+            "relay:96fe/space-46e0",
+            "e2e-1005-gamma-macos",
+            GAMMA,
+            Some(SKEW_BASE + 9_000),
+        );
+        // Not the create's: another Space on the same machine.
+        let other = registered("relay:96fe/space-9c73");
+        let registry = [other.clone(), ghost.clone()];
+        let s = reduce(
+            &CreatesState::default(),
+            &relay_start("pending:gamma", "e2e-1005-gamma-macos", SpaceOs::Macos),
+        );
+
+        // While it runs: the create's row, once; not "Stopped, Linux".
+        let rows = compose(&registry, &s);
+        assert_eq!(rows.len(), 2, "{:?}", names(&rows));
+        assert_eq!(rows[0].id, other.id);
+        assert_eq!(
+            (rows[1].id.as_str(), rows[1].status, rows[1].os),
+            ("pending:gamma", SpaceStatus::Provisioning, SpaceOs::Macos)
+        );
+        assert_eq!(rows[1].host_name.as_deref(), Some(GAMMA_NAME));
+
+        // The machine could not reach its VM: the row says Failed and names
+        // the machine (not "This Mac"); the record is still not a second
+        // tile.
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:gamma".into(),
+                error: "Local Network access is not available: cua cannot reach the VM at \
+                        192.168.64.45:3211 (No route to host (os error 65))"
+                    .into(),
+                error_variant: String::new(),
+            },
+        );
+        let rows = compose(&registry, &failed);
+        assert_eq!(rows.len(), 2, "{:?}", names(&rows));
+        let row = &rows[1];
+        assert_eq!(row.id, "pending:gamma");
+        assert!(
+            row.detail
+                .starts_with("gamma-4 Mac Studio can't reach its new VM because Cua doesn't have Local Network access there."),
+            "{}",
+            row.detail
+        );
+        assert_eq!(
+            row.progress.as_ref().unwrap().error.as_ref(),
+            Some(&row.detail)
+        );
+
+        // Removed from the list: the machine's own record is what is left
+        // (it is a Space there, and can be deleted).
+        let gone = reduce(
+            &failed,
+            &CreateAction::Dismiss {
+                id: "pending:gamma".into(),
+            },
+        );
+        assert_eq!(compose(&registry, &gone).len(), 2);
+        assert!(compose(&registry, &gone).iter().any(|s| s.id == ghost.id));
+
+        // Ready: the pending row hands over to the registry's one row.
+        let done = reduce(
+            &s,
+            &CreateAction::Finish {
+                id: "pending:gamma".into(),
+                space_id: ghost.id.clone(),
+            },
+        );
+        let rows = compose(&registry, &done);
+        assert_eq!(rows.len(), 2, "{:?}", names(&rows));
+        assert_eq!(rows.iter().filter(|r| r.id == ghost.id).count(), 1);
+        assert!(rows.iter().all(|r| !is_pending(&r.id)));
+    }
+
+    #[test]
+    fn an_unnamed_relay_create_hides_the_machines_new_record_of_it() {
+        let s = reduce(
+            &CreatesState::default(),
+            &relay_start("pending:u", "", SpaceOs::Macos),
+        );
+        assert_eq!(s.pending[0].name, "macOS Space");
+        // The machine names the Space itself, and it is not up yet.
+        let ghost = hosts_record(
+            "relay:96fe/space-464e",
+            "space-464e2d931db4b3ec",
+            GAMMA,
+            Some(SKEW_BASE + 8_000),
+        );
+        let rows = compose(std::slice::from_ref(&ghost), &s);
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["pending:u"]
+        );
+
+        // A Space that is up on that machine is somebody else's (or an
+        // older one's): it stays, as does one the machine added before
+        // this create began.
+        let up = registered("relay:96fe/space-up");
+        let mut up = Space {
+            host: Some(GAMMA.into()),
+            provider: Some(SpaceProvider::Relay),
+            ..up
+        };
+        up.status = SpaceStatus::Running;
+        let older = hosts_record(
+            "relay:96fe/space-old",
+            "space-old",
+            GAMMA,
+            Some(SKEW_BASE - 3_600_000),
+        );
+        let rows = compose(&[ghost, up.clone(), older.clone()], &s);
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, [up.id.as_str(), older.id.as_str(), "pending:u"]);
+    }
+
+    #[test]
+    fn a_record_that_is_not_the_creates_stays_listed() {
+        let s = reduce(
+            &CreatesState::default(),
+            &relay_start("pending:n", "dev", SpaceOs::Linux),
+        );
+        // Same name on another machine, or on this one (a local Space): not
+        // this create's.
+        let elsewhere = hosts_record("relay:aaaa/space-1", "dev", "aaaa", Some(SKEW_BASE + 1));
+        let mut here = registered("local:dev");
+        here.name = "dev".into();
+        // Same machine and name, but listed long before this create began:
+        // an older Space of the same name.
+        let older = hosts_record(
+            "relay:96fe/space-2",
+            "dev",
+            GAMMA,
+            Some(SKEW_BASE - 3_600_000),
+        );
+        // Another name on the same machine, not up yet: only an unnamed
+        // create takes those.
+        let other = hosts_record("relay:96fe/space-3", "build", GAMMA, Some(SKEW_BASE + 1));
+        let registry = [
+            elsewhere.clone(),
+            here.clone(),
+            older.clone(),
+            other.clone(),
+        ];
+        let rows = compose(&registry, &s);
+        assert_eq!(rows.len(), 5, "{:?}", names(&rows));
+        assert!(rows.iter().any(|r| r.id == "pending:n"));
+
+        // A create that is not on a machine of yours hides nothing.
+        let local = reduce(
+            &CreatesState::default(),
+            &start_on(
+                "pending:l",
+                "dev",
+                SpaceOs::Linux,
+                SpaceProvider::Local,
+                None,
+            ),
+        );
+        assert_eq!(compose(&registry, &local).len(), 5);
+
+        // A finished create hands over by its Space's id, not by name.
+        let sibling = hosts_record("relay:96fe/space-4", "dev", GAMMA, Some(SKEW_BASE + 5));
+        let done = reduce(
+            &s,
+            &CreateAction::Finish {
+                id: "pending:n".into(),
+                space_id: "relay:96fe/space-5".into(),
+            },
+        );
+        let rows = compose(std::slice::from_ref(&sibling), &done);
+        assert_eq!(rows.iter().filter(|r| r.id == sibling.id).count(), 1);
+    }
+
+    #[test]
+    fn a_failure_on_another_mac_names_that_mac() {
+        let sdk = "Local Network access is not available: cua cannot reach the VM at \
+                   192.168.64.45:3211 (No route to host (os error 65))";
+        // The machine's name when known; else who runs it, never this Mac.
+        assert!(
+            failure_text_on(
+                sdk,
+                None,
+                Some(SpaceProvider::Relay),
+                Some(GAMMA_NAME),
+                false
+            )
+            .starts_with("gamma-4 Mac Studio can't reach its new VM because")
+        );
+        assert!(
+            failure_text_on(sdk, None, Some(SpaceProvider::Relay), None, false)
+                .starts_with("The Mac running this Space can't reach its new VM because")
+        );
+        assert!(
+            failure_text_on(sdk, None, Some(SpaceProvider::Local), None, false)
+                .starts_with("This Mac can't reach its new VM because")
+        );
+        // The toast the wizard shows after a create fails.
+        assert_eq!(
+            crate::wizard::create_failed_text_on(sdk, Some(SpaceProvider::Relay), Some(GAMMA_NAME)),
+            format!(
+                "Could not create the Space: {}",
+                failure_text_on(
+                    sdk,
+                    None,
+                    Some(SpaceProvider::Relay),
+                    Some(GAMMA_NAME),
+                    false
+                )
+            )
+        );
+        assert_eq!(
+            crate::wizard::create_failed_text_on(sdk, None, None),
+            crate::wizard::create_failed_text(sdk)
+        );
+        // Apple's two macOS VMs are the other Mac's too.
+        let limit = "booting: the maximum number of VMs has been reached (limit 2)";
+        assert!(
+            failure_text_on(
+                limit,
+                Some("booting"),
+                Some(SpaceProvider::Relay),
+                Some(GAMMA_NAME),
+                false
+            )
+            .starts_with("gamma-4 Mac Studio is already running two macOS VMs")
+        );
+        assert!(
+            failure_text_on(
+                limit,
+                Some("booting"),
+                Some(SpaceProvider::Local),
+                None,
+                false
+            )
+            .starts_with("This Mac is already running two macOS VMs")
         );
     }
 }

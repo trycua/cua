@@ -1,0 +1,14 @@
+# Standalone project: install with `pnpm install --ignore-workspace`.
+# This file only carries pnpm settings for this directory.
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+# The UniFFI runtime lowers a TypeScript object (a callback such as
+# Teleport's run listener) inside an optional, a sequence or a record as it
+# lowers a bare argument (test/teleport-native.test.ts).
+patchedDependencies:
+  '@ubjs/core@0.31.0-3': patches/@ubjs__core@0.31.0-3.patch
+# Short .pnpm/ directory names. makensis aborts (SIGABRT) on an !include path
+# near 280 characters, which app-builder-lib's NSIS templates reach under a
+# deep checkout with the default limit.
+virtualStoreDirMaxLength: 40

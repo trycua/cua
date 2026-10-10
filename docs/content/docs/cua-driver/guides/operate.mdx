@@ -185,6 +185,42 @@ If pacman owns the executable, update with `sudo pacman -Syu`; Driver's own
 update and channel commands refuse with pacman guidance (builds with
 [#3636](https://github.com/trycua/cua/pull/3636)).
 
+### Before updating to 0.35
+
+0.35 changes three things that scripts and wrappers may depend on. The typed
+Rust, Python and TypeScript SDKs keep the full `get_window_state` response, so
+they are only affected by item 3.
+
+1. **`get_window_state` is lean by default**
+   ([#4743](https://github.com/trycua/cua/pull/4743)). A read returns only the
+   compact `tree_markdown`, walks at most 250 nodes, and leaves out `_note` and
+   `background_input`. If you read `structuredContent.elements`, pass
+   `tree_format: "elements"` (or `"both"` if you also read `tree_markdown`).
+   Pass `verbose: true` for `_note` and `background_input`, and `max_elements`
+   for a larger walk. `full_output: true` returns the 0.34 response unchanged.
+   A row `[N]` of a read whose `snapshot_id` is `s0000002a` has the
+   `element_token` `s0000002a:N`.
+2. **macOS reads collapse closed menus**
+   ([#4892](https://github.com/trycua/cua/pull/4892)). A default read lists
+   only the menu bar's titles, in `tree_markdown` and in `elements`. Run a menu
+   item with `invoke_menu` and its path, or find it with `query`;
+   `full_output: true` still walks every menu. The walk diagnostics
+   `nodes_visited`, `nodes_pending`, `walk_elapsed_ms` and
+   `screenshot_refreshed_snapshot` need `verbose: true`.
+3. **macOS `type_text` sends `\n`, `\r` and `\t` as Return and Tab**
+   ([#4821](https://github.com/trycua/cua/pull/4821)) when it types keys
+   (Chromium and Electron fields, `delivery_mode: "foreground"`, pixel
+   targets). Text with a line break now submits a form or an address bar, and
+   a tab moves focus. Remove them from text that should not submit, or write
+   the value with `set_value` where the field supports it.
+
+Scripts that read raw `list_apps` JSON on macOS should also treat
+`bundle_id`, `launch_path`, `kind` and `last_used` as optional: since
+[#4916](https://github.com/trycua/cua/pull/4916) they are omitted when unknown
+instead of `null`, and the always-empty `windows: []` is gone. The typed SDKs
+already treat them as optional. For an app's windows, call
+`list_windows({app: "Name"})`.
+
 ### Before updating to token-only element targeting
 
 Releases that include [#3873](https://github.com/trycua/cua/pull/3873) address
@@ -193,7 +229,8 @@ wrappers that act on elements before you update:
 
 1. Pass `element_token` instead of `element_index` or `snapshot_id`. Read it
    from `structuredContent.elements[].element_token` in the latest
-   `get_window_state` result and send it with the window's `pid`. The token
+   `get_window_state` result (from 0.35, pass `tree_format: "elements"` to
+   get that array) and send it with the window's `pid`. The token
    names its window, so `window_id` is optional; a different `window_id` is
    refused with `conflicting_element_target`. `get_window_state` still returns
    `element_index` and `snapshot_id` for display and correlation.

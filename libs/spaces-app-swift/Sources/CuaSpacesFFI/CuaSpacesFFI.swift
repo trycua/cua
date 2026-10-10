@@ -3978,6 +3978,688 @@ public func FfiConverterTypeAppAgentDetailView_lower(_ value: AppAgentDetailView
 }
 
 
+public struct AppAgentKeyConfirm: Equatable, Hashable {
+    public var title: String
+    public var message: String
+    public var confirmLabel: String
+    public var cancelLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, message: String, confirmLabel: String, cancelLabel: String) {
+        self.title = title
+        self.message = message
+        self.confirmLabel = confirmLabel
+        self.cancelLabel = cancelLabel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeyConfirm: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeyConfirm: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeyConfirm {
+        return
+            try AppAgentKeyConfirm(
+                title: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                confirmLabel: FfiConverterString.read(from: &buf),
+                cancelLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeyConfirm, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.confirmLabel, into: &buf)
+        FfiConverterString.write(value.cancelLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyConfirm_lift(_ buf: RustBuffer) throws -> AppAgentKeyConfirm {
+    return try FfiConverterTypeAppAgentKeyConfirm.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyConfirm_lower(_ value: AppAgentKeyConfirm) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeyConfirm.lower(value)
+}
+
+
+public struct AppAgentKeyFormInput: Equatable, Hashable {
+    /**
+     * `anthropic`, `openai` or `other`.
+     */
+    public var provider: String
+    /**
+     * The row it opened from (replacing an Other key), when any.
+     */
+    public var env: String?
+    /**
+     * The variable typed for a new Other key.
+     */
+    public var name: String
+    /**
+     * Something was typed in the key field (the page never sends the key).
+     */
+    public var hasValue: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `anthropic`, `openai` or `other`.
+         */provider: String,
+        /**
+         * The row it opened from (replacing an Other key), when any.
+         */env: String?,
+        /**
+         * The variable typed for a new Other key.
+         */name: String,
+        /**
+         * Something was typed in the key field (the page never sends the key).
+         */hasValue: Bool) {
+        self.provider = provider
+        self.env = env
+        self.name = name
+        self.hasValue = hasValue
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeyFormInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeyFormInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeyFormInput {
+        return
+            try AppAgentKeyFormInput(
+                provider: FfiConverterString.read(from: &buf),
+                env: FfiConverterOptionString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                hasValue: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeyFormInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterOptionString.write(value.env, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.hasValue, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyFormInput_lift(_ buf: RustBuffer) throws -> AppAgentKeyFormInput {
+    return try FfiConverterTypeAppAgentKeyFormInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyFormInput_lower(_ value: AppAgentKeyFormInput) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeyFormInput.lower(value)
+}
+
+
+public struct AppAgentKeyFormView: Equatable, Hashable {
+    public var title: String
+    public var lede: String
+    /**
+     * The variable field, for a new Other key.
+     */
+    public var nameLabel: String?
+    public var namePlaceholder: String?
+    /**
+     * Why the typed variable can't be used.
+     */
+    public var nameError: String?
+    public var valueLabel: String
+    public var valuePlaceholder: String
+    /**
+     * Under the key field.
+     */
+    public var valueHelp: String
+    public var saveLabel: String
+    public var cancelLabel: String
+    public var canSave: Bool
+    /**
+     * What `agent_keys.set` gets besides the key.
+     */
+    public var provider: String
+    public var env: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, lede: String,
+        /**
+         * The variable field, for a new Other key.
+         */nameLabel: String?, namePlaceholder: String?,
+        /**
+         * Why the typed variable can't be used.
+         */nameError: String?, valueLabel: String, valuePlaceholder: String,
+        /**
+         * Under the key field.
+         */valueHelp: String, saveLabel: String, cancelLabel: String, canSave: Bool,
+        /**
+         * What `agent_keys.set` gets besides the key.
+         */provider: String, env: String?) {
+        self.title = title
+        self.lede = lede
+        self.nameLabel = nameLabel
+        self.namePlaceholder = namePlaceholder
+        self.nameError = nameError
+        self.valueLabel = valueLabel
+        self.valuePlaceholder = valuePlaceholder
+        self.valueHelp = valueHelp
+        self.saveLabel = saveLabel
+        self.cancelLabel = cancelLabel
+        self.canSave = canSave
+        self.provider = provider
+        self.env = env
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeyFormView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeyFormView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeyFormView {
+        return
+            try AppAgentKeyFormView(
+                title: FfiConverterString.read(from: &buf),
+                lede: FfiConverterString.read(from: &buf),
+                nameLabel: FfiConverterOptionString.read(from: &buf),
+                namePlaceholder: FfiConverterOptionString.read(from: &buf),
+                nameError: FfiConverterOptionString.read(from: &buf),
+                valueLabel: FfiConverterString.read(from: &buf),
+                valuePlaceholder: FfiConverterString.read(from: &buf),
+                valueHelp: FfiConverterString.read(from: &buf),
+                saveLabel: FfiConverterString.read(from: &buf),
+                cancelLabel: FfiConverterString.read(from: &buf),
+                canSave: FfiConverterBool.read(from: &buf),
+                provider: FfiConverterString.read(from: &buf),
+                env: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeyFormView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.lede, into: &buf)
+        FfiConverterOptionString.write(value.nameLabel, into: &buf)
+        FfiConverterOptionString.write(value.namePlaceholder, into: &buf)
+        FfiConverterOptionString.write(value.nameError, into: &buf)
+        FfiConverterString.write(value.valueLabel, into: &buf)
+        FfiConverterString.write(value.valuePlaceholder, into: &buf)
+        FfiConverterString.write(value.valueHelp, into: &buf)
+        FfiConverterString.write(value.saveLabel, into: &buf)
+        FfiConverterString.write(value.cancelLabel, into: &buf)
+        FfiConverterBool.write(value.canSave, into: &buf)
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterOptionString.write(value.env, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyFormView_lift(_ buf: RustBuffer) throws -> AppAgentKeyFormView {
+    return try FfiConverterTypeAppAgentKeyFormView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyFormView_lower(_ value: AppAgentKeyFormView) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeyFormView.lower(value)
+}
+
+
+public struct AppAgentKeyInput: Equatable, Hashable {
+    /**
+     * `anthropic`, `openai` or `other`.
+     */
+    public var provider: String
+    /**
+     * The variable a run gets it as.
+     */
+    public var env: String
+    /**
+     * Its last four characters (empty for a short key).
+     */
+    public var last4: String
+    /**
+     * When it was added (Unix ms).
+     */
+    public var addedMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `anthropic`, `openai` or `other`.
+         */provider: String,
+        /**
+         * The variable a run gets it as.
+         */env: String,
+        /**
+         * Its last four characters (empty for a short key).
+         */last4: String,
+        /**
+         * When it was added (Unix ms).
+         */addedMs: UInt64) {
+        self.provider = provider
+        self.env = env
+        self.last4 = last4
+        self.addedMs = addedMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeyInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeyInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeyInput {
+        return
+            try AppAgentKeyInput(
+                provider: FfiConverterString.read(from: &buf),
+                env: FfiConverterString.read(from: &buf),
+                last4: FfiConverterString.read(from: &buf),
+                addedMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeyInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.env, into: &buf)
+        FfiConverterString.write(value.last4, into: &buf)
+        FfiConverterUInt64.write(value.addedMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyInput_lift(_ buf: RustBuffer) throws -> AppAgentKeyInput {
+    return try FfiConverterTypeAppAgentKeyInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyInput_lower(_ value: AppAgentKeyInput) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeyInput.lower(value)
+}
+
+
+public struct AppAgentKeyRow: Equatable, Hashable {
+    /**
+     * The variable (the row's id).
+     */
+    public var env: String
+    /**
+     * `anthropic`, `openai` or `other`.
+     */
+    public var provider: String
+    /**
+     * "Anthropic", "OpenAI", or the variable.
+     */
+    public var title: String
+    /**
+     * Who gets it.
+     */
+    public var detail: String
+    /**
+     * A key is saved.
+     */
+    public var set: Bool
+    /**
+     * "Not set", "•••• 0000", or "Saved" for a short key.
+     */
+    public var status: String
+    /**
+     * When it was added (the page writes "Added <date>").
+     */
+    public var addedMs: UInt64?
+    /**
+     * "Add key" or "Replace".
+     */
+    public var actionLabel: String
+    /**
+     * "Remove", when a key is saved.
+     */
+    public var removeLabel: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The variable (the row's id).
+         */env: String,
+        /**
+         * `anthropic`, `openai` or `other`.
+         */provider: String,
+        /**
+         * "Anthropic", "OpenAI", or the variable.
+         */title: String,
+        /**
+         * Who gets it.
+         */detail: String,
+        /**
+         * A key is saved.
+         */set: Bool,
+        /**
+         * "Not set", "•••• 0000", or "Saved" for a short key.
+         */status: String,
+        /**
+         * When it was added (the page writes "Added <date>").
+         */addedMs: UInt64?,
+        /**
+         * "Add key" or "Replace".
+         */actionLabel: String,
+        /**
+         * "Remove", when a key is saved.
+         */removeLabel: String?) {
+        self.env = env
+        self.provider = provider
+        self.title = title
+        self.detail = detail
+        self.set = set
+        self.status = status
+        self.addedMs = addedMs
+        self.actionLabel = actionLabel
+        self.removeLabel = removeLabel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeyRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeyRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeyRow {
+        return
+            try AppAgentKeyRow(
+                env: FfiConverterString.read(from: &buf),
+                provider: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                set: FfiConverterBool.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                addedMs: FfiConverterOptionUInt64.read(from: &buf),
+                actionLabel: FfiConverterString.read(from: &buf),
+                removeLabel: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeyRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.env, into: &buf)
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterBool.write(value.set, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterOptionUInt64.write(value.addedMs, into: &buf)
+        FfiConverterString.write(value.actionLabel, into: &buf)
+        FfiConverterOptionString.write(value.removeLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyRow_lift(_ buf: RustBuffer) throws -> AppAgentKeyRow {
+    return try FfiConverterTypeAppAgentKeyRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeyRow_lower(_ value: AppAgentKeyRow) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeyRow.lower(value)
+}
+
+
+public struct AppAgentKeysInput: Equatable, Hashable {
+    /**
+     * The keys saved, once read.
+     */
+    public var keys: [AppAgentKeyInput]
+    /**
+     * Why this machine can't keep keys (the daemon's words), when it can't.
+     */
+    public var unavailable: String?
+    /**
+     * The keys could not be read (no daemon, a refused Keychain).
+     */
+    public var error: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The keys saved, once read.
+         */keys: [AppAgentKeyInput],
+        /**
+         * Why this machine can't keep keys (the daemon's words), when it can't.
+         */unavailable: String?,
+        /**
+         * The keys could not be read (no daemon, a refused Keychain).
+         */error: String?) {
+        self.keys = keys
+        self.unavailable = unavailable
+        self.error = error
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeysInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeysInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeysInput {
+        return
+            try AppAgentKeysInput(
+                keys: FfiConverterSequenceTypeAppAgentKeyInput.read(from: &buf),
+                unavailable: FfiConverterOptionString.read(from: &buf),
+                error: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeysInput, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeAppAgentKeyInput.write(value.keys, into: &buf)
+        FfiConverterOptionString.write(value.unavailable, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeysInput_lift(_ buf: RustBuffer) throws -> AppAgentKeysInput {
+    return try FfiConverterTypeAppAgentKeysInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeysInput_lower(_ value: AppAgentKeysInput) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeysInput.lower(value)
+}
+
+
+public struct AppAgentKeysView: Equatable, Hashable {
+    public var title: String
+    /**
+     * Where the keys live and who gets them.
+     */
+    public var intro: String
+    public var rows: [AppAgentKeyRow]
+    /**
+     * The button for an Other key.
+     */
+    public var addOtherLabel: String
+    /**
+     * What an Other key is.
+     */
+    public var otherHelp: String
+    /**
+     * Why keys can't be saved or read, in place of the buttons.
+     */
+    public var notice: String?
+    /**
+     * The buttons work.
+     */
+    public var canEdit: Bool
+    /**
+     * "Added" (before the date the page formats).
+     */
+    public var addedLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String,
+        /**
+         * Where the keys live and who gets them.
+         */intro: String, rows: [AppAgentKeyRow],
+        /**
+         * The button for an Other key.
+         */addOtherLabel: String,
+        /**
+         * What an Other key is.
+         */otherHelp: String,
+        /**
+         * Why keys can't be saved or read, in place of the buttons.
+         */notice: String?,
+        /**
+         * The buttons work.
+         */canEdit: Bool,
+        /**
+         * "Added" (before the date the page formats).
+         */addedLabel: String) {
+        self.title = title
+        self.intro = intro
+        self.rows = rows
+        self.addOtherLabel = addOtherLabel
+        self.otherHelp = otherHelp
+        self.notice = notice
+        self.canEdit = canEdit
+        self.addedLabel = addedLabel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppAgentKeysView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppAgentKeysView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppAgentKeysView {
+        return
+            try AppAgentKeysView(
+                title: FfiConverterString.read(from: &buf),
+                intro: FfiConverterString.read(from: &buf),
+                rows: FfiConverterSequenceTypeAppAgentKeyRow.read(from: &buf),
+                addOtherLabel: FfiConverterString.read(from: &buf),
+                otherHelp: FfiConverterString.read(from: &buf),
+                notice: FfiConverterOptionString.read(from: &buf),
+                canEdit: FfiConverterBool.read(from: &buf),
+                addedLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppAgentKeysView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.intro, into: &buf)
+        FfiConverterSequenceTypeAppAgentKeyRow.write(value.rows, into: &buf)
+        FfiConverterString.write(value.addOtherLabel, into: &buf)
+        FfiConverterString.write(value.otherHelp, into: &buf)
+        FfiConverterOptionString.write(value.notice, into: &buf)
+        FfiConverterBool.write(value.canEdit, into: &buf)
+        FfiConverterString.write(value.addedLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeysView_lift(_ buf: RustBuffer) throws -> AppAgentKeysView {
+    return try FfiConverterTypeAppAgentKeysView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppAgentKeysView_lower(_ value: AppAgentKeysView) -> RustBuffer {
+    return FfiConverterTypeAppAgentKeysView.lower(value)
+}
+
+
 public struct AppAgentRowView: Equatable, Hashable {
     public var name: String
     /**
@@ -12705,6 +13387,10 @@ public struct AppExperiments: Equatable, Hashable {
      * Sharing a Space with other accounts.
      */
     public var sharing: Bool
+    /**
+     * The shared web UI, previewed in its own window.
+     */
+    public var webUi: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -12717,10 +13403,14 @@ public struct AppExperiments: Equatable, Hashable {
          */yourCloud: Bool,
         /**
          * Sharing a Space with other accounts.
-         */sharing: Bool) {
+         */sharing: Bool,
+        /**
+         * The shared web UI, previewed in its own window.
+         */webUi: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
         self.sharing = sharing
+        self.webUi = webUi
     }
 
 
@@ -12741,7 +13431,8 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
             try AppExperiments(
                 cuaVolume: FfiConverterBool.read(from: &buf),
                 yourCloud: FfiConverterBool.read(from: &buf),
-                sharing: FfiConverterBool.read(from: &buf)
+                sharing: FfiConverterBool.read(from: &buf),
+                webUi: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -12749,6 +13440,7 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         FfiConverterBool.write(value.cuaVolume, into: &buf)
         FfiConverterBool.write(value.yourCloud, into: &buf)
         FfiConverterBool.write(value.sharing, into: &buf)
+        FfiConverterBool.write(value.webUi, into: &buf)
     }
 }
 
@@ -14390,8 +15082,9 @@ public func FfiConverterTypeAppHostFormView_lower(_ value: AppHostFormView) -> R
 
 public struct AppHostLimit: Equatable, Hashable {
     /**
-     * `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
-     * Mac).
+     * `spaces` (every Space it provides), `macos_vms` (macOS VMs on that
+     * Mac), or [`HOST_SHARING_STOPPED`] (not a limit: its owner stopped
+     * sharing it).
      */
     public var resource: String
     /**
@@ -14412,8 +15105,9 @@ public struct AppHostLimit: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
-         * Mac).
+         * `spaces` (every Space it provides), `macos_vms` (macOS VMs on that
+         * Mac), or [`HOST_SHARING_STOPPED`] (not a limit: its owner stopped
+         * sharing it).
          */resource: String,
         /**
          * In use now.
@@ -20729,6 +21423,13 @@ public struct AppOnboardingState: Equatable, Hashable {
      * while Cua Volume is on. Off until the shell says otherwise.
      */
     public var experiments: AppExperiments
+    /**
+     * The run's start was counted (`onboarding_shown`, Welcome shown):
+     * when Welcome showed on a machine whose usage notice was already
+     * shown, else when Welcome was left. Once per run, however often
+     * Welcome shows again (Back).
+     */
+    public var runCounted: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -20801,7 +21502,13 @@ public struct AppOnboardingState: Equatable, Hashable {
         /**
          * Settings, Experiments: the Cua Volume page (and its Done line) only
          * while Cua Volume is on. Off until the shell says otherwise.
-         */experiments: AppExperiments) {
+         */experiments: AppExperiments,
+        /**
+         * The run's start was counted (`onboarding_shown`, Welcome shown):
+         * when Welcome showed on a machine whose usage notice was already
+         * shown, else when Welcome was left. Once per run, however often
+         * Welcome shows again (Back).
+         */runCounted: Bool) {
         self.step = step
         self.cliTarget = cliTarget
         self.menuBar = menuBar
@@ -20823,6 +21530,7 @@ public struct AppOnboardingState: Equatable, Hashable {
         self.launchAtLogin = launchAtLogin
         self.telemetry = telemetry
         self.experiments = experiments
+        self.runCounted = runCounted
     }
 
 
@@ -20861,7 +21569,8 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
                 storage: FfiConverterTypeAppStorageState.read(from: &buf),
                 launchAtLogin: FfiConverterBool.read(from: &buf),
                 telemetry: FfiConverterOptionTypeAppTelemetryInput.read(from: &buf),
-                experiments: FfiConverterTypeAppExperiments.read(from: &buf)
+                experiments: FfiConverterTypeAppExperiments.read(from: &buf),
+                runCounted: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -20887,6 +21596,7 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.launchAtLogin, into: &buf)
         FfiConverterOptionTypeAppTelemetryInput.write(value.telemetry, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
+        FfiConverterBool.write(value.runCounted, into: &buf)
     }
 }
 
@@ -21498,6 +22208,17 @@ public struct AppPendingCreate: Equatable, Hashable {
      * GPU acceleration was asked for.
      */
     public var gpu: Bool
+    /**
+     * A create on one of your machines: that machine's relay id (the
+     * `host:<machine>` of the create's `on`). The machine lists the Space
+     * it is creating as a record of its own, which [`compose`] folds into
+     * this row.
+     */
+    public var host: String?
+    /**
+     * That machine's name, for the row and for a failure that names it.
+     */
+    public var hostName: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -21572,7 +22293,16 @@ public struct AppPendingCreate: Equatable, Hashable {
          */cancelling: Bool,
         /**
          * GPU acceleration was asked for.
-         */gpu: Bool) {
+         */gpu: Bool,
+        /**
+         * A create on one of your machines: that machine's relay id (the
+         * `host:<machine>` of the create's `on`). The machine lists the Space
+         * it is creating as a record of its own, which [`compose`] folds into
+         * this row.
+         */host: String?,
+        /**
+         * That machine's name, for the row and for a failure that names it.
+         */hostName: String?) {
         self.id = id
         self.name = name
         self.os = os
@@ -21595,6 +22325,8 @@ public struct AppPendingCreate: Equatable, Hashable {
         self.bytesPerSecond = bytesPerSecond
         self.cancelling = cancelling
         self.gpu = gpu
+        self.host = host
+        self.hostName = hostName
     }
 
 
@@ -21634,7 +22366,9 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
                 bytesTotal: FfiConverterOptionUInt64.read(from: &buf),
                 bytesPerSecond: FfiConverterOptionDouble.read(from: &buf),
                 cancelling: FfiConverterBool.read(from: &buf),
-                gpu: FfiConverterBool.read(from: &buf)
+                gpu: FfiConverterBool.read(from: &buf),
+                host: FfiConverterOptionString.read(from: &buf),
+                hostName: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -21661,6 +22395,8 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
         FfiConverterOptionDouble.write(value.bytesPerSecond, into: &buf)
         FfiConverterBool.write(value.cancelling, into: &buf)
         FfiConverterBool.write(value.gpu, into: &buf)
+        FfiConverterOptionString.write(value.host, into: &buf)
+        FfiConverterOptionString.write(value.hostName, into: &buf)
     }
 }
 
@@ -22758,7 +23494,7 @@ public struct AppPlacementOption: Equatable, Hashable {
     public var id: String
     /**
      * The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
-     * "AWS · us-west-2".
+     * "Mac mini (not sharing)", "AWS · us-west-2".
      */
     public var label: String
     /**
@@ -22771,7 +23507,7 @@ public struct AppPlacementOption: Equatable, Hashable {
      */
     public var selected: Bool
     /**
-     * It can be chosen now (offline, at its limit: not).
+     * It can be chosen now (offline, not sharing, at its limit: not).
      */
     public var enabled: Bool
     /**
@@ -22788,7 +23524,7 @@ public struct AppPlacementOption: Equatable, Hashable {
          */id: String,
         /**
          * The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
-         * "AWS · us-west-2".
+         * "Mac mini (not sharing)", "AWS · us-west-2".
          */label: String,
         /**
          * Its group, in menu order (a separator between groups): `this-mac`,
@@ -22798,7 +23534,7 @@ public struct AppPlacementOption: Equatable, Hashable {
          * Chosen.
          */selected: Bool,
         /**
-         * It can be chosen now (offline, at its limit: not).
+         * It can be chosen now (offline, not sharing, at its limit: not).
          */enabled: Bool,
         /**
          * One line: why not, or what it runs (the tooltip).
@@ -28103,7 +28839,8 @@ public struct AppSpaceHost: Equatable, Hashable {
      */
     public var via: String
     /**
-     * It answered just now.
+     * It is online: it answered just now, or the relay sees it connected
+     * (the Machines page says the same).
      */
     public var online: Bool
     /**
@@ -28111,7 +28848,8 @@ public struct AppSpaceHost: Equatable, Hashable {
      */
     public var os: String
     /**
-     * Its limits, when it answered.
+     * Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
+     * it is online and refused because its owner stopped sharing it.
      */
     public var limits: [AppHostLimit]
 
@@ -28129,13 +28867,15 @@ public struct AppSpaceHost: Equatable, Hashable {
          * `relay` or `direct` (its Tailscale or LAN address).
          */via: String,
         /**
-         * It answered just now.
+         * It is online: it answered just now, or the relay sees it connected
+         * (the Machines page says the same).
          */online: Bool,
         /**
          * Its operating system (`macos`, `linux`, `windows`), when it answered.
          */os: String,
         /**
-         * Its limits, when it answered.
+         * Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
+         * it is online and refused because its owner stopped sharing it.
          */limits: [AppHostLimit]) {
         self.id = id
         self.name = name
@@ -30097,6 +30837,12 @@ public struct AppTelemetryInput: Equatable, Hashable {
      * The environment decides (`DO_NOT_TRACK`, `CUA_TELEMETRY`, CI): who.
      */
     public var lockedBy: String?
+    /**
+     * The first-run usage notice was already shown on this machine (by
+     * `cua`, or an earlier run of the app): events may be sent before
+     * Welcome is left.
+     */
+    public var noticeShown: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30106,9 +30852,15 @@ public struct AppTelemetryInput: Equatable, Hashable {
          */enabled: Bool,
         /**
          * The environment decides (`DO_NOT_TRACK`, `CUA_TELEMETRY`, CI): who.
-         */lockedBy: String?) {
+         */lockedBy: String?,
+        /**
+         * The first-run usage notice was already shown on this machine (by
+         * `cua`, or an earlier run of the app): events may be sent before
+         * Welcome is left.
+         */noticeShown: Bool) {
         self.enabled = enabled
         self.lockedBy = lockedBy
+        self.noticeShown = noticeShown
     }
 
 
@@ -30128,13 +30880,15 @@ public struct FfiConverterTypeAppTelemetryInput: FfiConverterRustBuffer {
         return
             try AppTelemetryInput(
                 enabled: FfiConverterBool.read(from: &buf),
-                lockedBy: FfiConverterOptionString.read(from: &buf)
+                lockedBy: FfiConverterOptionString.read(from: &buf),
+                noticeShown: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppTelemetryInput, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.enabled, into: &buf)
         FfiConverterOptionString.write(value.lockedBy, into: &buf)
+        FfiConverterBool.write(value.noticeShown, into: &buf)
     }
 }
 
@@ -36566,7 +37320,7 @@ public struct KvStatus: Equatable, Hashable {
     public var passphraseAvailable: Bool
     /**
      * Protector kinds that can unlock this vault now (`macos-keychain`,
-     * `windows-credential`, `passphrase`, `recovery`).
+     * `windows-credential`, `linux-secret-service`, `passphrase`, `recovery`).
      */
     public var unlockProtectors: [String]
     /**
@@ -36626,7 +37380,7 @@ public struct KvStatus: Equatable, Hashable {
          */passphraseAvailable: Bool,
         /**
          * Protector kinds that can unlock this vault now (`macos-keychain`,
-         * `windows-credential`, `passphrase`, `recovery`).
+         * `windows-credential`, `linux-secret-service`, `passphrase`, `recovery`).
          */unlockProtectors: [String],
         /**
          * The browse window is open until this time, Unix ms: item names are
@@ -41460,7 +42214,14 @@ public enum AppCreateAction: Equatable, Hashable {
          */hostArch: String?,
         /**
          * GPU acceleration was asked for (the create's `gpu` option).
-         */gpu: Bool
+         */gpu: Bool,
+        /**
+         * The machine it runs on, when it is one of yours (the create's
+         * `host:<machine>`): its relay id.
+         */host: String?,
+        /**
+         * That machine's name.
+         */hostName: String?
     )
     /**
      * The SDK reported progress.
@@ -41646,7 +42407,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .start(id: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf), os: try FfiConverterTypeAppSpaceOs.read(from: &buf), provider: try FfiConverterTypeAppSpaceProvider.read(from: &buf), now: try FfiConverterInt64.read(from: &buf), image: try FfiConverterOptionString.read(from: &buf), kind: try FfiConverterOptionTypeAppSpaceKind.read(from: &buf), hostArch: try FfiConverterOptionString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
+        case 1: return .start(id: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf), os: try FfiConverterTypeAppSpaceOs.read(from: &buf), provider: try FfiConverterTypeAppSpaceProvider.read(from: &buf), now: try FfiConverterInt64.read(from: &buf), image: try FfiConverterOptionString.read(from: &buf), kind: try FfiConverterOptionTypeAppSpaceKind.read(from: &buf), hostArch: try FfiConverterOptionString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), host: try FfiConverterOptionString.read(from: &buf), hostName: try FfiConverterOptionString.read(from: &buf)
         )
 
         case 2: return .progress(id: try FfiConverterString.read(from: &buf), phase: try FfiConverterString.read(from: &buf), fraction: try FfiConverterOptionDouble.read(from: &buf), now: try FfiConverterOptionInt64.read(from: &buf), bytesDone: try FfiConverterOptionUInt64.read(from: &buf), bytesTotal: try FfiConverterOptionUInt64.read(from: &buf), bytesPerSecond: try FfiConverterOptionDouble.read(from: &buf)
@@ -41699,7 +42460,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
         switch value {
 
 
-        case let .start(id,name,os,provider,now,image,kind,hostArch,gpu):
+        case let .start(id,name,os,provider,now,image,kind,hostArch,gpu,host,hostName):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(id, into: &buf)
             FfiConverterString.write(name, into: &buf)
@@ -41710,6 +42471,8 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
             FfiConverterOptionTypeAppSpaceKind.write(kind, into: &buf)
             FfiConverterOptionString.write(hostArch, into: &buf)
             FfiConverterBool.write(gpu, into: &buf)
+            FfiConverterOptionString.write(host, into: &buf)
+            FfiConverterOptionString.write(hostName, into: &buf)
 
 
         case let .progress(id,phase,fraction,now,bytesDone,bytesTotal,bytesPerSecond):
@@ -45324,6 +46087,12 @@ public enum AppOnboardingAction: Equatable, Hashable {
          */telemetry: AppTelemetryInput
     )
     /**
+     * Welcome is on screen (each time it shows; after `telemetry-loaded`).
+     * On a machine that already showed the usage notice, with usage data
+     * on, the run's start counts now rather than when Welcome is left.
+     */
+    case welcomeShown
+    /**
      * Welcome's "Share anonymous usage data" switch (not while the
      * environment decides). The shell writes the setting.
      */
@@ -45418,10 +46187,12 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
         case 20: return .telemetryLoaded(telemetry: try FfiConverterTypeAppTelemetryInput.read(from: &buf)
         )
 
-        case 21: return .usageDataToggled(on: try FfiConverterBool.read(from: &buf)
+        case 21: return .welcomeShown
+
+        case 22: return .usageDataToggled(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 22: return .experimentsLoaded(experiments: try FfiConverterTypeAppExperiments.read(from: &buf)
+        case 23: return .experimentsLoaded(experiments: try FfiConverterTypeAppExperiments.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -45529,13 +46300,17 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
             FfiConverterTypeAppTelemetryInput.write(telemetry, into: &buf)
 
 
-        case let .usageDataToggled(on):
+        case .welcomeShown:
             writeInt(&buf, Int32(21))
+
+
+        case let .usageDataToggled(on):
+            writeInt(&buf, Int32(22))
             FfiConverterBool.write(on, into: &buf)
 
 
         case let .experimentsLoaded(experiments):
-            writeInt(&buf, Int32(22))
+            writeInt(&buf, Int32(23))
             FfiConverterTypeAppExperiments.write(experiments, into: &buf)
 
         }
@@ -49217,6 +49992,10 @@ public enum AppStreamPhase: Equatable, Hashable {
      */
     case connecting
     /**
+     * Opening again by itself after the stream dropped (no frame yet).
+     */
+    case reconnecting
+    /**
      * Frames arrive.
      */
     case streaming
@@ -49255,11 +50034,13 @@ public struct FfiConverterTypeAppStreamPhase: FfiConverterRustBuffer {
 
         case 3: return .connecting
 
-        case 4: return .streaming
+        case 4: return .reconnecting
 
-        case 5: return .suspended
+        case 5: return .streaming
 
-        case 6: return .failed
+        case 6: return .suspended
+
+        case 7: return .failed
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -49281,16 +50062,20 @@ public struct FfiConverterTypeAppStreamPhase: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .streaming:
+        case .reconnecting:
             writeInt(&buf, Int32(4))
 
 
-        case .suspended:
+        case .streaming:
             writeInt(&buf, Int32(5))
 
 
-        case .failed:
+        case .suspended:
             writeInt(&buf, Int32(6))
+
+
+        case .failed:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -49642,6 +50427,25 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          */ok: Bool
     )
     /**
+     * The app started (`cua_onboarding_step`, step `app_launched`).
+     */
+    case launched(
+        /**
+         * The first run was not finished yet at this launch, so the
+         * app opens it (none: the shell does not know).
+         */onboardingEligible: Bool?
+    )
+    /**
+     * A sign-in failed, timed out or was cancelled (`cua_onboarding_step`,
+     * step `signed_in`, outcome `error`).
+     */
+    case signInFailed(
+        /**
+         * `timeout`, `cancelled`, `permission_denied`, `transport`,
+         * `unauthenticated` or `other` (never the message).
+         */errorKind: String
+    )
+    /**
      * A first-run page was shown or left (`cua_onboarding_page`).
      */
     case onboardingPage(
@@ -49822,34 +50626,40 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 2: return .step(step: try FfiConverterString.read(from: &buf), ok: try FfiConverterBool.read(from: &buf)
         )
 
-        case 3: return .onboardingPage(page: try FfiConverterString.read(from: &buf), action: try FfiConverterString.read(from: &buf), choice: try FfiConverterString.read(from: &buf)
+        case 3: return .launched(onboardingEligible: try FfiConverterOptionBool.read(from: &buf)
         )
 
-        case 4: return .spaceWizard(action: try FfiConverterString.read(from: &buf)
+        case 4: return .signInFailed(errorKind: try FfiConverterString.read(from: &buf)
         )
 
-        case 5: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf)
+        case 5: return .onboardingPage(page: try FfiConverterString.read(from: &buf), action: try FfiConverterString.read(from: &buf), choice: try FfiConverterString.read(from: &buf)
         )
 
-        case 6: return .spaceCreateStarted(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
+        case 6: return .spaceWizard(action: try FfiConverterString.read(from: &buf)
         )
 
-        case 7: return .volumeSetup(surface: try FfiConverterString.read(from: &buf), storage: try FfiConverterString.read(from: &buf), addToFinder: try FfiConverterBool.read(from: &buf), mountMethod: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        case 7: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf)
         )
 
-        case 8: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        case 8: return .spaceCreateStarted(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
         )
 
-        case 9: return .appUpdate(action: try FfiConverterString.read(from: &buf), channel: try FfiConverterString.read(from: &buf), trigger: try FfiConverterString.read(from: &buf)
+        case 9: return .volumeSetup(surface: try FfiConverterString.read(from: &buf), storage: try FfiConverterString.read(from: &buf), addToFinder: try FfiConverterBool.read(from: &buf), mountMethod: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .deviceEnroll(method: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        case 10: return .share(action: try FfiConverterString.read(from: &buf), role: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
         )
 
-        case 11: return .experiment(action: try FfiConverterString.read(from: &buf), experiment: try FfiConverterString.read(from: &buf)
+        case 11: return .appUpdate(action: try FfiConverterString.read(from: &buf), channel: try FfiConverterString.read(from: &buf), trigger: try FfiConverterString.read(from: &buf)
         )
 
-        case 12: return .experimentsOn(experiments: try FfiConverterSequenceString.read(from: &buf)
+        case 12: return .deviceEnroll(method: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf)
+        )
+
+        case 13: return .experiment(action: try FfiConverterString.read(from: &buf), experiment: try FfiConverterString.read(from: &buf)
+        )
+
+        case 14: return .experimentsOn(experiments: try FfiConverterSequenceString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -49871,20 +50681,30 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterBool.write(ok, into: &buf)
 
 
-        case let .onboardingPage(page,action,choice):
+        case let .launched(onboardingEligible):
             writeInt(&buf, Int32(3))
+            FfiConverterOptionBool.write(onboardingEligible, into: &buf)
+
+
+        case let .signInFailed(errorKind):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(errorKind, into: &buf)
+
+
+        case let .onboardingPage(page,action,choice):
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(page, into: &buf)
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(choice, into: &buf)
 
 
         case let .spaceWizard(action):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(action, into: &buf)
 
 
         case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu,errorVariant):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(location, into: &buf)
             FfiConverterString.write(guestOs, into: &buf)
             FfiConverterString.write(kind, into: &buf)
@@ -49897,7 +50717,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
 
 
         case let .spaceCreateStarted(location,guestOs,kind,gpu):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(location, into: &buf)
             FfiConverterString.write(guestOs, into: &buf)
             FfiConverterString.write(kind, into: &buf)
@@ -49905,7 +50725,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
 
 
         case let .volumeSetup(surface,storage,addToFinder,mountMethod,outcome):
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(surface, into: &buf)
             FfiConverterString.write(storage, into: &buf)
             FfiConverterBool.write(addToFinder, into: &buf)
@@ -49914,33 +50734,33 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
 
 
         case let .share(action,role,outcome):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(10))
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(role, into: &buf)
             FfiConverterString.write(outcome, into: &buf)
 
 
         case let .appUpdate(action,channel,trigger):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(11))
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(channel, into: &buf)
             FfiConverterString.write(trigger, into: &buf)
 
 
         case let .deviceEnroll(method,outcome):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(12))
             FfiConverterString.write(method, into: &buf)
             FfiConverterString.write(outcome, into: &buf)
 
 
         case let .experiment(action,experiment):
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(13))
             FfiConverterString.write(action, into: &buf)
             FfiConverterString.write(experiment, into: &buf)
 
 
         case let .experimentsOn(experiments):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(14))
             FfiConverterSequenceString.write(experiments, into: &buf)
 
         }
@@ -53888,6 +54708,30 @@ fileprivate struct FfiConverterOptionTypeAppAgentDetailView: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppAgentKeyConfirm: FfiConverterRustBuffer {
+    typealias SwiftType = AppAgentKeyConfirm?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppAgentKeyConfirm.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppAgentKeyConfirm.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppApproveRequest: FfiConverterRustBuffer {
     typealias SwiftType = AppApproveRequest?
 
@@ -56455,6 +57299,56 @@ fileprivate struct FfiConverterSequenceTypeAppActivityRow: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppActivityRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppAgentKeyInput: FfiConverterRustBuffer {
+    typealias SwiftType = [AppAgentKeyInput]
+
+    public static func write(_ value: [AppAgentKeyInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppAgentKeyInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppAgentKeyInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppAgentKeyInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppAgentKeyInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppAgentKeyRow: FfiConverterRustBuffer {
+    typealias SwiftType = [AppAgentKeyRow]
+
+    public static func write(_ value: [AppAgentKeyRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppAgentKeyRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppAgentKeyRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppAgentKeyRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppAgentKeyRow.read(from: &buf))
         }
         return seq
     }
@@ -60055,6 +60949,68 @@ public func appAboutView(input: AppAboutInput) -> AppAboutView  {
 })
 }
 /**
+ * The add or replace sheet.
+ */
+public func appAgentKeyForm(input: AppAgentKeysInput, form: AppAgentKeyFormInput) -> AppAgentKeyFormView  {
+    return try!  FfiConverterTypeAppAgentKeyFormView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_key_form(
+        FfiConverterTypeAppAgentKeysInput_lower(input),
+        FfiConverterTypeAppAgentKeyFormInput_lower(form),$0
+    )
+})
+}
+/**
+ * A sheet input from JSON (parity flows).
+ */
+public func appAgentKeyFormInputFromJson(json: String)throws  -> AppAgentKeyFormInput  {
+    return try  FfiConverterTypeAppAgentKeyFormInput_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_key_form_input_from_json(
+        FfiConverterString.lower(json),$0
+    )
+})
+}
+/**
+ * Why `name` can't hold an Other key (`None`: it can).
+ */
+public func appAgentKeyNameProblem(name: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_key_name_problem(
+        FfiConverterString.lower(name),$0
+    )
+})
+}
+/**
+ * The question before removing the key `env` (`None`: none is saved).
+ */
+public func appAgentKeyRemoveConfirm(input: AppAgentKeysInput, env: String) -> AppAgentKeyConfirm?  {
+    return try!  FfiConverterOptionTypeAppAgentKeyConfirm.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_key_remove_confirm(
+        FfiConverterTypeAppAgentKeysInput_lower(input),
+        FfiConverterString.lower(env),$0
+    )
+})
+}
+/**
+ * The section's input from JSON (`agent_keys.list`'s answer, camelCase).
+ */
+public func appAgentKeysInputFromJson(json: String)throws  -> AppAgentKeysInput  {
+    return try  FfiConverterTypeAppAgentKeysInput_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_keys_input_from_json(
+        FfiConverterString.lower(json),$0
+    )
+})
+}
+/**
+ * Settings, Agents: the rows for the keys the daemon reported.
+ */
+public func appAgentKeysView(input: AppAgentKeysInput) -> AppAgentKeysView  {
+    return try!  FfiConverterTypeAppAgentKeysView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_keys_view(
+        FfiConverterTypeAppAgentKeysInput_lower(input),$0
+    )
+})
+}
+/**
  * A coding agent's display name.
  */
 public func appAgentName(agent: String) -> String  {
@@ -60533,7 +61489,7 @@ public func appDevicesView(input: AppDevicesInput, now: UInt64) -> AppDevicesVie
 })
 }
 /**
- * "brave-otter" as "Brave Otter".
+ * A Space name as shown: as typed, trimmed.
  */
 public func appDisplayName(name: String) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
@@ -62233,9 +63189,10 @@ public func appTelemetryFeature(feature: String) -> [AppTelemetrySignal]  {
 /**
  * The app started (`app_launched`).
  */
-public func appTelemetryLaunched() -> [AppTelemetrySignal]  {
+public func appTelemetryLaunched(onboardingEligible: Bool?) -> [AppTelemetrySignal]  {
     return try!  FfiConverterSequenceTypeAppTelemetrySignal.lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_telemetry_launched($0
+    uniffi_cua_spaces_ffi_fn_func_app_telemetry_launched(
+        FfiConverterOptionBool.lower(onboardingEligible),$0
     )
 })
 }
@@ -62285,16 +63242,30 @@ public func appTelemetryShare(input: AppShareInput, state: AppShareSheetState, a
 })
 }
 /**
+ * A sign-in failed (`message`, which never leaves: only its kind) or was
+ * cancelled (none).
+ */
+public func appTelemetrySignInFailed(message: String?) -> [AppTelemetrySignal]  {
+    return try!  FfiConverterSequenceTypeAppTelemetrySignal.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failed(
+        FfiConverterOptionString.lower(message),$0
+    )
+})
+}
+/**
  * The app started: attributes this process's events to `spaces_app` at
  * `version`, lets the app show the first-run notice itself (nothing is
  * sent before it has been shown once), and records `app_launched` (on a
  * first run, once the notice shows). Call once at launch, before the
- * first `Cua`. Returns whether the notice was already shown here.
+ * first `Cua`. `onboarding_eligible`: the first run is still to finish
+ * (`app_launched` carries it). Returns whether the notice was already
+ * shown here.
  */
-public func appTelemetryStart(version: String) -> Bool  {
+public func appTelemetryStart(version: String, onboardingEligible: Bool?) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_start(
-        FfiConverterString.lower(version),$0
+        FfiConverterString.lower(version),
+        FfiConverterOptionBool.lower(onboardingEligible),$0
     )
 })
 }
@@ -62929,6 +63900,28 @@ public func spacesdOpenMediaDecodedWithAudio(client: SpacesdClient, options: Med
         )
 }
 /**
+ * Asks the person at this computer to confirm `reason` ("approve
+ * “Work laptop” for your Cua account"). Returns when they did; fails with
+ * `PermissionDenied` when it was cancelled or not confirmed, or when this
+ * Mac has neither Touch ID nor a login password, and with `Unsupported`
+ * where the system has no usable prompt (Windows Hello not set up, no
+ * polkit agent or action), in words that say what is missing.
+ */
+public func appConfirmPresence(reason: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_func_app_confirm_presence(FfiConverterString.lower(reason)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_void,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_void,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+/**
  * Teleport send: move app sessions from this machine into sandboxes (the
  * Swift app calls it as `cua.teleport()`).
  */
@@ -62974,6 +63967,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_view() != 65075) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() != 42778) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form_input_from_json() != 11803) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_name_problem() != 57041) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_remove_confirm() != 59177) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_keys_input_from_json() != 31421) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_keys_view() != 43550) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_agent_name() != 6096) {
@@ -63111,7 +64122,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_devices_view() != 32323) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_display_name() != 4994) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_display_name() != 24058) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_display_path() != 36578) {
@@ -63585,7 +64596,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_feature() != 57127) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_launched() != 16486) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_launched() != 17300) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_onboarding() != 25405) {
@@ -63600,7 +64611,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_share() != 42479) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 11423) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() != 34262) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 189) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_storage() != 21459) {
@@ -63769,6 +64783,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_spacesd_open_media_decoded_with_audio() != 6536) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_confirm_presence() != 44683) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_teleport() != 49330) {

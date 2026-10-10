@@ -52,7 +52,7 @@ A persistent agent is a harness with a name, a Space and a home in the Cua Volum
 | `agent` | `"claude-code" \| "gemini-cli" \| "google-antigravity" \| "goose" \| "hermes" \| "openai-codex" \| "openclaw" \| "opencode" \| "pi"` | required | Harness id. `agent_capabilities` lists what each needs. |
 | `base_url` | `string` | none | A custom model endpoint base URL. |
 | `env` | `map of string` | `{}` | More environment for every run (not secrets; see `env_from_host`). |
-| `env_from_host` | `string[]` | `[]` | Provider key variables forwarded from this server's environment at every start, for example ["ANTHROPIC_API_KEY"]. Names only. |
+| `env_from_host` | `string[]` | `[]` | Provider key variables forwarded from this server's environment (or the keys saved in Cua Spaces) at every start, for example ["ANTHROPIC_API_KEY"]. Names only. |
 | `model` | `string` | none | Model id. |
 | `name` | `string` | required | The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`. Its home is `agents/<name>/` in the Cua Volume. |
 | `space` | `string` | required | The Space it works in (id or name). |

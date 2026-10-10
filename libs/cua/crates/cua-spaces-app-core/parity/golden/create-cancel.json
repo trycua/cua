@@ -78,7 +78,7 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image… 16%",
+              "Status: Downloading image…",
               "System: macOS",
               "Kind: Virtual machine"
             ],
@@ -120,7 +120,7 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image… 18%",
+              "Status: Downloading image…",
               "System: macOS",
               "Kind: Virtual machine"
             ],
@@ -344,7 +344,7 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image… 42%",
+              "Status: Downloading image…",
               "System: Linux"
             ],
             "id": "pending:2",

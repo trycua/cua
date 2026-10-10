@@ -14,7 +14,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| [`get_desktop_state`](#get_desktop_state) | Capture the full display in true screen pixels, full size unless `max_image_dimension` caps it. | macOS, Linux, Windows |
+| [`get_desktop_state`](#get_desktop_state) | Capture the full display. | macOS, Linux, Windows |
 | [`get_screen_size`](#get_screen_size) | Return the logical size of the main display in points plus its backing scale factor. | macOS, Linux, Windows |
 | [`get_cursor_position`](#get_cursor_position) | Return the current mouse cursor position in screen points (origin top-left). | macOS, Linux, Windows |
 | [`zoom`](#zoom) | Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. | macOS, Linux, Windows |
@@ -28,7 +28,7 @@ Effect: read-only. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Capture the full display in true screen pixels, full size unless `max_image_dimension` caps it. Use its PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.
+Capture the full display. The long edge is capped at `max_image_dimension` (the configured default unless given); pixels of the returned image map back to the screen through its capture. Use its PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.
 
 </Tab>
 <Tab value="Linux">

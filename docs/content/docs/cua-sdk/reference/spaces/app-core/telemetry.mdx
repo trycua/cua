@@ -27,6 +27,8 @@ Each `app_telemetry_*` function takes a reducer step (the state before it and th
 ```swift
 .feature(feature: String)
 .step(step: String, ok: Bool)
+.launched(onboardingEligible: Bool?)
+.signInFailed(errorKind: String)
 .onboardingPage(page: String, action: String, choice: String)
 .spaceWizard(action: String)
 .spaceCreate(location: String, guestOs: String, kind: String, outcome: String, failedPhase: String, stalled: Bool, elapsedMs: UInt64, gpu: Bool, errorVariant: String)
@@ -45,6 +47,8 @@ Each `app_telemetry_*` function takes a reducer step (the state before it and th
 ```rust
 AppTelemetrySignal::Feature { feature: String }
 AppTelemetrySignal::Step { step: String, ok: bool }
+AppTelemetrySignal::Launched { onboarding_eligible: Option<bool> }
+AppTelemetrySignal::SignInFailed { error_kind: String }
 AppTelemetrySignal::OnboardingPage { page: String, action: String, choice: String }
 AppTelemetrySignal::SpaceWizard { action: String }
 AppTelemetrySignal::SpaceCreate { location: String, guest_os: String, kind: String, outcome: String, failed_phase: String, stalled: bool, elapsed_ms: u64, gpu: bool, error_variant: String }
@@ -64,6 +68,8 @@ AppTelemetrySignal::ExperimentsOn { experiments: Vec<String> }
 | --- | --- |
 | `Feature` | A Spaces app feature was used (`cua_spaces_feature_used`). Fields: `feature: String` |
 | `Step` | An install or activation funnel step (`cua_onboarding_step`; `first_*` steps count once per install). Fields: `step: String`, `ok: bool` |
+| `Launched` | The app started (`cua_onboarding_step`, step `app_launched`). Fields: `onboarding_eligible: Option<bool>` |
+| `SignInFailed` | A sign-in failed, timed out or was cancelled (`cua_onboarding_step`, step `signed_in`, outcome `error`). Fields: `error_kind: String` |
 | `OnboardingPage` | A first-run page was shown or left (`cua_onboarding_page`). Fields: `page: String`, `action: String`, `choice: String` |
 | `SpaceWizard` | The New Space panel (`cua_space_wizard`). Fields: `action: String` |
 | `SpaceCreate` | A Space create reached ready or failed (`cua_space_create`). Fields: `location: String`, `guest_os: String`, `kind: String`, `outcome: String`, `failed_phase: String`, `stalled: bool`, `elapsed_ms: u64`, `gpu: bool`, `error_variant: String` |
@@ -168,18 +174,22 @@ The app started (`app_launched`).
 <Tab value="Swift">
 
 ```swift
-func appTelemetryLaunched() -> [AppTelemetrySignal]
+func appTelemetryLaunched(onboardingEligible: Bool?) -> [AppTelemetrySignal]
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn app_telemetry_launched() -> Vec<AppTelemetrySignal>
+pub fn app_telemetry_launched(onboarding_eligible: Option<bool>) -> Vec<AppTelemetrySignal>
 ```
 
 </Tab>
 </Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `onboarding_eligible` | `Option<bool>` | required |
 
 **Returns** [`Vec<AppTelemetrySignal>`](#apptelemetrysignal-enum)
 
@@ -296,26 +306,56 @@ pub fn app_telemetry_share(input: AppShareInput, state: AppShareSheetState, acti
 
 **Returns** [`Vec<AppTelemetrySignal>`](#apptelemetrysignal-enum)
 
-## `app_telemetry_start`
+## `app_telemetry_sign_in_failed`
 
-The app started: attributes this process's events to `spaces_app` at
-`version`, lets the app show the first-run notice itself (nothing is
-sent before it has been shown once), and records `app_launched` (on a
-first run, once the notice shows). Call once at launch, before the
-first `Cua`. Returns whether the notice was already shown here.
+A sign-in failed (`message`, which never leaves: only its kind) or was
+cancelled (none).
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func appTelemetryStart(version: String) -> Bool
+func appTelemetrySignInFailed(message: String?) -> [AppTelemetrySignal]
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn app_telemetry_start(version: String) -> bool
+pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetrySignal>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `message` | `Option<String>` | required |
+
+**Returns** [`Vec<AppTelemetrySignal>`](#apptelemetrysignal-enum)
+
+## `app_telemetry_start`
+
+The app started: attributes this process's events to `spaces_app` at
+`version`, lets the app show the first-run notice itself (nothing is
+sent before it has been shown once), and records `app_launched` (on a
+first run, once the notice shows). Call once at launch, before the
+first `Cua`. `onboarding_eligible`: the first run is still to finish
+(`app_launched` carries it). Returns whether the notice was already
+shown here.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appTelemetryStart(version: String, onboardingEligible: Bool?) -> Bool
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -> bool
 ```
 
 </Tab>
@@ -324,6 +364,7 @@ pub fn app_telemetry_start(version: String) -> bool
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `version` | `String` | required |
+| `onboarding_eligible` | `Option<bool>` | required |
 
 **Returns** `bool`
 

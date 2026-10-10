@@ -4,18 +4,20 @@
 //! The Keyvault socket: framing, server and client.
 //!
 //! - One Unix socket, `$CUA_HOME/keyvault.sock`, mode 0600, bound inside a
-//!   private 0700 directory and renamed into place (no chmod race). Never
-//!   TCP, HTTP, gRPC-Web, WebSocket or MCP: nothing a browser can reach.
+//!   private 0700 directory and renamed into place (no chmod race); on
+//!   Windows one named pipe standing for that path, open to this account
+//!   only ([`crate::winpipe`]). Never TCP, HTTP, gRPC-Web, WebSocket or MCP:
+//!   nothing a browser can reach.
 //! - Frames: a 4-byte big-endian length, then JSON. At most 1 MiB. One
 //!   response per request.
 //! - Every connection is identified by the kernel before its first request
-//!   ([`crate::caller::identify_peer`]); a peer that cannot be identified is
-//!   refused and the refusal is audited.
+//!   ([`crate::caller::identify_peer`], [`crate::winpeer::identify_pipe_peer`]);
+//!   a peer that cannot be identified is refused and the refusal is audited.
 //! - Clients verify the server the same way (a same-user process could bind
 //!   the path first and phish consent).
 
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +27,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::Zeroize;
 
 use crate::audit::{AuditEntry, Verification};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::broker::StageSink;
 use crate::broker::{
     AccessRequest, ApproveOptions, Broker, Decision, ImportReport, ImportSpec, InitRequest,
@@ -284,8 +286,8 @@ impl Response {
         }
     }
 
-    // Stage frames stream over the Unix socket only.
-    #[cfg(unix)]
+    // Stage frames stream over the socket and the pipe.
+    #[cfg(any(unix, windows))]
     fn stage(s: TeleportStage) -> Self {
         Self {
             ok: true,
@@ -531,17 +533,103 @@ pub async fn serve(listener: tokio::net::UnixListener, broker: Arc<Broker>, poli
 #[cfg(unix)]
 async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy: &TrustPolicy) {
     use std::os::fd::AsRawFd;
-    let caller = match crate::caller::identify_peer(stream.as_raw_fd(), policy) {
-        Ok(c) => c,
-        Err(e) => {
-            broker.record_rejected(&e.to_string()).await;
-            let resp = Response::err(&Error::Forbidden(format!("caller not identified: {e}")));
-            if let Ok(b) = serde_json::to_vec(&resp) {
-                let _ = write_frame(&mut stream, &b).await;
-            }
-            return;
+    match crate::caller::identify_peer(stream.as_raw_fd(), policy) {
+        Ok(caller) => serve_connection(stream, caller, broker).await,
+        Err(e) => refuse(&mut stream, &broker, e).await,
+    }
+}
+
+/// The Keyvault's pipe on Windows: the instance waiting for the next client.
+#[cfg(windows)]
+pub struct PipeListener {
+    name: String,
+    next: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
+}
+
+/// Creates the Keyvault pipe for the socket path `path` (see
+/// [`crate::winpipe`]). Refuses when another server already holds it.
+#[cfg(windows)]
+pub fn bind_pipe(path: &Path) -> Result<PipeListener> {
+    let name = crate::winpipe::pipe_name(path);
+    let first = crate::winpipe::create_server(&name, true)?;
+    Ok(PipeListener {
+        name,
+        next: Some(first),
+    })
+}
+
+/// Serves until the process ends. Each connection runs in its own task, and a
+/// fresh instance is waiting before a connection is served.
+#[cfg(windows)]
+pub async fn serve_pipe(mut listener: PipeListener, broker: Arc<Broker>, policy: TrustPolicy) {
+    let policy = Arc::new(policy);
+    // Bounded by the process lifetime; each iteration handles one accept.
+    loop {
+        let server = match listener.next.take() {
+            Some(s) => s,
+            None => match crate::winpipe::create_server(&listener.name, false) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "keyvault pipe instance failed");
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+            },
+        };
+        if let Err(e) = server.connect().await {
+            tracing::warn!(error = %e, "keyvault accept failed");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
         }
-    };
+        listener.next = crate::winpipe::create_server(&listener.name, false)
+            .map_err(|e| tracing::warn!(error = %e, "keyvault pipe instance failed"))
+            .ok();
+        let broker = broker.clone();
+        let policy = policy.clone();
+        tokio::spawn(async move {
+            handle_pipe(server, broker, &policy).await;
+        });
+    }
+}
+
+#[cfg(windows)]
+async fn handle_pipe(
+    mut pipe: tokio::net::windows::named_pipe::NamedPipeServer,
+    broker: Arc<Broker>,
+    policy: &TrustPolicy,
+) {
+    use std::os::windows::io::AsRawHandle;
+    match crate::winpeer::identify_pipe_peer(
+        pipe.as_raw_handle(),
+        policy,
+        crate::winpeer::PipeSide::Client,
+    ) {
+        Ok(caller) => serve_connection(pipe, caller, broker).await,
+        Err(e) => refuse(&mut pipe, &broker, e).await,
+    }
+}
+
+/// A peer that could not be identified is refused, and the refusal audited.
+#[cfg(any(unix, windows))]
+async fn refuse<S: AsyncWriteExt + Unpin>(
+    stream: &mut S,
+    broker: &Broker,
+    e: crate::caller::PeerError,
+) {
+    broker.record_rejected(&e.to_string()).await;
+    let resp = Response::err(&Error::Forbidden(format!("caller not identified: {e}")));
+    if let Ok(b) = serde_json::to_vec(&resp) {
+        let _ = write_frame(stream, &b).await;
+    }
+}
+
+/// Answers one identified peer's requests until it goes away.
+#[cfg(any(unix, windows))]
+async fn serve_connection<S: AsyncReadExt + AsyncWriteExt + Unpin>(
+    mut stream: S,
+    caller: CallerIdentity,
+    broker: Arc<Broker>,
+) {
     broker.remember_caller(&caller).await;
     for _ in 0..MAX_REQUESTS_PER_CONNECTION {
         let mut frame = match tokio::time::timeout(IDLE_TIMEOUT, read_frame(&mut stream)).await {
@@ -586,9 +674,9 @@ async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy:
 /// `import_and_teleport` with its stages written as frames while it runs;
 /// the reply is returned for the caller to write. None when the client went
 /// away (the teleport still finishes).
-#[cfg(unix)]
-async fn teleport_streaming(
-    stream: &mut tokio::net::UnixStream,
+#[cfg(any(unix, windows))]
+async fn teleport_streaming<S: AsyncWriteExt + Unpin>(
+    stream: &mut S,
     broker: &Broker,
     caller: &CallerIdentity,
     spec: ImportSpec,
@@ -662,19 +750,22 @@ impl ServerCheck {
     }
 }
 
-/// The client's connection: the Keyvault socket. Peer verification
-/// ([`crate::caller::identify_peer`]) exists only for Unix sockets, so other
-/// OSes have no connection type and [`KeyvaultClient::connect`] refuses.
+/// The client's connection: the Keyvault socket, or on Windows its named
+/// pipe. Peer verification ([`crate::caller::identify_peer`], the pipe's
+/// [`crate::winpeer`]) exists for those only, so other OSes have no
+/// connection type and [`KeyvaultClient::connect`] refuses.
 #[cfg(unix)]
 type ClientStream = tokio::net::UnixStream;
-#[cfg(not(unix))]
+#[cfg(windows)]
+type ClientStream = tokio::net::windows::named_pipe::NamedPipeClient;
+#[cfg(not(any(unix, windows)))]
 type ClientStream = NoConnection;
 
 /// Uninhabited: no Keyvault connection exists on this OS.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub enum NoConnection {}
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl tokio::io::AsyncRead for NoConnection {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
@@ -685,7 +776,7 @@ impl tokio::io::AsyncRead for NoConnection {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl tokio::io::AsyncWrite for NoConnection {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
@@ -781,9 +872,47 @@ impl KeyvaultClient {
         Ok(Self { stream, server })
     }
 
-    /// Connects to `path`: the Keyvault IPC needs a kernel-verified Unix
-    /// socket peer, so it is not available on this OS yet.
-    #[cfg(not(unix))]
+    /// Connects to the Keyvault pipe that stands for `path` and verifies the
+    /// server's process and signature per `check`.
+    #[cfg(windows)]
+    pub async fn connect(
+        path: &Path,
+        check: ServerCheck,
+    ) -> std::result::Result<Self, ConnectError> {
+        use std::os::windows::io::AsRawHandle;
+        let stream = crate::winpipe::open_client(&crate::winpipe::pipe_name(path))
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ConnectError::NotRunning(path.to_path_buf())
+                } else {
+                    ConnectError::Other(e.to_string())
+                }
+            })?;
+        let server = match check {
+            ServerCheck::Unverified => None,
+            ServerCheck::Require(policy) => {
+                let id = crate::winpeer::identify_pipe_peer(
+                    stream.as_raw_handle(),
+                    &policy,
+                    crate::winpeer::PipeSide::Server,
+                )
+                .map_err(|e| ConnectError::Other(e.to_string()))?;
+                if !id.first_party {
+                    return Err(ConnectError::Impostor {
+                        path: path.to_path_buf(),
+                        who: id.display(),
+                    });
+                }
+                Some(id)
+            }
+        };
+        Ok(Self { stream, server })
+    }
+
+    /// Connects to `path`: the Keyvault IPC needs a verified peer, which this
+    /// OS has no way to give.
+    #[cfg(not(any(unix, windows)))]
     pub async fn connect(
         path: &Path,
         check: ServerCheck,
@@ -1072,11 +1201,21 @@ impl KeyvaultClient {
     }
 }
 
+/// The suffix [`Error::NoVault`]'s display adds.
+const NO_VAULT_FIX: &str = "; run `cua keyvault init`";
+
 /// Maps a wire error back to [`Error`].
 pub fn wire_to_error(e: WireError) -> Error {
     match e.code.as_str() {
         "locked" => Error::Locked,
-        "no_vault" => Error::NoVault(e.message),
+        // The wire message is the display, which already ends with the fix;
+        // strip it so the rebuilt error doesn't repeat it.
+        "no_vault" => Error::NoVault(
+            e.message
+                .strip_suffix(NO_VAULT_FIX)
+                .unwrap_or(&e.message)
+                .to_string(),
+        ),
         "disabled" => Error::Disabled,
         "forbidden" => Error::Forbidden(e.message),
         "presence_failed" => Error::PresenceFailed(e.message),
@@ -1308,4 +1447,24 @@ mod tests {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod no_vault_copy_tests {
+    use super::*;
+
+    #[test]
+    fn no_vault_reads_cleanly_and_survives_the_wire() {
+        let e = Error::NoVault("the Keyvault is not set up".into());
+        assert_eq!(
+            e.to_string(),
+            "the Keyvault is not set up; run `cua keyvault init`"
+        );
+        let wire = WireError {
+            code: error_code(&e).into(),
+            message: e.to_string(),
+        };
+        let back = wire_to_error(wire);
+        assert_eq!(back.to_string(), e.to_string());
+    }
 }

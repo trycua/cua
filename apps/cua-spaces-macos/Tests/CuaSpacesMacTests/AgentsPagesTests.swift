@@ -15,8 +15,15 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
     var paused = false
     var grants: [[String: Any]] = []
     let now: Int64 = 1_790_000_000_000
+    /// The model calls this from concurrent tasks; one lock keeps the
+    /// recorded calls and state consistent.
+    private let lock = NSLock()
 
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
+        try lock.withLock { try answer(tool, args) }
+    }
+
+    private func answer(_ tool: String, _ args: [String: Any]) throws -> Any {
         calls.append(tool)
         switch tool {
         case "persistent_agent_list":

@@ -248,14 +248,9 @@ public final class HostModel {
     public func submit() async {
         guard let host, let view = formView, view.canSubmit, let request = view.request else { return }
         send(.submit)
-        defer { progress = nil }
         do {
-            let status = request.mode == "relay"
-                ? try await setUpRelay(host, request)
-                : try await host.setupRequest(request: request, accountToken: nil)
+            try await setUp(request, on: host)
             form = nil
-            setupFailure = nil
-            apply(status)
         } catch {
             let raw = LiveSpacesBackend.words(error)
             setupFailure = Self.isUnauthenticated(error)
@@ -263,6 +258,17 @@ public final class HostModel {
                 : HostSetupFailure.presenting(raw)
             send(.failed(error: raw))
         }
+    }
+
+    /// Host setup with a request the core's form built and validated (the
+    /// form's submit, and the web UI's): relay setup with the account token.
+    func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
+        defer { progress = nil }
+        let status = request.mode == "relay"
+            ? try await setUpRelay(host, request)
+            : try await host.setupRequest(request: request, accountToken: nil)
+        setupFailure = nil
+        apply(status)
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a

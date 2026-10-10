@@ -256,7 +256,29 @@ pub async fn host_checks(cua: &Arc<Cua>, runtime_type: Option<&str>, arch: &str)
         }
     }
     checks.extend(host_sharing_checks());
+    checks.push(local_network_check(&report.checks).await);
     checks
+}
+
+/// `host.local_network`: on a Mac that runs macOS VMs (lume answers, or
+/// it provides Spaces), one bounded connect to a running VM.
+async fn local_network_check(runtime: &[cua_sdk::RuntimeCheck]) -> Check {
+    let os = std::env::consts::OS;
+    let lume = runtime
+        .iter()
+        .any(|c| c.name == "lume" && c.status == RuntimeCheckStatus::Ok);
+    let provides = os == "macos"
+        && matches!(
+            cua_host::Host::new(cua_daemon::cua_home()).config(),
+            Ok(Some(c)) if c.provide_spaces
+        );
+    let macos_vms = lume || provides;
+    let probe = if os == "macos" && macos_vms {
+        Some(super::local_network::probe(&super::local_network::lume_base()).await)
+    } else {
+        None
+    };
+    super::local_network::check(os, macos_vms, probe)
 }
 
 /// This machine's `cua host` readiness: a GUI (Aqua) session for the
@@ -294,6 +316,21 @@ fn host_sharing_checks() -> Vec<Check> {
         ),
         false,
     ));
+    // Not readable from here (macOS answers only the process it asks), so
+    // a reminder with exactly what to allow, not a pass or a failure.
+    if let Some(hint) =
+        cua_host::local_network_hint("macos", config.provide_spaces, &config.driver_bin)
+    {
+        checks.push(with_severity(
+            Check::new(
+                format!("host.permissions.{}", hint.id),
+                Status::Warn,
+                hint.instructions.clone(),
+            )
+            .fix(format!("open {}", hint.settings_url)),
+            false,
+        ));
+    }
     if config.share_desktop
         && let Some((sr, ax)) = probe.permission_status(&config.driver_bin)
     {

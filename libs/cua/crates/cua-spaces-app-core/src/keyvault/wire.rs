@@ -406,7 +406,7 @@ pub struct KvStatus {
     #[serde(default)]
     pub passphrase_available: bool,
     /// Protector kinds that can unlock this vault now (`macos-keychain`,
-    /// `windows-credential`, `passphrase`, `recovery`).
+    /// `windows-credential`, `linux-secret-service`, `passphrase`, `recovery`).
     #[serde(default)]
     pub unlock_protectors: Vec<String>,
     /// The browse window is open until this time, Unix ms: item names are

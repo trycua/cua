@@ -1,6 +1,9 @@
 {
   "name": "telemetry-funnel",
-  "about": "The usage events one run from first launch (nothing while Welcome shows its notice and usage-data switch; nothing at all in a run that turns the switch off) to a first ready Space means, the same in every shell: the app launched; every first-run page shown and left (completed, skipped or back, with its answer as a fixed word), the Cua Volume choice, signing in, Done; Spaces created (one ready, one failed while booting, one that stalled pulling and was dismissed, one with GPU acceleration cancelled while pulling, and one whose first cancel failed and whose second ended the create); Settings, Storage (the Finder volume on, Open in Finder, a bucket saved, a failed save); sharing (view-only, a role change, unsharing, a failure); and enrolling this device (a fresh sign-in, an approval, a failure). Names, paths, emails and buckets in the inputs never reach a signal. Three more creates: one with GPU acceleration cancelled while pulling (the cancel counts once, as cancelled, with the time to it), one whose cancel failed and that then became ready (counted as ready), and one with GPU acceleration that ended cancelled while being cancelled.",
+  "about": "The usage events one run from first launch (nothing while Welcome shows its notice and usage-data switch; nothing at all in a run that turns the switch off) to a first ready Space means, the same in every shell: the app launched; every first-run page shown and left (completed, skipped or back, with its answer as a fixed word), the Cua Volume choice, signing in, Done; Spaces created (one ready, one failed while booting, one that stalled pulling and was dismissed, one with GPU acceleration cancelled while pulling, and one whose first cancel failed and whose second ended the create); Settings, Storage (the Finder volume on, Open in Finder, a bucket saved, a failed save); sharing (view-only, a role change, unsharing, a failure); and enrolling this device (a fresh sign-in, an approval, a failure). Names, paths, emails and buckets in the inputs never reach a signal. Three more creates: one with GPU acceleration cancelled while pulling (the cancel counts once, as cancelled, with the time to it), one whose cancel failed and that then became ready (counted as ready), and one with GPU acceleration that ended cancelled while being cancelled. The launch says the first run is still to finish (onboarding_eligible). The run's start (onboarding_shown, Welcome shown) counts once per run: when Welcome shows on a machine that already showed the usage notice, else when Welcome is left; going Back to Welcome and on again does not count it twice.",
+  "launch": {
+    "onboardingEligible": true
+  },
   "onboarding": [
     {
       "type": "experiments-loaded",
@@ -12,8 +15,12 @@
       "type": "telemetry-loaded",
       "telemetry": {
         "enabled": true,
-        "lockedBy": null
+        "lockedBy": null,
+        "noticeShown": false
       }
+    },
+    {
+      "type": "welcome-shown"
     },
     {
       "type": "start"
@@ -99,8 +106,28 @@
       }
     },
     {
+      "type": "telemetry-loaded",
+      "telemetry": {
+        "enabled": true,
+        "lockedBy": null,
+        "noticeShown": true
+      }
+    },
+    {
+      "type": "welcome-shown"
+    },
+    {
       "type": "signed-in",
       "identity": "sam@example.com"
+    },
+    {
+      "type": "start"
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "welcome-shown"
     },
     {
       "type": "start"

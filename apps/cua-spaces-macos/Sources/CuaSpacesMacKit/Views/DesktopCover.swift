@@ -142,11 +142,14 @@ struct StreamPhaseReader<Content: View>: View {
         if let session { Observed(session: session, content: content) } else { content(.noSession) }
     }
 
-    static func phase(_ status: LiveStreamSession.Status, hasFrame: Bool) -> AppStreamPhase {
+    /// `reconnecting`: the stream dropped and opens again by itself
+    /// ("Reconnecting…" until its first frame).
+    static func phase(_ status: LiveStreamSession.Status, hasFrame: Bool,
+                      reconnecting: Bool = false) -> AppStreamPhase {
         switch status {
         case .idle: return .idle
-        case .connecting: return .connecting
-        case .streaming: return hasFrame ? .streaming : .connecting
+        case .connecting: return reconnecting ? .reconnecting : .connecting
+        case .streaming: return hasFrame ? .streaming : reconnecting ? .reconnecting : .connecting
         case .suspended: return .suspended
         case .failed: return .failed
         }
@@ -156,7 +159,8 @@ struct StreamPhaseReader<Content: View>: View {
         @ObservedObject var session: LiveStreamSession
         let content: (AppStreamPhase) -> Content
         var body: some View {
-            content(StreamPhaseReader.phase(session.status, hasFrame: session.frame != nil))
+            content(StreamPhaseReader.phase(session.status, hasFrame: session.frame != nil,
+                                            reconnecting: session.isReconnecting))
         }
     }
 }

@@ -19,11 +19,28 @@ import SwiftUI
 public struct OnboardingView: View {
     @Bindable var onboarding: OnboardingModel
     var onSignIn: (() async -> String?)?
-    @State private var signingIn = false
+    /// Where the account's sign-in stands (the code while it waits, why it
+    /// failed).
+    var signInPhase: AppSignInPhase
+    /// Stops waiting for the browser.
+    var onCancelSignIn: (() -> Void)?
+    /// The page a waiting sign-in finishes on, to open it again.
+    var signInURL: URL?
 
-    public init(onboarding: OnboardingModel, onSignIn: (() async -> String?)? = nil) {
+    public init(onboarding: OnboardingModel, onSignIn: (() async -> String?)? = nil,
+                signInPhase: AppSignInPhase = .idle, onCancelSignIn: (() -> Void)? = nil, signInURL: URL? = nil) {
         self.onboarding = onboarding
         self.onSignIn = onSignIn
+        self.signInPhase = signInPhase
+        self.onCancelSignIn = onCancelSignIn
+        self.signInURL = signInURL
+    }
+
+    private var signingIn: Bool {
+        switch signInPhase {
+        case .starting, .waiting: return true
+        default: return false
+        }
     }
 
     public var body: some View {
@@ -147,7 +164,7 @@ public struct OnboardingView: View {
 
     private func hasCard(_ v: AppOnboardingView) -> Bool {
         switch v.step {
-        case .signin: return onboarding.state.identity != nil || signingIn
+        case .signin: return onboarding.state.identity != nil || signInPhase != .idle
         default: return true
         }
     }
@@ -158,8 +175,8 @@ public struct OnboardingView: View {
         case .signin:
             if let identity = onboarding.state.identity {
                 Text(appOnboardingSignedInText(identity: identity)).foregroundStyle(.secondary)
-            } else if signingIn {
-                Text(copy.signInWaiting).foregroundStyle(.secondary)
+            } else {
+                signInStatus
             }
         case .agents:
             agentsContent
@@ -250,6 +267,8 @@ public struct OnboardingView: View {
                             .strokeBorder(choice.preselected ? Color.primary : Color(nsColor: .separatorColor),
                                           lineWidth: choice.preselected ? 2 : 1))
                         .accessibilityIdentifier(choice.mode == .host ? "onboarding-host" : "onboarding-client")
+                        // Return picks the preselected choice (the page has no other primary).
+                        .keyboardShortcut(choice.preselected ? .defaultAction : nil)
                     }
                 }
             }
@@ -289,6 +308,42 @@ public struct OnboardingView: View {
                 }
             }
         default:
+            EmptyView()
+        }
+    }
+
+    /// A sign-in under way: the code to confirm, the browser page again and
+    /// Cancel; or why it failed (the primary button then says Try again).
+    @ViewBuilder private var signInStatus: some View {
+        switch signInPhase {
+        case .starting:
+            Text(onboarding.copy.signInWaiting).foregroundStyle(.secondary)
+        case let .waiting(userCode):
+            VStack(alignment: .leading, spacing: 10) {
+                Text(appOnboardingSignInCodeText(userCode: userCode))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("onboarding-signin-code")
+                HStack(spacing: 14) {
+                    if let url = signInURL {
+                        Button("Open the browser again") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("onboarding-signin-reopen")
+                    }
+                    if let onCancelSignIn {
+                        Button("Cancel", action: onCancelSignIn)
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("onboarding-signin-cancel")
+                    }
+                }
+                .font(.caption)
+            }
+        case let .failed(message):
+            Text(message)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("onboarding-signin-error")
+        case .idle:
             EmptyView()
         }
     }
@@ -423,11 +478,9 @@ public struct OnboardingView: View {
         switch v.step {
         case .signin where onboarding.state.identity == nil:
             if let onSignIn {
-                Button(signingIn ? copy.signInWaiting : copy.signIn) {
-                    signingIn = true
+                Button(signingIn ? copy.signInWaiting : signInPhase == .idle ? copy.signIn : copy.tryAgain) {
                     Task {
                         if let id = await onSignIn() { onboarding.send(.signedIn(identity: id)) }
-                        signingIn = false
                     }
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
@@ -543,6 +596,7 @@ struct PresentationCardView: View {
 struct PromptTicker: View {
     let prompts: [String]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.onboardingMotionStill) private var motionStill
     @State private var origin = Date()
     @State private var pausedAt: Date?
 
@@ -554,7 +608,7 @@ struct PromptTicker: View {
     var body: some View {
         let height = Self.rowHeight * CGFloat(Self.visibleRows)
         Group {
-            if reduceMotion {
+            if reduceMotion || motionStill {
                 rows(Array(prompts.prefix(Self.visibleRows)))
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: pausedAt != nil)) { context in

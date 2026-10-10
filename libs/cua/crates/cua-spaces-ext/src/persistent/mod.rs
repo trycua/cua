@@ -156,11 +156,39 @@ pub struct AgentRecord {
     /// The last problem the supervisor hit (cleared on success).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// The failed turn last notified (`<run>#<turn>`): one notification
+    /// per failed turn, however many passes see its events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notified_error: Option<String>,
 }
 
 fn yes() -> bool {
     true
 }
+
+/// A run `agent_start` started outside a persistent agent, followed by the
+/// supervisor until its process exits so that a failed run or turn posts
+/// one notification.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchedRun {
+    pub space: String,
+    pub run_id: String,
+    /// Harness id.
+    pub agent: String,
+    /// Unix ms.
+    pub added_ms: u64,
+    /// Event cursor (the supervisor's bookmark).
+    #[serde(default)]
+    pub cursor: u64,
+    /// The last failed turn notified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notified_turn: Option<u32>,
+}
+
+/// How long a watched run is followed at most.
+pub const WATCH_FOR: Duration = Duration::from_secs(24 * 3600);
+/// Watched runs kept (oldest dropped first).
+const MAX_WATCHED: usize = 200;
 
 /// How a persistent agent is created.
 #[derive(Clone, Debug, Default)]
@@ -325,10 +353,15 @@ impl Persistent {
         })?;
         let space = self.spaces.resolve(&spec.space)?.to_string();
         let allowed = cua_spaces::agents::forwardable_env();
+        let saved = if spec.env_from_host.is_empty() {
+            vec![]
+        } else {
+            cua_spaces::agents::keys::global().names()
+        };
         for k in &spec.env_from_host {
-            if !allowed.contains(&k.as_str()) {
+            if !allowed.contains(&k.as_str()) && !saved.contains(k) {
                 return Err(Error::invalid(format!(
-                    "{k} is not a provider key variable"
+                    "{k} is not a provider key variable (or a key saved in Cua Spaces → Settings → Agents)"
                 )));
             }
         }
@@ -350,6 +383,7 @@ impl Persistent {
             notify: true,
             saved_ms: 0,
             last_error: None,
+            notified_error: None,
         };
         let out = rec.clone();
         locked_json(&self.agents_path(), |all: &mut Vec<AgentRecord>| {
@@ -376,6 +410,9 @@ impl Persistent {
         // A home on the mounted volume: its writes land, and the volume
         // shows the Space's own view again.
         let _ = self.spaces.volume_release_agent(&rec.space, name).await;
+        // Its home stays, but without the drive's bookkeeping (the reserved
+        // sync manifest, the lease), so the user can delete it entirely.
+        let _ = self.drive.forget_agent_home(name).await;
         let store = self.routine_store().await?;
         {
             let mut s = store.lock().await;
@@ -550,9 +587,14 @@ impl Persistent {
                 return Err(e);
             }
         };
-        let (host_env, missing) = cua_spaces::agents::env_from_host(&rec.env_from_host)?;
-        let mut env = rec.env.clone();
-        env.extend(host_env);
+        // Its env, its env_from_host keys, and the keys saved in Cua Spaces
+        // that its harness reads.
+        let (env, missing) = cua_spaces::agents::run_env(
+            &rec.harness,
+            &rec.env,
+            &rec.env_from_host,
+            rec.base_url.is_some(),
+        )?;
         if !missing.is_empty() {
             self.release_lease(name).await;
             return Err(Error::invalid(format!(
@@ -590,6 +632,8 @@ impl Persistent {
                 self.release_lease(name).await;
                 let e = Error::from(e);
                 cua_spaces::agents::telemetry::start_failed(&rec.harness, &rec.space, entry, &e);
+                let msg = e.to_string();
+                let _ = self.update(name, |r| r.last_error = Some(msg.clone()));
                 return Err(e);
             }
         };
@@ -895,6 +939,140 @@ impl Persistent {
         Ok(r)
     }
 
+    // --- runs started with agent_start --------------------------------
+
+    fn watched_path(&self) -> PathBuf {
+        self.dir.join("watched-runs.json")
+    }
+
+    /// Follows `run_id` (an `agent_start` run in `space` of harness
+    /// `agent`) until its process exits; the supervisor posts one
+    /// notification for each failed turn, or for the run failing.
+    pub fn watch_run(&self, space: &str, run_id: &str, agent: &str) -> Result<()> {
+        let w = WatchedRun {
+            space: space.into(),
+            run_id: run_id.into(),
+            agent: agent.into(),
+            added_ms: cua_volume::now_ms(),
+            cursor: 0,
+            notified_turn: None,
+        };
+        locked_json(&self.watched_path(), |all: &mut Vec<WatchedRun>| {
+            if !all
+                .iter()
+                .any(|x| x.run_id == w.run_id && x.space == w.space)
+            {
+                all.push(w);
+            }
+            let extra = all.len().saturating_sub(MAX_WATCHED);
+            all.drain(..extra);
+        })
+    }
+
+    /// The runs being followed.
+    pub fn watched_runs(&self) -> Result<Vec<WatchedRun>> {
+        read_json(&self.watched_path())
+    }
+
+    /// One pass over the watched runs.
+    async fn tick_watched(&self, report: &mut TickReport) {
+        let runs = match self.watched_runs() {
+            Ok(r) => r,
+            Err(e) => {
+                report.errors.push(format!("watched runs: {e}"));
+                return;
+            }
+        };
+        if runs.is_empty() {
+            return;
+        }
+        let mut next: HashMap<(String, String), Option<WatchedRun>> = HashMap::new();
+        for w in runs {
+            let key = (w.space.clone(), w.run_id.clone());
+            let expired =
+                cua_volume::now_ms().saturating_sub(w.added_ms) > WATCH_FOR.as_millis() as u64;
+            if expired {
+                next.insert(key, None);
+                continue;
+            }
+            match tokio::time::timeout(AGENT_TICK_BUDGET, self.tick_watched_run(w, report)).await {
+                Ok(Ok(w)) => {
+                    next.insert(key, w);
+                }
+                Ok(Err(e)) => {
+                    self.forget_space(&key.0).await;
+                    report.errors.push(format!("{}: {e}", key.1));
+                }
+                Err(_) => report
+                    .errors
+                    .push(format!("{}: supervisor pass timed out", key.1)),
+            }
+        }
+        let saved = locked_json(&self.watched_path(), |all: &mut Vec<WatchedRun>| {
+            all.retain_mut(|x| match next.get(&(x.space.clone(), x.run_id.clone())) {
+                Some(Some(w)) => {
+                    *x = w.clone();
+                    true
+                }
+                Some(None) => false,
+                None => true,
+            });
+        });
+        if let Err(e) = saved {
+            report.errors.push(format!("watched runs: {e}"));
+        }
+    }
+
+    /// Reads `w`'s new events and status; posts what failed. `None` once
+    /// there is nothing left to follow.
+    async fn tick_watched_run(
+        &self,
+        mut w: WatchedRun,
+        report: &mut TickReport,
+    ) -> Result<Option<WatchedRun>> {
+        let agents = self.cached_agents(&w.space).await?;
+        let name = ag::harness::harness(&w.agent).map_or(w.agent.as_str(), |h| h.name);
+        let page = agents.events(&w.run_id, w.cursor, 500).await?;
+        for (turn, err) in failed_turns(&page.events) {
+            if w.notified_turn.is_none_or(|t| turn > t) {
+                self.post_stopped(&w, name, &err)?;
+                w.notified_turn = Some(turn);
+                report.notified += 1;
+            }
+        }
+        w.cursor = page.cursor;
+        if !page.caught_up {
+            return Ok(Some(w));
+        }
+        let info = match agents.status(&w.run_id).await {
+            Ok(info) => info,
+            // Removed: nothing to follow.
+            Err(cua_agents::Error::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        // A run that failed without an error event (the runner recorded
+        // why in its state).
+        if info.status == RunStatus::Failed && w.notified_turn.is_none_or(|t| info.turn > t) {
+            let err = info.error.clone().unwrap_or_else(|| info.reason.clone());
+            self.post_stopped(&w, name, &err)?;
+            w.notified_turn = Some(info.turn);
+            report.notified += 1;
+        }
+        Ok((info.alive != Some(false)).then_some(w))
+    }
+
+    fn post_stopped(&self, w: &WatchedRun, name: &str, err: &str) -> Result<()> {
+        self.feed().post(
+            None,
+            "error",
+            &notify::stopped_title(name, err),
+            err,
+            Some(&w.run_id),
+            Some(&w.space),
+        )?;
+        Ok(())
+    }
+
     // --- the supervisor -------------------------------------------------
 
     /// Takes the supervisor lock for this cua home (one supervising
@@ -971,6 +1149,7 @@ impl Persistent {
                     .push(format!("{name}: supervisor pass timed out")),
             }
         }
+        self.tick_watched(&mut report).await;
         report
     }
 
@@ -1002,19 +1181,30 @@ impl Persistent {
         report.bridged += bridged?;
         // Then the run's events since the bookmark.
         let page = agents.events(&run, rec.cursor, 500).await?;
-        let ended: Vec<u32> = page
-            .events
-            .iter()
-            .filter(|e| e.kind == "turn_ended")
-            .map(|e| e.turn)
-            .collect();
-        let failed = page
-            .events
-            .iter()
-            .rev()
-            .find(|e| e.kind == "error")
-            .and_then(|e| e.text.clone());
-        if let Some(&turn) = ended.iter().max()
+        let (ended, failed) = turn_outcome(&page.events);
+        if let Some((turn, err)) = &failed {
+            // One notification per failed turn, posted before anything
+            // below can fail this pass (a later pass sees the same events).
+            let key = format!("{run}#{turn}");
+            let notify = rec.notify && rec.notified_error.as_deref() != Some(key.as_str());
+            if notify {
+                self.feed().post(
+                    Some(&rec.name),
+                    "error",
+                    &notify::stopped_title(&rec.name, err),
+                    err,
+                    Some(&run),
+                    Some(&rec.space),
+                )?;
+                report.notified += 1;
+            }
+            let err = err.clone();
+            self.update(&rec.name, |r| {
+                r.last_error = Some(err);
+                r.notified_error = Some(key);
+            })?;
+        }
+        if let Some(turn) = ended
             && turn > rec.saved_turn
         {
             let saved = self.save(&rec.name).await?;
@@ -1044,7 +1234,7 @@ impl Persistent {
                 )?;
                 report.notified += 1;
             }
-            if rec.notify {
+            if rec.notify && !ended_in_error(turn, failed.as_ref()) {
                 let result = agents.result(&run).await?;
                 let body = if result.text.trim().is_empty() {
                     "Finished.".to_string()
@@ -1064,22 +1254,8 @@ impl Persistent {
             self.update(&rec.name, |r| r.saved_turn = turn)?;
         }
         let run_failed = failed.is_some();
-        if let Some(err) = failed
-            && page.cursor > rec.cursor
-            && rec.notify
-        {
-            self.feed().post(
-                Some(&rec.name),
-                "error",
-                &format!("{} ran into a problem", rec.name),
-                &err,
-                Some(&run),
-                Some(&rec.space),
-            )?;
-            report.notified += 1;
-        }
         // Agent-run telemetry: the end of a run this install started.
-        if (!ended.is_empty() || run_failed)
+        if (ended.is_some() || run_failed)
             && cua_telemetry::global().agent_run_pending(&run)
             && let Ok(info) = agents.status(&run).await
         {
@@ -1092,6 +1268,41 @@ impl Persistent {
         self.renew_lease(&rec.name).await?;
         Ok(())
     }
+}
+
+/// In a page of a run's events: the last turn that ended, and the last
+/// error (its turn and message).
+fn turn_outcome(events: &[ag::AgentEvent]) -> (Option<u32>, Option<(u32, String)>) {
+    let ended = events
+        .iter()
+        .filter(|e| e.kind == "turn_ended")
+        .map(|e| e.turn)
+        .max();
+    (ended, last_failed_turn(events))
+}
+
+/// The last turn with an error, and its first error (the cause; a later
+/// one such as "the agent exited" follows from it).
+fn last_failed_turn(events: &[ag::AgentEvent]) -> Option<(u32, String)> {
+    let turn = events.iter().rev().find(|e| e.kind == "error")?.turn;
+    failed_turns(events).into_iter().find(|(t, _)| *t == turn)
+}
+
+/// Every turn with an error, in order, each with its first error.
+fn failed_turns(events: &[ag::AgentEvent]) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = vec![];
+    for e in events.iter().filter(|e| e.kind == "error") {
+        if out.last().is_none_or(|(t, _)| *t != e.turn) {
+            out.push((e.turn, e.text.clone().unwrap_or_default()));
+        }
+    }
+    out
+}
+
+/// Whether `turn` ended in `failed`'s error: it then gets the error's
+/// notification only, not a "Finished." as well.
+fn ended_in_error(turn: u32, failed: Option<&(u32, String)>) -> bool {
+    failed.is_some_and(|(t, _)| *t >= turn)
 }
 
 /// Fires a routine as a turn of its agent (never interrupting one).
@@ -1232,6 +1443,37 @@ pub fn parse_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // An events.jsonl line as the runner writes it.
+    fn ev(kind: &str, turn: u32, text: Option<&str>) -> ag::AgentEvent {
+        let line =
+            serde_json::json!({"seq": 1, "ts": 0, "turn": turn, "type": kind, "message": text});
+        ag::AgentEvent::parse(&line.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_failed_turn_is_one_error_not_finished_plus_an_error() {
+        // The runner's failed turn: an error, then turn_ended (stop: error).
+        let evs = [
+            ev("turn_started", 1, None),
+            ev("error", 1, Some("Authentication required")),
+            ev("turn_ended", 1, None),
+        ];
+        let (ended, failed) = turn_outcome(&evs);
+        assert_eq!(ended, Some(1));
+        assert_eq!(failed, Some((1, "Authentication required".into())));
+        assert!(ended_in_error(1, failed.as_ref()));
+        // An earlier turn's error does not hide a later turn's result.
+        let evs = [
+            ev("error", 1, Some("x")),
+            ev("turn_ended", 1, None),
+            ev("turn_ended", 2, None),
+        ];
+        let (ended, failed) = turn_outcome(&evs);
+        assert!(!ended_in_error(ended.unwrap(), failed.as_ref()));
+        let (ended, failed) = turn_outcome(&[ev("turn_ended", 1, None)]);
+        assert!(!ended_in_error(ended.unwrap(), failed.as_ref()));
+    }
 
     #[test]
     fn schedules_parse() {

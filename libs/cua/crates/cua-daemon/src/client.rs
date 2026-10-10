@@ -860,7 +860,7 @@ pub fn cua_binary() -> Option<PathBuf> {
 
 /// `major.minor.patch` of a version string; a pre-release sorts before its
 /// release. `None` when it does not parse.
-fn version_key(version: &str) -> Option<(u64, u64, u64, bool)> {
+pub(crate) fn version_key(version: &str) -> Option<(u64, u64, u64, bool)> {
     let version = version.trim().trim_start_matches('v');
     let (core, pre) = match version.split_once('-') {
         Some((core, _)) => (core, true),

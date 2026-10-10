@@ -17,6 +17,7 @@ More of this crate: [registry and primitives](/cua-sdk/reference/rust/cua-spaces
 ## Modules
 
 - `agents`: Coding agents inside a Space: `cua_agents` over the ...
+- `agents::keys`: Provider keys for agent runs, kept on this machine (Cua ...
 - `agents::telemetry`: Agent-run telemetry: the host install that starts a run ...
 - `mcp`: The Spaces MCP server: the contract's tools over ...
 - `mcp::codes`: JSON-RPC error codes.
@@ -37,6 +38,63 @@ pub struct CapabilitiesReport {
   pub harnesses: Vec<HarnessInfo>,
   pub forwardable_env: Vec<&'static str>,
   pub runner: &'static str,
+}
+```
+
+### `agents::keys::AgentKeys`
+
+The stored agent keys of one credential store.
+
+```rust
+pub struct AgentKeys { /* private fields */ }
+impl AgentKeys {
+  fn new(store: Store) -> Self;
+  fn unavailable(reason: &str) -> Self;
+  fn available(&self) -> bool;
+  fn list(&self) -> Result<Vec<KeyInfo>>;
+  fn report(&self) -> Result<KeysReport>;
+  fn set(&self, provider: &str, env: Option<&str>, value: &str) -> Result<KeyInfo>;
+  fn remove(&self, env: &str) -> Result<bool>;
+  fn names(&self) -> Vec<String>;
+  fn values(&self, names: &[&str]) -> BTreeMap<String, String>;
+}
+```
+
+### `agents::keys::KeyInfo`
+
+What the APIs answer about a stored key.
+
+```rust
+pub struct KeyInfo {
+  pub provider: String,
+  pub env: String,
+  pub last4: String,
+  pub added_ms: u64,
+}
+```
+
+### `agents::keys::KeysReport`
+
+`agent_keys.list`: the stored keys and whether this ...
+
+```rust
+pub struct KeysReport {
+  pub keys: Vec<KeyInfo>,
+  pub providers: Vec<Provider>,
+  pub available: bool,
+  pub unavailable: Option<String>,
+}
+```
+
+### `agents::keys::Provider`
+
+A provider with its own row in Settings.
+
+```rust
+pub struct Provider {
+  pub id: &'static str,
+  pub label: &'static str,
+  pub env: &'static str,
 }
 ```
 
@@ -111,8 +169,36 @@ impl ToolOutcome {
 pub fn capabilities() -> CapabilitiesReport
 /// Resolves `names` from this process's ...
 pub fn env_from_host(names: &[String]) -> Result<(BTreeMap<String, String>, Vec<String>)>
+/// `env_from_host` over the given saved ...
+pub fn env_from_host_with(saved: &AgentKeys, names: &[String]) -> Result<(BTreeMap<String, String>, Vec<String>)>
 /// The provider key variables a host may ...
 pub fn forwardable_env() -> Vec<&'static str>
+/// The first of `h`'s keys this server can ...
+pub fn host_key(h: &Harness) -> Option<&'static str>
+/// `host_key` given the names of the saved ...
+pub fn host_key_with(h: &Harness, saved: &[String]) -> Option<&'static str>
+/// The provider keys a run of `harness` ...
+pub fn run_env(harness: &str, env: &BTreeMap<String, String>, env_from_host: &[String], custom_endpoint: bool) -> Result<(BTreeMap<String, String>, Vec<String>)>
+/// `run_env` over the given saved keys.
+pub fn run_env_with(saved: &AgentKeys, harness: &str, env: &BTreeMap<String, String>, env_from_host: &[String], custom_endpoint: bool) -> Result<(BTreeMap<String, String>, Vec<String>)>
+/// The run options of an `agent_start` ...
+pub fn start_options(a: &AgentStart) -> Result<(RunOptions, Vec<String>)>
+/// `start_options` over the given saved ...
+pub fn start_options_with(saved: &AgentKeys, a: &AgentStart) -> Result<(RunOptions, Vec<String>)>
+
+// mod agents::keys
+/// Runs one of `APP_METHODS` against ...
+pub fn app_call(keys: &AgentKeys, name: &str, args: Value) -> Option<Result<KeysReport>>
+/// `app_call` on this process's keys as a ...
+pub fn app_tool(name: &str, args: Value) -> Option<ToolOutcome>
+/// This process's agent keys: the default ...
+pub fn global() -> &'static AgentKeys
+/// Whether `name` is one of `APP_METHODS`.
+pub fn is_app_method(name: &str) -> bool
+/// The provider id for a variable: its ...
+pub fn provider_of(env: &str) -> &'static str
+/// Checks a name for an Other key: an env ...
+pub fn validate_name(name: &str) -> Result<()>
 
 // mod agents::telemetry
 /// Before stopping `run_id`: records an ...
@@ -150,6 +236,18 @@ pub async fn serve_process_stdio(server: McpServer) -> Result<()>
 ## Constants
 
 ```rust
+// mod agents
+/// The extension operation `agent_start` ...
+pub const WATCH_OP: &str = "agent_start.watch";
+
+// mod agents::keys
+/// The app's settings methods ...
+pub const APP_METHODS: &[&str] = _;
+/// Anthropic and OpenAI; anything else is ...
+pub const PROVIDERS: &[Provider] = _;
+/// The store's secret name.
+pub const SECRET_NAME: &str = "agent-keys";
+
 // mod agents::telemetry
 /// How long a watcher follows a run before ...
 pub const WATCH_FOR: Duration = _;

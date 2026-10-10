@@ -1,0 +1,5713 @@
+{
+  "$comment": "Generated from apps/cua-spaces-web/src/bridge/contracts/shapes.ts by `pnpm contract:shapes`; do not edit. JSON Schema keywords; every $ref is #/$defs/<name>.",
+  "$defs": {
+    "AboutInput": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "build": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "updater": {
+          "type": "boolean"
+        },
+        "autoCheck": {
+          "type": "boolean"
+        },
+        "autoInstall": {
+          "type": "boolean"
+        },
+        "channel": {
+          "enum": [
+            "stable",
+            "beta"
+          ]
+        },
+        "lastCheck": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checking": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "platform",
+        "version",
+        "build",
+        "os",
+        "updater",
+        "autoCheck",
+        "autoInstall",
+        "channel",
+        "lastCheck",
+        "checking"
+      ]
+    },
+    "AgentKeysReport": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "enum": [
+                  "anthropic",
+                  "openai",
+                  "other"
+                ]
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "addedMs": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "addedMs"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "enum": [
+                  "anthropic",
+                  "openai",
+                  "other"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available",
+        "unavailable"
+      ]
+    },
+    "AgentSetupRow": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "skillsInstalled": {
+          "type": "number"
+        },
+        "skillsTotal": {
+          "type": "number"
+        },
+        "mcpConfig": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skillsDir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent",
+        "name",
+        "installed",
+        "configured",
+        "detail",
+        "skillsInstalled",
+        "skillsTotal",
+        "mcpConfig",
+        "skillsDir"
+      ]
+    },
+    "CatalogEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "hostPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostAppId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capability": {
+          "enum": [
+            "full",
+            "install_only",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "moves": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "app_only",
+              "app_with_files",
+              "app_with_state"
+            ]
+          }
+        },
+        "providerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sensitiveGroups": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "sign_ins",
+              "passwords",
+              "history"
+            ]
+          }
+        },
+        "installSource": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launchBin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastUsedMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "json": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "hostPath",
+        "hostAppId",
+        "version",
+        "capability",
+        "reason",
+        "moves",
+        "providerId",
+        "installSource",
+        "installId",
+        "installVersion",
+        "launchBin",
+        "lastUsedMs",
+        "json"
+      ]
+    },
+    "CloudPricing": {
+      "type": "object",
+      "properties": {
+        "vcpuHourUsd": {
+          "type": "number"
+        },
+        "memoryGibHourUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "vcpuHourUsd",
+        "memoryGibHourUsd"
+      ]
+    },
+    "CloudProviderWire": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "tier": {
+          "type": "string"
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "default": {
+          "type": "boolean"
+        },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "found"
+          ]
+        },
+        "account": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "zone": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "ttl_hours": {
+          "type": "number"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "image": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "supported": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "image",
+              "kind",
+              "supported"
+            ]
+          }
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "tier",
+        "connected"
+      ]
+    },
+    "DevicesInput": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "enrolledUntil": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "lastSeen": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "current": {
+                "type": "boolean"
+              },
+              "platform": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "audit": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ts": {
+                "type": "number"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "kind"
+            ]
+          }
+        },
+        "localDeviceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pendingCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enforceAfter": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "machineNames": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "machines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "confirmed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "readError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deviceName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "DriveCheckInput": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "authorized": {
+          "type": "boolean"
+        },
+        "versioning": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "reachable",
+        "authorized",
+        "versioning",
+        "applied"
+      ]
+    },
+    "DriveMountInput": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volume_name": {
+          "type": "string"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "settings_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volume_errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "space",
+              "error"
+            ]
+          }
+        }
+      },
+      "required": [
+        "state",
+        "method"
+      ]
+    },
+    "DriveStorageInput": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "fs_path": {
+          "type": "string"
+        },
+        "s3": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_keys": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "backend",
+        "fs_path",
+        "has_keys"
+      ]
+    },
+    "Experiments": {
+      "type": "object",
+      "properties": {
+        "cuaVolume": {
+          "type": "boolean"
+        },
+        "yourCloud": {
+          "type": "boolean"
+        },
+        "sharing": {
+          "type": "boolean"
+        },
+        "webUi": {
+          "type": "boolean"
+        }
+      }
+    },
+    "GpuChoice": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "experimental": {
+          "type": "boolean"
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "learnMore": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "runtime",
+        "id",
+        "label",
+        "experimental",
+        "supported"
+      ]
+    },
+    "HostStatus": {
+      "type": "object",
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "relay",
+            "direct",
+            null
+          ]
+        },
+        "relayUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machineId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sharing": {
+          "type": "boolean"
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "installed": {
+              "type": "boolean"
+            },
+            "running": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "installed",
+            "running",
+            "kind"
+          ]
+        },
+        "online": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "clients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "streams": {
+                "type": "number"
+              },
+              "since": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "settingsUrl": {
+                "type": "string"
+              },
+              "granted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ]
+          }
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shareDesktop": {
+          "type": "boolean"
+        },
+        "provideSpaces": {
+          "type": "boolean"
+        },
+        "maxSpaces": {
+          "type": "number"
+        },
+        "maxMacosVms": {
+          "type": "number"
+        },
+        "recentAccess": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "atMs": {
+                "type": "number"
+              },
+              "via": {
+                "type": "string"
+              },
+              "who": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "atMs",
+              "via",
+              "who",
+              "what"
+            ]
+          }
+        },
+        "accessLogError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providedSpaces": {
+          "type": "array",
+          "items": {}
+        },
+        "spacesAudit": {
+          "type": "array",
+          "items": {}
+        },
+        "spacesAuditError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pausedSignedOut": {
+          "type": "boolean"
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ownerEmail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "account": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "display": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "configured",
+        "sharing",
+        "service",
+        "clients",
+        "permissions"
+      ]
+    },
+    "KeyvaultOverview": {
+      "type": "object",
+      "properties": {
+        "availability": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "status": {},
+        "serverVerified": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {},
+              "provider_id": {
+                "type": "string"
+              },
+              "app_display": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "provider_id",
+              "app_display",
+              "key"
+            ]
+          }
+        },
+        "namesVisible": {
+          "type": "boolean"
+        },
+        "itemsTotal": {
+          "type": "number"
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {}
+        },
+        "deliveries": {
+          "type": "array",
+          "items": {}
+        },
+        "audit": {
+          "type": "array",
+          "items": {}
+        },
+        "auditVerification": {},
+        "partialErrors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dismissed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "availability",
+        "serverVerified",
+        "items",
+        "namesVisible",
+        "itemsTotal",
+        "pending",
+        "grants",
+        "rules",
+        "deliveries",
+        "audit",
+        "partialErrors"
+      ]
+    },
+    "KvGrant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "caller_fp": {
+          "type": "string"
+        },
+        "caller_display": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "created_ms": {
+          "type": "number"
+        },
+        "not_after_ms": {
+          "type": "number"
+        },
+        "uses_left": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "revoked": {
+          "type": "boolean"
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "request_id",
+        "caller_fp",
+        "caller_display",
+        "items",
+        "targets",
+        "actions",
+        "created_ms",
+        "not_after_ms",
+        "revoked"
+      ]
+    },
+    "LocalStatus": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "backends": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "containerImage": {
+          "type": "string"
+        },
+        "macosImage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostArch": {
+          "type": "string"
+        },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalStorage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "backends",
+        "error"
+      ]
+    },
+    "LocalStorage": {
+      "type": "object",
+      "properties": {
+        "reserveBytes": {
+          "type": "number"
+        },
+        "lume": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "availableBytes": {
+              "type": "number"
+            },
+            "totalBytes": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "availableBytes",
+            "totalBytes",
+            "name"
+          ]
+        },
+        "qemu": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "availableBytes": {
+              "type": "number"
+            },
+            "totalBytes": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "availableBytes",
+            "totalBytes",
+            "name"
+          ]
+        },
+        "container": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "availableBytes": {
+              "type": "number"
+            },
+            "totalBytes": {
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "availableBytes",
+            "totalBytes",
+            "name"
+          ]
+        },
+        "pulled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "reserveBytes",
+        "lume",
+        "qemu",
+        "container",
+        "pulled"
+      ]
+    },
+    "LoginItemReport": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "enabled",
+            "notRegistered",
+            "requiresApproval",
+            "notFound"
+          ]
+        },
+        "providesSpaces": {
+          "type": "boolean"
+        },
+        "runsAgents": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "status",
+        "providesSpaces",
+        "runsAgents"
+      ]
+    },
+    "MachineAccessNotice": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "enrolled",
+            "grace",
+            "needs-enrollment",
+            "waiting",
+            "due",
+            "revoked"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "actionLabel": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "status",
+        "text",
+        "actionLabel"
+      ]
+    },
+    "MachineRow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "os": {
+          "type": "string"
+        },
+        "limits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "resource": {
+                "type": "string"
+              },
+              "used": {
+                "type": "number"
+              },
+              "limit": {
+                "type": "number"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "resource",
+              "used",
+              "limit",
+              "reason"
+            ]
+          }
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "lastSeen": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "host": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device": {
+          "type": "boolean"
+        },
+        "deviceState": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "presence": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "accessNotice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MachineAccessNotice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "via",
+        "online",
+        "os",
+        "limits"
+      ]
+    },
+    "NewSpaceOptions": {
+      "type": "object",
+      "properties": {
+        "local": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpus": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/GpuChoice"
+          }
+        },
+        "cloudPricing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CloudPricing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "experiments": {
+          "$ref": "#/$defs/Experiments"
+        },
+        "maxCpus": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "env": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WizardEnv"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "macosVmsRunning": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pending": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "local",
+        "gpus",
+        "cloudPricing",
+        "experiments",
+        "maxCpus"
+      ]
+    },
+    "NotificationInput": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "atMs": {
+          "type": "number"
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "atMs",
+        "kind",
+        "title",
+        "body"
+      ]
+    },
+    "RemoteWindow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "appName": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "appId": {
+          "type": "string"
+        },
+        "targetEpoch": {
+          "type": "number"
+        },
+        "widthPx": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "heightPx": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pid": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "appName",
+        "title",
+        "visible",
+        "appId",
+        "targetEpoch"
+      ]
+    },
+    "SessionSnapshot": {
+      "type": "object",
+      "properties": {
+        "fleet": {
+          "type": "object",
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "authMode": {
+              "enum": [
+                "user",
+                "client-credentials",
+                "static-token",
+                "none"
+              ]
+            },
+            "baseUrl": {
+              "type": "string"
+            },
+            "tokenUrl": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "namespaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "probeError": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "configured",
+            "authMode",
+            "baseUrl",
+            "tokenUrl"
+          ]
+        },
+        "onboarding": {
+          "type": "object",
+          "properties": {
+            "completed": {
+              "type": "boolean"
+            },
+            "mode": {
+              "enum": [
+                "client",
+                "host",
+                null
+              ]
+            },
+            "installerMode": {
+              "enum": [
+                "client",
+                "host",
+                null
+              ]
+            }
+          },
+          "required": [
+            "completed"
+          ]
+        },
+        "daemon": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "connected": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": "string"
+            },
+            "socketPath": {
+              "type": "string"
+            },
+            "loopbackUrl": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "connected"
+          ]
+        },
+        "hostSignIn": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "userCode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "userCode",
+            "url"
+          ]
+        }
+      },
+      "required": [
+        "fleet",
+        "onboarding",
+        "daemon"
+      ]
+    },
+    "SettingsSnapshot": {
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "enum": [
+                "system",
+                "light",
+                "dark"
+              ]
+            },
+            "menuBar": {
+              "type": "boolean"
+            },
+            "hotkey": {
+              "type": "string"
+            },
+            "telemetry": {
+              "type": "boolean"
+            },
+            "defaultLocation": {
+              "type": "string"
+            },
+            "launchAtLogin": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "updateChannel": {
+              "enum": [
+                "stable",
+                "beta",
+                null
+              ]
+            },
+            "autoConnect": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "theme",
+            "menuBar",
+            "hotkey",
+            "telemetry",
+            "defaultLocation",
+            "launchAtLogin",
+            "updateChannel"
+          ]
+        },
+        "defaultLocation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "value": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "env",
+                "config",
+                "default"
+              ]
+            },
+            "env": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "source",
+            "path"
+          ]
+        },
+        "telemetry": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": "string"
+            },
+            "sourceKind": {
+              "type": "string"
+            },
+            "noticeShown": {
+              "type": "boolean"
+            },
+            "noticeText": {
+              "type": "string"
+            },
+            "docsUrl": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "source",
+            "sourceKind",
+            "noticeShown",
+            "noticeText",
+            "docsUrl"
+          ]
+        },
+        "hostSettings": {
+          "type": "object",
+          "properties": {
+            "lumeSource": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "linuxSource": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "autoConnect": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "keyvaultAutoWipe": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "required": [
+        "values",
+        "defaultLocation",
+        "telemetry"
+      ]
+    },
+    "ShareEntry": {
+      "type": "object",
+      "properties": {
+        "who": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "connected": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "who",
+        "role"
+      ]
+    },
+    "SpaceProgress": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "permille": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "transfer": {
+          "type": "string"
+        },
+        "cancellable": {
+          "type": "boolean"
+        },
+        "cancelling": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "phase",
+        "permille",
+        "label"
+      ]
+    },
+    "SpaceRow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "hostProgress": {
+          "$ref": "#/$defs/SpaceProgress"
+        },
+        "name": {
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "cloud",
+            "local",
+            "direct",
+            "relay"
+          ]
+        },
+        "spacesdVersion": {
+          "type": "string"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "addedAt": {
+          "type": "string"
+        },
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown"
+          ]
+        },
+        "osName": {
+          "type": "string"
+        },
+        "osPrettyName": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "imageDigest": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "container",
+            "vm"
+          ]
+        },
+        "arch": {
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "hostName": {
+          "type": "string"
+        },
+        "power": {
+          "type": "string"
+        },
+        "powerState": {
+          "type": "string"
+        },
+        "cloud": {
+          "type": "string"
+        },
+        "cloudPlace": {
+          "type": "string"
+        },
+        "cloudDelete": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "spacesdVersion",
+        "features",
+        "reachable"
+      ]
+    },
+    "StartupState": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "enum": [
+            "starting",
+            "needsKeychain",
+            "waitingForKeychain",
+            "keychainDenied",
+            "startFailed",
+            "ready"
+          ]
+        },
+        "slow": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "allowAccess",
+              "tryAgain",
+              "signInAgain"
+            ]
+          }
+        }
+      },
+      "required": [
+        "phase",
+        "slow",
+        "title",
+        "body",
+        "actions"
+      ]
+    },
+    "StorageInput": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown"
+          ]
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriveStorageInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriveMountInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "size_bytes": {
+              "type": "number"
+            },
+            "capacity_bytes": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "size_bytes",
+            "capacity_bytes"
+          ]
+        }
+      },
+      "required": [
+        "os",
+        "home",
+        "storage",
+        "mount",
+        "cache"
+      ]
+    },
+    "VolumeOverview": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown"
+          ]
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "principal": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "principal",
+              "prefix",
+              "mode",
+              "reason"
+            ]
+          }
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "principal": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "revoked": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "principal",
+              "prefix",
+              "mode"
+            ]
+          }
+        },
+        "mount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriveMountInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sync": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "device_id": {
+              "type": "string"
+            },
+            "device_name": {
+              "type": "string"
+            },
+            "feed": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "device_id",
+            "device_name",
+            "feed"
+          ]
+        }
+      },
+      "required": [
+        "os",
+        "home",
+        "requests",
+        "grants",
+        "mount",
+        "sync"
+      ]
+    },
+    "WizardEnv": {
+      "type": "object",
+      "properties": {
+        "defaultLocation": {
+          "enum": [
+            "cloud",
+            "local",
+            "yours",
+            "host"
+          ]
+        },
+        "cloudAvailable": {
+          "type": "boolean"
+        },
+        "localAvailable": {
+          "type": "boolean"
+        },
+        "localReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "localBackends": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "maxCpus": {
+          "type": "number"
+        },
+        "hostArch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalStorage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cloudPricing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CloudPricing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clouds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "isDefault": {
+                "type": "boolean"
+              },
+              "ttlHours": {
+                "type": "number"
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "image": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "supported": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "kind",
+                    "supported"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name",
+              "title",
+              "label",
+              "isDefault",
+              "ttlHours",
+              "offers"
+            ]
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "via": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "os": {
+                "type": "string"
+              },
+              "limits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "resource": {
+                      "type": "string"
+                    },
+                    "used": {
+                      "type": "number"
+                    },
+                    "limit": {
+                      "type": "number"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "resource",
+                    "used",
+                    "limit",
+                    "reason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "via",
+              "online",
+              "os",
+              "limits"
+            ]
+          }
+        },
+        "experiments": {
+          "$ref": "#/$defs/Experiments"
+        },
+        "gpus": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/GpuChoice"
+          }
+        }
+      },
+      "required": [
+        "defaultLocation",
+        "cloudAvailable",
+        "localAvailable",
+        "maxCpus"
+      ]
+    },
+    "WkCatalogEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "hostPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostAppId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capability": {
+          "enum": [
+            "full",
+            "installOnly",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "moves": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "appOnly",
+              "appWithFiles",
+              "appWithState"
+            ]
+          }
+        },
+        "providerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sensitiveGroups": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "signIns",
+              "passwords",
+              "history"
+            ]
+          }
+        },
+        "installSource": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launchBin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastUsedMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "json": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "hostPath",
+        "hostAppId",
+        "version",
+        "capability",
+        "reason",
+        "moves",
+        "providerId",
+        "sensitiveGroups",
+        "installSource",
+        "installId",
+        "installVersion",
+        "launchBin",
+        "lastUsedMs",
+        "json"
+      ]
+    },
+    "WkCreateOptions": {
+      "type": "object",
+      "properties": {
+        "local": {
+          "$ref": "#/$defs/LocalStatus"
+        },
+        "gpus": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/GpuChoice"
+          }
+        },
+        "cloudPricing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CloudPricing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "experiments": {
+          "$ref": "#/$defs/Experiments"
+        },
+        "maxCpus": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "env": {
+          "$ref": "#/$defs/WizardEnv"
+        },
+        "macosVmsRunning": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pending": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "local",
+        "gpus",
+        "cloudPricing",
+        "experiments",
+        "maxCpus",
+        "env"
+      ]
+    },
+    "WkHostState": {
+      "type": "object",
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "relayUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machineId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sharing": {
+          "type": "boolean"
+        },
+        "serviceInstalled": {
+          "type": "boolean"
+        },
+        "serviceRunning": {
+          "type": "boolean"
+        },
+        "serviceKind": {
+          "type": "string"
+        },
+        "online": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "clients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "streams": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "settingsUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "instructions": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "granted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "granted"
+            ]
+          }
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shareDesktop": {
+          "type": "boolean"
+        },
+        "provideSpaces": {
+          "type": "boolean"
+        },
+        "maxSpaces": {
+          "type": "number"
+        },
+        "maxMacosVms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "recentAccess": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "atMs": {
+                "type": "number"
+              },
+              "via": {
+                "type": "string"
+              },
+              "who": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "atMs",
+              "via",
+              "who",
+              "what"
+            ]
+          }
+        },
+        "accessLogError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providedSpaces": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {}
+        },
+        "spacesAudit": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {}
+        },
+        "spacesAuditError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pausedSignedOut": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ownerEmail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "account": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "display": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "configured",
+        "sharing",
+        "serviceInstalled",
+        "serviceRunning",
+        "serviceKind",
+        "clients",
+        "permissions",
+        "shareDesktop",
+        "provideSpaces",
+        "maxSpaces"
+      ]
+    },
+    "WkKeyvault": {
+      "type": "object",
+      "properties": {
+        "availability": {
+          "type": "string"
+        },
+        "overview": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {}
+            },
+            "grants": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "items",
+            "pending",
+            "grants"
+          ]
+        },
+        "dismissed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "busy": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "availability",
+        "busy",
+        "error"
+      ]
+    },
+    "WkMachines": {
+      "type": "object",
+      "properties": {
+        "thisMachine": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "statusText": {
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "statusText",
+            "detail"
+          ]
+        },
+        "devices": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string"
+                  },
+                  "current": {
+                    "type": "boolean"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "lastSeen": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "platform",
+                  "current"
+                ]
+              }
+            }
+          },
+          "required": [
+            "rows"
+          ]
+        },
+        "signedIn": {
+          "type": "boolean"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WkHostState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hostnames": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "presence": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "deviceStates": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "accessNotice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MachineAccessNotice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "devices",
+        "signedIn"
+      ]
+    },
+    "WkSession": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signedIn": {
+          "type": "boolean"
+        },
+        "cloudConfigured": {
+          "type": "boolean"
+        },
+        "signIn": {
+          "anyOf": [
+            {
+              "enum": [
+                "idle",
+                "starting"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "userCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          ]
+        },
+        "signInUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "identity",
+        "signedIn",
+        "cloudConfigured",
+        "signIn"
+      ]
+    },
+    "WkSettings": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "help": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "active": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "label",
+                              "active"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "label",
+                        "enabled",
+                        "options"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "rows"
+                ]
+              }
+            }
+          },
+          "required": [
+            "title",
+            "sections"
+          ]
+        },
+        "updateChannel": {
+          "enum": [
+            "stable",
+            "beta",
+            null
+          ]
+        }
+      },
+      "required": [
+        "page"
+      ]
+    },
+    "WkSpace": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown"
+          ]
+        },
+        "status": {
+          "enum": [
+            "local",
+            "running",
+            "approval",
+            "suspended",
+            "provisioning",
+            "deleting"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "lastUsedAt": {
+          "type": "number"
+        },
+        "startedAt": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "provider": {
+          "enum": [
+            "cloud",
+            "local",
+            "direct",
+            "relay",
+            null
+          ]
+        },
+        "sdk": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "features": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "spacesdVersion": {
+              "type": "string"
+            },
+            "reachable": {
+              "type": "boolean"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "features",
+            "spacesdVersion",
+            "reachable"
+          ]
+        },
+        "osName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "osPrettyName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "imageDigest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "container",
+            "vm",
+            null
+          ]
+        },
+        "arch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "power": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "control": {
+              "type": "string"
+            },
+            "off": {
+              "type": "boolean"
+            },
+            "turningOn": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "control",
+            "off"
+          ]
+        },
+        "cloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cloudPlace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cloudDelete": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpaceProgress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "os",
+        "status",
+        "detail",
+        "lastUsedAt"
+      ]
+    },
+    "WkSpaces": {
+      "type": "object",
+      "properties": {
+        "loaded": {
+          "type": "boolean"
+        },
+        "selectedId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "$ref": "#/$defs/WkSpace"
+              },
+              "deleting": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "space",
+              "deleting"
+            ]
+          }
+        },
+        "rosterError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "daemonNotice": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "loaded",
+        "selectedId",
+        "spaces"
+      ]
+    }
+  },
+  "ops": {
+    "about.checkNow": {
+      "$ref": "#/$defs/AboutInput"
+    },
+    "about.get": {
+      "$ref": "#/$defs/AboutInput"
+    },
+    "about.set": {
+      "$ref": "#/$defs/AboutInput"
+    },
+    "agentKeys.list": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.remove": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.set": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agents.configure": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
+    "agents.events": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "ts_ms": {
+                "type": "number"
+              },
+              "turn": {
+                "type": "number"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "category": {
+                "enum": [
+                  "message",
+                  "user",
+                  "activity",
+                  "hidden"
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "ts_ms",
+              "turn",
+              "kind",
+              "category"
+            ]
+          }
+        },
+        "cursor": {
+          "type": "number"
+        },
+        "caught_up": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "phase",
+        "events",
+        "cursor",
+        "caught_up"
+      ]
+    },
+    "agents.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "space": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "spaceState": {
+            "type": "string"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "savedMs": {
+            "type": "number"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "harness",
+          "space",
+          "paused",
+          "spaceState",
+          "savedMs"
+        ]
+      }
+    },
+    "agents.pause": {
+      "type": "null"
+    },
+    "agents.resume": {
+      "type": "null"
+    },
+    "agents.runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "idle",
+              "failed",
+              "crashed",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "turn": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "runId",
+          "agent",
+          "status",
+          "reason",
+          "summary",
+          "createdAt",
+          "phase",
+          "turn"
+        ]
+      }
+    },
+    "agents.setup": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
+    "agents.setupDriver": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "agents",
+          "target",
+          "item",
+          "change",
+          "detail"
+        ]
+      }
+    },
+    "clouds.connect": {
+      "$ref": "#/$defs/CloudProviderWire"
+    },
+    "clouds.status": {
+      "type": "object",
+      "properties": {
+        "default_on": {
+          "type": "string"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CloudProviderWire"
+          }
+        }
+      },
+      "required": [
+        "providers"
+      ]
+    },
+    "clouds.test": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "account": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "ok"
+            ]
+          }
+        }
+      },
+      "required": [
+        "provider",
+        "ok",
+        "checks"
+      ]
+    },
+    "devices.approve": {
+      "type": "null"
+    },
+    "devices.checkEnrolled": {
+      "type": "boolean"
+    },
+    "devices.confirmMachine": {
+      "type": "null"
+    },
+    "devices.enroll": {
+      "type": "object",
+      "properties": {
+        "enrolled": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "enrolled",
+        "code"
+      ]
+    },
+    "devices.get": {
+      "$ref": "#/$defs/DevicesInput"
+    },
+    "devices.rename": {
+      "type": "null"
+    },
+    "devices.revoke": {
+      "type": "null"
+    },
+    "experiments.get": {
+      "$ref": "#/$defs/Experiments"
+    },
+    "experiments.set": {
+      "$ref": "#/$defs/Experiments"
+    },
+    "host.action": {
+      "$ref": "#/$defs/HostStatus"
+    },
+    "host.openSettings": {
+      "type": "null"
+    },
+    "host.setUp": {
+      "$ref": "#/$defs/HostStatus"
+    },
+    "host.status": {
+      "$ref": "#/$defs/HostStatus"
+    },
+    "keyvault.approve": {
+      "$ref": "#/$defs/KvGrant"
+    },
+    "keyvault.delete": {
+      "type": "null"
+    },
+    "keyvault.deny": {
+      "type": "null"
+    },
+    "keyvault.dismiss": {
+      "type": "null"
+    },
+    "keyvault.overview": {
+      "$ref": "#/$defs/KeyvaultOverview"
+    },
+    "keyvault.revokeGrant": {
+      "type": "number"
+    },
+    "keyvault.run": {
+      "type": "null"
+    },
+    "keyvault.setDisabled": {
+      "type": "null"
+    },
+    "keyvault.setUnattended": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    "keyvault.setup": {
+      "type": "object",
+      "properties": {
+        "recoveryKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "keyvault.showItems": {
+      "$ref": "#/$defs/KeyvaultOverview"
+    },
+    "keyvault.unlock": {
+      "type": "null"
+    },
+    "loginItem.get": {
+      "$ref": "#/$defs/LoginItemReport"
+    },
+    "loginItem.openSettings": {
+      "type": "null"
+    },
+    "loginItem.set": {
+      "$ref": "#/$defs/LoginItemReport"
+    },
+    "machines.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MachineRow"
+      }
+    },
+    "notifications.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NotificationInput"
+      }
+    },
+    "notifications.markAllRead": {
+      "type": "null"
+    },
+    "session.completeOnboarding": {
+      "type": "null"
+    },
+    "session.get": {
+      "$ref": "#/$defs/SessionSnapshot"
+    },
+    "session.openExternal": {
+      "type": "null"
+    },
+    "session.signIn": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "browser",
+            "device"
+          ]
+        },
+        "userCode": {
+          "type": "string"
+        },
+        "verificationUri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "verificationUri"
+      ]
+    },
+    "session.signOut": {
+      "type": "null"
+    },
+    "settings.choose": {
+      "$ref": "#/$defs/SettingsSnapshot"
+    },
+    "settings.get": {
+      "$ref": "#/$defs/SettingsSnapshot"
+    },
+    "settings.set": {
+      "$ref": "#/$defs/SettingsSnapshot"
+    },
+    "sharing.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.share": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.unshare": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "spaces.add": {
+      "$ref": "#/$defs/SpaceRow"
+    },
+    "spaces.cancelCreate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "cancelled",
+            "not_creating",
+            "already_created"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "message"
+      ]
+    },
+    "spaces.chooseFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spaces.create": {
+      "$ref": "#/$defs/SpaceRow"
+    },
+    "spaces.createOptions": {
+      "$ref": "#/$defs/NewSpaceOptions"
+    },
+    "spaces.delete": {
+      "type": "string"
+    },
+    "spaces.droppedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spaces.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceRow"
+      }
+    },
+    "spaces.open": {
+      "type": "null"
+    },
+    "spaces.openStream": {
+      "type": "object",
+      "properties": {
+        "wsUrl": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "wsUrl",
+        "expiresAt"
+      ]
+    },
+    "spaces.sendFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "dest": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "dest",
+          "bytes"
+        ]
+      }
+    },
+    "spaces.setPower": {
+      "type": "object",
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "power": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "space",
+        "state",
+        "power",
+        "message"
+      ]
+    },
+    "spaces.thumbnail": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "capturedAtMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "url",
+        "capturedAtMs"
+      ]
+    },
+    "spaces.usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "memoryUsed": {
+          "type": "number"
+        },
+        "memoryTotal": {
+          "type": "number"
+        },
+        "memoryLimited": {
+          "type": "boolean"
+        },
+        "diskUsed": {
+          "type": "number"
+        },
+        "diskTotal": {
+          "type": "number"
+        },
+        "diskLimited": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "memoryUsed",
+        "memoryTotal",
+        "memoryLimited",
+        "diskUsed",
+        "diskTotal",
+        "diskLimited"
+      ]
+    },
+    "spaces.windows": {
+      "type": "object",
+      "properties": {
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RemoteWindow"
+          }
+        },
+        "display": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "widthPx": {
+              "type": "number"
+            },
+            "heightPx": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "widthPx",
+            "heightPx"
+          ]
+        },
+        "open": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "windows",
+        "display"
+      ]
+    },
+    "startup.act": {
+      "$ref": "#/$defs/StartupState"
+    },
+    "startup.get": {
+      "$ref": "#/$defs/StartupState"
+    },
+    "storage.get": {
+      "$ref": "#/$defs/StorageInput"
+    },
+    "storage.run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriveCheckInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stream.pip": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "telemetry.track": {
+      "type": "null"
+    },
+    "teleport.catalog": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CatalogEntry"
+      }
+    },
+    "teleport.entryForPath": {
+      "$ref": "#/$defs/CatalogEntry"
+    },
+    "teleport.icon": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "teleport.plan": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "$ref": "#/$defs/CatalogEntry"
+        },
+        "spaceId": {
+          "type": "string"
+        },
+        "moves": {
+          "enum": [
+            "app_only",
+            "app_with_files",
+            "app_with_state"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          }
+        },
+        "consent": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "install",
+                  "file",
+                  "folder",
+                  "state",
+                  "secret"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "number"
+              },
+              "sensitive": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "key",
+              "label",
+              "detail",
+              "bytes",
+              "sensitive"
+            ]
+          }
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "totalBytes": {
+          "type": "number"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relayUnsealed": {
+          "type": "boolean"
+        },
+        "json": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "spaceId",
+        "moves",
+        "steps",
+        "consent",
+        "sensitive",
+        "totalBytes",
+        "warnings",
+        "json"
+      ]
+    },
+    "teleport.remembered": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "teleport.remoteWindows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RemoteWindow"
+      }
+    },
+    "teleport.run": {
+      "type": "object",
+      "properties": {
+        "appId": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "imported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "launched": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "appId",
+        "installed",
+        "sent",
+        "imported",
+        "skipped",
+        "launched"
+      ]
+    },
+    "teleport.sites": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "type": "string"
+        },
+        "app_display": {
+          "type": "string"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string"
+              },
+              "cookies": {
+                "type": "number"
+              },
+              "session_cookies": {
+                "type": "number"
+              },
+              "local_storage": {
+                "type": "number"
+              },
+              "passwords": {
+                "type": "number"
+              },
+              "signin": {
+                "type": "boolean"
+              },
+              "identity_provider": {
+                "type": "boolean"
+              },
+              "unavailable": {
+                "type": "number"
+              },
+              "unavailable_reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "provider_id",
+        "app_display",
+        "domains"
+      ]
+    },
+    "teleport.streamWindow": {
+      "type": "null"
+    },
+    "teleport.thumbnail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "teleport.windows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "windowId": {
+            "type": "number"
+          },
+          "appId": {
+            "type": "string"
+          },
+          "appName": {
+            "type": "string"
+          },
+          "windowTitle": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          },
+          "bundlePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "windowId",
+          "appId",
+          "appName",
+          "windowTitle",
+          "supported"
+        ]
+      }
+    },
+    "volume.approve": {
+      "type": "null"
+    },
+    "volume.deny": {
+      "type": "null"
+    },
+    "volume.mount": {
+      "$ref": "#/$defs/DriveMountInput"
+    },
+    "volume.overview": {
+      "$ref": "#/$defs/VolumeOverview"
+    },
+    "volume.resolve": {
+      "type": "null"
+    },
+    "volume.reveal": {
+      "type": "null"
+    },
+    "volume.revoke": {
+      "type": "null"
+    },
+    "volume.storage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriveStorageInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "volume.storageSet": {
+      "$ref": "#/$defs/DriveCheckInput"
+    },
+    "volume.unmount": {
+      "$ref": "#/$defs/DriveMountInput"
+    }
+  },
+  "webkit": {
+    "about.checkNow": {
+      "$ref": "#/$defs/AboutInput"
+    },
+    "about.get": {
+      "$ref": "#/$defs/AboutInput"
+    },
+    "about.set": {
+      "$ref": "#/$defs/AboutInput"
+    },
+    "agentKeys.list": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.remove": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.set": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agents.configure": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
+    "agents.events": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "idle",
+            "failed",
+            "crashed",
+            "unknown"
+          ]
+        },
+        "phase": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "ts_ms": {
+                "type": "number"
+              },
+              "turn": {
+                "type": "number"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "category": {
+                "enum": [
+                  "message",
+                  "user",
+                  "activity",
+                  "hidden"
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "ts_ms",
+              "turn",
+              "kind",
+              "category"
+            ]
+          }
+        },
+        "cursor": {
+          "type": "number"
+        },
+        "caught_up": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "phase",
+        "events",
+        "cursor",
+        "caught_up"
+      ]
+    },
+    "agents.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "space": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "spaceState": {
+            "type": "string"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "savedMs": {
+            "type": "number"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "harness",
+          "space",
+          "paused",
+          "spaceState",
+          "savedMs"
+        ]
+      }
+    },
+    "agents.pause": {},
+    "agents.resume": {},
+    "agents.runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "idle",
+              "failed",
+              "crashed",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "turn": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "runId",
+          "agent",
+          "status",
+          "reason",
+          "summary",
+          "createdAt",
+          "phase",
+          "turn"
+        ]
+      }
+    },
+    "agents.setup": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
+    "agents.setupDriver": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "agents",
+          "target",
+          "item",
+          "change",
+          "detail"
+        ]
+      }
+    },
+    "app.info": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "experiments": {
+          "$ref": "#/$defs/Experiments"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "platform",
+        "host",
+        "version",
+        "experiments",
+        "methods"
+      ]
+    },
+    "clouds.connect": {
+      "$ref": "#/$defs/CloudProviderWire"
+    },
+    "clouds.status": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "default_on": {
+          "type": "string"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CloudProviderWire"
+          }
+        }
+      },
+      "required": [
+        "providers"
+      ]
+    },
+    "clouds.test": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "account": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "ok"
+            ]
+          }
+        }
+      },
+      "required": [
+        "provider",
+        "ok",
+        "checks"
+      ]
+    },
+    "devices.approve": {
+      "type": "null"
+    },
+    "devices.checkEnrolled": {
+      "type": "boolean"
+    },
+    "devices.confirmMachine": {
+      "type": "null"
+    },
+    "devices.enroll": {
+      "type": "object",
+      "properties": {
+        "enrolled": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "enrolled",
+        "code"
+      ]
+    },
+    "devices.get": {
+      "$ref": "#/$defs/DevicesInput"
+    },
+    "devices.rename": {
+      "type": "null"
+    },
+    "devices.revoke": {
+      "type": "null"
+    },
+    "host.action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.openSettings": {
+      "type": "null"
+    },
+    "host.setUp": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "keyvault.approve": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "requestId",
+        "items"
+      ]
+    },
+    "keyvault.delete": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.deny": {},
+    "keyvault.dismiss": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.get": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.lock": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.revokeGrant": {
+      "type": "number"
+    },
+    "keyvault.run": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.setDisabled": {},
+    "keyvault.setup": {
+      "type": "object",
+      "properties": {
+        "recoveryKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "keyvault.showItems": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.unlock": {
+      "$ref": "#/$defs/WkKeyvault"
+    },
+    "keyvault.unlockVault": {},
+    "loginItem.get": {
+      "$ref": "#/$defs/LoginItemReport"
+    },
+    "loginItem.openSettings": {
+      "type": "null"
+    },
+    "loginItem.set": {
+      "$ref": "#/$defs/LoginItemReport"
+    },
+    "machines.list": {
+      "$ref": "#/$defs/WkMachines"
+    },
+    "notifications.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NotificationInput"
+      }
+    },
+    "notifications.markAllRead": {
+      "type": "null"
+    },
+    "session.get": {
+      "$ref": "#/$defs/WkSession"
+    },
+    "session.signIn": {
+      "$ref": "#/$defs/WkSession"
+    },
+    "session.signOut": {
+      "$ref": "#/$defs/WkSession"
+    },
+    "settings.choose": {
+      "$ref": "#/$defs/WkSettings"
+    },
+    "settings.get": {
+      "$ref": "#/$defs/WkSettings"
+    },
+    "sharing.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.share": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "sharing.unshare": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ShareEntry"
+      }
+    },
+    "spaces.add": {
+      "$ref": "#/$defs/WkSpace"
+    },
+    "spaces.cancelCreate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "cancelled",
+            "not_creating",
+            "already_created"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "message"
+      ]
+    },
+    "spaces.chooseFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spaces.create": {
+      "$ref": "#/$defs/WkSpace"
+    },
+    "spaces.createOptions": {
+      "$ref": "#/$defs/WkCreateOptions"
+    },
+    "spaces.delete": {
+      "$ref": "#/$defs/WkSpaces"
+    },
+    "spaces.droppedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spaces.list": {
+      "$ref": "#/$defs/WkSpaces"
+    },
+    "spaces.open": {
+      "type": "null"
+    },
+    "spaces.sendFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "dest": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "dest",
+          "bytes"
+        ]
+      }
+    },
+    "spaces.setPower": {
+      "$ref": "#/$defs/WkSpaces"
+    },
+    "spaces.thumbnail": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "capturedAtMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "url",
+        "capturedAtMs"
+      ]
+    },
+    "spaces.usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "memoryUsed": {
+          "type": "number"
+        },
+        "memoryTotal": {
+          "type": "number"
+        },
+        "memoryLimited": {
+          "type": "boolean"
+        },
+        "diskUsed": {
+          "type": "number"
+        },
+        "diskTotal": {
+          "type": "number"
+        },
+        "diskLimited": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "memoryUsed",
+        "memoryTotal",
+        "memoryLimited",
+        "diskUsed",
+        "diskTotal",
+        "diskLimited"
+      ]
+    },
+    "spaces.windows": {
+      "type": "object",
+      "properties": {
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RemoteWindow"
+          }
+        },
+        "display": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "widthPx": {
+              "type": "number"
+            },
+            "heightPx": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "widthPx",
+            "heightPx"
+          ]
+        },
+        "open": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "windows",
+        "display"
+      ]
+    },
+    "startup.act": {
+      "$ref": "#/$defs/StartupState"
+    },
+    "startup.get": {
+      "$ref": "#/$defs/StartupState"
+    },
+    "storage.get": {
+      "$ref": "#/$defs/StorageInput"
+    },
+    "storage.run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriveCheckInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stream.pip": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "telemetry.track": {
+      "type": "null"
+    },
+    "teleport.catalog": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WkCatalogEntry"
+      }
+    },
+    "teleport.entryForPath": {
+      "$ref": "#/$defs/WkCatalogEntry"
+    },
+    "teleport.icon": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "teleport.plan": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "$ref": "#/$defs/WkCatalogEntry"
+        },
+        "spaceId": {
+          "type": "string"
+        },
+        "moves": {
+          "enum": [
+            "appOnly",
+            "appWithFiles",
+            "appWithState"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          }
+        },
+        "consent": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "install",
+                  "file",
+                  "folder",
+                  "state",
+                  "secret"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "number"
+              },
+              "sensitive": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "key",
+              "label",
+              "detail",
+              "bytes",
+              "sensitive"
+            ]
+          }
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "totalBytes": {
+          "type": "number"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relayUnsealed": {
+          "type": "boolean"
+        },
+        "json": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "spaceId",
+        "moves",
+        "steps",
+        "consent",
+        "sensitive",
+        "totalBytes",
+        "warnings",
+        "relayUnsealed",
+        "json"
+      ]
+    },
+    "teleport.remembered": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "teleport.remoteWindows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RemoteWindow"
+      }
+    },
+    "teleport.run": {
+      "type": "object",
+      "properties": {
+        "appId": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "imported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "launched": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "appId",
+        "installed",
+        "sent",
+        "imported",
+        "skipped",
+        "launched"
+      ]
+    },
+    "teleport.sites": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "appDisplay": {
+          "type": "string"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string"
+              },
+              "cookies": {
+                "type": "number"
+              },
+              "sessionCookies": {
+                "type": "number"
+              },
+              "localStorage": {
+                "type": "number"
+              },
+              "passwords": {
+                "type": "number"
+              },
+              "signin": {
+                "type": "boolean"
+              },
+              "identityProvider": {
+                "type": "boolean"
+              },
+              "unavailable": {
+                "type": "number"
+              },
+              "unavailableReason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "domain",
+              "cookies",
+              "sessionCookies",
+              "localStorage",
+              "passwords",
+              "signin",
+              "identityProvider",
+              "unavailable",
+              "unavailableReason"
+            ]
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "providerId",
+        "appDisplay",
+        "domains",
+        "notes"
+      ]
+    },
+    "teleport.streamWindow": {
+      "type": "null"
+    },
+    "teleport.thumbnail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "teleport.windows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "windowId": {
+            "type": "number"
+          },
+          "appId": {
+            "type": "string"
+          },
+          "appName": {
+            "type": "string"
+          },
+          "windowTitle": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          },
+          "bundlePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "windowId",
+          "appId",
+          "appName",
+          "windowTitle",
+          "supported"
+        ]
+      }
+    },
+    "volume.approve": {
+      "type": "null"
+    },
+    "volume.deny": {
+      "type": "null"
+    },
+    "volume.mount": {
+      "$ref": "#/$defs/DriveMountInput"
+    },
+    "volume.overview": {
+      "$ref": "#/$defs/VolumeOverview"
+    },
+    "volume.resolve": {
+      "type": "null"
+    },
+    "volume.reveal": {
+      "type": "null"
+    },
+    "volume.revoke": {
+      "type": "null"
+    },
+    "volume.storage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriveStorageInput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "volume.storageSet": {
+      "$ref": "#/$defs/DriveCheckInput"
+    },
+    "volume.unmount": {
+      "$ref": "#/$defs/DriveMountInput"
+    },
+    "window.setBackgroundColor": {
+      "type": "null"
+    },
+    "window.setDragRegions": {
+      "type": "null"
+    }
+  },
+  "webkitUnshaped": {}
+}

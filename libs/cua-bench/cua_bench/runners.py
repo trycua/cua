@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .core import Task, make
+from .dataset_manifest import verify_dataset
 from .environment import Environment
 from .types import Action, DoneAction
 
@@ -43,6 +44,7 @@ class BenchmarkResult:
     avg_reward: float
     duration_seconds: float
     output_dir: Optional[str] = None
+    dataset_manifest_sha256: Optional[str] = None
 
 
 @dataclass
@@ -226,6 +228,7 @@ async def run_benchmark(
     max_variants: Optional[int] = None,
     task_filter: Optional[str] = None,
     split: str = "train",
+    dataset_manifest: Optional[Path] = None,
 ) -> BenchmarkResult:
     """Run a benchmark on a dataset using the gym interface.
 
@@ -242,6 +245,7 @@ async def run_benchmark(
         max_variants: Maximum variants per task (optional)
         task_filter: Glob pattern to filter tasks (optional)
         split: Dataset split (default: "train")
+        dataset_manifest: Optional manifest JSON to verify before importing or running tasks.
 
     Returns:
         BenchmarkResult with run statistics and task results
@@ -285,6 +289,16 @@ async def run_benchmark(
     # Validate dataset path
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+
+    # Verify pinned dataset bytes before importing task definitions or launching workers.
+    manifest_sha256 = None
+    if dataset_manifest is not None:
+        manifest_bytes = Path(dataset_manifest).read_bytes()
+        manifest = json.loads(manifest_bytes)
+        verify_dataset(dataset_path, manifest)
+        manifest_sha256 = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
     # Discover tasks in dataset
     tasks: List[Path] = []
@@ -457,6 +471,7 @@ async def run_benchmark(
         failed_count=failed_count,
         avg_reward=avg_reward,
         duration_seconds=duration_seconds,
+        dataset_manifest_sha256=manifest_sha256,
     )
 
 

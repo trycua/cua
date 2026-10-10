@@ -1231,6 +1231,10 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 5 (diagnostic, registered before it runs):** v2s3b5, background, IR-01, 1 run, AX only, same build, with a DTrace of BenchLab's window-ordering calls beside it. Validation only.
 
+**Round 5 outcome (v2s3b5):** 1 trial, passed, the same raise. BenchLab's only ordering call at that moment was the menu window's own `orderFrontRegardless`, as under Codex.
+
+**Round 6 (diagnostic, registered before it runs):** v2s3b6, background, IR-01, 1 run, AX only, same build, with the on-screen window order (owner, layer, bounds) logged every 0.3 s beside it. Validation only.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

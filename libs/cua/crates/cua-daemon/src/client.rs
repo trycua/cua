@@ -3,6 +3,7 @@
 use crate::{
     Discovery, Error, Result, SandboxRecord,
     convert::{dur, info_from_pb, probe_to_pb, provider_to_pb},
+    identity::version_key,
     runtime::CreateRequest,
 };
 use cua_proto::daemon::v1::{
@@ -856,19 +857,6 @@ pub fn cua_binary() -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|d| d.join(exe))
         .find(|p| p.is_file())
-}
-
-/// `major.minor.patch` of a version string; a pre-release sorts before its
-/// release. `None` when it does not parse.
-pub(crate) fn version_key(version: &str) -> Option<(u64, u64, u64, bool)> {
-    let version = version.trim().trim_start_matches('v');
-    let (core, pre) = match version.split_once('-') {
-        Some((core, _)) => (core, true),
-        None => (version.split('+').next().unwrap_or(version), false),
-    };
-    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let key = (parts.next()??, parts.next()??, parts.next()??, !pre);
-    parts.next().is_none().then_some(key)
 }
 
 /// Whether a daemon reporting `running` is older than a client at `ours`.

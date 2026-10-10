@@ -97,6 +97,19 @@ pub enum Verdict {
     Replace(String),
 }
 
+/// `major.minor.patch` of a version string; a pre-release sorts before its
+/// release. `None` when it does not parse.
+pub(crate) fn version_key(version: &str) -> Option<(u64, u64, u64, bool)> {
+    let version = version.trim().trim_start_matches('v');
+    let (core, pre) = match version.split_once('-') {
+        Some((core, _)) => (core, true),
+        None => (version.split('+').next().unwrap_or(version), false),
+    };
+    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
+    let key = (parts.next()??, parts.next()??, parts.next()??, !pre);
+    parts.next().is_none().then_some(key)
+}
+
 /// The version a daemon reports: `version`, else the one in its `build_id`
 /// (`<version>-<size hex>-<mtime ns hex>`).
 fn reported_version<'a>(version: &'a str, build_id: &'a str) -> &'a str {
@@ -164,10 +177,7 @@ fn verdict_for(
             if theirs.is_empty() { "unknown" } else { theirs }
         ));
     }
-    match (
-        crate::client::version_key(theirs),
-        crate::client::version_key(ours),
-    ) {
+    match (version_key(theirs), version_key(ours)) {
         (Some(t), Some(o)) if !same_file && t >= o => Verdict::Keep(format!(
             "{} (cua {theirs}, not older than this app's {ours})",
             if executable.is_empty() {

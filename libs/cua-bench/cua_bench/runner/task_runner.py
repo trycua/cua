@@ -6,6 +6,7 @@ communicating via Docker network.
 
 import asyncio
 import json
+import math
 import os
 import shutil
 from dataclasses import dataclass
@@ -382,6 +383,32 @@ class TaskRunner:
                         or not isinstance(oracle_result.get("success"), bool)
                     ):
                         oracle_error = "Invalid oracle result receipt"
+                    else:
+                        # Recalculate the verdict from the numeric rewards.
+                        # Do not trust a self-asserted success boolean.
+                        rewards = oracle_result.get("rewards")
+                        threshold = oracle_result.get("success_threshold")
+                        valid_rewards = (
+                            isinstance(rewards, list) and bool(rewards)
+                            and all(
+                                isinstance(v, (int, float)) and not isinstance(v, bool)
+                                and math.isfinite(v) and 0.0 <= v <= 1.0
+                                for v in rewards
+                            )
+                        )
+                        valid_threshold = (
+                            isinstance(threshold, (int, float))
+                            and not isinstance(threshold, bool)
+                            and math.isfinite(threshold) and 0.0 <= threshold <= 1.0
+                        )
+                        calculated = (
+                            valid_rewards and valid_threshold
+                            and all(v >= threshold for v in rewards)
+                        )
+                        if not valid_rewards or not valid_threshold or (
+                            oracle_result["success"] is not calculated
+                        ):
+                            oracle_error = "Inconsistent oracle reward and success verdict"
                 except (OSError, ValueError, TypeError):
                     oracle_error = "Unreadable oracle result receipt"
             else:

@@ -71,7 +71,8 @@ pub use platform::{
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{
-    existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_SETUP_READY_TIMEOUT,
+    existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_CONSENT_TIMEOUT,
+    EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
 pub use tools::register_browser_tools;
 pub use types::{

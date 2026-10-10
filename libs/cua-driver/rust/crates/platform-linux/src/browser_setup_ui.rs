@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use cua_driver_core::browser::{
@@ -23,6 +23,7 @@ pub(crate) struct SetupInput {
     pub fingerprint: cua_driver_core::browser::ProcessFingerprint,
     pub hyprland: bool,
     pub cancellation: ActionCancellation,
+    pub focus: FocusRestore,
 }
 
 fn foreground_ack(value: serde_json::Value) -> anyhow::Result<()> {
@@ -31,7 +32,193 @@ fn foreground_ack(value: serde_json::Value) -> anyhow::Result<()> {
     {
         return Ok(());
     }
+    // A refusal after some packets landed still activated the window and
+    // typed into it; report it as possibly delivered, never as a clean refusal.
+    if value.get("effect").and_then(serde_json::Value::as_str) == Some("partial") {
+        let delivered = value
+            .pointer("/delivery/delivered_count")
+            .and_then(serde_json::Value::as_u64)
+            .map_or(1, |count| u32::try_from(count).unwrap_or(u32::MAX));
+        return Err(hyprland_input::unknown_dispatch(
+            anyhow::anyhow!("exact Hyprland setup input was partially delivered: {value}"),
+            delivered,
+        ));
+    }
     anyhow::bail!("exact Hyprland setup input refused: {value}")
+}
+
+/// The person's Hyprland focus and pointer, captured once before a setup
+/// transaction's first foreground packet and handed back once when that
+/// transaction ends. The plugin's per-packet activation deliberately persists;
+/// this is the single restoration point for the whole Rust transaction.
+#[derive(Clone, Default)]
+pub(crate) struct FocusRestore(Arc<Mutex<Option<PriorFocus>>>);
+
+struct PriorFocus {
+    pid: u32,
+    target: u64,
+    window: Option<u64>,
+    workspace: Option<i64>,
+    cursor: (f64, f64),
+}
+
+/// Restore only when focus provably still sits on the setup target and the
+/// prior window is another window that still exists, with the pointer left
+/// where the person or the compositor's focus warp put it. Anything else
+/// means the person has moved on, and their choice wins.
+fn focus_to_restore(
+    target: u64,
+    prior: Option<u64>,
+    target_active: impl FnOnce() -> bool,
+    prior_exists: impl FnOnce(u64) -> bool,
+    pointer_unmoved: impl FnOnce() -> bool,
+) -> Option<u64> {
+    let prior = prior.filter(|prior| *prior != target)?;
+    (target_active() && prior_exists(prior) && pointer_unmoved()).then_some(prior)
+}
+
+/// With no prior window (an empty workspace), hand back the workspace itself
+/// under the same conditions, when the setup left the person elsewhere.
+fn workspace_to_restore(
+    prior_window: Option<u64>,
+    prior_workspace: Option<i64>,
+    target_active: impl FnOnce() -> bool,
+    pointer_unmoved: impl FnOnce() -> bool,
+    current_workspace: impl FnOnce() -> Option<i64>,
+) -> Option<i64> {
+    if prior_window.is_some() {
+        return None;
+    }
+    let prior = prior_workspace?;
+    (target_active() && pointer_unmoved() && current_workspace().is_some_and(|now| now != prior))
+        .then_some(prior)
+}
+
+fn same_pointer(captured: (f64, f64), current: (f64, f64)) -> bool {
+    (captured.0 - current.0).abs() < 1.0 && (captured.1 - current.1).abs() < 1.0
+}
+
+/// With `cursor:no_warps` off, Hyprland warps the pointer to the centre of a
+/// window it focuses, including one that took focus through xdg-activation.
+/// A pointer resting exactly there was moved by the compositor, not the person.
+fn compositor_warped_pointer(window: (i32, i32, u32, u32), current: (f64, f64)) -> bool {
+    let centre = (
+        f64::from(window.0) + f64::from(window.2) / 2.0,
+        f64::from(window.1) + f64::from(window.3) / 2.0,
+    );
+    (centre.0 - current.0).abs() <= 1.0 && (centre.1 - current.1).abs() <= 1.0
+}
+
+fn pointer_left_alone(
+    captured: (f64, f64),
+    target: Option<(i32, i32, u32, u32)>,
+    current: (f64, f64),
+) -> bool {
+    same_pointer(captured, current)
+        || target.is_some_and(|window| compositor_warped_pointer(window, current))
+}
+
+impl FocusRestore {
+    fn capture(&self, pid: u32, target: u64) -> anyhow::Result<()> {
+        let mut prior = self.0.lock().unwrap();
+        if prior.is_none() {
+            *prior = Some(PriorFocus {
+                pid,
+                target,
+                window: crate::wayland::hyprland::active_window_address()?,
+                workspace: crate::wayland::hyprland::single_output_workspace()?,
+                cursor: crate::wayland::hyprland::cursor_position()?,
+            });
+        }
+        Ok(())
+    }
+
+    /// Guard an endpoint claim whose browser-owned consent prompt the
+    /// compositor may focus by itself (xdg-activation with focus-on-activate).
+    /// The driver sends no input there, so a pointer the person moved since
+    /// capture also means they moved on.
+    pub(crate) fn guard_consent_prompt(pid: u32, target: u64) -> Option<RestoreFocusOnDrop> {
+        let focus = Self::default();
+        if let Err(error) = focus.capture(pid, target) {
+            tracing::debug!(%error, "could not capture focus before browser consent");
+            return None;
+        }
+        Some(focus.restore_on_drop())
+    }
+
+    fn restore(&self) {
+        let Some(prior) = self.0.lock().unwrap().take() else {
+            return;
+        };
+        let target_active = || {
+            crate::wayland::hyprland::target_is_active(prior.target, Some(prior.pid))
+                .unwrap_or(false)
+        };
+        // Packet activation and xdg-activation both let Hyprland warp the
+        // pointer to the target's centre; any other move is the person's.
+        let pointer_unmoved = || {
+            crate::wayland::hyprland::cursor_position().is_ok_and(|current| {
+                let target = crate::wayland::hyprland::window_for_address(prior.target)
+                    .map(|window| (window.x, window.y, window.width, window.height));
+                pointer_left_alone(prior.cursor, target, current)
+            })
+        };
+        let restored = if let Some(window) = focus_to_restore(
+            prior.target,
+            prior.window,
+            target_active,
+            |window| crate::wayland::hyprland::window_for_address(window).is_some(),
+            pointer_unmoved,
+        ) {
+            crate::wayland::hyprland::restore_focus_to_window(window).map(|()| Some(window))
+        } else if let Some(workspace) = workspace_to_restore(
+            prior.window,
+            prior.workspace,
+            target_active,
+            pointer_unmoved,
+            || {
+                crate::wayland::hyprland::single_output_workspace()
+                    .ok()
+                    .flatten()
+            },
+        ) {
+            crate::wayland::hyprland::restore_workspace(workspace).map(|()| None)
+        } else {
+            tracing::debug!("browser setup or consent left focus where the person has it");
+            return;
+        };
+        let result = restored.and_then(|window| {
+            crate::wayland::hyprland::move_cursor(prior.cursor.0, prior.cursor.1)?;
+            // With follow-mouse focus the pointer move can itself refocus
+            // whatever lies under it; say so rather than claim a restore.
+            let now = crate::wayland::hyprland::active_window_address()?;
+            if window.is_some() && now != window {
+                anyhow::bail!("focus moved again after the pointer was restored");
+            }
+            Ok(())
+        });
+        match result {
+            Ok(()) => {
+                tracing::info!("restored prior focus and pointer after browser setup or consent")
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not restore prior focus after browser setup or consent")
+            }
+        }
+    }
+
+    pub(crate) fn restore_on_drop(&self) -> RestoreFocusOnDrop {
+        RestoreFocusOnDrop(self.clone())
+    }
+}
+
+/// Ends a setup transaction on every path, including errors and panics.
+pub(crate) struct RestoreFocusOnDrop(FocusRestore);
+
+impl Drop for RestoreFocusOnDrop {
+    fn drop(&mut self) {
+        self.0.restore();
+    }
 }
 
 impl SetupInput {
@@ -52,6 +239,7 @@ impl SetupInput {
     ) -> anyhow::Result<()> {
         self.check()?;
         if self.hyprland {
+            self.focus.capture(pid, window_id)?;
             return foreground_ack(hyprland_input::execute_foreground(
                 Some(self.lane_owner.clone()),
                 pid,
@@ -79,6 +267,7 @@ impl SetupInput {
 
     fn type_setup_url(&self, pid: u32, window_id: u64, url: &str) -> anyhow::Result<()> {
         self.check()?;
+        self.focus.capture(pid, window_id)?;
         foreground_ack(hyprland_input::execute_foreground_text(
             Some(self.lane_owner.clone()),
             pid,
@@ -198,10 +387,6 @@ fn with_target_foreground<T>(
     }
 }
 
-fn close_tab(pid: u32, window_id: u64, input: &SetupInput) -> anyhow::Result<()> {
-    input.hotkey(pid, window_id, "w", &["ctrl"])
-}
-
 /// The exact address-and-search field of the approved window, or `None` while
 /// the freshly created tab has not exposed one yet. More than one is refused:
 /// the field is where the setup URL is about to be written, so the wrong pick
@@ -246,86 +431,167 @@ struct BrowserTabs {
     selected: ObjectRef,
 }
 
-fn browser_tabs(tree: &AtspiTreeResult) -> Result<BrowserTabs, BrowserRefusal> {
+/// Every identified native tab in one walk. Only proven ambiguity fails here;
+/// incomplete evidence is reported so callers decide whether it is transient.
+struct TabScan {
+    objects: Vec<ObjectRef>,
+    selected: Vec<ObjectRef>,
+    truncated: bool,
+    unidentified: bool,
+    unknown_state: bool,
+}
+
+fn scan_tabs(tree: &AtspiTreeResult) -> Result<TabScan, BrowserRefusal> {
     require_window_scope(tree.trusted, tree.window_scoped)?;
-    if tree.truncated {
-        return Err(refusal(
-            BrowserRefusalCode::BrowserRouteUnavailable,
-            "a complete browser tab tree is required to prove setup tab ownership",
-        ));
-    }
-    let mut objects = Vec::new();
-    let mut selected = None;
+    let mut scan = TabScan {
+        objects: Vec::new(),
+        selected: Vec::new(),
+        truncated: tree.truncated,
+        unidentified: false,
+        unknown_state: false,
+    };
     for tab in tree
         .nodes
         .iter()
         .filter(|node| !node.in_web_content && role_is(node, &["page tab", "tab", "tab item"]))
     {
-        let object = tab
+        let Some(object) = tab
             .object_ref
             .as_ref()
             .filter(|object| !object.bus.is_empty() && !object.path.is_empty())
-            .ok_or_else(|| {
-                refusal(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    "a browser tab has no stable accessibility object identity",
-                )
-            })?;
-        if objects.contains(object) {
+        else {
+            scan.unidentified = true;
+            continue;
+        };
+        if scan.objects.contains(object) {
             return Err(refusal(
                 BrowserRefusalCode::BrowserBindingAmbiguous,
                 "duplicate browser tab identities prevent exact setup ownership",
             ));
         }
-        let is_selected = tab.selected.ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "a browser tab has no verifiable selected state",
-            )
-        })?;
-        if is_selected && selected.replace(object.clone()).is_some() {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "multiple browser tabs claim to be selected",
-            ));
+        match tab.selected {
+            Some(true) => scan.selected.push(object.clone()),
+            Some(false) => {}
+            None => scan.unknown_state = true,
         }
-        objects.push(object.clone());
+        scan.objects.push(object.clone());
     }
-    let selected = selected.ok_or_else(|| {
-        refusal(
-            BrowserRefusalCode::BrowserRouteUnavailable,
-            "the browser exposes no uniquely selected tab identity",
-        )
-    })?;
-    Ok(BrowserTabs { objects, selected })
+    Ok(scan)
 }
 
+fn browser_tabs(tree: &AtspiTreeResult) -> Result<BrowserTabs, BrowserRefusal> {
+    let scan = scan_tabs(tree)?;
+    let unavailable = |message| {
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            message,
+        ))
+    };
+    if scan.truncated {
+        return unavailable("a complete browser tab tree is required to prove setup tab ownership");
+    }
+    if scan.unidentified {
+        return unavailable("a browser tab has no stable accessibility object identity");
+    }
+    if scan.unknown_state {
+        return unavailable("a browser tab has no verifiable selected state");
+    }
+    match <[ObjectRef; 1]>::try_from(scan.selected) {
+        Ok([selected]) => Ok(BrowserTabs {
+            objects: scan.objects,
+            selected,
+        }),
+        Err(selected) if selected.is_empty() => {
+            unavailable("the browser exposes no uniquely selected tab identity")
+        }
+        Err(_) => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "multiple browser tabs claim to be selected",
+        )),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum CreatedTab {
+    /// Not proven yet: Chromium publishes tab state asynchronously.
+    Pending { added: usize },
+    /// Exactly one added tab, uniquely selected in a complete walk.
+    Selected(ObjectRef),
+}
+
+/// One walk's evidence after the new-tab shortcut. Only a lost baseline tab
+/// or more than one added tab is final; every other state may still settle.
 fn created_tab(
     baseline: &BrowserTabs,
-    current: &BrowserTabs,
-) -> Result<Option<ObjectRef>, BrowserRefusal> {
-    if baseline
+    tree: &AtspiTreeResult,
+) -> Result<CreatedTab, BrowserRefusal> {
+    let scan = scan_tabs(tree)?;
+    let added = scan
         .objects
         .iter()
-        .any(|object| !current.objects.contains(object))
+        .filter(|object| !baseline.objects.contains(object))
+        .collect::<Vec<_>>();
+    if added.len() > 1 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "setup did not create exactly one browser tab",
+        ));
+    }
+    let complete = !scan.truncated && !scan.unidentified;
+    if complete
+        && baseline
+            .objects
+            .iter()
+            .any(|object| !scan.objects.contains(object))
     {
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "a pre-existing browser tab changed while setup was creating its tab",
         ));
     }
-    let added = current
-        .objects
-        .iter()
-        .filter(|object| !baseline.objects.contains(object))
-        .collect::<Vec<_>>();
-    match added.as_slice() {
-        [] if current.selected == baseline.selected => Ok(None),
-        [object] if **object == current.selected => Ok(Some((*object).clone())),
-        _ => Err(refusal(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "setup did not create exactly one uniquely selected browser tab",
-        )),
+    match (added.as_slice(), scan.selected.as_slice()) {
+        ([object], [selected]) if complete && !scan.unknown_state && *object == selected => {
+            Ok(CreatedTab::Selected((*object).clone()))
+        }
+        _ => Ok(CreatedTab::Pending { added: added.len() }),
+    }
+}
+
+/// Ownership needs the same added tab uniquely selected in two consecutive
+/// walks, so one racing snapshot cannot grant cleanup authority.
+#[derive(Default)]
+struct CreatedTabProof {
+    candidate: Option<ObjectRef>,
+    added: usize,
+    selection_seen: bool,
+}
+
+impl CreatedTabProof {
+    fn observe(&mut self, step: CreatedTab) -> Option<ObjectRef> {
+        match step {
+            CreatedTab::Selected(object) => {
+                (self.added, self.selection_seen) = (1, true);
+                if self.candidate.as_ref() == Some(&object) {
+                    return Some(object);
+                }
+                self.candidate = Some(object);
+            }
+            CreatedTab::Pending { added } => (self.candidate, self.added) = (None, added),
+        }
+        None
+    }
+
+    fn timeout_message(&self) -> String {
+        format!(
+            "the setup shortcut did not produce a verifiably owned browser tab \
+             ({} added tab(s) in the last walk; a uniquely selected added tab was {})",
+            self.added,
+            if self.selection_seen {
+                "seen but not confirmed by a consecutive walk"
+            } else {
+                "never seen"
+            }
+        )
     }
 }
 
@@ -347,24 +613,23 @@ fn trusted_setup_navigation(
     let baseline = browser_tabs(initial).map_err(|error| anyhow::anyhow!(error.message))?;
     handle.hotkey("t", &["ctrl"])?;
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
+    let mut proof = CreatedTabProof::default();
     loop {
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        let current = browser_tabs(&tree).map_err(|error| anyhow::anyhow!(error.message))?;
-        if let Some(object) =
-            created_tab(&baseline, &current).map_err(|error| anyhow::anyhow!(error.message))?
-        {
+        let step = created_tab(&baseline, &tree).map_err(|error| anyhow::anyhow!(error.message))?;
+        if let Some(object) = proof.observe(step) {
             handle.owned_setup_tab = Some(object);
             handle.opened_setup_page = true;
             break;
         }
         if Instant::now() >= deadline {
-            anyhow::bail!("the setup shortcut did not produce a verifiably owned browser tab");
+            anyhow::bail!("{}", proof.timeout_message());
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    handle.hotkey("l", &["ctrl"])?;
+    handle.owned_hotkey("l", &["ctrl"])?;
 
     // Wait for the new tab to publish its address field before writing to it.
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
@@ -394,12 +659,14 @@ fn trusted_setup_navigation(
     if input.hyprland {
         // No clipboard access: the plugin refuses unsupported layouts and
         // guards every packet, including punctuation and held modifiers.
-        handle.hotkey("a", &["ctrl"])?;
+        handle.owned_hotkey("a", &["ctrl"])?;
         handle
             .owned_tab_tree()
             .map_err(|error| anyhow::anyhow!(error.message))?;
+        handle.require_owned_tab_selected_now()?;
         handle.record_input_result(input.type_setup_url(pid, window_id, descriptor.setup_url))?;
     } else {
+        handle.require_owned_tab_selected_now()?;
         use cua_driver_core::clipboard::ClipboardBackend;
         let clipboard = crate::clipboard::LinuxClipboard::new();
         let restore = clipboard.read_text().ok().flatten();
@@ -427,7 +694,7 @@ fn trusted_setup_navigation(
     handle
         .owned_tab_tree()
         .map_err(|error| anyhow::anyhow!(error.message))?;
-    handle.hotkey("enter", &[])?;
+    handle.owned_hotkey("enter", &[])?;
 
     // Verify the destination, not the input. Chromium exposes no readable text
     // on its omnibox over AT-SPI — no Value interface and no Text content even
@@ -556,10 +823,12 @@ impl Drop for SetupUiHandle {
         // Keep its restoration authority on the resource, not on the caller.
         // Drop may run on a Tokio executor when endpoint discovery is
         // cancelled. AT-SPI's bounded runtime must run on a blocking thread.
+        let restore = self.input.focus.restore_on_drop();
         std::thread::scope(|scope| {
             if let Ok(worker) = std::thread::Builder::new()
                 .name("cua-abandoned-setup".into())
-                .spawn_scoped(scope, || {
+                .spawn_scoped(scope, move || {
+                    let _restore = restore;
                     let Some(_cleanup) = self.cleanup_input() else {
                         return;
                     };
@@ -582,7 +851,13 @@ impl SetupUiHandle {
                 Ok(())
             }
             Err(error) => {
-                self.input_delivery_unknown |= error.is::<hyprland_input::DispatchUnknown>();
+                // Delivery may have happened: report its side effects
+                // conservatively. This is reporting only, never ownership.
+                if error.is::<hyprland_input::DispatchUnknown>() {
+                    self.input_delivery_unknown = true;
+                    self.foregrounded_window = true;
+                    self.injected_global_input = true;
+                }
                 Err(error)
             }
         }
@@ -591,6 +866,61 @@ impl SetupUiHandle {
     fn hotkey(&mut self, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
         let result = self.input.hotkey(self.pid, self.window_id, key, modifiers);
         self.record_input_result(result)
+    }
+
+    /// One targeted state read of the owned tab, as close to the keystroke as
+    /// possible: a full walk is seconds old by the time it returns.
+    fn require_owned_tab_selected_now(&self) -> anyhow::Result<()> {
+        let owned = self
+            .owned_setup_tab
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("this setup has no independently proven created tab"))?;
+        if !crate::atspi::native::element_selected_ref(owned)? {
+            anyhow::bail!("the selected browser tab is no longer this setup's created tab");
+        }
+        Ok(())
+    }
+
+    fn owned_hotkey(&mut self, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+        self.require_owned_tab_selected_now()?;
+        self.hotkey(key, modifiers)
+    }
+
+    /// Close the owned tab with the window's shortcut, then prove its exact
+    /// accessibility object is gone. `Ok(false)` means the shortcut was never
+    /// sent; an error after delivery must not be followed by another close.
+    fn close_owned_tab(&mut self) -> anyhow::Result<bool> {
+        let owned = self
+            .owned_setup_tab
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("this setup has no independently proven created tab"))?;
+        if self.require_owned_tab_selected_now().is_err() {
+            return Ok(false);
+        }
+        if let Err(error) = self.hotkey("w", &["ctrl"]) {
+            // A refused shortcut was never sent. One that may have landed
+            // must not be followed by rollback input on whatever tab
+            // Chromium selected next.
+            if error.is::<hyprland_input::DispatchUnknown>() {
+                return Err(error);
+            }
+            return Ok(false);
+        }
+        let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
+        loop {
+            let tree = window_scoped_tree(self.pid, self.window_id)
+                .map_err(|error| anyhow::anyhow!(error.message))?;
+            let scan = scan_tabs(&tree).map_err(|error| anyhow::anyhow!(error.message))?;
+            if !scan.truncated && !scan.unidentified && !scan.objects.contains(&owned) {
+                self.opened_setup_page = false;
+                self.owned_setup_tab = None;
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!("the temporary setup tab was still present after its close shortcut");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn require_owned_selected_tab(&self, tree: &AtspiTreeResult) -> Result<(), BrowserRefusal> {
@@ -702,9 +1032,10 @@ impl SetupUiHandle {
         let restored_remote_debugging = self.rollback_remote_debugging();
         let opened_setup_page = self.opened_setup_page;
         let focused_setup_address_field = self.focused_setup_address_field;
+        let closed_setup_page = self.close().unwrap_or(false);
+        // Read after the close: its shortcut is input too.
         let foregrounded_window = self.foregrounded_window;
         let injected_global_input = self.injected_global_input;
-        let closed_setup_page = self.close().unwrap_or(false);
         let mut error = error;
         let cause = error.detail.take();
         error.with_detail(serde_json::json!({
@@ -734,17 +1065,25 @@ impl SetupUiHandle {
         if let Err(error) = self.require_owned_setup_page(&tree) {
             return Err(self.abort(error));
         }
-        if let Err(error) = close_tab(self.pid, self.window_id, &self.input) {
-            let error = refusal(
+        match self.close_owned_tab() {
+            Ok(true) => {
+                self.armed = false;
+                Ok(Some(true))
+            }
+            Ok(false) => Err(self.abort(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!("could not close the exact temporary setup tab: {error}"),
-            );
-            return Err(self.abort(error));
+                "could not close the exact temporary setup tab",
+            ))),
+            // The shortcut was delivered: a second close or a rollback could
+            // land on whatever tab Chromium selected next.
+            Err(error) => {
+                self.armed = false;
+                Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    format!("could not verify the exact temporary setup tab closed: {error}"),
+                ))
+            }
         }
-        self.opened_setup_page = false;
-        self.owned_setup_tab = None;
-        self.armed = false;
-        Ok(Some(true))
     }
 
     fn close(&mut self) -> Option<bool> {
@@ -754,13 +1093,9 @@ impl SetupUiHandle {
         let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
             return Some(false);
         };
-        let closed = self.require_owned_setup_page(&tree).is_ok()
-            && close_tab(self.pid, self.window_id, &self.input).is_ok();
-        self.opened_setup_page &= !closed;
-        if closed {
-            self.owned_setup_tab = None;
-        }
-        Some(closed)
+        Some(
+            self.require_owned_setup_page(&tree).is_ok() && self.close_owned_tab().unwrap_or(false),
+        )
     }
 }
 
@@ -771,21 +1106,28 @@ fn pending_setups() -> &'static Mutex<HashMap<PendingSetupKey, SetupUiHandle>> {
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Retain an armed setup for its later commit or rollback. The check and the
+/// insert stay synchronous so a cancelled caller cannot strand an armed
+/// handle; a duplicate is handed back for the caller to abort off the async
+/// executor.
 pub fn retain_pending(
     pid: u32,
     window_id: u64,
     handle: SetupUiHandle,
-) -> Result<(), BrowserRefusal> {
+) -> Result<(), Box<SetupUiHandle>> {
     let mut pending = pending_setups().lock().unwrap();
     if pending.contains_key(&(pid, window_id)) {
-        drop(pending);
-        return Err(handle.abort(refusal(
-            BrowserRefusalCode::BrowserBindingAmbiguous,
-            "another approved browser setup is already pending for this exact window",
-        )));
+        return Err(Box::new(handle));
     }
     pending.insert((pid, window_id), handle);
     Ok(())
+}
+
+pub(crate) fn duplicate_pending_refusal() -> BrowserRefusal {
+    refusal(
+        BrowserRefusalCode::BrowserBindingAmbiguous,
+        "another approved browser setup is already pending for this exact window",
+    )
 }
 
 pub fn commit_pending(pid: u32, window_id: u64, input: SetupInput) -> Result<bool, BrowserRefusal> {
@@ -1066,6 +1408,7 @@ mod tests {
                 executable: None,
             },
             cancellation: ActionCancellation::default(),
+            focus: FocusRestore::default(),
         };
         assert!(input.check().is_ok());
         assert!(session::end_session_for_owner(sid, transport));
@@ -1093,6 +1436,7 @@ mod tests {
                     executable: None,
                 },
                 cancellation: ActionCancellation::default(),
+                focus: FocusRestore::default(),
             },
             owned_setup_tab: None,
             trusted_setup_navigation: false,
@@ -1107,7 +1451,7 @@ mod tests {
             foregrounded_window: false,
             injected_global_input: false,
         };
-        retain_pending(pid, window, handle).unwrap();
+        assert!(retain_pending(pid, window, handle).is_ok());
         discard_pending(pid, window, "another-private-owner");
         assert!(pending_setups()
             .lock()
@@ -1143,8 +1487,121 @@ mod tests {
             json!({"ok": true}),
             json!({"route": "primary_foreground"}),
         ] {
-            assert!(foreground_ack(reply).is_err());
+            let error = foreground_ack(reply).unwrap_err();
+            assert!(!error.is::<hyprland_input::DispatchUnknown>());
         }
+        // A refusal after delivered packets is possibly-delivered input.
+        let partial = foreground_ack(json!({
+            "ok": false,
+            "code": "text_interrupted",
+            "effect": "partial",
+            "delivery": {"mode": "foreground", "delivered_count": 7},
+        }))
+        .unwrap_err();
+        assert_eq!(
+            partial
+                .downcast_ref::<hyprland_input::DispatchUnknown>()
+                .unwrap()
+                .acknowledged_phases,
+            7
+        );
+        let mut handle = inert_setup_handle();
+        assert!(handle.record_input_result(Err(partial)).is_err());
+        assert!(handle.input_delivery_unknown);
+        assert!(handle.foregrounded_window);
+        assert!(handle.injected_global_input);
+        assert!(handle.owned_setup_tab.is_none());
+    }
+
+    #[test]
+    fn an_empty_prior_workspace_is_handed_back_only_when_the_person_stayed() {
+        // Empty workspace 1, setup left them on the browser's workspace 5.
+        assert_eq!(
+            workspace_to_restore(None, Some(1), || true, || true, || Some(5)),
+            Some(1)
+        );
+        // A prior window takes the window route instead.
+        assert_eq!(
+            workspace_to_restore(Some(0x4931), Some(1), || true, || true, || Some(5)),
+            None
+        );
+        // Already back, several outputs, the person moved on, or the target
+        // is no longer active: leave the workspace alone.
+        assert_eq!(
+            workspace_to_restore(None, Some(1), || true, || true, || Some(1)),
+            None
+        );
+        assert_eq!(
+            workspace_to_restore(None, None, || true, || true, || Some(5)),
+            None
+        );
+        assert_eq!(
+            workspace_to_restore(None, Some(1), || true, || false, || Some(5)),
+            None
+        );
+        assert_eq!(
+            workspace_to_restore(None, Some(1), || false, || true, || Some(5)),
+            None
+        );
+    }
+
+    #[test]
+    fn focus_returns_only_from_the_still_active_target_to_a_live_prior_window() {
+        let (target, prior) = (0x5156, 0x4931);
+        assert_eq!(
+            focus_to_restore(target, Some(prior), || true, |_| true, || true),
+            Some(prior)
+        );
+        // A consent prompt sends no driver input: a moved pointer is the
+        // person's own activity, so focus stays where they took it.
+        assert_eq!(
+            focus_to_restore(target, Some(prior), || true, |_| true, || false),
+            None
+        );
+        assert!(same_pointer((10.0, 20.0), (10.4, 19.6)));
+        assert!(!same_pointer((10.0, 20.0), (12.0, 20.0)));
+        // Hyprland's own warp to the newly focused target's centre (observed
+        // live: a 3832x2087 window at 4,4 left the pointer at 1920/1047) is
+        // the compositor's move, not the person's.
+        let chrome = Some((4, 4, 3832, 2087));
+        assert!(pointer_left_alone(
+            (942.0, 1047.0),
+            chrome,
+            (1920.0, 1047.0)
+        ));
+        assert!(pointer_left_alone((942.0, 1047.0), chrome, (942.0, 1047.0)));
+        assert!(!pointer_left_alone(
+            (942.0, 1047.0),
+            chrome,
+            (1500.0, 900.0)
+        ));
+        assert!(!pointer_left_alone((942.0, 1047.0), None, (1920.0, 1047.0)));
+        // The person moved on, the prior window closed, or there was nothing
+        // (or only the target itself) to return to: leave focus alone.
+        assert_eq!(
+            focus_to_restore(target, Some(prior), || false, |_| true, || true),
+            None
+        );
+        assert_eq!(
+            focus_to_restore(target, Some(prior), || true, |_| false, || true),
+            None
+        );
+        assert_eq!(
+            focus_to_restore(
+                target,
+                Some(target),
+                || panic!("no query"),
+                |_| true,
+                || true
+            ),
+            None
+        );
+        assert_eq!(
+            focus_to_restore(target, None, || panic!("no query"), |_| true, || true),
+            None
+        );
+        // Nothing captured means no compositor query and no restoration.
+        FocusRestore::default().restore();
     }
 
     fn descriptor() -> &'static BrowserSetupDescriptor {
@@ -1224,6 +1681,7 @@ mod tests {
                 },
                 hyprland: true,
                 cancellation: ActionCancellation::default(),
+                focus: FocusRestore::default(),
             },
             owned_setup_tab: None,
             trusted_setup_navigation: false,
@@ -1289,8 +1747,9 @@ mod tests {
             )))
             .is_err());
         assert!(handle.input_delivery_unknown);
-        assert!(!handle.foregrounded_window);
-        assert!(!handle.injected_global_input);
+        // Possibly delivered input is reported, but grants no ownership.
+        assert!(handle.foregrounded_window);
+        assert!(handle.injected_global_input);
         assert!(!handle.opened_setup_page);
         assert!(handle.owned_setup_tab.is_none());
         assert_eq!(
@@ -1317,11 +1776,12 @@ mod tests {
         let baseline = setup_tree(vec![tab("/existing", true)]);
         let current = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
         let mut handle = inert_setup_handle();
-        handle.owned_setup_tab = created_tab(
-            &browser_tabs(&baseline).unwrap(),
-            &browser_tabs(&current).unwrap(),
-        )
-        .unwrap();
+        let CreatedTab::Selected(created) =
+            created_tab(&browser_tabs(&baseline).unwrap(), &current).unwrap()
+        else {
+            panic!("one added, uniquely selected tab is a created tab");
+        };
+        handle.owned_setup_tab = Some(created);
         handle.opened_setup_page = true;
         handle.trusted_setup_navigation = true;
         assert!(handle.require_owned_setup_page(&current).is_ok());
@@ -1362,14 +1822,13 @@ mod tests {
     fn setup_tab_creation_requires_a_complete_preserved_native_tab_baseline() {
         let baseline = browser_tabs(&setup_tree(vec![tab("/existing", true)])).unwrap();
         let unchanged = setup_tree(vec![tab("/existing", true)]);
-        assert!(created_tab(&baseline, &browser_tabs(&unchanged).unwrap())
-            .unwrap()
-            .is_none());
+        assert_eq!(
+            created_tab(&baseline, &unchanged).unwrap(),
+            CreatedTab::Pending { added: 0 }
+        );
         let replaced = setup_tree(vec![tab("/created", true)]);
         assert_eq!(
-            created_tab(&baseline, &browser_tabs(&replaced).unwrap())
-                .unwrap_err()
-                .code,
+            created_tab(&baseline, &replaced).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
         let extra = setup_tree(vec![
@@ -1378,9 +1837,7 @@ mod tests {
             tab("/unexpected", false),
         ]);
         assert_eq!(
-            created_tab(&baseline, &browser_tabs(&extra).unwrap())
-                .unwrap_err()
-                .code,
+            created_tab(&baseline, &extra).unwrap_err().code,
             BrowserRefusalCode::BrowserBindingAmbiguous
         );
         let mut incomplete = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
@@ -1399,9 +1856,91 @@ mod tests {
         let mut web_tab = tab("/web-content-tab", true);
         web_tab.in_web_content = true;
         let web_content = setup_tree(vec![tab("/existing", true), web_tab]);
-        assert!(created_tab(&baseline, &browser_tabs(&web_content).unwrap())
-            .unwrap()
-            .is_none());
+        assert_eq!(
+            created_tab(&baseline, &web_content).unwrap(),
+            CreatedTab::Pending { added: 0 }
+        );
+    }
+
+    #[test]
+    fn created_tab_waits_through_asynchronous_tab_state() {
+        let baseline = browser_tabs(&setup_tree(vec![tab("/existing", true)])).unwrap();
+        let created = ObjectRef {
+            bus: ":1.5156".to_owned(),
+            path: "/created".to_owned(),
+        };
+        let mut unstated = tab("/created", false);
+        unstated.selected = None;
+        let mut unidentified = tab("/created", true);
+        unidentified.object_ref = None;
+        let mut truncated = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
+        truncated.truncated = true;
+        // Scripted states Chromium publishes between Ctrl+T and a settled
+        // strip: none of them is final, and none of them is ownership.
+        for (tree, added) in [
+            (setup_tree(vec![tab("/existing", false)]), 0),
+            (
+                setup_tree(vec![tab("/existing", true), tab("/created", false)]),
+                1,
+            ),
+            (
+                setup_tree(vec![tab("/existing", false), tab("/created", false)]),
+                1,
+            ),
+            (
+                setup_tree(vec![tab("/existing", true), tab("/created", true)]),
+                1,
+            ),
+            (setup_tree(vec![tab("/existing", false), unstated]), 1),
+            (setup_tree(vec![tab("/existing", false), unidentified]), 0),
+            (truncated, 1),
+        ] {
+            assert_eq!(
+                created_tab(&baseline, &tree).unwrap(),
+                CreatedTab::Pending { added }
+            );
+        }
+        // A lost baseline tab is final only when the walk could have seen it.
+        let mut partial = setup_tree(vec![tab("/created", true)]);
+        partial.truncated = true;
+        assert_eq!(
+            created_tab(&baseline, &partial).unwrap(),
+            CreatedTab::Pending { added: 1 }
+        );
+        assert_eq!(
+            created_tab(
+                &baseline,
+                &setup_tree(vec![tab("/existing", false), tab("/created", true)])
+            )
+            .unwrap(),
+            CreatedTab::Selected(created.clone())
+        );
+        // Ownership needs two consecutive confirmations of the same tab.
+        let other = ObjectRef {
+            bus: ":1.5156".to_owned(),
+            path: "/other".to_owned(),
+        };
+        let mut proof = CreatedTabProof::default();
+        assert!(proof.timeout_message().contains("0 added tab(s)"));
+        assert!(proof.timeout_message().contains("never seen"));
+        assert_eq!(proof.observe(CreatedTab::Selected(created.clone())), None);
+        assert_eq!(proof.observe(CreatedTab::Pending { added: 1 }), None);
+        assert_eq!(proof.observe(CreatedTab::Selected(created.clone())), None);
+        assert_eq!(proof.observe(CreatedTab::Selected(other.clone())), None);
+        assert!(proof
+            .timeout_message()
+            .contains("seen but not confirmed by a consecutive walk"));
+        assert_eq!(
+            proof.observe(CreatedTab::Selected(other.clone())),
+            Some(other)
+        );
+
+        let mut duplicated = setup_tree(vec![tab("/existing", false), tab("/existing", true)]);
+        duplicated.nodes.truncate(2);
+        assert_eq!(
+            created_tab(&baseline, &duplicated).unwrap_err().code,
+            BrowserRefusalCode::BrowserBindingAmbiguous
+        );
     }
 
     #[test]

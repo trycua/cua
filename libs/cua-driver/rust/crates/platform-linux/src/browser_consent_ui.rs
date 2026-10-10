@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use cua_driver_core::browser::platform::BrowserConsentAction;
 use cua_driver_core::browser::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserRefusal, BrowserRefusalCode,
+    EXISTING_PROFILE_CONSENT_TIMEOUT,
 };
 
 use crate::atspi::AtspiNode;
@@ -280,6 +281,16 @@ fn check_deadline(deadline: Instant) -> Result<(), BrowserRefusal> {
     Ok(())
 }
 
+/// One attempt must fit a walk to find Allow, its action, and a walk to see
+/// the prompt gone, with a spare walk. Scale from this host's slowest walk,
+/// settling at least a second inside core's outer bound.
+fn consent_budget(slowest_walk: Duration) -> Duration {
+    (slowest_walk * 3 + Duration::from_secs(1)).clamp(
+        Duration::from_secs(4),
+        EXISTING_PROFILE_CONSENT_TIMEOUT.saturating_sub(Duration::from_secs(1)),
+    )
+}
+
 async fn consent_action<T: Send + 'static>(
     action: &BrowserConsentAction,
     deadline: Instant,
@@ -319,7 +330,9 @@ pub async fn handle(
         )
     })?;
     prove_window_owner(pid, request.window_id)?;
-    let deadline = Instant::now() + Duration::from_secs(4);
+    let started = Instant::now();
+    let mut deadline = started + consent_budget(Duration::ZERO);
+    let mut slowest_walk = Duration::ZERO;
     let mut saw_prompt = false;
     let mut accessibility_action_at = None;
     let mut trusted_click_attempted = false;
@@ -327,6 +340,7 @@ pub async fn handle(
         check_deadline(deadline)?;
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
+        let walk_started = Instant::now();
         let tree = tokio::task::spawn_blocking(move || {
             crate::browser_setup_ui::window_scoped_tree(pid, window_id)
         })
@@ -337,6 +351,8 @@ pub async fn handle(
                 format!("could not inspect the browser consent UI: {error}"),
             )
         })??;
+        slowest_walk = slowest_walk.max(walk_started.elapsed());
+        deadline = started + consent_budget(slowest_walk);
         check_deadline(deadline)?;
         let prompt_present = remote_debugging_prompt_present(&tree.nodes);
         saw_prompt |= prompt_present;
@@ -371,11 +387,18 @@ pub async fn handle(
                     }) =>
             {
                 let window_id = request.window_id;
-                consent_action(&request.action, deadline, move || {
+                trusted_click_attempted = true;
+                // A fallback only: the semantic action may still be settling,
+                // and some sessions (Hyprland) have no trusted click route.
+                // Its failure must not turn a later confirmed acceptance
+                // into a refusal; the deadline still bounds the attempt.
+                if let Err(error) = consent_action(&request.action, deadline, move || {
                     trusted_allow_click(pid, window_id)
                 })
-                .await?;
-                trusted_click_attempted = true;
+                .await
+                {
+                    tracing::debug!(error = %error.message, "trusted consent click fallback unavailable");
+                }
             }
             None if saw_prompt && !prompt_present => {
                 if accessibility_action_at.is_some() {
@@ -395,6 +418,24 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consent_budget_scales_with_slow_walks_inside_the_outer_bound() {
+        assert_eq!(consent_budget(Duration::ZERO), Duration::from_secs(4));
+        assert_eq!(
+            consent_budget(Duration::from_millis(500)),
+            Duration::from_secs(4)
+        );
+        // Two 2.1s walks no longer exhaust the attempt.
+        assert_eq!(
+            consent_budget(Duration::from_millis(2100)),
+            Duration::from_millis(7300)
+        );
+        assert_eq!(
+            consent_budget(Duration::from_secs(10)),
+            EXISTING_PROFILE_CONSENT_TIMEOUT - Duration::from_secs(1)
+        );
+    }
 
     #[tokio::test]
     async fn expired_action_never_enters_native_helper() {

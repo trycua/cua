@@ -1763,6 +1763,36 @@ async def _cmd_run_dataset_async(args) -> int:
             "failed_count": sum(not item["success"] for item in task_outcomes),
             "tasks": task_outcomes,
         }
+        # Index the artifacts actually emitted by each agent container. Hashes
+        # let external consumers verify bytes without trusting printed logs.
+        # An artifact hash is NOT proof that an action was executed or an
+        # oracle passed; those require separately recorded execution events.
+        import hashlib
+
+        for row in task_outcomes:
+            task_dir = output_dir / f"{row['task']}_v{row['variant_id']}"
+            artifacts = []
+            if task_dir.is_dir():
+                for artifact in sorted(task_dir.rglob("*")):
+                    if not artifact.is_file() or artifact.is_symlink():
+                        continue
+                    relative_path = artifact.relative_to(task_dir).as_posix()
+                    digest = hashlib.sha256()
+                    with artifact.open("rb") as source:
+                        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    artifacts.append({
+                        "path": relative_path,
+                        "size_bytes": artifact.stat().st_size,
+                        "sha256": digest.hexdigest(),
+                    })
+            row["artifacts"] = artifacts
+            row["evidence_status"] = "artifacts_indexed" if artifacts else "no_artifacts"
+
+        identity_path = output_dir / "dataset-identity.json"
+        if identity_path.is_file():
+            receipt["dataset_identity"] = json.loads(identity_path.read_text(encoding="utf-8"))
+
         receipt_path = output_dir / "run-result.json"
         pending = output_dir / "run-result.json.tmp"
         pending.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1782,33 +1812,6 @@ async def _cmd_run_dataset_async(args) -> int:
 
         log_print(summary)
 
-        # Persist actual TaskRunner outcomes for downstream consumers rather
-        # than forcing them to parse colored console messages.
-        import json
-        receipt_rows = []
-        for (task_path, variant_id), result in zip(task_variants, results):
-            valid_result = result is not None and not isinstance(result, BaseException)
-            receipt_rows.append({
-                "task": task_path.name,
-                "variant_id": variant_id,
-                "success": bool(result.success) if valid_result else False,
-                "error": (str(result) if isinstance(result, BaseException)
-                          else ("task failed without result" if result is None else None)),
-            })
-        receipt = {
-            "schema_version": "cua-bench-dataset-run/v1",
-            "run_id": run_id,
-            "total_tasks": len(results),
-            "success_count": success_count,
-            "failed_count": failed_count,
-            "tasks": receipt_rows,
-        }
-        identity_path = output_dir / "dataset-identity.json"
-        if identity_path.is_file():
-            receipt["dataset_identity"] = json.loads(identity_path.read_text(encoding="utf-8"))
-        (output_dir / "run-result.json").write_text(
-            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
 
         # Summary
         model_name = getattr(args, "model", None) or "default"

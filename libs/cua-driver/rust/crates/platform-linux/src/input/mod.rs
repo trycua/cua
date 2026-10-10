@@ -39,7 +39,7 @@ use std::ffi::{CStr, CString};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
@@ -50,6 +50,11 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
+/// The longest [`sync_client`] waits for a client's `_NET_WM_PING` reply.
+const PING_TIMEOUT: Duration = Duration::from_secs(1);
+/// Identifies each `_NET_WM_PING` in its timestamp field, so a late reply to an
+/// earlier ping cannot confirm a later one.
+static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug)]
 pub struct VirtualPointerDrag {
@@ -3391,25 +3396,31 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     // silently dropped — see keycode_for_keysym's doc and the analogous fix
     // in mpx_keyboard::plan_text_with_fallback for the background path.
     let mut remap_guards = Vec::new();
+    let mut client = TextClient::new(Some(window));
 
-    for ch in text.chars() {
+    for (typed, ch) in text.chars().enumerate() {
         // Resolve the keycode and whether Shift must be held — without it,
         // uppercase and shifted symbols would otherwise type their unshifted
         // form (e.g. "A" arriving as "a").
         let (keycode, needs_shift) =
             match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
                 Some(found) => found,
-                None => match keycode_for_keysym(
+                None => match text_keycode(
                     &conn,
                     &mapping,
+                    &mut remap_guards,
+                    &mut client,
                     mpx_keyboard::keysym_for_char(ch),
                     &ch.to_string(),
                 ) {
-                    Ok((keycode, guard)) => {
-                        remap_guards.extend(guard);
-                        (keycode, false)
+                    Ok(keycode) => (keycode, false),
+                    Err(error) => {
+                        client.release(&conn, std::mem::take(&mut remap_guards));
+                        bail!(
+                            "typed {typed} of {} characters: {error:#}",
+                            text.chars().count()
+                        )
                     }
-                    Err(_) => continue,
                 },
             };
         let state = if needs_shift {
@@ -3461,6 +3472,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     }
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
+    client.release(&conn, remap_guards);
     Ok(())
 }
 
@@ -3485,16 +3497,27 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .unwrap_or(50);
     // Remap guards live until the function returns — see send_type_text_with_delay.
     let mut remap_guards = Vec::new();
-    for ch in text.chars() {
+    let mut client = TextClient::new(targeted::active_window(&conn, conn.setup().roots[0].root));
+    for (typed, ch) in text.chars().enumerate() {
         let cp = mpx_keyboard::keysym_for_char(ch);
         let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
             Some(found) => found,
-            None => match keycode_for_keysym(&conn, &mapping, cp, &ch.to_string()) {
-                Ok((keycode, guard)) => {
-                    remap_guards.extend(guard);
-                    (keycode, false)
+            None => match text_keycode(
+                &conn,
+                &mapping,
+                &mut remap_guards,
+                &mut client,
+                cp,
+                &ch.to_string(),
+            ) {
+                Ok(keycode) => (keycode, false),
+                Err(error) => {
+                    client.release(&conn, std::mem::take(&mut remap_guards));
+                    bail!(
+                        "typed {typed} of {} characters: {error:#}",
+                        text.chars().count()
+                    )
                 }
-                Err(_) => continue,
             },
         };
         if needs_shift {
@@ -3512,6 +3535,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
     let _ = conn.get_input_focus()?.reply();
+    client.release(&conn, remap_guards);
     Ok(())
 }
 
@@ -4100,6 +4124,28 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 }
 
 #[cfg(test)]
+mod spare_keycode_tests {
+    use super::spare_keycode;
+    use x11rb::protocol::xproto::GetKeyboardMappingReply;
+
+    #[test]
+    fn spare_keycodes_skip_bound_and_held_keycodes() {
+        let per = 2usize;
+        let mut keysyms = vec![0u32; 4 * per];
+        keysyms[per..2 * per].copy_from_slice(&[0x61, 0x41]);
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: per as u8,
+            sequence: 0,
+            keysyms,
+        };
+        assert_eq!(spare_keycode(&mapping, &[]), Some(11));
+        assert_eq!(spare_keycode(&mapping, &[11]), Some(10));
+        assert_eq!(spare_keycode(&mapping, &[11, 10]), Some(8));
+        assert_eq!(spare_keycode(&mapping, &[11, 10, 8]), None);
+    }
+}
+
+#[cfg(test)]
 mod key_name_alias_tests {
     use super::key_name_to_keysym;
 
@@ -4137,6 +4183,7 @@ mod key_name_alias_tests {
 pub(crate) struct RemappedKeycode<'a> {
     conn: &'a RustConnection,
     keycode: u8,
+    keysym: u32,
     keysyms_per_keycode: u8,
     original_keysyms: Vec<u32>,
 }
@@ -4144,43 +4191,36 @@ pub(crate) struct RemappedKeycode<'a> {
 impl Drop for RemappedKeycode<'_> {
     fn drop(&mut self) {
         // Best-effort restore: re-install the original keysyms for this keycode
-        // and flush. Errors are swallowed deliberately — Drop must not panic in
-        // the daemon, and the worst case of a failed restore is a single spare
-        // keycode left mapped (it was unused to begin with), never a crash.
+        // and wait for the server to apply them. Xorg drops a request that is
+        // the last one before the connection closes, so a flush alone leaks the
+        // spare keycode. Errors are swallowed deliberately — Drop must not panic
+        // in the daemon, and the worst case of a failed restore is a single
+        // spare keycode left mapped (it was unused to begin with), never a crash.
         let _ = self.conn.change_keyboard_mapping(
             1,
             self.keycode,
             self.keysyms_per_keycode,
             &self.original_keysyms,
         );
-        let _ = self.conn.flush();
+        let _ = self.conn.get_input_focus().map(|cookie| cookie.reply());
     }
 }
 
 /// Temporarily bind `keysym` onto a spare (fully unused) keycode so it can be
 /// injected even when no existing keycode emits it. Returns a guard that
 /// restores the original mapping on drop. Errors only if the keymap has no free
-/// keycode left to borrow.
+/// keycode left to borrow outside `held`, the keycodes the caller still holds.
 fn remap_spare_keycode<'a>(
     conn: &'a RustConnection,
     mapping: &GetKeyboardMappingReply,
     keysym: u32,
+    held: &[u8],
 ) -> Result<RemappedKeycode<'a>> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
     }
-
-    // Find a keycode whose every keysym slot is NoSymbol (0) — i.e. completely
-    // unused — so borrowing it cannot clobber a real key. Scan high-to-low:
-    // high keycodes are far likelier to be free than the low, populated ones.
-    let spare = mapping
-        .keysyms
-        .chunks(per)
-        .enumerate()
-        .rev()
-        .find(|(_, syms)| syms.iter().all(|&s| s == 0))
-        .map(|(i, _)| (8 + i) as u8)
+    let spare = spare_keycode(mapping, held)
         .ok_or_else(|| anyhow!("no spare keycode available to remap keysym 0x{keysym:X}"))?;
 
     // Snapshot the original keysyms (all NoSymbol, but capture them so restore is
@@ -4197,9 +4237,29 @@ fn remap_spare_keycode<'a>(
     Ok(RemappedKeycode {
         conn,
         keycode: spare,
+        keysym,
         keysyms_per_keycode: per as u8,
         original_keysyms,
     })
+}
+
+/// Find a keycode outside `held` whose every keysym slot is NoSymbol (0) — i.e.
+/// completely unused — so borrowing it cannot clobber a real key. Scan
+/// high-to-low: high keycodes are far likelier to be free than the low,
+/// populated ones.
+fn spare_keycode(mapping: &GetKeyboardMappingReply, held: &[u8]) -> Option<u8> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per == 0 {
+        return None;
+    }
+    mapping
+        .keysyms
+        .chunks(per)
+        .enumerate()
+        .rev()
+        .map(|(i, syms)| ((8 + i) as u8, syms))
+        .find(|(keycode, syms)| syms.iter().all(|&s| s == 0) && !held.contains(keycode))
+        .map(|(keycode, _)| keycode)
 }
 
 /// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
@@ -4213,6 +4273,17 @@ fn keycode_for_keysym<'a>(
     keysym: u32,
     key: &str,
 ) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+    keycode_for_keysym_except(conn, mapping, keysym, key, &[])
+}
+
+/// [`keycode_for_keysym`] that never borrows one of the `held` keycodes.
+fn keycode_for_keysym_except<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    keysym: u32,
+    key: &str,
+    held: &[u8],
+) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per > 0 {
         for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
@@ -4223,11 +4294,155 @@ fn keycode_for_keysym<'a>(
     }
 
     // Not in the map — fall back to remapping a spare keycode.
-    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
+    let guard = remap_spare_keycode(conn, mapping, keysym, held).with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
     let keycode = guard.keycode;
     Ok((keycode, Some(guard)))
+}
+
+/// Keycode for `keysym` while typing one text. It reuses the text's own
+/// binding of the keysym, else borrows a spare keycode that no earlier
+/// character of the text holds: a client may still be translating that
+/// character, and rebinding its keycode would change what it reads. With every
+/// spare held, it rebinds the oldest one only once `client` confirms it has
+/// read its keys. A new binding is used once `client` has seen it: Chrome drops
+/// keys on a keycode bound after the last mapping change it handled.
+fn text_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    guards: &mut Vec<RemappedKeycode<'a>>,
+    client: &mut TextClient,
+    keysym: u32,
+    key: &str,
+) -> Result<u8> {
+    if let Some(guard) = guards.iter().find(|guard| guard.keysym == keysym) {
+        return Ok(guard.keycode);
+    }
+    let mut held: Vec<u8> = guards.iter().map(|guard| guard.keycode).collect();
+    if !held.is_empty() && spare_keycode(mapping, &held).is_none() {
+        if client.sync(conn) != ClientSync::Confirmed {
+            bail!(
+                "no spare keycode for key '{key}': every one holds an earlier character the client has not confirmed reading"
+            );
+        }
+        guards.remove(0);
+        held.remove(0);
+    }
+    let (keycode, guard) = keycode_for_keysym_except(conn, mapping, keysym, key, &held)?;
+    if guard.is_some() {
+        client.sync(conn);
+    }
+    guards.extend(guard);
+    Ok(keycode)
+}
+
+/// How a client answered [`sync_client`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientSync {
+    /// The client answered this ping, so it has handled every earlier event.
+    Confirmed,
+    /// There is no client window, or it does not take `_NET_WM_PING`.
+    Unsupported,
+    /// The client takes `_NET_WM_PING` but did not answer this ping in time.
+    Unanswered,
+}
+
+/// The client that reads one text's keys.
+struct TextClient {
+    window: Option<Window>,
+    /// Cleared once the client leaves a ping unanswered: it is not pinged again
+    /// for this text, so a stalled client costs at most one [`PING_TIMEOUT`].
+    answering: bool,
+}
+
+impl TextClient {
+    fn new(window: Option<Window>) -> Self {
+        Self {
+            window,
+            answering: true,
+        }
+    }
+
+    fn sync(&mut self, conn: &RustConnection) -> ClientSync {
+        if !self.answering {
+            return ClientSync::Unanswered;
+        }
+        let sync = sync_client(conn, self.window);
+        self.answering = sync != ClientSync::Unanswered;
+        sync
+    }
+
+    /// Restores the text's borrowed keycodes once the client has read its keys.
+    /// A client without the protocol gets the restore at once; one that does not
+    /// answer keeps the keycodes bound, since its keys may still be unread.
+    fn release(&mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
+        if guards.is_empty() || self.sync(conn) != ClientSync::Unanswered {
+            return;
+        }
+        tracing::warn!(
+            keycodes = guards.len(),
+            "client did not confirm reading typed keys; leaving their borrowed keycodes bound"
+        );
+        guards.into_iter().for_each(std::mem::forget);
+    }
+}
+
+/// Waits until `window`'s client has handled the events sent before this call,
+/// so a borrowed keycode can be restored or rebound without changing keys the
+/// client has not translated yet. Clients answer an EWMH `_NET_WM_PING` in
+/// event order, echoing its timestamp field, which carries a fresh serial so
+/// only the reply to this ping counts. No client is waited for longer than
+/// [`PING_TIMEOUT`].
+fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
+    let atom = |name: &str| {
+        conn.intern_atom(false, name.as_bytes())
+            .ok()?
+            .reply()
+            .ok()
+            .map(|reply| reply.atom)
+    };
+    let (Some(window), Some(protocols), Some(ping)) =
+        (window, atom("WM_PROTOCOLS"), atom("_NET_WM_PING"))
+    else {
+        return ClientSync::Unsupported;
+    };
+    let supported = conn
+        .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|mut atoms| atoms.any(|a| a == ping)))
+        .unwrap_or(false);
+    if !supported {
+        return ClientSync::Unsupported;
+    }
+    let root = conn.setup().roots[0].root;
+    let listen = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
+    let serial = PING_SERIAL.fetch_add(1, Ordering::Relaxed).max(1);
+    let event = ClientMessageEvent::new(32, window, protocols, [ping, serial, window, 0, 0]);
+    if conn.change_window_attributes(root, &listen).is_err()
+        || conn
+            .send_event(false, window, EventMask::NO_EVENT, event)
+            .is_err()
+        || conn.flush().is_err()
+    {
+        return ClientSync::Unanswered;
+    }
+    let deadline = std::time::Instant::now() + PING_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        match conn.poll_for_event() {
+            Ok(Some(x11rb::protocol::Event::ClientMessage(pong)))
+                if pong.type_ == protocols
+                    && pong.data.as_data32()[..3] == [ping, serial, window] =>
+            {
+                return ClientSync::Confirmed;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => sleep(Duration::from_millis(1)),
+            Err(_) => return ClientSync::Unanswered,
+        }
+    }
+    ClientSync::Unanswered
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {

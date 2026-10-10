@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.5.3...cua-spacesd-v0.6.0) (2026-10-10)
+
+
+### Features
+
+* **cua-driver:** plan cursor motion with the new cua-cursor-motion crate ([#4758](https://github.com/trycua/cua/issues/4758)) ([558cb53](https://github.com/trycua/cua/commit/558cb534d26ad51680ffd0f85b249bdebe64989a))
+* **cua-driver:** plan cursor motions from the SDKs through UniFFI ([#4767](https://github.com/trycua/cua/issues/4767)) ([365f5e3](https://github.com/trycua/cua/commit/365f5e3c5b92f9457dbd560ddea8ec0268565724))
+* **cua-driver:** run_script tool: sandboxed JavaScript (QuickJS) that drives the driver's own tools in one call, with wall-time, driver-call, heap and stack limits (on by default since [#4936](https://github.com/trycua/cua/issues/4936)) (CUA-1214) ([#4822](https://github.com/trycua/cua/issues/4822)) ([45469a5](https://github.com/trycua/cua/commit/45469a59c931ddccd78f9c18f1bbba4cb4cdd7be))
+* **spaces:** new shared UI — React web UI in the Mac app and an Electron app (preview) ([#4893](https://github.com/trycua/cua/issues/4893)) ([7cc4bd0](https://github.com/trycua/cua/commit/7cc4bd0bfc3ce1a3246ae47fe02948dc9f64f010))
+
+
+### Bug Fixes
+
+* **cua-spacesd:** connect hosted machines through HTTP proxies ([#4778](https://github.com/trycua/cua/issues/4778)) ([853e2c5](https://github.com/trycua/cua/commit/853e2c57aedb9f5573d802a8326f966985e28ef7))
+* **cua-spacesd:** declare DPI awareness for Windows Host ([#4805](https://github.com/trycua/cua/issues/4805)) ([34d69bf](https://github.com/trycua/cua/commit/34d69bf2c7d9470e9f8e18d5e5f225123afcaafb))
+* **cua-spacesd:** restore Windows viewer input through driver tools ([#4528](https://github.com/trycua/cua/issues/4528)) ([6b95048](https://github.com/trycua/cua/commit/6b95048b048d79ad3ce4745abe58d8e9e522144c))
+* **cua-spacesd:** stream 6K displays and carry tool results over 4 MiB ([#4850](https://github.com/trycua/cua/issues/4850)) ([a88f100](https://github.com/trycua/cua/commit/a88f100b428a3eb9a73bd60757540d6ecd1fd00f)), closes [#4623](https://github.com/trycua/cua/issues/4623)
+* **relay:** audit log in its own file, stale temp cleanup, sessions survive restarts ([#4939](https://github.com/trycua/cua/issues/4939)) ([cfc95fd](https://github.com/trycua/cua/commit/cfc95fd70369461339e1a7af97b15b1814211c06))
+* **sdk:** honor HTTP proxies for controller RPC ([#4795](https://github.com/trycua/cua/issues/4795)) ([23e23d4](https://github.com/trycua/cua/commit/23e23d4cc321b1e64f5832d44a150667ff0d5c04))
+* **spacesd:** ask get_window_state for structured elements in the tool backend ([#4908](https://github.com/trycua/cua/issues/4908)) ([ba4c636](https://github.com/trycua/cua/commit/ba4c6369660ab4a9c4d3d8af942bc53ad376615f))
+* **spaces:** report directory refresh failures ([#4716](https://github.com/trycua/cua/issues/4716)) ([1f96a4b](https://github.com/trycua/cua/commit/1f96a4bf0e3f02dcf79ab83d78a4fc9c017d24ff))
+
 ## [0.5.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.5.2...cua-spacesd-v0.5.3) (2026-10-03)
 
 

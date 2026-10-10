@@ -2,6 +2,7 @@
   "id": "MB-11",
   "title": "Read a native tooltip and type its code",
   "group": "P",
+  "category": "precision",
   "ability": "tooltip",
   "dimension_tags": [
     "hover",

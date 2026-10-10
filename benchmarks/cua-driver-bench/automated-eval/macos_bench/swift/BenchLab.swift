@@ -262,7 +262,7 @@ struct CanvasClickParams {
             "canvasclick": CanvasClickParams(seed: seed).dump,
             "hover": HoverParams(seed: seed).dump,
             "clipboard": ClipboardParams(seed: seed).dump,
-        ].merging(dumpModeParams(seed: seed)) { a, _ in a }
+        ].merging(dumpModeParams(seed: seed)) { a, _ in a }.merging(dumpIRParams(seed: seed)) { a, _ in a }
         let data = try! JSONSerialization.data(withJSONObject: all, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }
@@ -1507,6 +1507,10 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
         case "settings": controller = SettingsController(rec: rec, seed: opts.seed)
         case "listdrag": controller = ListDragController(rec: rec, seed: opts.seed)
         case "tooltip": controller = TooltipController(rec: rec, seed: opts.seed)
+        case "irmodal": controller = IRModalController(rec: rec, seed: opts.seed)
+        case "irbanner": controller = IRBannerController(rec: rec, seed: opts.seed)
+        case "irunsaved": controller = IRUnsavedController(rec: rec, seed: opts.seed)
+        case "irconsent": controller = IRConsentController(rec: rec, seed: opts.seed)
         default: controller = ClipboardController(rec: rec)
         }
 
@@ -1543,6 +1547,7 @@ enum BenchLabMain {
         let valid = [
             "forms", "table", "canvas", "canvasclick", "hover", "clipboard",
             "canvasmenu", "tablesel", "richtext", "settings", "listdrag", "tooltip",
+            "irmodal", "irbanner", "irunsaved", "irconsent",
         ]
         guard let opts = Options.parse(CommandLine.arguments) else {
             FileHandle.standardError.write(Data("BenchLab: bad --seed\n".utf8))
@@ -1557,7 +1562,7 @@ enum BenchLabMain {
         guard valid.contains(opts.mode), opts.statePath != nil, opts.eventsPath != nil else {
             FileHandle.standardError.write(
                 Data(
-                    "usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|canvasmenu|tablesel|richtext|settings|listdrag|tooltip --seed N --state PATH --events PATH\n"
+                    "usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|canvasmenu|tablesel|richtext|settings|listdrag|tooltip|irmodal|irbanner|irunsaved|irconsent --seed N --state PATH --events PATH\n"
                         .utf8))
             exit(2)
         }

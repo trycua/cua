@@ -2,6 +2,7 @@
   "id": "MB-02",
   "title": "Right-click 4 dots on a custom-drawn board and choose the stated menu action",
   "group": "AF",
+  "category": "precision",
   "ability": "canvas_right_click",
   "dimension_tags": [
     "pixel_click",

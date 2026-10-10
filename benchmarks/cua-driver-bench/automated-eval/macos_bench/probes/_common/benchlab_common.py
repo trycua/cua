@@ -361,6 +361,84 @@ def derive_mode_params(seed: int) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------ Bench v2 interruption probes (IR-*)
+# Keep identical to swift/BenchLabInterrupts.swift (TablesIR, irSalt and the IR*Params structs).
+
+IR_TEAMS = ["Design", "Finance", "Operations", "Research"]
+IR_PERM_RESOURCES = ["Contacts", "Calendars", "Photos"]
+IR_NOTE_TITLES = [
+    "Budget review", "Client kickoff", "Hiring plan", "Launch checklist",
+    "Office move", "Q3 roadmap", "Supplier audit", "Team offsite",
+]  # fmt: skip
+IR_STATUS_WORDS = ["Approved", "On hold", "Shipped", "Cancelled"]
+IR_PLANS = ["Starter", "Team", "Enterprise"]
+IR_INITIAL_STATUS = "Draft"
+IR_SALT = {
+    "irmodal": 0x1A011A011A011A01,
+    "irbanner": 0x1A021A021A021A02,
+    "irunsaved": 0x1A031A031A031A03,
+    "irconsent": 0x1A041A041A041A04,
+}
+
+
+def ir_email(name: str, domain: str) -> str:
+    return name.lower().replace(" ", ".") + "@" + domain
+
+
+def derive_irmodal(seed: int) -> dict[str, Any]:
+    r = SplitMix64(seed ^ IR_SALT["irmodal"])
+    name = NAMES[r.index(20)]
+    return {
+        "name": name,
+        "email": ir_email(name, "example.com"),
+        "team": IR_TEAMS[r.index(4)],
+        "seats": r.randint(2, 40),
+        "resource": IR_PERM_RESOURCES[r.index(3)],
+    }
+
+
+def derive_irbanner(seed: int) -> dict[str, Any]:
+    r = SplitMix64(seed ^ IR_SALT["irbanner"])
+    item = f"{ITEM_WORDS[r.index(24)]} {ITEM_KINDS[r.index(6)]}"
+    return {"item": item, "quantity": r.randint(2, 60), "priority": PRIORITIES[r.index(3)]}
+
+
+def derive_irunsaved(seed: int) -> dict[str, Any]:
+    r = SplitMix64(seed ^ IR_SALT["irunsaved"])
+    titles = r.shuffled(IR_NOTE_TITLES)[:3]
+    status_index = r.index(3)
+    rename_index = (status_index + 1 + r.index(2)) % 3
+    status = IR_STATUS_WORDS[r.index(4)]
+    new_title = f"{ITEM_WORDS[r.index(24)]} plan"
+    return {
+        "titles": titles,
+        "status_index": status_index,
+        "rename_index": rename_index,
+        "status": status,
+        "new_title": new_title,
+    }
+
+
+def derive_irconsent(seed: int) -> dict[str, Any]:
+    r = SplitMix64(seed ^ IR_SALT["irconsent"])
+    name = NAMES[r.index(20)]
+    return {
+        "name": name,
+        "email": ir_email(name, "example.org"),
+        "plan": IR_PLANS[r.index(3)],
+        "digest": r.index(2) == 1,
+    }
+
+
+def derive_ir_params(seed: int) -> dict[str, Any]:
+    return {
+        "irmodal": derive_irmodal(seed),
+        "irbanner": derive_irbanner(seed),
+        "irunsaved": derive_irunsaved(seed),
+        "irconsent": derive_irconsent(seed),
+    }
+
+
 def derive_all(seed: int) -> dict[str, Any]:
     return {
         "prng_head": [str(v) for v in _head(seed, 4)],

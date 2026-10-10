@@ -40,8 +40,7 @@ class MbParity(unittest.TestCase):
                 "arm64-apple-macosx26.0",
                 "-D",
                 "BENCHLAB_DUMP",
-                str(SWIFT / "BenchLab.swift"),
-                str(SWIFT / "BenchLabModes.swift"),
+                *[str(p) for p in sorted(SWIFT.glob("BenchLab*.swift"))],
                 "-o",
                 cls.exe,
             ],
@@ -93,6 +92,10 @@ class MbParity(unittest.TestCase):
             self.assertEqual(sw["listdrag"], py["listdrag"], seed)
             for k in ("order", "target_index", "target", "codes"):
                 self.assertEqual(sw["tooltip"][k], py["tooltip"][k], (seed, k))
+            # Bench v2 interruption probes (IR-01..IR-04)
+            ir = C.derive_ir_params(seed)
+            for mode in ("irmodal", "irbanner", "irunsaved", "irconsent"):
+                self.assertEqual(sw[mode], ir[mode], (seed, mode))
 
 
 class DerivationShape(unittest.TestCase):
@@ -119,6 +122,14 @@ class DerivationShape(unittest.TestCase):
             d = C.derive_listdrag(seed)
             self.assertGreaterEqual(sum(1 for a, b in zip(d["initial"], d["target"]) if a != b), 4)
             self.assertEqual(sorted(d["initial"]), sorted(d["target"]))
+
+    def test_irunsaved_targets_differ(self) -> None:
+        for seed in range(500):
+            d = C.derive_irunsaved(seed)
+            self.assertEqual(len(set(d["titles"])), 3, seed)
+            self.assertNotEqual(d["status_index"], d["rename_index"], seed)
+            self.assertNotIn(d["new_title"], d["titles"], seed)
+            self.assertNotEqual(d["status"], C.IR_INITIAL_STATUS, seed)
 
     def test_tooltip_codes_distinct(self) -> None:
         for seed in range(500):

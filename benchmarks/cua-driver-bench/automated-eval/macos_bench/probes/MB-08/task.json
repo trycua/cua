@@ -2,6 +2,7 @@
   "id": "MB-08",
   "title": "Open Settings from the menu bar, change three settings, apply, confirm in the main window",
   "group": "AF",
+  "category": "web_forms",
   "ability": "multi_window_menu",
   "dimension_tags": [
     "multi_window",

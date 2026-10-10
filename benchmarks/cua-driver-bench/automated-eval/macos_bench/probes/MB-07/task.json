@@ -2,6 +2,7 @@
   "id": "MB-07",
   "title": "Compute in Calculator, copy the result, paste it into BenchLab and save",
   "group": "AF",
+  "category": "multi_app",
   "ability": "multi_app_clipboard",
   "dimension_tags": [
     "multi_app",

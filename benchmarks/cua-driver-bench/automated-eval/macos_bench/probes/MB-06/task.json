@@ -2,6 +2,7 @@
   "id": "MB-06",
   "title": "Type a paragraph, bold one sentence, replace one word in a rich text editor",
   "group": "AF",
+  "category": "precision",
   "ability": "text_editing",
   "dimension_tags": [
     "text_entry",

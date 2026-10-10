@@ -154,10 +154,35 @@ def summarize(log_path: str) -> dict[str, Any]:
                 else:
                     in_episode = False
 
+    _windows_raised(window, result)
     result["pointer_max_deviation_px"] = round(result["pointer_max_deviation_px"], 2)
     result["front_changed_to"] = sorted(changed_to)
     result["available"] = result["samples"] >= 10
     return result
+
+
+def _windows_raised(window: list[dict[str, Any]], result: dict[str, Any]) -> None:
+    """Amendment 14 (CUA-1282): count raise episodes, i.e. lines where a window owner that was not
+    above the sentinel's window on the previous line now is. The armed line is the baseline.
+    Logs from sentinels without the `above_n` field give None (not measured)."""
+    measured = [ln for ln in window if ln.get("ev") in ("s", "armed", "disarmed") and "above_n" in ln]
+    if not measured:
+        result["windows_raised"] = None
+        result["raised_by"] = []
+        return
+    prev = set(measured[0].get("above") or [])
+    raised = 0
+    owners: set[str] = set()
+    for line in measured[1:]:
+        now = {o for o in (line.get("above") or []) if isinstance(o, str)}
+        new = now - prev
+        if new:
+            raised += 1
+            owners |= new
+        prev = now
+    result["windows_raised"] = raised
+    result["raised_by"] = sorted(owners)
+    result["above_at_start"] = sorted(o for o in (measured[0].get("above") or []) if isinstance(o, str))
 
 
 def main(argv: list[str] | None = None) -> int:

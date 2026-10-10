@@ -2,6 +2,7 @@
   "id": "MB-01",
   "title": "Click 12 numbered dots in order on a custom-drawn board",
   "group": "AF",
+  "category": "precision",
   "ability": "canvas_left_click",
   "dimension_tags": [
     "pixel_click",

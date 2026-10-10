@@ -2,6 +2,7 @@
   "id": "MB-03",
   "title": "Scroll a 400-row table, find one row by Name and Qty, select it, Confirm",
   "group": "AF",
+  "category": "precision",
   "ability": "scroll",
   "dimension_tags": [
     "native_ax",

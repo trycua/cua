@@ -44,6 +44,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "swift"))
 
 import arms  # noqa: E402
+import bench_v2 as v2  # noqa: E402
 import bench_core as core  # noqa: E402
 import claude_arms as ca  # noqa: E402
 import cdb_adapter  # noqa: E402
@@ -692,6 +693,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     max_turns = int(args.max_turns or spec.get("max_turns") or 30)
     run_index = entry["run_index"]
     seed = core.probe_seed(task.id, run_index)
+    bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
+    sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
     build_versions = (ctx.versions.get("builds") or {}).get(arm) or (
         ctx.versions.get("builds") or {}
@@ -719,6 +722,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "task_group": task_spec(task).get("group", "probe"),
         "ability": spec.get("ability"),
         "dimension_tags": task.tags,
+        "bench_version": v2.BENCH_VERSION if bench_v2 else 1,
+        "category": spec.get("category"),
         "order_index": entry.get("order_index"),
         "task_pos": entry["task_pos"],
         "arm_slot": entry["arm_slot"],
@@ -785,6 +790,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     front_seen: list[str] = []
     side_door: set[str] = set()
     watcher: FrontWatcher | None = None
+    guard: v2.GuiOnlyGuard | None = None
+    gui_only: dict[str, Any] | None = None
     try:
         ctx.set_state(
             state="setup", trial_id=entry["trial_id"], attempt=attempt, trial_started_mono=t0
@@ -815,7 +822,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             brief, paths = pilot.prepare_probe(task, seed, trial_dir, lab_app)
             sentinel.start()
             lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
-        if spec.get("sentinel_frontmost", True):
+        if sentinel_front:
             sentinel.activate()
         if cdb is None and getattr(args, "check_occlusion", True):
             row["lab_occlusion"] = ensure_lab_unoccluded(ctx)
@@ -830,7 +837,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             max_budget_usd=args.max_budget_usd,
             tool_search=args.tool_search == "default",
             effort=args.effort,
-            coding_tools=bool(spec.get("coding_tools")),
+            coding_tools=bool(spec.get("coding_tools")) and not bench_v2,
             system_prompt=ca.system_prompt_for(arm),
         )
         prompt = brief.strip() + "\n"
@@ -843,7 +850,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         sentinel.toggle_armed()
         ctx.set_state(state="agent")
         agent_started = time.monotonic()
-        watcher = FrontWatcher() if not spec.get("coding_tools") and cdb is not None else None
+        if bench_v2:  # A14.2: every v2 trial is guarded, CDB or BenchLab
+            guard = v2.GuiOnlyGuard(
+                stream_path, frontmost_bundle, enforce=getattr(args, "gui_only_enforce", True)
+            )
+            guard.start()
+        watcher = (
+            FrontWatcher() if not bench_v2 and not spec.get("coding_tools") and cdb is not None else None
+        )
         if watcher:
             watcher.start()
         with pilot.IdleSampler(artifacts / "hid-idle.jsonl"):
@@ -857,12 +871,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 stream_path,
                 stderr_path,
                 artifacts / "elicitations.jsonl",
-                abort=ctx.abort,
+                abort=v2.EitherEvent(ctx.abort, guard.stop) if guard else ctx.abort,
             )
         agent_ended = time.monotonic()
         if watcher:
             watcher.finish()
             front_seen, side_door = sorted(watcher.seen), set(watcher.side)
+        if guard:
+            guard.finish()
         running_at_end = apps_running(needs)
         sentinel.toggle_armed()
         ctx.set_state(state="teardown")
@@ -873,6 +889,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             stderr_path.read_text("utf-8", "replace")[-4000:] if stderr_path.exists() else ""
         )
         failure = claude_events.classify_failure(summary, stderr_text, claude["returncode"])
+        if guard:
+            gui_only = guard.summary(*v2.scan_events(events))
+            front_seen = gui_only["frontmost_seen"]
+            side_door = {v["detail"] for v in gui_only["violations"]}
+            if gui_only["stopped_trial"]:
+                failure = {"kind": None}  # the harness ended it on purpose: final, never retried
         try:
             if cdb is not None:
                 rc = claude.get("returncode")
@@ -907,6 +929,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             claude_driver.kill_group(lab.pid)
         if watcher is not None:
             watcher.finish()
+        if guard is not None:
+            guard.finish()
         if cdb is not None:
             cdb.stop_apps()
         pilot.sweep_processes(str(trial_dir))
@@ -937,7 +961,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     hid_total = sum(int(v) for v in hid.values()) if hid else 0
     deviation = float(summary_sentinel.get("pointer_max_deviation_px", 0.0) or 0.0)
     infra = failure.get("kind")
-    if claude.get("timed_out"):
+    violation = bool(gui_only and gui_only["violation"])
+    if gui_only and gui_only["stopped_trial"]:
+        status = "gui_only_violation"
+    elif claude.get("timed_out"):
         status = "timeout"
     elif infra:
         status = "infra_error"
@@ -960,7 +987,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             "excluded_reason": f"infra_failure:{infra}" if infra else None,
             "passed": bool(evaluation.get("passed"))
             and status in ("completed", "timeout", "max_turns", "agent_error")
-            and not infra,
+            and not infra
+            and not violation,  # A14.2: a GUI-only violation fails the trial
+            "passed_raw": bool(evaluation.get("passed")) and not infra,
             "score": evaluation.get("score"),
             "checks": evaluation.get("checks"),
             "diagnostics": evaluation.get("diagnostics"),
@@ -1037,7 +1066,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "frontmost_changed": bool(summary_sentinel.get("front_changes", 0)),
                 "hid_events": hid or {"move": 0, "down": 0, "key": 0, "scroll": 0},
                 "human_input_suspected": bool(hid_total and idle_start < 900),
+                "windows_raised": summary_sentinel.get("windows_raised"),
+                "raised_by": summary_sentinel.get("raised_by", []),
             },
+            "sentinel_frontmost": sentinel_front,
+            "gui_only": gui_only,
+            "interruption": v2.interruption_of(evaluation),
             "hid_idle_drops": pilot.hid_drops(artifacts / "hid-idle.jsonl")
             if (artifacts / "hid-idle.jsonl").exists()
             else None,
@@ -1055,6 +1089,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             "notes": note,
         }
     )
+    # A14.4: the background-operation score, on every v2 trial
+    row["background"] = v2.background_score(row["disturbance"], sentinel_front) if bench_v2 else None
     if video_raw and ctx.compress:
         ctx.compress.submit(video_raw, trial_dir / "video")
     (trial_dir / "trial.json").write_text(json.dumps(row, indent=2) + "\n", "utf-8")
@@ -1675,6 +1711,36 @@ BUNDLED_SKILLS_OK = {
 }
 
 
+def v2_static_checks(ctx: Ctx) -> list[tuple[str, str, str]]:
+    """Amendment 14: every task has one known category and is GUI-only, and no arm's argv offers a
+    shell or file tool (the same surface for every setup)."""
+    out: list[tuple[str, str, str]] = []
+    problems = v2.validate_tasks({t: task_spec(ctx.tasks[t]) for t in ctx.tasks}, ctx.task_ids)
+    cats = {t: task_spec(ctx.tasks[t]).get("category") for t in ctx.task_ids}
+    out.append(("v2 tasks and categories", "fail" if problems else "pass", "; ".join(problems) or json.dumps(cats)))
+    for arm in ctx.arm_names:
+        argv = ca.claude_argv(
+            mcp_config=Path("/dev/null"),
+            server=(ctx.mcp.get(arm) or (None, "server"))[1],
+            model=ctx.args.model,
+            max_turns=45,
+            max_budget_usd=ctx.args.max_budget_usd,
+            tool_search=ctx.args.tool_search == "default",
+            coding_tools=False,
+        )
+        tools = argv[argv.index("--tools") + 1].split(",")
+        allowed = argv[argv.index("--allowedTools") + 1].split(",") if "--allowedTools" in argv else []
+        bad = [t for t in tools + allowed if t in v2.FORBIDDEN_BUILTINS]
+        out.append(
+            (
+                f"v2 GUI-only surface {arm}",
+                "fail" if bad else "pass",
+                f"tools {tools}, allowed {allowed}" + (f"; forbidden {bad}" if bad else ""),
+            )
+        )
+    return out
+
+
 def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     args = ctx.args
     checks: list[tuple[str, str, str]] = []
@@ -1684,6 +1750,9 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         print(f"[{status.upper():4}] {name}: {detail}", flush=True)
 
     pins = ca.load_pins()
+    if getattr(args, "bench_v2", False):
+        for name, status, detail in v2_static_checks(ctx):
+            add(name, status, detail)
     add(
         "claude binary",
         "pass" if ca.CLAUDE_BIN.is_file() else "fail",
@@ -2024,6 +2093,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="start even when no quota reading exists (default: refuse)",
     )
     p.add_argument("--ignore-hold", action="store_true", help="start although WORK/HOLD exists")
+    p.add_argument(
+        "--bench-v2",
+        action="store_true",
+        help="Bench v2 (Amendment 14): GUI-only v2 task list, categories, background score, interruption probes",
+    )
+    p.add_argument(
+        "--gui-only-enforce",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="v2: end a trial at its first GUI-only violation (default); --no-gui-only-enforce only records it",
+    )
     return p
 
 
@@ -2035,18 +2115,21 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "trials").mkdir(exist_ok=True)
     tasks = load_tasks(HERE / "probes")
-    selected = args.tasks or (
-        [args.only_task] if args.only_task else [t for t in tasks if default_task(tasks, t)]
-    )
+    bench_v2 = bool(getattr(args, "bench_v2", False))
+    defaults = list(v2.V2_TASKS) if bench_v2 else [t for t in tasks if default_task(tasks, t)]
+    selected = args.tasks or ([args.only_task] if args.only_task else defaults)
     if args.only_task and args.tasks is None:
         selected = [args.only_task]
     unknown = [t for t in selected if t not in tasks]
     if unknown:
         raise SystemExit(f"unknown tasks {unknown}; known {sorted(tasks)}")
-    task_ids = core.order_tasks(selected, explicit=bool(args.tasks))
-    full_ids = (
-        task_ids if args.tasks else core.order_tasks([t for t in tasks if default_task(tasks, t)])
-    )
+    if bench_v2:
+        problems = v2.validate_tasks({t: task_spec(tasks[t]) for t in tasks}, selected)
+        if problems:
+            raise SystemExit("bench v2: " + "; ".join(problems))
+    explicit = bool(args.tasks) or bench_v2  # v2 keeps the registered order (A14.6)
+    task_ids = core.order_tasks(selected, explicit=explicit)
+    full_ids = task_ids if args.tasks else core.order_tasks(defaults, explicit=bench_v2)
     arm_names = [args.only_arm] if args.only_arm else list(args.arms)
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]
     if codex and not args.allow_codex_arms:
@@ -2202,6 +2285,18 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "recorder": getattr(ctx.recorder, "name", "none"),
         "first_block_schedule": first_schedule,
         "arm_descriptions": {a: ca.ARM_DESCRIPTIONS.get(a, a) for a in ctx.arm_names},
+        "bench_version": v2.BENCH_VERSION if getattr(args, "bench_v2", False) else 1,
+        "bench_v2": {
+            "categories": v2.CATEGORIES,
+            "task_categories": {t: task_spec(ctx.tasks[t]).get("category") for t in ctx.task_ids},
+            "gui_only_enforce": getattr(args, "gui_only_enforce", True),
+            "exec_patterns": list(v2.EXEC_PATTERNS),
+            "side_door_bundles": v2.SIDE_DOOR_BUNDLES,
+            "side_door_processes": list(v2.SIDE_DOOR_PROCESSES),
+            "front_grace_samples": v2.FRONT_GRACE_SAMPLES,
+        }
+        if getattr(args, "bench_v2", False)
+        else None,
         "price_fallback_usd_per_mtok_ASSUMED": PRICE_FALLBACK,
         "example_argv": {
             a: ca.claude_argv(

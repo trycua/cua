@@ -2,6 +2,7 @@
   "id": "MB-05",
   "title": "Fill and submit a native invoice form",
   "group": "AF",
+  "category": "web_forms",
   "ability": "form_fill",
   "dimension_tags": [
     "native_ax",

@@ -2,6 +2,7 @@
   "id": "MB-04",
   "title": "Drag three tiles to their zones on a custom-drawn board",
   "group": "AF",
+  "category": "precision",
   "ability": "canvas_drag",
   "dimension_tags": [
     "pixel_drag",

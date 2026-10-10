@@ -2,6 +2,7 @@
   "id": "MB-10",
   "title": "Reveal a hover-only toolbar and click one action",
   "group": "P",
+  "category": "precision",
   "ability": "hover_menu",
   "dimension_tags": [
     "hover",

@@ -1,6 +1,7 @@
 {
   "id": "PROBE-CANVASCLICK",
   "title": "Left-click and right-click numbered circles on a pixel-only canvas",
+  "category": "precision",
   "dimension_tags": ["pixel_click", "no_ax"],
   "timeout_s": 360,
   "app_args": ["--mode", "canvasclick"]

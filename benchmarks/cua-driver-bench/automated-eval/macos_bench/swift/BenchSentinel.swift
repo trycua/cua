@@ -104,11 +104,40 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
         log.write(line)
     }
 
+    /// Owners of the normal-layer (layer 0) on-screen windows ordered above the sentinel's window,
+    /// other than the sentinel's own (Amendment 14, CUA-1282: windows raised over the user's app).
+    /// Owner names and pids need no Screen Recording permission; window titles are not read.
+    func windowsAbove() -> [String] {
+        guard let window = window, window.windowNumber > 0,
+              let list = CGWindowListCopyWindowInfo(
+                  [.optionOnScreenAboveWindow, .excludeDesktopElements],
+                  CGWindowID(window.windowNumber)) as? [[String: Any]]
+        else { return [] }
+        let me = Int(getpid())
+        var owners: [String] = []
+        for w in list {
+            guard (w[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = w[kCGWindowOwnerPID as String] as? Int, pid != me
+            else { continue }
+            if let a = w[kCGWindowAlpha as String] as? Double, a <= 0 { continue }
+            if let b = w[kCGWindowBounds as String] as? [String: Any],
+               let bw = b["Width"] as? Double, let bh = b["Height"] as? Double, bw <= 1 || bh <= 1
+            { continue }
+            let name = w[kCGWindowOwnerName as String] as? String ?? "pid:\(pid)"
+            if !owners.contains(name) { owners.append(name) }
+        }
+        return owners
+    }
+
     func sampleFields() -> [String: Any] {
-        return [
+        var out: [String: Any] = [
             "mouse": mouseInfo(), "front": frontInfo(), "active": NSApp.isActive,
             "key": window?.isKeyWindow ?? false, "idle": idleInfo(),
         ]
+        let above = windowsAbove()
+        out["above_n"] = above.count
+        if !above.isEmpty { out["above"] = above }
+        return out
     }
 
     // MARK: lifecycle

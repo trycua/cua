@@ -2,6 +2,7 @@
   "id": "CDB-S03",
   "title": "Task cdb-s03 of the private CDB task pack",
   "group": "CDB",
+  "category": "multi_app",
   "kind": "cdb",
   "ability": "coding_and_gui_workflow",
   "pack_task": "shared/cdb-s03",

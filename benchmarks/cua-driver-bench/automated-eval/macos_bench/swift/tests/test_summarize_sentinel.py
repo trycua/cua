@@ -256,5 +256,45 @@ class SummarizeSentinelTests(unittest.TestCase):
         self.assertEqual(json.loads(buffer.getvalue())["samples"], 12)
 
 
+class WindowsRaisedTests(unittest.TestCase):
+    """Amendment 14 (CUA-1282): windows ordered above the sentinel's window."""
+
+    def summarize(self, lines: list[dict]) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.jsonl"
+            path.write_text("".join(json.dumps(x) + "\n" for x in lines), "utf-8")
+            return summarize_sentinel.summarize(str(path))
+
+    @staticmethod
+    def line(ev: str, i: int, above: list[str] | None, armed: bool = True) -> dict:
+        out = {"ev": ev, "t": T0 + 50 * i, "armed": armed, "mouse": [1.0, 1.0],
+               "front": {"bid": SENT, "pid": 1}, "idle": {"move": 9, "down": 9, "key": 9, "scroll": 9}}
+        if above is not None:
+            out["above_n"] = len(above)
+            if above:
+                out["above"] = above
+        return out
+
+    def test_old_logs_are_not_measured(self) -> None:
+        lines = [self.line("armed", 0, None)] + [self.line("s", i, None) for i in range(1, 12)]
+        result = self.summarize(lines)
+        self.assertIsNone(result["windows_raised"])
+        self.assertEqual(result["raised_by"], [])
+
+    def test_counts_raise_episodes_not_samples(self) -> None:
+        seq = [[]] * 3 + [["BenchLab"]] * 5 + [[]] * 2 + [["BenchLab", "Google Chrome"]] * 3
+        lines = [self.line("armed", 0, [])] + [self.line("s", i + 1, a) for i, a in enumerate(seq)]
+        lines.append(self.line("disarmed", 20, [], armed=False))
+        result = self.summarize(lines)
+        self.assertEqual(result["windows_raised"], 2)
+        self.assertEqual(result["raised_by"], ["BenchLab", "Google Chrome"])
+
+    def test_windows_already_above_at_arm_are_not_raises(self) -> None:
+        lines = [self.line("armed", 0, ["Terminal"])] + [self.line("s", i, ["Terminal"]) for i in range(1, 12)]
+        result = self.summarize(lines)
+        self.assertEqual(result["windows_raised"], 0)
+        self.assertEqual(result["above_at_start"], ["Terminal"])
+
+
 if __name__ == "__main__":
     unittest.main()

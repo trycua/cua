@@ -18,7 +18,8 @@ interface FileOptions {
   additionalArguments?: string[];
 }
 const signer = require("../packaging/sign-mac.cjs") as {
-  sign(opts: unknown, load?: () => unknown): Promise<void>;
+  sign(opts: unknown, packager?: unknown): Promise<void>;
+  signWith(opts: unknown, load: () => unknown): Promise<void>;
   withDaemonIdentity(base: FileOptions, file: string): FileOptions;
   isDaemon(file: string): boolean;
   DAEMON_IDENTIFIER: string;
@@ -51,10 +52,20 @@ describe("the bundled daemon's signature", () => {
     expect(signer.isDaemon(`${daemon}.bak`)).toBe(false);
   });
 
+  // electron-builder calls a custom mac.sign as sign(opts, packager)
+  // (app-builder-lib macPackager.doSign); the packager is not a loader.
+  it("is the hook electron-builder calls with its packager", async () => {
+    const err = await signer.sign({ app: path.join(tmpdir(), "no-such-dir", "Cua Spaces.app") }, { packager: true }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(String(err)).not.toMatch(/is not a function/);
+  });
+
   it("signs the whole app the default way, through the daemon's options", async () => {
     let received: { optionsForFile: (f: string) => FileOptions; app: string } | undefined;
     const opts = { app, identity: "Developer ID Application: Cua", optionsForFile: () => ({ entitlements: "inherit.plist", additionalArguments: [] }) };
-    await signer.sign(opts, () => ({ signAsync: async (o: typeof received) => void (received = o) }));
+    await signer.signWith(opts, () => ({ signAsync: async (o: typeof received) => void (received = o) }));
     expect(received?.app).toBe(app);
     expect(received?.optionsForFile(daemon).additionalArguments).toEqual(["--identifier", "com.trycua.cua"]);
     expect(received?.optionsForFile(`${app}/Contents/MacOS/Cua Spaces`)).toEqual({ entitlements: "inherit.plist", additionalArguments: [] });
@@ -104,7 +115,7 @@ describe("the Linux policy", () => {
 
 describe("the Windows daemon's signature", () => {
   const configPath = require.resolve("../electron-builder.config.cjs");
-  const azure = { AZURE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net", AZURE_SIGNING_ACCOUNT: "acct", AZURE_SIGNING_PROFILE: "profile" };
+  const azure = { AZURE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net", AZURE_SIGNING_ACCOUNT: "acct", AZURE_SIGNING_PROFILE: "profile", AZURE_SIGNING_PUBLISHER: "Cua AI, Inc." };
 
   /** The config as CI loads it with `env`. */
   function load(env: Record<string, string>) {

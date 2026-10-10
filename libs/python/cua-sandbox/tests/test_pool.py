@@ -134,6 +134,19 @@ def fake_claim(namespace: str = "foo", name: str = "claim-1") -> SimpleNamespace
     return SimpleNamespace(metadata=SimpleNamespace(namespace=namespace, name=name))
 
 
+def fake_claim_with_phase(
+    phase: str | None,
+    namespace: str = "foo",
+    name: str = "claim-1",
+) -> SimpleNamespace:
+    """A claim carrying the Fleet ``status.phase`` the control plane reports."""
+    status = None if phase is None else SimpleNamespace(phase=phase)
+    return SimpleNamespace(
+        metadata=SimpleNamespace(namespace=namespace, name=name),
+        status=status,
+    )
+
+
 class FakeFleetClient:
     def __init__(
         self,
@@ -985,6 +998,83 @@ async def test_named_claim_reattach_failure_does_not_release_existing_claim(monk
     assert client.claims == []
     assert client.released == []
     assert client.closed is True
+
+
+@pytest.mark.parametrize("phase", ["Failed", "Error", "Expired"])
+@pytest.mark.asyncio
+async def test_named_claim_replaces_terminal_existing_claim(phase, monkeypatch):
+    """A terminal claim can never bind, so it is replaced instead of reattached."""
+    client = FakeFleetClient()
+    client.existing_claims = [fake_claim_with_phase(phase)]
+
+    async def list_claims(namespace: str):
+        assert namespace == "foo"
+        return client.existing_claims
+
+    client.list_claims = list_claims
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    sandbox = await Pool(fleet_pool()).claim(name="claim-1")
+
+    # The stale claim is removed, and a fresh one is created in its place.
+    assert client.released == ["claim-1"]
+    assert len(client.claims) == 1
+    assert client.deleted_pools == []
+    assert client.deleted_templates == []
+    assert sandbox.claim_name == "claim-1"
+    await sandbox.close()
+
+
+@pytest.mark.parametrize("phase", [None, "Pending", "Binding", "Bound", "Ready"])
+@pytest.mark.asyncio
+async def test_named_claim_still_reattaches_resumable_existing_claim(phase, monkeypatch):
+    """A claim that has not reached a terminal phase is still adopted as before."""
+    client = FakeFleetClient()
+    client.existing_claims = [fake_claim_with_phase(phase)]
+
+    async def list_claims(namespace: str):
+        assert namespace == "foo"
+        return client.existing_claims
+
+    client.list_claims = list_claims
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    sandbox = await Pool(fleet_pool()).claim(name="claim-1")
+
+    assert client.released == []
+    assert client.claims == []
+    assert sandbox.claim_name == "claim-1"
+    await sandbox.close()
+
+
+@pytest.mark.asyncio
+async def test_named_claim_replace_survives_delete_failure(monkeypatch):
+    """A failed cleanup of the terminal claim still re-claims rather than aborting."""
+    client = FakeFleetClient()
+    client.existing_claims = [fake_claim_with_phase("Failed")]
+
+    async def list_claims(namespace: str):
+        assert namespace == "foo"
+        return client.existing_claims
+
+    calls = 0
+
+    async def delete_claim(claim: object) -> None:
+        nonlocal calls
+        calls += 1
+        client.released.append(claim.metadata.name)
+        if calls == 1:
+            raise RuntimeError("delete rejected")
+
+    client.list_claims = list_claims
+    client.delete_claim = delete_claim
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
+
+    sandbox = await Pool(fleet_pool()).claim(name="claim-1")
+
+    assert len(client.claims) == 1
+    assert sandbox.claim_name == "claim-1"
+    await sandbox.close()
 
 
 @pytest.mark.asyncio

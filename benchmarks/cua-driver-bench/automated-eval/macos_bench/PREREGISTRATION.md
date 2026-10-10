@@ -1084,6 +1084,15 @@ A probe whose smoke shows a harness or app defect is fixed. The fix and its reas
 |---|---|---|---|---|
 | v2s1 | IR-01, IR-02, IR-03, IR-04, CDB-G04; 1 run each (`--smoke --bench-v2`) | AX (`cc-cua-driver-script`), B (`cc-codex-cu`, 26.930), `cc-claude-cu-helper` | `815dfd96a10c` (#4935, #4936; AX binary `d15b330db1f6`, A binary `33b85a6e3d2b`, skill tree `11cf6b720c31`); VM `cdb-v2`, a clone of `cdb-claudecu` | 2026-10-10T13:15Z |
 
+**Smoke v2s1 outcome (recorded 10 Oct 2026 after it ran; validation only, not analysed).**
+
+* **The run:** 15 trials, 0 infrastructure exclusions, seat 4, VM `cdb-v2`.
+* **IR probes:** every probe worked in every setup. The interruption was shown in 12/12 trials and handled in 12/12; 11/12 trials passed. IR-02 in arm B was not exercised: Apply came less than 300 ms after the banner. The helper failed to complete IR-04, though it handled the overlay.
+* **GUI-only guard:** no violations, no transient side doors and no mentions.
+* **Background score:** measured in 15/15 trials. In CDB-G04 the witness stayed frontmost for Cua Driver and Codex (0 focus steals), but both raised windows over it without activating: 2 and 11 raise episodes. The helper had 24 focus steals.
+* **No harness or app defect was found**, so no probe changes.
+* **Open question for the owner, before any scored v2 run:** each setup's own overlay window counts as a raised window under A14.4 as written. The two overlays seen are "Cua Driver Bench Script" (the agent cursor) and "ChatGPT Computer Use". Whether to exclude a setup's own overlay is to be decided in a new amendment line before the first scored trial. Until then the rule above stands.
+
 ### A14.9 Rename: `run_actions` is now `run_steps` (no protocol change)
 
 Folded in from the pending amendment note. Before 0.35.0, Cua Driver's `run_actions` tool was renamed `run_steps` (trycua/cua#4935). `run_actions` stays a hidden alias that adds a deprecation note. The AX addendum in `claude_arms.RUN_SCRIPT_ADDENDUM` now says `run_steps`, and `tools/analyze_v035.py` counts both names. Earlier runs and reports keep `run_actions`.

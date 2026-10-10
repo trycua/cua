@@ -456,3 +456,32 @@ class TestEvaluatorRewardFailClosed:
         result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
         assert result.success is False
         assert result.error is not None
+
+    @pytest.mark.asyncio
+    async def test_setup_only_cannot_claim_success_even_if_evaluator_would_pass(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        calls = {"evaluated": False, "closed": False}
+
+        class AlreadySatisfied:
+            evaluate_task_fn = object()
+            solve_task_fn = None
+
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+
+            async def evaluate(self):
+                calls["evaluated"] = True
+                return 1.0
+
+            async def close(self):
+                calls["closed"] = True
+
+        monkeypatch.setattr(runners, "make", lambda *args, **kwargs: AlreadySatisfied())
+        result = await runners.run_single_task(tmp_path)
+        assert result.success is False
+        assert result.reward == 0.0
+        assert "No agent_fn" in result.error
+        assert calls["evaluated"] is False
+        assert calls["closed"] is True

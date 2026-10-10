@@ -3,6 +3,15 @@
 pub mod nsworkspace;
 
 use anyhow::Context;
+use core_foundation::{
+    base::{CFType, TCFType},
+    boolean::CFBoolean,
+    data::CFData,
+    dictionary::CFDictionary,
+    number::{CFNumber, CFNumberIsFloatType},
+    propertylist::{create_with_data, kCFPropertyListImmutable},
+    string::CFString,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::c_void,
@@ -131,23 +140,10 @@ fn bundle_root_of_executable(path: &str) -> Option<&str> {
 /// `NSApplicationActivationPolicyRegular` filter, read from the bundle instead
 /// of from AppKit's cache.
 fn is_background_bundle(app_path: &str) -> bool {
-    let plist = format!("{app_path}/Contents/Info.plist");
-    for key in ["LSUIElement", "LSBackgroundOnly"] {
-        let out = Command::new("/usr/bin/plutil")
-            .args(["-extract", key, "raw", "-o", "-", &plist])
-            .output();
-        if let Ok(out) = out {
-            if out.status.success() {
-                let raw = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
-                // The key is written as both a boolean and a "1"/"0" string in
-                // the wild; plutil renders the boolean as true/false.
-                if raw == "1" || raw == "true" {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    let path = std::path::Path::new(app_path).join("Contents/Info.plist");
+    read_bundle_plist(&path).is_some_and(|plist| {
+        plist_flag(&plist, "LSUIElement") || plist_flag(&plist, "LSBackgroundOnly")
+    })
 }
 
 /// Where a user-launchable application lives. Mirrors the roots
@@ -686,23 +682,9 @@ pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
 }
 
 /// Read `CFBundleIdentifier` from an `.app` bundle's `Info.plist`.
-/// Falls back to shelling out to `plutil` (already used elsewhere in
-/// this file) to avoid pulling in a plist crate just for this.
 fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
-    let plist = format!("{app_path}/Contents/Info.plist");
-    let out = Command::new("/usr/bin/plutil")
-        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-", &plist])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let bid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if bid.is_empty() {
-        None
-    } else {
-        Some(bid)
-    }
+    let path = std::path::Path::new(app_path).join("Contents/Info.plist");
+    plist_string(&read_bundle_plist(&path)?, "CFBundleIdentifier")
 }
 
 /// Return all apps: running apps merged with installed-but-not-running apps.
@@ -873,68 +855,61 @@ fn fs_last_used(path: &std::path::Path) -> Option<String> {
     cua_driver_core::timestamp::unix_secs_to_rfc3339(duration.as_secs() as i64)
 }
 
-fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
-    let bundle_id_out = Command::new("plutil")
-        .args([
-            "-extract",
-            "CFBundleIdentifier",
-            "raw",
-            "-o",
-            "-",
-            plist_path.to_str()?,
-        ])
-        .output()
-        .ok()?;
-    if !bundle_id_out.status.success() {
-        return None;
-    }
-    let bundle_id = String::from_utf8_lossy(&bundle_id_out.stdout)
-        .trim()
-        .to_string();
-    if bundle_id.is_empty() {
-        return None;
-    }
+/// Decode XML or binary bundle metadata without launching a process per key.
+fn read_bundle_plist(path: &std::path::Path) -> Option<CFDictionary> {
+    let bytes = std::fs::read(path).ok()?;
+    let (plist, _) =
+        create_with_data(CFData::from_buffer(&bytes), kCFPropertyListImmutable).ok()?;
+    // The Create API transfers ownership; the checked downcast rejects a
+    // valid plist whose root is not a dictionary.
+    unsafe { CFType::wrap_under_create_rule(plist) }.downcast_into::<CFDictionary>()
+}
 
-    let name_out = Command::new("plutil")
-        .args([
-            "-extract",
-            "CFBundleDisplayName",
-            "raw",
-            "-o",
-            "-",
-            plist_path.to_str()?,
-        ])
-        .output()
-        .ok();
-    let name = name_out
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
+fn plist_value(plist: &CFDictionary, key: &str) -> Option<CFType> {
+    let key = CFString::new(key);
+    let value = plist.find(key.as_concrete_TypeRef() as *const c_void)?;
+    // Retain the borrowed value before the dictionary can be dropped.
+    Some(unsafe { CFType::wrap_under_get_rule(*value) })
+}
+
+fn plist_string(plist: &CFDictionary, key: &str) -> Option<String> {
+    let value = plist_value(plist, key)?.downcast::<CFString>()?;
+    let value = value.to_string().trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn plist_flag(plist: &CFDictionary, key: &str) -> bool {
+    let Some(value) = plist_value(plist, key) else {
+        return false;
+    };
+    if let Some(value) = value.downcast::<CFBoolean>() {
+        return bool::from(value);
+    }
+    if let Some(value) = value.downcast::<CFNumber>() {
+        return unsafe { CFNumberIsFloatType(value.as_concrete_TypeRef()) == 0 }
+            && value.to_i64() == Some(1);
+    }
+    // Agent flags also occur as "1"/"0" and "true"/"false" strings.
+    value.downcast::<CFString>().is_some_and(|value| {
+        let raw = value.to_string();
+        let raw = raw.trim();
+        raw == "1" || raw.eq_ignore_ascii_case("true")
+    })
+}
+
+fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
+    let plist = read_bundle_plist(plist_path)?;
+    let bundle_id = plist_string(&plist, "CFBundleIdentifier")?;
+    let name = plist_string(&plist, "CFBundleDisplayName")
+        .or_else(|| plist_string(&plist, "CFBundleName"))
         .unwrap_or_else(|| {
-            // Fallback: CFBundleName.
-            Command::new("plutil")
-                .args([
-                    "-extract",
-                    "CFBundleName",
-                    "raw",
-                    "-o",
-                    "-",
-                    plist_path.to_str().unwrap_or(""),
-                ])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    plist_path
-                        .parent()
-                        .and_then(|p| p.parent())
-                        .and_then(|p| p.file_stem())
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string()
-                })
+            plist_path
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.file_stem())
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string()
         });
 
     if name.is_empty() {
@@ -1044,6 +1019,149 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
         lines.push(format!("- {} (pid {}){}", app.name, app.pid, bundle));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod plist_tests {
+    use super::{bundle_id_for_app_path, is_background_bundle, read_app_plist, read_bundle_plist};
+    use core_foundation::{
+        base::TCFType,
+        propertylist::{create_data, kCFPropertyListBinaryFormat_v1_0},
+    };
+
+    fn write_plist(root: &std::path::Path, body: &str) -> std::path::PathBuf {
+        let path = root.join("Fixture.app/Contents/Info.plist");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(r#"<?xml version="1.0"?><plist version="1.0">{body}</plist>"#),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn xml_and_binary_bundle_metadata_match() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = write_plist(
+            temp.path(),
+            r#"<dict>
+<key>CFBundleIdentifier</key><string> com.trycua.test </string>
+<key>CFBundleDisplayName</key><string> 测试 &amp; App </string>
+<key>CFBundleName</key><string>Fallback</string>
+<key>LSBackgroundOnly</key><true/>
+</dict>"#,
+        );
+        let dictionary = read_bundle_plist(&path).unwrap();
+        let binary =
+            create_data(dictionary.as_CFTypeRef(), kCFPropertyListBinaryFormat_v1_0).unwrap();
+
+        for bytes in [std::fs::read(&path).unwrap(), binary.bytes().to_vec()] {
+            std::fs::write(&path, bytes).unwrap();
+            let app = read_app_plist(&path).unwrap();
+            assert_eq!(app.name, "测试 & App");
+            assert_eq!(app.bundle_id.as_deref(), Some("com.trycua.test"));
+            assert_eq!(app.pid, 0);
+            assert!(!app.running && !app.active);
+            assert!(app.launch_path.is_none() && app.kind.is_none() && app.last_used.is_none());
+            let bundle = path.parent().unwrap().parent().unwrap().to_str().unwrap();
+            assert_eq!(bundle_id_for_app_path(bundle), app.bundle_id);
+            assert!(is_background_bundle(bundle));
+        }
+    }
+
+    #[test]
+    fn bundle_names_fall_back_and_metadata_is_reread() {
+        let temp = tempfile::tempdir().unwrap();
+        for (display, name, expected) in [
+            ("Display", "Bundle", "Display"),
+            (" \n ", " Bundle ", "Bundle"),
+            ("", "", "Fixture"),
+        ] {
+            let path = write_plist(
+                temp.path(),
+                &format!(
+                    "<dict><key>CFBundleIdentifier</key><string>com.test</string>\
+                     <key>CFBundleDisplayName</key><string>{display}</string>\
+                     <key>CFBundleName</key><string>{name}</string></dict>"
+                ),
+            );
+            assert_eq!(read_app_plist(&path).unwrap().name, expected);
+        }
+        let path = write_plist(
+            temp.path(),
+            "<dict><key>CFBundleIdentifier</key><string>com.changed</string></dict>",
+        );
+        let app = read_app_plist(&path).unwrap();
+        assert_eq!(app.bundle_id.as_deref(), Some("com.changed"));
+        assert_eq!(app.name, "Fixture");
+    }
+
+    #[test]
+    fn background_flags_accept_boolean_number_and_string_forms() {
+        let temp = tempfile::tempdir().unwrap();
+        for key in ["LSUIElement", "LSBackgroundOnly"] {
+            for (value, expected) in [
+                ("<true/>", true),
+                ("<integer>1</integer>", true),
+                ("<string> 1 </string>", true),
+                ("<string> TrUe </string>", true),
+                ("<false/>", false),
+                ("<integer>0</integer>", false),
+                ("<integer>2</integer>", false),
+                ("<real>1.0</real>", false),
+                ("<real>1.5</real>", false),
+                ("<string>false</string>", false),
+                ("<array/>", false),
+                ("<array><string>item</string></array>", false),
+                ("<dict/>", false),
+            ] {
+                let path = write_plist(
+                    temp.path(),
+                    &format!("<dict><key>{key}</key>{value}</dict>"),
+                );
+                let bundle = path.parent().unwrap().parent().unwrap().to_str().unwrap();
+                assert_eq!(is_background_bundle(bundle), expected, "{key}: {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_bundle_metadata_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        for body in [
+            "<dict/>",
+            "<dict><key>CFBundleIdentifier</key><string> </string></dict>",
+            "<dict><key>CFBundleIdentifier</key><integer>1</integer></dict>",
+            "<array/>",
+            "invalid plist",
+        ] {
+            let path = write_plist(temp.path(), body);
+            let bundle = path.parent().unwrap().parent().unwrap().to_str().unwrap();
+            assert!(read_app_plist(&path).is_none(), "{body}");
+            assert!(bundle_id_for_app_path(bundle).is_none(), "{body}");
+            assert!(!is_background_bundle(bundle), "{body}");
+        }
+        let missing = temp.path().join("Missing.app/Contents/Info.plist");
+        assert!(read_app_plist(&missing).is_none());
+        assert!(!is_background_bundle(
+            missing
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        ));
+
+        let path = write_plist(
+            temp.path(),
+            "<dict><key>CFBundleIdentifier</key><string>com.test</string>\
+             <key>CFBundleDisplayName</key><array/>\
+             <key>CFBundleName</key><integer>42</integer></dict>",
+        );
+        assert_eq!(read_app_plist(&path).unwrap().name, "Fixture");
+    }
 }
 
 #[cfg(test)]

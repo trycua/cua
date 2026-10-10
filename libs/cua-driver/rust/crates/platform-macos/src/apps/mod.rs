@@ -647,6 +647,23 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
     }
 }
 
+/// Filesystem path of the bundle LaunchServices currently associates with
+/// `bundle_id`, or `None` when no registered app owns it.
+///
+/// Only for apps that live on an ordinary filesystem path (such as Cua
+/// Driver's own bundle). Launching system apps should keep going through
+/// [`resolve_bundle_id_to_locator`], which preserves the live `NSURL`.
+pub fn registered_application_path(bundle_id: &str) -> Option<std::path::PathBuf> {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::NSString;
+    unsafe {
+        let ws = NSWorkspace::sharedWorkspace();
+        let url = ws.URLForApplicationWithBundleIdentifier(&NSString::from_str(bundle_id))?;
+        url.path()
+            .map(|path| std::path::PathBuf::from(path.to_string()))
+    }
+}
+
 /// Mirror of Swift's `AppLauncher.locate(name:)`.
 ///
 /// 1. filesystem lookup by bundle filename in the canonical roots

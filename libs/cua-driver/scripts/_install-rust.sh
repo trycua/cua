@@ -157,8 +157,15 @@ REQUIRE_SIGNATURE="${CUA_DRIVER_RS_REQUIRE_SIGNATURE:-0}"
 # Identical to the Swift driver's CuaDriver.app + com.trycua.driver
 # pair — the Rust port replaces the Swift install at this path,
 # preserving TCC grants (they're keyed on bundle id, which we share).
+#
+# The bundle goes to /Applications when the user can write there (the admin
+# default). Non-admin users cannot, so the installer falls back to
+# ~/Applications; see macos_app_install_dir below. The runtime resolves its
+# own bundle location, so both layouts behave the same after install.
 APP_NAME="CuaDriver.app"
-APP_DEST="/Applications/$APP_NAME"
+SYSTEM_APP_DIR="/Applications"
+USER_APP_DIR="$HOME/Applications"
+APP_DEST="$SYSTEM_APP_DIR/$APP_NAME"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -192,6 +199,25 @@ err() { printf 'error: %s\n' "$*" >&2; }
 # The integer "version" of a GNOME helper metadata.json, or nothing.
 helper_metadata_version() {
     sed -n 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1 || true
+}
+
+# Print the directory the macOS app bundle should be installed into.
+# /Applications when it is writable, so admin installs are unchanged.
+# Otherwise the per-user Applications folder, created if needed, which
+# LaunchServices and Spotlight index like /Applications. Fails only when
+# neither location can be written.
+macos_app_install_dir() {
+    local system_dir="$1"
+    local user_dir="$2"
+
+    if [[ -d "$system_dir" && -w "$system_dir" ]]; then
+        printf '%s' "$system_dir"
+        return 0
+    fi
+    if ! mkdir -p "$user_dir" 2>/dev/null || [[ ! -w "$user_dir" ]]; then
+        return 1
+    fi
+    printf '%s' "$user_dir"
 }
 
 # Return the source form of an app's designated code-signing requirement.
@@ -1207,9 +1233,10 @@ else
     rm -f "$HOME_DIR/.telemetry_install_channel"
 fi
 
-# macOS: install the .app to /Applications first, then symlink the
+# macOS: install the .app to /Applications (or ~/Applications when
+# /Applications is not writable) first, then symlink the
 # bin into the bundle so `~/.local/bin/cua-driver` resolves into
-# `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. The
+# `<Applications>/CuaDriver.app/Contents/MacOS/cua-driver`. The
 # `realpath` walk in `is_executable_inside_cuadriver_app()` keys on
 # that resolved path to know whether the auto-relaunch heuristic
 # should fire. Same path and same bundle id as the Swift `cua-driver`
@@ -1245,10 +1272,17 @@ if [[ "$OS" == "Darwin" ]]; then
 fi
 DAEMONS_STOPPED_BEFORE_SWAP=0
 if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
-    if [[ ! -w "/Applications" ]]; then
-        err "/Applications is not writable. Re-run this installer in a shell where it is, or grant write access."
-        err "  Without the .app bundle, \`cua-driver-rs mcp\` from an IDE terminal will not auto-relaunch into a TCC-correct daemon."
+    if ! APP_INSTALL_DIR="$(macos_app_install_dir "$SYSTEM_APP_DIR" "$USER_APP_DIR")"; then
+        err "neither $SYSTEM_APP_DIR nor $USER_APP_DIR is writable, so $APP_NAME cannot be installed."
+        err "  Without the .app bundle, \`cua-driver mcp\` from an IDE terminal will not auto-relaunch into a TCC-correct daemon."
         exit 1
+    fi
+    APP_DEST="$APP_INSTALL_DIR/$APP_NAME"
+    if [[ "$APP_INSTALL_DIR" != "$SYSTEM_APP_DIR" ]]; then
+        log "$SYSTEM_APP_DIR is not writable by this user; installing $APP_NAME into $APP_INSTALL_DIR"
+        if [[ -e "$SYSTEM_APP_DIR/$APP_NAME" ]]; then
+            log "note: the existing $SYSTEM_APP_DIR/$APP_NAME is left unchanged; $BIN_LINK will use $APP_DEST"
+        fi
     fi
     if ! command -v codesign >/dev/null 2>&1; then
         err "codesign is required to verify the macOS release app safely"
@@ -1607,7 +1641,7 @@ case "$(uname -s)" in
     Darwin)
         echo ""
         echo "macOS TCC: grant Accessibility + Screen Recording on first run:"
-        echo "  open -n -g -a CuaDriver --args serve"
+        echo "  open -n -g \"$APP_DEST\" --args serve"
         echo "  $BIN_LINK check_permissions"
         ;;
     Linux)

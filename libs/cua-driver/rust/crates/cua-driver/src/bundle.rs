@@ -6,6 +6,8 @@
 //! without a mutable "active version" switch.
 
 use std::path::Path;
+#[cfg(any(target_os = "macos", test))]
+use std::path::PathBuf;
 
 pub const RELEASE_CLI_NAME: &str = "cua-driver";
 pub const LOCAL_CLI_NAME: &str = "cua-driver-local";
@@ -85,9 +87,78 @@ pub fn app_name() -> &'static str {
     }
 }
 
+/// Path of the installed app bundle for this product.
+///
+/// Resolved at runtime because the bundle is not always in `/Applications`:
+/// the installer falls back to `~/Applications` for users who cannot write to
+/// `/Applications`. See [`resolve_app_bundle_path`] for the lookup order.
 #[cfg(target_os = "macos")]
 pub fn app_bundle_path() -> String {
-    format!("/Applications/{}.app", app_name())
+    let current_exe = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok());
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from);
+    resolve_app_bundle_path(
+        current_exe.as_deref(),
+        app_name(),
+        home.as_deref(),
+        |path| path.is_dir(),
+        || platform_macos::apps::registered_application_path(bundle_id()),
+    )
+    .to_string_lossy()
+    .into_owned()
+}
+
+/// The `<app_name>.app` bundle that contains `executable`, if any.
+///
+/// `executable` must already be canonical, so a CLI symlink such as
+/// `~/.local/bin/cua-driver` has been resolved into the bundle it points at.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn bundle_containing_executable(executable: &Path, app_name: &str) -> Option<PathBuf> {
+    let macos_dir = executable.parent()?;
+    let contents_dir = macos_dir.parent()?;
+    let bundle = contents_dir.parent()?;
+    let expected = format!("{app_name}.app");
+    (macos_dir.file_name()? == "MacOS"
+        && contents_dir.file_name()? == "Contents"
+        && bundle.file_name()? == expected.as_str())
+    .then(|| bundle.to_path_buf())
+}
+
+/// Resolve the app bundle path, in order:
+///
+/// 1. the bundle that contains the running executable, so every relaunch
+///    (daemon, permission host) targets the copy that is actually running;
+/// 2. `/Applications/<app>.app`, then `~/Applications/<app>.app`;
+/// 3. the bundle LaunchServices has registered for the bundle identifier;
+/// 4. `/Applications/<app>.app` as the documented default, so error messages
+///    still name a concrete location when nothing is installed.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn resolve_app_bundle_path(
+    current_exe: Option<&Path>,
+    app_name: &str,
+    home: Option<&Path>,
+    is_bundle: impl Fn(&Path) -> bool,
+    registered: impl FnOnce() -> Option<PathBuf>,
+) -> PathBuf {
+    if let Some(bundle) = current_exe.and_then(|exe| bundle_containing_executable(exe, app_name)) {
+        return bundle;
+    }
+    let bundle_name = format!("{app_name}.app");
+    let system = Path::new("/Applications").join(&bundle_name);
+    let user = home.map(|home| home.join("Applications").join(&bundle_name));
+    if let Some(found) = std::iter::once(system.clone())
+        .chain(user)
+        .find(|candidate| is_bundle(candidate))
+    {
+        return found;
+    }
+    registered()
+        .filter(|path| path.file_name() == Some(std::ffi::OsStr::new(&bundle_name)))
+        .filter(|path| is_bundle(path))
+        .unwrap_or(system)
 }
 
 pub fn bundle_id() -> &'static str {
@@ -142,6 +213,105 @@ mod tests {
             "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
         )));
         assert!(!path_is_local(Path::new("/tmp/cua-driver-local-test")));
+    }
+
+    fn no_registration() -> Option<PathBuf> {
+        None
+    }
+
+    #[test]
+    fn running_bundle_wins_over_every_fixed_location() {
+        let exe = Path::new("/Users/alice/Applications/CuaDriver.app/Contents/MacOS/cua-driver");
+        let resolved = resolve_app_bundle_path(
+            Some(exe),
+            RELEASE_APP_NAME,
+            Some(Path::new("/Users/alice")),
+            |_| true,
+            || panic!("LaunchServices must not be consulted when the running bundle is known"),
+        );
+        assert_eq!(
+            resolved,
+            PathBuf::from("/Users/alice/Applications/CuaDriver.app")
+        );
+    }
+
+    #[test]
+    fn executable_outside_the_product_bundle_is_not_a_bundle() {
+        for exe in [
+            "/Users/alice/.cargo/bin/cua-driver",
+            "/Applications/Other.app/Contents/MacOS/cua-driver",
+            "/Applications/CuaDriver.app/Contents/Resources/cua-driver",
+            "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
+        ] {
+            assert_eq!(
+                bundle_containing_executable(Path::new(exe), RELEASE_APP_NAME),
+                None,
+                "{exe}"
+            );
+        }
+        assert_eq!(
+            bundle_containing_executable(
+                Path::new("/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local"),
+                LOCAL_APP_NAME
+            ),
+            Some(PathBuf::from("/Applications/CuaDriverLocal.app"))
+        );
+    }
+
+    #[test]
+    fn system_applications_is_preferred_over_the_user_folder() {
+        let resolved = resolve_app_bundle_path(
+            Some(Path::new("/usr/local/bin/cua-driver")),
+            RELEASE_APP_NAME,
+            Some(Path::new("/Users/alice")),
+            |_| true,
+            no_registration,
+        );
+        assert_eq!(resolved, PathBuf::from("/Applications/CuaDriver.app"));
+    }
+
+    #[test]
+    fn user_applications_is_used_when_only_it_has_the_bundle() {
+        let resolved = resolve_app_bundle_path(
+            None,
+            RELEASE_APP_NAME,
+            Some(Path::new("/Users/alice")),
+            |path| path == Path::new("/Users/alice/Applications/CuaDriver.app"),
+            no_registration,
+        );
+        assert_eq!(
+            resolved,
+            PathBuf::from("/Users/alice/Applications/CuaDriver.app")
+        );
+    }
+
+    #[test]
+    fn launchservices_registration_is_used_only_for_an_existing_product_bundle() {
+        let elsewhere = PathBuf::from("/Volumes/Tools/CuaDriver.app");
+        let resolved = resolve_app_bundle_path(
+            None,
+            RELEASE_APP_NAME,
+            Some(Path::new("/Users/alice")),
+            |path| path == elsewhere.as_path(),
+            || Some(elsewhere.clone()),
+        );
+        assert_eq!(resolved, elsewhere);
+
+        let wrong_name = resolve_app_bundle_path(
+            None,
+            RELEASE_APP_NAME,
+            None,
+            |_| false,
+            || Some(PathBuf::from("/Volumes/Tools/Renamed.app")),
+        );
+        assert_eq!(wrong_name, PathBuf::from("/Applications/CuaDriver.app"));
+    }
+
+    #[test]
+    fn nothing_installed_falls_back_to_the_documented_default() {
+        let resolved =
+            resolve_app_bundle_path(None, LOCAL_APP_NAME, None, |_| false, no_registration);
+        assert_eq!(resolved, PathBuf::from("/Applications/CuaDriverLocal.app"));
     }
 
     #[cfg(target_os = "windows")]

@@ -163,14 +163,14 @@ impl FocusRestore {
                 pointer_left_alone(prior.cursor, target, current)
             })
         };
-        let restored = if let Some(window) = focus_to_restore(
+        let plan = if let Some(window) = focus_to_restore(
             prior.target,
             prior.window,
             target_active,
             |window| crate::wayland::hyprland::window_for_address(window).is_some(),
             pointer_unmoved,
         ) {
-            crate::wayland::hyprland::restore_focus_to_window(window).map(|()| Some(window))
+            HandBack::Window(window)
         } else if let Some(workspace) = workspace_to_restore(
             prior.window,
             prior.workspace,
@@ -182,25 +182,20 @@ impl FocusRestore {
                     .flatten()
             },
         ) {
-            crate::wayland::hyprland::restore_workspace(workspace).map(|()| None)
+            HandBack::Workspace(workspace)
         } else {
             tracing::debug!("browser setup or consent left focus where the person has it");
             return;
         };
-        let result = restored.and_then(|window| {
-            crate::wayland::hyprland::move_cursor(prior.cursor.0, prior.cursor.1)?;
-            // With follow-mouse focus the pointer move can itself refocus
-            // whatever lies under it; say so rather than claim a restore.
-            let now = crate::wayland::hyprland::active_window_address()?;
-            if window.is_some() && now != window {
-                anyhow::bail!("focus moved again after the pointer was restored");
-            }
-            Ok(())
-        });
-        match result {
-            Ok(()) => {
+        match hand_back(plan, prior.cursor, &mut HyprlandHandBack) {
+            Ok(HandBackOutcome::Restored) => {
                 tracing::info!("restored prior focus and pointer after browser setup or consent")
             }
+            Ok(HandBackOutcome::FocusStayed { realigned }) => tracing::warn!(
+                realigned,
+                "Hyprland accepted the focus hand-back but keyboard focus stayed; the \
+                 visible workspace was returned to the focused window"
+            ),
             Err(error) => {
                 tracing::warn!(%error, "could not restore prior focus after browser setup or consent")
             }
@@ -210,6 +205,102 @@ impl FocusRestore {
     pub(crate) fn restore_on_drop(&self) -> RestoreFocusOnDrop {
         RestoreFocusOnDrop(self.clone())
     }
+}
+
+enum HandBack {
+    Window(u64),
+    Workspace(i64),
+}
+
+#[derive(Debug, PartialEq)]
+enum HandBackOutcome {
+    Restored,
+    FocusStayed { realigned: bool },
+}
+
+/// The compositor operations a hand-back needs, separable for tests.
+trait HandBackOps {
+    fn focus_window(&mut self, address: u64) -> anyhow::Result<()>;
+    fn show_workspace(&mut self, id: i64) -> anyhow::Result<()>;
+    fn move_pointer(&mut self, at: (f64, f64)) -> anyhow::Result<()>;
+    fn active_window(&mut self) -> anyhow::Result<Option<u64>>;
+    fn window_workspace(&mut self, address: u64) -> Option<i64>;
+    fn visible_workspace(&mut self) -> Option<i64>;
+    fn settle(&mut self);
+}
+
+struct HyprlandHandBack;
+
+impl HandBackOps for HyprlandHandBack {
+    fn focus_window(&mut self, address: u64) -> anyhow::Result<()> {
+        crate::wayland::hyprland::restore_focus_to_window(address)
+    }
+    fn show_workspace(&mut self, id: i64) -> anyhow::Result<()> {
+        crate::wayland::hyprland::restore_workspace(id)
+    }
+    fn move_pointer(&mut self, at: (f64, f64)) -> anyhow::Result<()> {
+        crate::wayland::hyprland::move_cursor(at.0, at.1)
+    }
+    fn active_window(&mut self) -> anyhow::Result<Option<u64>> {
+        crate::wayland::hyprland::active_window_address()
+    }
+    fn window_workspace(&mut self, address: u64) -> Option<i64> {
+        crate::wayland::hyprland::window_workspace(address)
+    }
+    fn visible_workspace(&mut self) -> Option<i64> {
+        crate::wayland::hyprland::single_output_workspace()
+            .ok()
+            .flatten()
+    }
+    fn settle(&mut self) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Hand focus back and prove it. A dispatcher's `ok` is not focus: on
+/// Hyprland 0.56 a window focus was observed to switch the visible workspace
+/// while keyboard focus stayed on the browser, leaving the person typing
+/// into a window they could not see. When focus does not follow, put the
+/// visible workspace back under the focused window instead, and never move
+/// the pointer on an unproven restore.
+fn hand_back(
+    plan: HandBack,
+    pointer: (f64, f64),
+    ops: &mut impl HandBackOps,
+) -> anyhow::Result<HandBackOutcome> {
+    let expected = match plan {
+        HandBack::Window(window) => {
+            ops.focus_window(window)?;
+            Some(window)
+        }
+        HandBack::Workspace(id) => {
+            ops.show_workspace(id)?;
+            None
+        }
+    };
+    let mut active = ops.active_window()?;
+    for _ in 0..10 {
+        if expected.is_none() || active == expected {
+            break;
+        }
+        ops.settle();
+        active = ops.active_window()?;
+    }
+    if expected.is_some() && active != expected {
+        let focused_workspace = active.and_then(|window| ops.window_workspace(window));
+        let realigned = match focused_workspace {
+            Some(id) if ops.visible_workspace() != Some(id) => ops.show_workspace(id).is_ok(),
+            _ => false,
+        };
+        return Ok(HandBackOutcome::FocusStayed { realigned });
+    }
+    ops.move_pointer(pointer)?;
+    // With follow-mouse focus the pointer move can itself refocus whatever
+    // lies under it; say so rather than claim a restore.
+    if expected.is_some() && ops.active_window()? != expected {
+        anyhow::bail!("focus moved again after the pointer was restored");
+    }
+    Ok(HandBackOutcome::Restored)
 }
 
 /// Ends a setup transaction on every path, including errors and panics.
@@ -1511,6 +1602,95 @@ mod tests {
         assert!(handle.foregrounded_window);
         assert!(handle.injected_global_input);
         assert!(handle.owned_setup_tab.is_none());
+    }
+
+    #[derive(Default)]
+    struct FakeHandBack {
+        active: Option<u64>,
+        follows_focus: bool,
+        visible: Option<i64>,
+        workspaces: HashMap<u64, i64>,
+        log: Vec<String>,
+    }
+
+    impl HandBackOps for FakeHandBack {
+        fn focus_window(&mut self, address: u64) -> anyhow::Result<()> {
+            self.log.push(format!("focus {address:x}"));
+            // Hyprland switches to the window's workspace either way.
+            self.visible = self.workspaces.get(&address).copied();
+            if self.follows_focus {
+                self.active = Some(address);
+            }
+            Ok(())
+        }
+        fn show_workspace(&mut self, id: i64) -> anyhow::Result<()> {
+            self.log.push(format!("workspace {id}"));
+            self.visible = Some(id);
+            Ok(())
+        }
+        fn move_pointer(&mut self, at: (f64, f64)) -> anyhow::Result<()> {
+            self.log.push(format!("pointer {} {}", at.0, at.1));
+            Ok(())
+        }
+        fn active_window(&mut self) -> anyhow::Result<Option<u64>> {
+            Ok(self.active)
+        }
+        fn window_workspace(&mut self, address: u64) -> Option<i64> {
+            self.workspaces.get(&address).copied()
+        }
+        fn visible_workspace(&mut self) -> Option<i64> {
+            self.visible
+        }
+        fn settle(&mut self) {}
+    }
+
+    #[test]
+    fn hand_back_proves_focus_before_moving_the_pointer() {
+        let (chrome, t3) = (0x55fe0d6b8140, 0x55fe0d713130);
+        let workspaces = HashMap::from([(chrome, 5), (t3, 1)]);
+        let mut ops = FakeHandBack {
+            active: Some(chrome),
+            follows_focus: true,
+            visible: Some(5),
+            workspaces: workspaces.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Window(t3), (942.0, 1047.0), &mut ops).unwrap(),
+            HandBackOutcome::Restored
+        );
+        assert_eq!(ops.log, ["focus 55fe0d713130", "pointer 942 1047"]);
+
+        // Observed live on Hyprland 0.56: `ok`, workspace 1 shown, keyboard
+        // focus still on Chrome. Show Chrome's workspace again; leave the
+        // pointer alone.
+        let mut ops = FakeHandBack {
+            active: Some(chrome),
+            follows_focus: false,
+            visible: Some(5),
+            workspaces,
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Window(t3), (942.0, 1047.0), &mut ops).unwrap(),
+            HandBackOutcome::FocusStayed { realigned: true }
+        );
+        assert_eq!(ops.log, ["focus 55fe0d713130", "workspace 5"]);
+        assert_eq!(ops.visible, Some(5));
+    }
+
+    #[test]
+    fn hand_back_of_an_empty_workspace_restores_the_pointer_after_showing_it() {
+        let mut ops = FakeHandBack {
+            active: Some(0x55fe0d6b8140),
+            visible: Some(5),
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Workspace(1), (10.0, 20.0), &mut ops).unwrap(),
+            HandBackOutcome::Restored
+        );
+        assert_eq!(ops.log, ["workspace 1", "pointer 10 20"]);
     }
 
     #[test]

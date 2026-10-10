@@ -11,7 +11,11 @@ plus a tighter, softer glow so they remain legible without competing with it.
 Every semantic state inherits the same gentle levitation and rotation as the
 idle pointer, with its action-specific motion layered on top. The pointer and
 semantic mark therefore move as one visual unit.
-Reduced-motion mode removes this shared movement. The anonymous/default cursor
+The macOS, Windows, X11, and Wayland overlays keep rendering frames while a
+visible cursor rests, so the levitation continues until the idle fade hides it.
+A cursor set never to hide (`idle_hide_ms` 0) rests still instead, so the
+overlay stops rendering once activity settles. Reduced-motion mode removes this
+shared movement and lets the overlay stop rendering while the cursor is still. The anonymous/default cursor
 uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.
@@ -69,8 +73,24 @@ cua-driver set_agent_cursor_theme \
 cua-driver get_agent_cursor_state '{"session":"demo"}'
 ```
 
-`set_agent_cursor_motion` changes only movement physics and visibility timing.
-It does not change artwork. The removed `set_agent_cursor_style` operation and
+`get_agent_cursor_state` always includes `position`. It is `null` until the
+session cursor first moves, then `{"x": ..., "y": ...}`: the screen point the
+cursor tip was last placed on.
+
+Keyboard actions place a named session's cursor before the input.
+`press_key`, `hotkey`, and `type_text` put it on the targeted element, else
+at its last position, else at the target window's centre, so a session whose
+first action is a keyboard action shows its cursor on that window. Anonymous
+calls keep their existing cursor behavior.
+
+`set_agent_cursor_motion` changes how the cursor moves and when it hides. It
+does not change artwork. `style` picks the trajectory: `signature_arc` (the
+default), `spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, or `classic`
+(the previous Dubins glide). `timing` is `native` (the style's own), `fitts`
+(scales with distance and target size), or `fixed` (`glide_duration_ms`, 1430
+ms when 0). `effects` turns `trail`, `glow`, `magnet`, `ripple`, and `squish`
+on or off; null restores the style's default. From a shell, `cua-driver cursor
+motion --session <label> --style magnetic` sets the same fields. The removed `set_agent_cursor_style` operation and
 its `cursor_id`, shape, color, label, size, opacity, image-path, gradient, and
 bloom styling fields are not accepted. Input-delivery tools may still use
 `cursor_id` to name a virtual pointer; it does not select cursor artwork.
@@ -90,6 +110,14 @@ The same four typed operations are available on `CuaDriver` and
 `StartSessionInput.cursor_theme` may select an installed theme when the session
 is created. `reduced_motion` is `auto`, `on`, or `off`. `auto` follows the host
 accessibility preference where the platform exposes one.
+
+`StartSessionInput.cursor_motion` sets the session's motion (the fields of
+`set_agent_cursor_motion` without `session`) before the cursor is first shown,
+and `start_session` echoes it. A saved default comes from
+`cua-driver config set cursor.motion.style|timing|effects.<name>`. Precedence:
+`set_agent_cursor_motion`, then `start_session.cursor_motion`, then the saved
+default, then the built-in `signature_arc`. Reduced motion wins over all of
+them.
 
 ## Semantic profile
 

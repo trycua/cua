@@ -133,6 +133,8 @@ impl PageBackend for MacOsPageBackend {
   return JSON.stringify({{
     vx: r.left + r.width / 2,
     vy: r.top + r.height / 2,
+    vw: r.width,
+    vh: r.height,
     sx: window.screenX + (window.outerWidth - window.innerWidth) / 2,
     sy: window.screenY + (window.outerHeight - window.innerHeight),
     dpr: window.devicePixelRatio || 1
@@ -154,12 +156,30 @@ impl PageBackend for MacOsPageBackend {
 
         let screen_x = sx + vx * dpr;
         let screen_y = sy + vy * dpr;
+        // Element box in the same space as the click point (optional: an
+        // older probe without vw/vh simply glides without a target rect).
+        let finite = |key: &str| {
+            parsed
+                .get(key)
+                .and_then(serde_json::Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.0)
+        };
+        let target_rect = finite("vw").zip(finite("vh")).map(|(vw, vh)| {
+            let (w, h) = (vw * dpr, vh * dpr);
+            [screen_x - w / 2.0, screen_y - h / 2.0, w, h]
+        });
         let cursor_key = "default".to_owned();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::PinAbove(window_id),
         );
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+        crate::cursor::overlay::animate_cursor_to_target(
+            cursor_key.clone(),
+            screen_x,
+            screen_y,
+            target_rect,
+        )
+        .await;
         self.state
             .cursor_registry
             .update_position(&cursor_key, screen_x, screen_y);
@@ -252,10 +272,14 @@ async fn resolve_cdp_port(pid: i32, cdp_port: Option<u16>, action: &str) -> anyh
              the browser to have been launched with a CDP port on a NON-default profile — \
              Chrome refuses to open --remote-debugging-port on its default data directory \
              (even if you pass --user-data-dir explicitly pointing at that same default \
-             path). Relaunch via launch_app with cdp_debugging_port AND \
-             additional_arguments: [\"--user-data-dir=<some other path>\"], e.g. a \
-             dedicated automation profile — this will not have the user's existing \
-             logins/session. Alternatively, if you already enabled Chrome's own \
+             path). Call browser_prepare instead: profile.mode isolated_new with \
+             allow_launch true starts a driver-owned automation profile (no existing \
+             logins/session), and \
+             strategy.kind existing_profile with this browser's pid and window_id drives \
+             the browser's own remote-debugging toggle under explicit approval when the \
+             authenticated profile is required. Do not relaunch \
+             with remote-debugging flags through launch_app — it refuses them, so that \
+             route cannot succeed. Alternatively, if you already enabled Chrome's own \
              remote-debugging toggle for this profile (chrome://inspect/#remote-debugging), \
              pass that port explicitly via cdp_port — auto-discovery can't confirm it."
         )
@@ -267,7 +291,7 @@ async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u64) -> anyh
     if BrowserJs::supports(bundle_id) {
         let window_id = u32::try_from(window_id)
             .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
-        return BrowserJs::execute(js, bundle_id, window_id).await;
+        return BrowserJs::execute(js, bundle_id, pid, window_id).await;
     }
     let is_electron = tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?;
     if is_electron {

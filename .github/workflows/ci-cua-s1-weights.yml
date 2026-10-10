@@ -1,0 +1,453 @@
+name: "CI: cua-s1 weights"
+
+# Weights-backed Cua-S1-4B checks on a standard GitHub-hosted Linux runner.
+# The pinned public weights (~9.5 GB, no token) are downloaded from Hugging
+# Face on every run and verified against libs/cua-s1/ci/weights.lock.json.
+# They are deliberately not stored in the Actions cache: the repository's
+# 10 GB cache limit would evict every other workflow's cache.
+on:
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dtype:
+        # bfloat16 uses the runner's AVX512-BF16; float16 has no native CPU
+        # support there and is about 8x slower. float32 weights (18.7 GB)
+        # do not fit in the runner's 16 GB of memory.
+        description: "Torch dtype for CPU inference"
+        required: false
+        type: choice
+        default: bfloat16
+        options:
+          - bfloat16
+          - float16
+  pull_request:
+    paths:
+      - "libs/cua-s1/**"
+      - "libs/cua-driver/examples/jev-use/python/choose_action.py"
+      - "libs/cua-driver/examples/jev-use/python/choose_decision.py"
+      - "libs/cua-driver/examples/jev-use/python/decision_models.py"
+      - "libs/cua-driver/examples/jev-use/python/jev_adapter.py"
+      - "libs/cua-driver/examples/jev-use/verify_decision_cli.py"
+      - "libs/cua-driver/examples/jev-use/fixtures/jev-choice-*"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs"
+      - ".github/workflows/ci-cua-s1-weights.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-s1-weights-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CUA_TELEMETRY_ENABLED: "false"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  PYTHONHASHSEED: "0"
+  WANDB_MODE: disabled
+
+jobs:
+  smoke:
+    name: S1 chooser smoke with pinned weights (CPU, text + multimodal)
+    runs-on: ubuntu-latest
+    # Hosted runners vary: with AVX512-BF16 this takes about 40 minutes; without
+    # it the cold and warm multimodal decisions alone passed 85 minutes.
+    timeout-minutes: 150
+    env:
+      S1_DEVICE: cpu
+      S1_DTYPE: ${{ inputs.dtype || 'bfloat16' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua-s1/python
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Free disk space for the weights and the CUDA-enabled torch wheel
+        working-directory: .
+        run: |
+          set -euo pipefail
+          df -h /
+          # Preinstalled toolchains this job never uses.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+          {
+            echo "S1_MODELS=$RUNNER_TEMP/s1-models"
+            echo "S1_EVIDENCE=$RUNNER_TEMP/s1-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/s1-models" "$RUNNER_TEMP/s1-evidence"
+
+      - name: Record runner hardware
+        working-directory: .
+        run: |
+          set -euo pipefail
+          {
+            echo "cpu_model=$(lscpu | sed -n 's/^Model name: *//p' | head -n1)"
+            echo "nproc=$(nproc)"
+            echo "mem_total_mb=$(free -m | awk '/^Mem:/ {print $2}')"
+            echo "mem_available_mb=$(free -m | awk '/^Mem:/ {print $7}')"
+            flags="$(grep -m1 '^flags' /proc/cpuinfo)"
+            for flag in avx2 avx512f avx512_bf16 amx_bf16 avx512_fp16; do
+              if grep -qw "$flag" <<<"$flags"; then echo "$flag=yes"; else echo "$flag=no"; fi
+            done
+            echo "disk_free=$(df -h / | awk 'NR==2 {print $4}')"
+          } | tee "$S1_EVIDENCE/runner.env"
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Install the pinned four-b inference environment
+        run: uv sync --frozen --extra four-b
+
+      - name: Download and verify the pinned weights
+        run: |
+          set -euo pipefail
+          .venv/bin/python ../ci/fetch_pinned_weights.py --dest "$S1_MODELS" \
+            | tee "$S1_EVIDENCE/weights.json"
+          du -sh "$S1_MODELS"/*
+          df -h /
+
+      - name: Run the documented chooser smoke (cold process per decision)
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+          export S1_BASE_MODEL_PATH="$S1_MODELS/Qwen3.5-4B"
+          export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
+          jev=../../cua-driver/examples/jev-use
+          : > "$S1_EVIDENCE/cold.jsonl"
+          for modality in text multimodal; do
+            for fixture in positive negative; do
+              args=(--model s1)
+              if [[ "$fixture" == negative ]]; then
+                args+=(--fixture negative --expected-id abstain)
+                png="$jev/fixtures/jev-choice-negative-v1.png"
+              else
+                png="$jev/fixtures/jev-choice-request-v1.png"
+              fi
+              if [[ "$modality" == multimodal ]]; then
+                args+=(--screenshot "$png")
+              fi
+              echo "::group::$modality $fixture"
+              timing="$S1_EVIDENCE/cold-$modality-$fixture.time"
+              status=0
+              /usr/bin/time -v -o "$timing" \
+                .venv/bin/python "$jev/verify_decision_cli.py" "${args[@]}" \
+                > "$S1_EVIDENCE/cold-$modality-$fixture.out" || status=$?
+              cat "$S1_EVIDENCE/cold-$modality-$fixture.out"
+              wall="$(sed -n 's/.*Elapsed (wall clock) time (h:mm:ss or m:ss): //p' "$timing")"
+              rss_kb="$(sed -n 's/.*Maximum resident set size (kbytes): //p' "$timing")"
+              jq -nc --arg modality "$modality" --arg fixture "$fixture" \
+                --arg wall "$wall" --argjson rss_kb "${rss_kb:-0}" --argjson status "$status" \
+                --arg out "$(cat "$S1_EVIDENCE/cold-$modality-$fixture.out")" \
+                '{modality: $modality, fixture: $fixture, exit: $status, wall: $wall,
+                  peak_rss_mb: ($rss_kb / 1024 | floor), output: $out}' \
+                >> "$S1_EVIDENCE/cold.jsonl"
+              echo "::endgroup::"
+              if [[ "$status" != 0 ]]; then
+                echo "::error::documented S1 smoke failed: $modality $fixture"
+                exit 1
+              fi
+              grep -Fq '@16818868b0cc7813808aae4e87b417657046ab79:'"$modality" \
+                "$S1_EVIDENCE/cold-$modality-$fixture.out"
+            done
+          done
+
+      - name: Measure warm per-decision latency
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+          export S1_BASE_MODEL_PATH="$S1_MODELS/Qwen3.5-4B"
+          export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
+          for modality in text multimodal; do
+            echo "::group::warm $modality"
+            # Multimodal decisions take minutes on runners without AVX512-BF16.
+            repeats=3
+            [[ "$modality" == multimodal ]] && repeats=1
+            S1_MODALITY="$modality" /usr/bin/time -v -o "$S1_EVIDENCE/warm-$modality.time" \
+              .venv/bin/python ../ci/warm_chooser.py --smoke --repeats "$repeats" \
+              > "$S1_EVIDENCE/warm-$modality.json"
+            cat "$S1_EVIDENCE/warm-$modality.json"
+            echo "::endgroup::"
+          done
+
+      - name: Publish latency and memory summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, statistics
+          from pathlib import Path
+
+          evidence = Path(os.environ["S1_EVIDENCE"])
+          def read(name):
+              path = evidence / name
+              return path.read_text() if path.exists() else ""
+          runner = dict(line.split("=", 1) for line in read("runner.env").splitlines() if "=" in line)
+          print(f"## Cua-S1-4B weights smoke ({os.environ['S1_DEVICE']}, {os.environ['S1_DTYPE']})\n")
+          print(f"Runner: {runner.get('cpu_model', '?')}, {runner.get('nproc', '?')} vCPU, "
+                f"{runner.get('mem_total_mb', '?')} MB RAM; avx512_bf16={runner.get('avx512_bf16', '?')}, "
+                f"amx_bf16={runner.get('amx_bf16', '?')}\n")
+          weights = read("weights.json")
+          if weights:
+              for artifact in json.loads(weights)["artifacts"]:
+                  print(f"- `{artifact['repo_id']}@{artifact['revision'][:12]}`: {artifact['files']} files, "
+                        f"{artifact['bytes'] / 1e9:.2f} GB, downloaded in {artifact['download_s']} s, "
+                        f"verified={artifact['verified']}")
+              print()
+          cold = [json.loads(line) for line in read("cold.jsonl").splitlines() if line.strip()]
+          if cold:
+              print("### Documented smoke (`verify_decision_cli.py --model s1`, one cold process per decision)\n")
+              print("| Modality | Fixture | Result | Wall (load + decision) | Peak RSS |")
+              print("| --- | --- | --- | --- | --- |")
+              for row in cold:
+                  result = row["output"] if row["exit"] == 0 else f"exit {row['exit']}"
+                  print(f"| {row['modality']} | {row['fixture']} | `{result}` | {row['wall']} | {row['peak_rss_mb']} MB |")
+              print()
+          print("### Warm decisions (model resident; `libs/cua-s1/ci/warm_chooser.py --smoke`)\n")
+          print("| Modality | Load | Fixture | Choice | Latency per decision (ms) | Peak RSS |")
+          print("| --- | --- | --- | --- | --- | --- |")
+          for modality in ("text", "multimodal"):
+              raw = read(f"warm-{modality}.json").strip()
+              if not raw:
+                  print(f"| {modality} | not run | | | | |")
+                  continue
+              report = json.loads(raw.splitlines()[-1])
+              for fixture in ("positive", "negative"):
+                  rows = [d for d in report["decisions"] if d["fixture"] == fixture]
+                  latencies = [d["latency_ms"] for d in rows if "latency_ms" in d]
+                  choice = ", ".join(sorted({f"{d.get('selected_id')} ({'ok' if d['ok'] else 'FAIL'})" for d in rows}))
+                  median = statistics.median(latencies) if latencies else "n/a"
+                  print(f"| {modality} | {report['load_s']} s | {fixture} | {choice} | "
+                        f"median {median} (all: {latencies}) | {report['peak_rss_mb']} MB |")
+          PY
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-s1-weights-smoke
+          path: ${{ runner.temp }}/s1-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+  driver-e2e:
+    # Canonical Linux X11 row for the model-backed perception loop: Driver
+    # captures the Electron harness, the published cua-perception extension
+    # parses the capture, Cua-S1-4B chooses one region, Driver clicks it with
+    # the same capture_id inside the 60 s lifetime, the fixture journal
+    # verifies the effect, and stale captures are refused. It runs here, not
+    # in e2e-rust-linux.yml, because it needs the 9.5 GB of pinned weights.
+    name: Linux X11 / S1 + OmniParser capture-loop row
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ github.sha }}
+      CUA_E2E_PERCEPTION_VERSION: "0.2.1"
+      # SHA-256 of cua-perception-0.2.1-x86_64-unknown-linux-gnu.tar.gz as
+      # published; the Driver also verifies the signed catalog.
+      PERCEPTION_ARCHIVE_SHA256: b4d76b626df9ce1a48b8036f7313412525295d0cb818d82ecbe3d9cca5fd1d08
+      S1_DEVICE: cpu
+      S1_DTYPE: ${{ inputs.dtype || 'bfloat16' }}
+      S1_MODALITY: text
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check the runner CPU against the capture-lifetime budget
+        id: cpu
+        run: |
+          set -euo pipefail
+          # Hosted ubuntu-latest VMs vary: some expose AVX512-BF16, some hide
+          # AVX-512 entirely. Without native BF16 a warm Cua-S1-4B text
+          # decision took 50-67 s for the 3-candidate fixture (5.5-7.3 s
+          # with it), so the row cannot decide inside the 60 s capture
+          # lifetime. Record that as a typed limitation instead of a flaky
+          # failure or a vacuous pass; the smoke job still runs.
+          artifacts=artifacts/cua-driver/linux
+          mkdir -p "$artifacts"
+          flags="$(grep -m1 '^flags' /proc/cpuinfo)"
+          cpu_model="$(lscpu | sed -n 's/^Model name: *//p' | head -n1)"
+          echo "cpu_model=$cpu_model nproc=$(nproc) mem_total_mb=$(free -m | awk '/^Mem:/ {print $2}')" \
+            | tee "$artifacts/runner.txt"
+          if grep -qw avx512_bf16 <<<"$flags"; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            reason="This hosted runner ($cpu_model) does not expose AVX512-BF16; CPU bfloat16 Cua-S1-4B decisions take longer than the 60 s capture lifetime there."
+            jq -n --arg reason "$reason" '{
+              schema: "cua-e2e-limitation-v1",
+              platform: "linux",
+              display_server: "x11",
+              harness: "electron",
+              test: "perception-s1-decision-loop",
+              status: "not_covered",
+              reason: $reason
+            }' > "$artifacts/perception-s1-decision-loop-limitation.json"
+            echo "::warning title=S1 row not run::$reason Re-run the job to draw another runner."
+          fi
+
+      - name: Free disk space for the weights, Rust build, and extension
+        if: steps.cpu.outputs.supported == 'true'
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+          {
+            echo "S1_MODELS=$RUNNER_TEMP/s1-models"
+            echo "S1_BASE_MODEL_PATH=$RUNNER_TEMP/s1-models/Qwen3.5-4B"
+            echo "S1_ADAPTER_PATH=$RUNNER_TEMP/s1-models/cua-s1-4b-0.2"
+            echo "CUA_E2E_S1_PYTHON=$GITHUB_WORKSPACE/libs/cua-s1/python/.venv/bin/python"
+            echo "PERCEPTION_DIR=$RUNNER_TEMP/cua-perception"
+          } >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        if: steps.cpu.outputs.supported == 'true'
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        if: steps.cpu.outputs.supported == 'true'
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-s1-perception
+          save-if: ${{ github.event_name == 'schedule' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.cpu.outputs.supported == 'true'
+        with:
+          node-version: "22"
+
+      - name: Install GUI and Rust build dependencies
+        if: steps.cpu.outputs.supported == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
+
+      - name: Set up uv and Python
+        if: steps.cpu.outputs.supported == 'true'
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Install the pinned four-b inference environment
+        if: steps.cpu.outputs.supported == 'true'
+        working-directory: libs/cua-s1/python
+        run: uv sync --frozen --extra four-b
+
+      - name: Download and verify the pinned weights
+        if: steps.cpu.outputs.supported == 'true'
+        run: |
+          set -euo pipefail
+          "$CUA_E2E_S1_PYTHON" libs/cua-s1/ci/fetch_pinned_weights.py --dest "$S1_MODELS"
+          df -h /
+
+      - name: Download the published cua-perception release
+        if: steps.cpu.outputs.supported == 'true'
+        run: |
+          set -euo pipefail
+          tag="cua-perception-v${CUA_E2E_PERCEPTION_VERSION}"
+          stem="cua-perception-${CUA_E2E_PERCEPTION_VERSION}-x86_64-unknown-linux-gnu"
+          # Perception releases are published on trycua/cua; forks have none.
+          base="https://github.com/trycua/cua/releases/download/${tag}"
+          mkdir -p "$PERCEPTION_DIR"
+          cd "$PERCEPTION_DIR"
+          for asset in "${stem}.catalog.json" "${stem}.tar.gz" SHA256SUMS; do
+            curl --fail --silent --show-error --location --retry 3 -o "$asset" "$base/$asset"
+          done
+          grep -E " \*?(${stem}\.catalog\.json|${stem}\.tar\.gz)$" SHA256SUMS | sha256sum --check --strict
+          echo "${PERCEPTION_ARCHIVE_SHA256}  ${stem}.tar.gz" | sha256sum --check --strict
+          echo "CUA_E2E_PERCEPTION_CATALOG=$PERCEPTION_DIR/${stem}.catalog.json" >> "$GITHUB_ENV"
+
+      - name: Run the S1 + OmniParser capture-loop row
+        if: steps.cpu.outputs.supported == 'true'
+        env:
+          CUA_E2E_INTERNAL_LANE: s1-perception
+        run: |
+          set -euo pipefail
+          # The row's anonymous memory (resident model ~8.4 GB, Driver,
+          # Electron, OmniParser worker, recorder) fits in 16 GB. With swap
+          # enabled, the kernel swaps the resident model out while it copies
+          # the weights, and the next decisions page it back in from disk.
+          sudo swapoff -a
+          free -m
+          vmstat -S M 5 > "$RUNNER_TEMP/vmstat.log" &
+          vmstat_pid=$!
+          # Top CPU and memory consumers, to explain any latency outlier.
+          while sleep 15; do
+            date -u +%H:%M:%S
+            ps -eo pcpu,rss,comm --sort=-pcpu | head -n 8
+          done > "$RUNNER_TEMP/top.log" 2>&1 &
+          top_pid=$!
+          trap 'kill "$vmstat_pid" "$top_pid" 2>/dev/null || true' EXIT
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -lc \
+            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
+
+      - name: Publish row summary
+        if: always()
+        run: |
+          set -euo pipefail
+          artifacts=artifacts/cua-driver/linux
+          {
+            echo "## S1 + OmniParser capture-loop row (Linux X11, S1 ${S1_MODALITY} on ${S1_DEVICE}/${S1_DTYPE})"
+            echo
+            if [[ -f "$artifacts/s1-perception/timing.json" ]]; then
+              jq -r '
+                "| Measure | Value |", "| --- | --- |",
+                "| Extension | cua-perception \(.extension.version) (\(.extension.trust)) |",
+                "| S1 checkpoint | `\(.s1.model)` (load \(.s1.load_s) s, resident copy \(.s1.resident_s) s, warm-up decision \(.s1.warmup_ms) ms, anonymous RSS \(.s1.rss_anon_mb) MB) |",
+                "| Regions parsed / candidates | \(.regions_parsed) / \(.candidates) |",
+                "| S1 choice | `\(.selected_id)` \(.selected_text | tojson) (confidence \(.confidence)) |",
+                "| Parse (warm worker) | \(.parse_ms) ms (first parse \(.warm_parse_ms) ms) |",
+                "| S1 decision | \(.s1_decision_ms) ms |",
+                "| Capture age at click | \(.capture_age_at_click_ms) ms of 60000 |",
+                "| Click | \(.click_ms) ms, route \(.click_route) |",
+                "| Fixture oracle | \(.fixture_counter) |"
+              ' "$artifacts/s1-perception/timing.json"
+            elif [[ -f "$artifacts/perception-s1-decision-loop-limitation.json" ]]; then
+              echo "**Not run:** $(jq -r .reason "$artifacts/perception-s1-decision-loop-limitation.json")"
+            else
+              echo "No timing record was produced."
+            fi
+            echo
+            echo "Runner: $(cat "$artifacts/runner.txt" 2>/dev/null || echo unknown)"
+            if [[ -f "$RUNNER_TEMP/vmstat.log" ]]; then
+              min_free="$(awk 'NR>2 {avail=$4+$5+$6; if (min=="" || avail<min) min=avail} END {print min}' "$RUNNER_TEMP/vmstat.log")"
+              echo
+              echo "Lowest free + buffer + cache memory during the row: ${min_free} MB (vmstat, 5 s samples)."
+            fi
+            echo
+            if [[ -f "$artifacts/summary.md" ]]; then
+              cat "$artifacts/summary.md"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp "$RUNNER_TEMP/vmstat.log" "$RUNNER_TEMP/top.log" "$artifacts/" 2>/dev/null || true
+
+      - name: Upload row evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-s1-perception-linux-x11
+          path: artifacts/cua-driver/linux
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 14

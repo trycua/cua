@@ -1,0 +1,6 @@
+#!/bin/sh
+# Chromium as the desktop session starts it. /usr/bin/chromium sources
+# /etc/chromium.d/cua-sandbox, which adds the sandbox flags start-desktop
+# chose for this runtime (none where Chromium's own sandbox works).
+# image.json's launch_app claim uses this.
+exec /usr/bin/chromium "$@"

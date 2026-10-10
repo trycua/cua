@@ -15,7 +15,8 @@ use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use serde_json::Value;
 
 use crate::daemon::TestDaemon;
-use crate::paths::driver_binary;
+use crate::host_state::IsolatedStateRoot;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::{spawn_in_job, ChildReaper};
 
 /// A spawned cua-driver with raw stdio access and no handshake performed.
@@ -23,6 +24,8 @@ use crate::reaper::{spawn_in_job, ChildReaper};
 pub struct RawDriver {
     _reaper: ChildReaper,
     _daemon: Option<TestDaemon>,
+    /// State root for a direct runtime; daemon-backed drivers use the daemon's.
+    _state_root: Option<IsolatedStateRoot>,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -35,9 +38,19 @@ impl RawDriver {
         self._daemon.as_ref().map(|daemon| daemon.pid)
     }
 
+    /// Isolated per-user state root given to the spawned driver, or `None`
+    /// when the caller passed [`crate::SHARE_HOST_STATE`].
+    pub fn state_root(&self) -> Option<&std::path::Path> {
+        self._daemon
+            .as_ref()
+            .and_then(TestDaemon::state_root)
+            .or_else(|| self._state_root.as_ref().map(IsolatedStateRoot::path))
+    }
+
     /// Spawn the driver with piped stdio. Returns `None` (with a skip eprintln)
     /// if the binary isn't built — callers early-return so an un-built binary
-    /// skips rather than fails.
+    /// skips rather than fails, unless `CUA_TEST_REQUIRE_DRIVER_BIN=1` makes a
+    /// missing binary panic.
     pub fn spawn() -> Option<Self> {
         Self::spawn_daemon_backed(driver_binary(), false, &[])
     }
@@ -72,8 +85,7 @@ impl RawDriver {
         overlay_enabled: bool,
         env: &[(&str, &str)],
     ) -> Option<Self> {
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
         let mut reaper = ChildReaper::new();
@@ -88,6 +100,7 @@ impl RawDriver {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        daemon.apply_state_root(&mut command);
         let mut child = spawn_in_job(&mut command)
             .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
             .ok()?;
@@ -97,6 +110,7 @@ impl RawDriver {
         Some(RawDriver {
             _reaper: reaper,
             _daemon: Some(daemon),
+            _state_root: None,
             stdin,
             stdout,
         })
@@ -121,11 +135,13 @@ impl RawDriver {
 
     fn spawn_direct_with_args(args: &[&str]) -> Option<Self> {
         let bin = driver_binary();
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
         let mut reaper = ChildReaper::new();
+        // A direct runtime owns its state just like a daemon, so it receives
+        // the same isolation from the developer's installed-product state.
+        let state_root = IsolatedStateRoot::for_env(&[])?;
         let mut command = Command::new(&bin);
         command
             .args(args)
@@ -133,6 +149,7 @@ impl RawDriver {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        state_root.apply(&mut command);
         let mut child = spawn_in_job(&mut command)
             .inspect_err(|e| eprintln!("[testkit] direct driver spawn failed: {e}"))
             .ok()?;
@@ -142,6 +159,7 @@ impl RawDriver {
         Some(Self {
             _reaper: reaper,
             _daemon: None,
+            _state_root: Some(state_root),
             stdin,
             stdout,
         })

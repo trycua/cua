@@ -1,5 +1,5 @@
 # Cua Docker XFCE Container - Development Version
-# Vanilla XFCE desktop with noVNC and computer-server (from local source)
+# Vanilla XFCE desktop with noVNC and cua-spacesd (from a local build)
 
 FROM ubuntu:22.04
 
@@ -11,7 +11,7 @@ ENV HOME=/home/cua
 ENV DISPLAY=:1
 ENV VNC_PORT=5901
 ENV NOVNC_PORT=6901
-ENV API_PORT=8000
+ENV CUA_ENV_PORT=3211
 ENV VNC_RESOLUTION=1024x768
 ENV VNC_COL_DEPTH=24
 
@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y \
     net-tools \
     netcat \
     supervisor \
-    # Computer-server dependencies
+    # Desktop tooling
     # python-tk/dev for 3.12 will be installed later \
     gnome-screenshot \
     wmctrl \
@@ -122,10 +122,12 @@ RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Copy local computer-server source and install it
-COPY python/computer-server /tmp/computer-server
-RUN uv pip install --system /tmp/computer-server && \
-    rm -rf /tmp/computer-server
+# Copy a locally built cua-spacesd (build context is libs/). Build it with
+#   cargo build --release --manifest-path libs/cua-spacesd/Cargo.toml \
+#     --target x86_64-unknown-linux-gnu -p cua-spacesd
+ARG CUA_SPACESD_TARGET=x86_64-unknown-linux-gnu
+COPY cua-spacesd/target/${CUA_SPACESD_TARGET}/release/cua-spacesd /usr/local/bin/cua-spacesd
+RUN chmod 0755 /usr/local/bin/cua-spacesd && ln -s cua-spacesd /usr/local/bin/cua-env-driver && ln -s cua-spacesd /usr/local/bin/cua-guestd && install -d -o cua -g cua -m 0700 /run/cua
 
 # Install GTK and WebKit dependencies for pywebview
 RUN apt-get update && apt-get install -y \
@@ -148,8 +150,7 @@ RUN uv pip install --system playwright && \
     python3.12 -m playwright install --with-deps firefox
 
 # Install the same released Cua Driver SDK used by the production image. This
-# makes the Python API and bundled executable available without changing the
-# existing computer-server runtime or port contract.
+# makes the Python API and bundled executable available to co-located apps.
 COPY xfce/requirements-cua-driver.txt /tmp/requirements-cua-driver.txt
 RUN uv pip install --system --no-cache-dir \
         -r /tmp/requirements-cua-driver.txt && \
@@ -197,7 +198,7 @@ RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefo
 USER root
 
 # Expose ports
-EXPOSE $VNC_PORT $NOVNC_PORT $API_PORT
+EXPOSE $VNC_PORT $NOVNC_PORT $CUA_ENV_PORT
 
 # Start services via supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

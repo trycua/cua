@@ -1,0 +1,3 @@
+# Written by libs/images/common/vm. make-disk.sh labels the partitions.
+LABEL=cloudimg-rootfs  /          ext4  discard,errors=remount-ro  0 1
+LABEL=UEFI             /boot/efi  vfat  umask=0077,nofail          0 1

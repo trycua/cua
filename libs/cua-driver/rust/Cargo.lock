@@ -170,6 +170,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1198,24 +1204,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-cursor-motion"
+version = "0.34.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cua-driver"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
  "cap-fs-ext",
  "cap-std",
- "core-foundation",
  "cua-driver-contract",
  "cua-driver-core",
  "cua-driver-sdk",
  "cua-driver-testkit",
+ "cua-telemetry",
  "cursor-overlay",
  "embed-resource",
  "flate2",
  "fs2",
- "futures-util",
  "httparse",
  "image",
  "jsonschema",
@@ -1233,7 +1246,6 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
- "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "ureq",
@@ -1244,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1252,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1262,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1281,6 +1293,7 @@ dependencies = [
  "libc",
  "regex",
  "regorus",
+ "rquickjs",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -1299,11 +1312,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-driver-e2e"
+version = "0.34.0"
+dependencies = [
+ "base64",
+ "core-foundation",
+ "cua-driver-contract",
+ "cua-driver-core",
+ "cua-driver-sdk",
+ "cua-driver-testkit",
+ "cursor-overlay",
+ "flate2",
+ "futures-util",
+ "image",
+ "jsonschema",
+ "libc",
+ "platform-linux",
+ "platform-windows",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "windows 0.61.3",
+ "x11rb",
+]
+
+[[package]]
 name = "cua-driver-sdk"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "async-trait",
  "core-foundation",
+ "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",
@@ -1323,22 +1366,28 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
+ "arbitrary",
+ "async-trait",
  "core-foundation",
+ "cua-driver-contract",
+ "cua-driver-core",
  "image",
+ "jsonschema",
  "libc",
  "objc2-app-kit 0.2.2",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "windows 0.61.3",
  "x11rb",
 ]
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1353,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "cua-perception"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "image",
@@ -1367,13 +1416,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-telemetry"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml_edit 0.25.12+spec-1.1.0",
+]
+
+[[package]]
 name = "cursor-overlay"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
+ "cua-cursor-motion",
  "cua-driver-contract",
+ "cua-driver-core",
  "fontdue",
  "image",
+ "indexmap",
  "postcard",
  "serde",
  "serde_json",
@@ -1385,7 +1449,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -2061,6 +2125,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heapless"
@@ -3395,7 +3464,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "serde_json",
 ]
@@ -3453,7 +3522,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3507,7 +3576,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3523,7 +3592,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.2",
  "image",
- "indexmap",
  "libc",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
@@ -3547,7 +3615,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.28.2"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3558,7 +3626,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.2",
  "image",
- "indexmap",
  "keyring",
  "pip-preview",
  "serde",
@@ -3954,6 +4021,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "relative-path"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2a073568cd8b9c4825429d3e9fc5f52851b4f97cc1348800689408921e6b8f8"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3965,6 +4041,35 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rquickjs"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
+dependencies = [
+ "hashbrown 0.17.1",
+ "relative-path",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -4013,9 +4118,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -4037,9 +4142,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -4775,6 +4880,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.3",
 ]
 

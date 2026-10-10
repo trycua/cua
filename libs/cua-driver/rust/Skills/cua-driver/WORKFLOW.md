@@ -35,14 +35,17 @@ These objects are argument fragments for tools advertising `target`, not standal
 
 ## Observe
 
-`get_window_state({pid, window_id})` requests the accessibility tree and a grounding screenshot by default. Check what actually came back: permission, backing-store, or surface-identity failures can leave usable tree data without an image. `screenshot_error` and `screenshot_frame_valid:false` are not empty-tree signals.
+`get_window_state({pid, window_id})` requests the accessibility tree and a grounding screenshot by default. Start with `query` (or `max_elements`) instead of a full read, and verify at checkpoints rather than after every action. Check what actually came back: permission, backing-store, or surface-identity failures can leave usable tree data without an image. `screenshot_error` and `screenshot_frame_valid:false` are not empty-tree signals.
 
-Prefer `structuredContent.elements` in MCP (the CLI prints structured fields directly) over parsing `tree_markdown`. Rows may contain `element_token`, role, label, value, actions, parent, depth, enabled/selected state, and frame. Missing fields are unknown.
+By default the tree comes back **once**, as compact `tree_markdown` (`tree_format:"markdown"`). A row `[N]` is addressed with `element_token` `<snapshot_id>:N`; the `snapshot_id` is in the response header and in `structuredContent`. Use `tree_format:"elements"` for the structured `elements` array when you need explicit tokens, frames, parents, or values, or `"both"` for the old double payload (about twice the size). `full_output:true` restores the previous full response, including the platform's walk limits. In `elements`, rows may contain `element_token`, role, label, value, actions, parent, depth, enabled/selected state, `frame` (screen coordinates, the space of `scope:"desktop"` actions), and `screenshot_frame` (pixels of the screenshot in the same response, the space of window-local pointer `x`/`y`). Missing fields are unknown.
 
 - Use `query` to project matching rows plus ancestors without renumbering their indices.
-- Use `max_elements` / `max_depth` to bound the walk, and compare returned/total counts. Truncation does not prove absence.
-- Use `include_screenshot:false` only when tree-only observation is enough; it cannot ground a pixel action.
-- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. Check the installed schema first.
+- A read walks at most 250 nodes by default. When it stops there the response says `Tree truncated at max_elements=…` (`truncated:true`, `truncation_hint`). Pass a larger `max_elements`, or narrow with `query` / `max_depth`. Truncation does not prove absence.
+- After the first read, pass `since:"latest"` (or `since:<snapshot_id>`) to get only what changed. `latest` is this window's most recent read with the same `query`, `max_elements` and `max_depth`. You get: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), or `no change since …; focused element is …` (focus is reported on macOS only). The response carries a new `snapshot_id`: use it in tokens (`<new id>:N`). Rows not listed keep their `[N]` unless a `reindexed:` line says otherwise. An unknown, expired, other-window, or differently-scoped `since` returns a full read, and `since_status` says why. A diff reads the rendered tree rows only; it does not prove the screenshot is unchanged.
+- `_note`, `background_input`, and (Linux) `frame_note` are omitted unless `verbose:true`; a degraded snapshot keeps `background_input`.
+- `include_screenshot:false` returns the tree only. On macOS the window keeps the pixel frame of its last screenshot while its size is unchanged, so `x,y` read off that screenshot still work; elsewhere, and after a resize, take a new screenshot before a pixel action.
+- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. It keeps the current snapshot's rows and tokens valid. `display_only:true` with it is for live previews: it also leaves your pixel frame alone, and its image cannot ground actions. Use it when you only need to look; do not use `max_elements:1` or a `query` that matches nothing for that, because those replace the snapshot with an almost empty one.
+- Row numbers belong to one read. A narrower re-read (smaller `max_elements`, `max_depth`, another `query`) can stop before a row you saw earlier, and `<new snapshot_id>:N` for that row is then out of range. Use rows printed in the read whose `snapshot_id` you use.
 - `capture_mode` is deprecated and ignored. Do not change configuration to repair a sparse tree.
 - Use `screenshot_out_file` to save a PNG instead of inlining it, then actually read the image. Use an absolute, run-scoped output path.
 
@@ -50,7 +53,7 @@ The accessibility model may lag or disagree with rendered state: Electron text s
 
 ## Act once
 
-Use an opaque `element_token` from the latest snapshot of the intended window. If using an integer, pair `element_index` with that response's `snapshot_id`. Do not derive or edit tokens. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id` and then means row 11 of that window's current snapshot. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
 
 Example CLI window action, with IDs and token replaced from the preceding response:
 
@@ -66,7 +69,7 @@ cua-driver click '{"target":{"kind":"window","pid":844,"window_id":10725},"eleme
 | Focus a visible field and type  | `type_text` with `x,y,text`, when that form is advertised                      |
 | Replace an exposed native value | `set_value` with `pid,element_token,value` (its own schema, no `target`)       |
 | Send a key or combination       | `press_key` with `key`, or `hotkey` with `keys`                                |
-| Scroll / drag                   | Inspect `describe scroll` / `describe drag`; units and supported shapes matter |
+| Scroll / drag                   | `scroll` takes `direction` and `amount` (wheel notches); signed `dx`/`dy` is converted (positive `dy` is down; up to 50 is notches, more is pixels at 100 px per notch). Inspect `describe drag` |
 
 Text insertion and value replacement are different intents. Setting a field does not prove a form submission, navigation, or rename committed. Open a collapsed search/input control and reobserve before typing into it; one focus-click may not both open and focus it. Inspect the existing value/selection before replacing content.
 
@@ -74,13 +77,34 @@ If a text action returns `unverifiable`, take a fresh snapshot before retrying. 
 
 Keep `delivery_mode:"background"` as the default for window input. The route may use accessibility hit-testing even when addressed by pixels: pixel coordinates do not promise physical pointer delivery. Read the returned `route` instead of inferring it from the tool name.
 
+## Batch known actions
+
+`run_actions` is the default way to act. When the next action or actions are decided, send them as one `run_actions` call with `observe:true` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
+
+```bash
+cua-driver run_actions '{"session":"run-1","steps":[
+  {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:14","value":"Ada"}},
+  {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:15","value":"Lovelace"}},
+  {"tool":"click","args":{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:21"}},
+  {"tool":"press_key","args":{"pid":844,"key":"return"}}
+ ],"delay_ms":100,"observe":true}'
+```
+
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `move_cursor` (`press` and `type` are accepted for `press_key` and `type_text`, `triple_click` is a click with `count:3`, and a key name such as `down` as the tool is a `press_key`); `args` are exactly that tool's arguments. Observation tools do not run inside a batch: a read between actions is skipped (it could not change the later steps), a `get_window_state` as the last step is the observation (merged with `observe`), and a trailing `zoom` runs after it. Run `describe run_actions` and `describe <tool>` for schemas. Up to 64 steps. `delivery_mode` on `run_actions` is the default for steps that set none.
+- Name the window once: `pid` and `window_id` (or `app`/`window`) on `run_actions` itself are the default for every step that names none.
+- A step whose `element_token` went stale because an earlier step re-rendered the window is retried once on the element with the same role and label in a fresh read, when exactly one matches; the step's line says so.
+- Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
+- A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
+- `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
+- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action. When a step fails because another window of the app holds focus (a dialog opened mid-batch), the end read is of that window, even without `observe`; when a pixel step names a window with no screenshot yet, the end read includes its screenshot. A step refused because its app ignores background input (Electron, LibreOffice) says how to re-send it; set `foreground_fallback:true` on `run_actions` to retry such steps once in the foreground (the window is activated and the pointer may move).
+
 ## Pixel coordinates
 
 Ground window actions on the PNG from that exact `get_window_state`; ground desktop actions on `get_desktop_state`. Origins are top-left, increasing downward. The driver handles its own window capture scaling; do not add window offsets to window-local input.
 
 The harness may downsample the displayed preview independently of the returned PNG. Use the returned dimensions and the original file. If measuring on a resized preview, account for its exact scale in both axes; do not assume the preview is native resolution. Do not guess from accessibility frames or another app's geometry.
 
-After movement, resize, navigation, or a competing desktop interaction, reobserve. When using `zoom`, read its schema and preserve the `from_zoom` mapping on the supported follow-up action. A manually cropped image requires its crop offset; an untracked crop is not an action coordinate source.
+After movement, resize, navigation, or a competing desktop interaction, reobserve. `zoom` takes a region as corners, `x1,y1` (top-left) to `x2,y2` (bottom-right); `x,y,width,height` is converted. Preserve the `from_zoom` mapping on the supported follow-up action. A manually cropped image requires its crop offset; an untracked crop is not an action coordinate source.
 
 For tiny targets, inspect at full resolution or annotate a copy without changing its dimensions. Keep the raw evidence unmodified. `debug_image_out`, where advertised, captures an action diagnostic; it is not a pre-action approval step.
 
@@ -106,7 +130,7 @@ For an expressible exact-window postcondition, use `verify_state` with bounded p
 cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}],"include_screenshot":true,"session":"run-1"}'
 ```
 
-This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
+This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. `label_contains` matches an element's accessible name, which for label-less text is its value. On macOS a selector also reaches display-only text (static text, read-only values) when no addressable control matches it. Text inside web content stays `unknown` with `untrusted_source`; read it from a fresh snapshot instead. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
 
 Action facts are not task outcomes:
 

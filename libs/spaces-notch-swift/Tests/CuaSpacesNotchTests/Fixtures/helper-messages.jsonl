@@ -1,0 +1,18 @@
+{"pid":4242,"type":"hello","v":1}
+{"notch":{"auxLeftWidth":662,"auxRightWidth":662,"frame":{"height":982,"width":1512,"x":0,"y":0},"safeAreaTop":32,"visibleFrame":{"height":945,"width":1512,"x":0,"y":0}},"primary":{"frame":{"height":1440,"width":2560,"x":-2560,"y":0},"safeAreaTop":0,"visibleFrame":{"height":1415,"width":2560,"x":-2560,"y":0}},"type":"screens"}
+{"event":{"kind":"hoverEnter"},"type":"event"}
+{"event":{"kind":"hoverExit"},"type":"event"}
+{"event":{"kind":"click"},"type":"event"}
+{"event":{"kind":"dismiss"},"type":"event"}
+{"event":{"kind":"escape"},"type":"event"}
+{"event":{"kind":"dropTargeted","targeted":true},"type":"event"}
+{"event":{"kind":"search","query":"au"},"type":"event"}
+{"action":"openSpace","spaceId":"local:aurora","type":"action"}
+{"action":"openMain","type":"action"}
+{"action":"openSettings","type":"action"}
+{"action":"openAccess","type":"action"}
+{"action":"dismissAccess","type":"action"}
+{"action":"openPermissionSettings","pane":"accessibility","type":"action"}
+{"action":"drop","paths":["/Applications/Notes.app","/Users/me/report.pdf"],"spaceId":"local:aurora","type":"action"}
+{"open":true,"type":"stage"}
+{"message":"Electron speaks notch protocol 2; this helper speaks 1","type":"error"}

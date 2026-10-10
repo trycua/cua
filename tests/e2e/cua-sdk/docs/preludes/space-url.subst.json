@@ -1,0 +1,5 @@
+{
+  "$comment": "The direct-Space address and token a page shows, replaced by the fixtures' confined cua-spacesd core (CUA_DOCS_SPACE_URL / CUA_DOCS_SPACE_TOKEN).",
+  "\"http://10.0.0.5:3211\"": "CUA_DOCS_SPACE_URL",
+  "\"TOKEN\"": "CUA_DOCS_SPACE_TOKEN"
+}

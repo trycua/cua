@@ -10,7 +10,7 @@
 /libs/cua-bench/ @ddupont808
 
 # Cua Driver documentation and driver-only release/CI automation.
-/docs/content/docs/reference/cua-driver/ @f-trycua @injaneity
+/docs/content/docs/cua-driver/reference/ @f-trycua @injaneity
 /scripts/docs-generators/cua-driver.ts @f-trycua @injaneity
 /.github/release-notes/cua-driver-rs.md @f-trycua @injaneity
 /.github/scripts/sync_driver_release_docs.py @f-trycua @injaneity
@@ -26,6 +26,7 @@
 /.github/workflows/ci-distro-compat-cua-driver.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-format.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-linux.yml @f-trycua @injaneity
+/.github/workflows/ci-rust-macos.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-windows.yml @f-trycua @injaneity
 /.github/workflows/clawhub-cua-driver.yml @f-trycua @injaneity
 /.github/workflows/e2e-rust-linux-wayland.yml @f-trycua @injaneity
@@ -34,7 +35,7 @@
 /.github/workflows/e2e-rust-windows.yml @f-trycua @injaneity
 
 # Platform infrastructure.
-/libs/fleet/ @r33drichards
-/nix/ @r33drichards
-/flake.nix @r33drichards
-/flake.lock @r33drichards
+/libs/fleet/ @ddupont808
+/nix/ @ddupont808
+/flake.nix @ddupont808
+/flake.lock @ddupont808

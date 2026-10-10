@@ -37,10 +37,13 @@ pub fn is_process_live(pid: u32) -> bool {
     is_process_live_state(&status)
 }
 
-fn process_start_time_from_stat(stat: &str) -> Option<u64> {
-    // `comm` is parenthesized and may contain spaces. Fields after its closing
-    // parenthesis begin with state (field 3); starttime is field 22.
-    stat.rsplit_once(") ")?
+/// Parse the kernel start time (field 22, in clock ticks) from the contents
+/// of `/proc/<pid>/stat`.
+pub(crate) fn process_start_time_from_stat(stat: &str) -> Option<u64> {
+    // `comm` is parenthesized and may contain spaces and closing parentheses.
+    // Fields after its final `)` begin with state (field 3); starttime is
+    // field 22.
+    stat.rsplit_once(')')?
         .1
         .split_whitespace()
         .nth(19)?
@@ -53,6 +56,55 @@ fn process_start_time_from_stat(stat: &str) -> Option<u64> {
 pub fn process_instance_id(pid: u32) -> Option<u64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     process_start_time_from_stat(&stat)
+}
+
+/// One process instance as `/proc/<pid>/stat` describes it: its scheduler
+/// state and its kernel start time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ProcessStat {
+    pub state: char,
+    pub start_time: u64,
+}
+
+/// Parse state (field 3) and start time (field 22) from `/proc/<pid>/stat`.
+pub(crate) fn process_stat_from_stat(stat: &str) -> Option<ProcessStat> {
+    let state = stat
+        .rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .next()?
+        .chars()
+        .next()?;
+    Some(ProcessStat {
+        state,
+        start_time: process_start_time_from_stat(stat)?,
+    })
+}
+
+/// Read one pid's [`ProcessStat`]; `Ok(None)` when no such process exists.
+pub(crate) fn read_process_stat(pid: u32) -> std::io::Result<Option<ProcessStat>> {
+    match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => process_stat_from_stat(&stat).map(Some).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "malformed /proc stat")
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// How the process first read as `before` ended, judged from a later read of
+/// the same pid, or `None` while that same instance is still alive. A zombie
+/// has exited and only waits for its parent to reap it.
+pub(crate) fn process_exit_observation(
+    before: ProcessStat,
+    now: Option<ProcessStat>,
+) -> Option<&'static str> {
+    match now {
+        None => Some("process_absent"),
+        Some(now) if now.start_time != before.start_time => Some("pid_reused"),
+        Some(now) if matches!(now.state, 'Z' | 'X') => Some("zombie"),
+        Some(_) => None,
+    }
 }
 
 /// Return all running processes by reading /proc/<pid>/status.
@@ -116,8 +168,60 @@ mod tests {
         let mut fields = vec!["S".to_owned()];
         fields.extend((4..=21).map(|field| field.to_string()));
         fields.push("987654".to_owned());
-        let stat = format!("42 (fixture with spaces) {}", fields.join(" "));
-        assert_eq!(super::process_start_time_from_stat(&stat), Some(987654));
+        let fields = fields.join(" ");
+        for comm in [
+            "fixture with spaces",
+            "name with ) parentheses",
+            "ends with )",
+        ] {
+            let stat = format!("42 ({comm}) {fields} 23");
+            assert_eq!(
+                super::process_start_time_from_stat(&stat),
+                Some(987654),
+                "{comm}"
+            );
+        }
+        assert_eq!(super::process_start_time_from_stat("bad"), None);
+        assert_eq!(
+            super::process_start_time_from_stat("42 (short) S 1 2"),
+            None
+        );
+    }
+
+    #[test]
+    fn exit_observation_tells_the_same_live_instance_from_its_end() {
+        let stat = |state| super::ProcessStat {
+            state,
+            start_time: 7,
+        };
+        let parsed = super::process_stat_from_stat(&format!(
+            "42 (a) b) S {} 7 23",
+            (4..=21)
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+        assert_eq!(parsed, Some(stat('S')));
+        assert_eq!(
+            super::process_exit_observation(stat('S'), Some(stat('R'))),
+            None
+        );
+        assert_eq!(
+            super::process_exit_observation(stat('S'), Some(stat('Z'))),
+            Some("zombie")
+        );
+        assert_eq!(
+            super::process_exit_observation(stat('S'), None),
+            Some("process_absent")
+        );
+        let reused = super::ProcessStat {
+            state: 'S',
+            start_time: 8,
+        };
+        assert_eq!(
+            super::process_exit_observation(stat('S'), Some(reused)),
+            Some("pid_reused")
+        );
     }
 
     #[test]

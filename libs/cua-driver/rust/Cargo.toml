@@ -6,19 +6,21 @@ members = [
     "crates/cua-driver-sdk",
     "crates/cua-driver-bindgen",
     "crates/cua-driver-testkit",
+    "crates/cua-driver-e2e",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
     "crates/platform-macos",
     "crates/platform-windows",
     "crates/platform-linux",
     "crates/cursor-overlay",
+    "crates/cua-cursor-motion",
     "crates/cursor-theme-cli",
     "crates/pip-preview",
     "crates/cua-perception",
 ]
 
 [workspace.package]
-version = "0.28.2"
+version = "0.34.0"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"

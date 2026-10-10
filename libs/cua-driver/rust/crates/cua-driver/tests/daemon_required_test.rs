@@ -1,6 +1,5 @@
 //! Public tool transports must fail closed when no daemon is reachable.
 
-#[cfg(not(target_os = "macos"))]
 use std::io::Write as _;
 use std::process::Command;
 
@@ -209,6 +208,50 @@ fn named_session_survives_across_one_shot_cli_calls() {
     let sessions: serde_json::Value =
         serde_json::from_slice(&sessions.stdout).expect("session list JSON");
     assert_eq!(sessions["count"], 0);
+}
+
+#[test]
+fn cli_call_strips_a_utf8_bom_from_piped_stdin_arguments() {
+    // PowerShell 5.1 `Set-Content -Encoding utf8` prepends a BOM. The piped
+    // arguments must still parse; otherwise the call silently runs with
+    // default arguments and the named session below is never created.
+    let mut driver = CliDriver::new();
+    assert!(driver.available(), "test daemon failed to start");
+    let session = format!("synthetic-cli-bom-{}", std::process::id());
+    let socket = driver
+        .daemon_socket()
+        .expect("test daemon socket")
+        .to_owned();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["call", "start_session", "--socket", &socket])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cua-driver call");
+    let payload = serde_json::json!({"session": session, "capture_scope": "window"});
+    {
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        write!(stdin, "\u{feff}{payload}").expect("write BOM-prefixed arguments");
+    }
+    let started = child.wait_with_output().expect("wait for cua-driver call");
+    assert!(
+        started.status.success(),
+        "BOM-prefixed start_session failed: {}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+
+    let state = driver.call("get_session_state", serde_json::json!({"session": session}));
+    assert!(
+        !state.is_error(),
+        "BOM-prefixed arguments were not applied: {}",
+        state.text()
+    );
+    assert_eq!(state.structured()["session"], session);
+
+    let ended = driver.call("end_session", serde_json::json!({"session": session}));
+    assert!(!ended.is_error(), "end failed: {}", ended.text());
 }
 
 #[test]
@@ -432,11 +475,7 @@ fn capability_manifest_narrows_standard_mode() {
         driver.available(),
         "standard manifest daemon failed to start"
     );
-    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
-    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
-    assert!(driver
-        .call("get_screen_size", serde_json::json!({}))
-        .is_error());
+    assert_manifest_narrows(&mut driver);
 }
 
 #[test]
@@ -459,9 +498,37 @@ fn capability_manifest_narrows_unrestricted_mode() {
         driver.available(),
         "unrestricted manifest daemon failed to start"
     );
-    assert!(!driver.call("get_config", serde_json::json!({})).is_error());
-    assert!(driver.call("list_apps", serde_json::json!({})).is_error());
-    assert!(driver
-        .call("get_screen_size", serde_json::json!({}))
-        .is_error());
+    assert_manifest_narrows(&mut driver);
+}
+
+/// The allow-listed tool runs, while the denied and undeclared tools are
+/// refused by the capability manifest itself rather than by a scope or consent
+/// guard that would also refuse them without a manifest.
+fn assert_manifest_narrows(driver: &mut CliDriver) {
+    let allowed = driver.call("get_config", serde_json::json!({}));
+    assert!(
+        !allowed.is_error(),
+        "allowed call failed: {}",
+        allowed.text()
+    );
+
+    let denied = driver.call("list_apps", serde_json::json!({}));
+    assert!(denied.is_error());
+    assert!(
+        denied
+            .text()
+            .contains("capability manifest denies tool 'list_apps'"),
+        "unexpected denial: {}",
+        denied.text()
+    );
+
+    let undeclared = driver.call("get_screen_size", serde_json::json!({}));
+    assert!(undeclared.is_error());
+    assert!(
+        undeclared
+            .text()
+            .contains("tool 'get_screen_size' is outside the capability manifest"),
+        "unexpected undeclared refusal: {}",
+        undeclared.text()
+    );
 }

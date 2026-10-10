@@ -1,14 +1,20 @@
-"""Session manager for creating and managing async container sessions."""
+"""Run/session bookkeeping for ``cb run`` (``$XDG_STATE_HOME/cua-bench/runs.json``).
 
+Parallel variants and detached runs update the same file, so every
+read-modify-write holds an exclusive lock.
+"""
+
+import contextlib
 import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
-from .providers.base import SessionProvider
-from .providers.cloud import CloudProvider
-from .providers.docker import DockerProvider
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
 
 
 def _get_state_dir() -> Path:
@@ -19,38 +25,6 @@ def _get_state_dir() -> Path:
 
 # Session storage path
 RUNS_FILE = _get_state_dir() / "runs.json"
-
-
-def make(provider_name: str, env_type: Optional[str] = None) -> SessionProvider:
-    """Create a session provider for the specified provider.
-
-    Args:
-        provider_name: Name of the provider:
-            - "local": Run locally using Docker (webtop) or QEMU/KVM (winarena)
-            - "cloud": Run on CUA Cloud (GCP Batch for webtop, Azure Batch for winarena)
-            - "docker": (legacy) Alias for "local"
-        env_type: Optional environment type hint ("webtop" or "winarena").
-            Used by local provider to select appropriate backend.
-
-    Returns:
-        SessionProvider instance
-
-    Raises:
-        ValueError: If provider is not supported
-    """
-    # Normalize provider name (support legacy aliases)
-    normalized = provider_name.lower()
-    if normalized in ("docker", "local"):
-        # Local execution - uses Docker for webtop, can use winarena for Windows
-        # The DockerProvider handles both via task.computer configuration
-        return DockerProvider()
-    elif normalized == "cloud":
-        return CloudProvider()
-    else:
-        raise ValueError(
-            f"Unknown provider: {provider_name}. "
-            "Supported providers: 'local' (Docker/QEMU), 'cloud' (CUA Cloud API)"
-        )
 
 
 def _load_runs() -> Dict[str, Any]:
@@ -66,10 +40,25 @@ def _load_runs() -> Dict[str, Any]:
 
 
 def _save_runs(runs: Dict[str, Any]) -> None:
-    """Save runs to the storage file."""
+    """Save runs to the storage file (atomically)."""
     RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(RUNS_FILE, "w") as f:
+    tmp = RUNS_FILE.with_suffix(f".{os.getpid()}.tmp")
+    with open(tmp, "w") as f:
         json.dump(runs, f, indent=2)
+    os.replace(tmp, RUNS_FILE)
+
+
+@contextlib.contextmanager
+def _locked() -> Iterator[None]:
+    RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(RUNS_FILE.with_suffix(".lock"), "a") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def add_session(session_data: Dict[str, Any]) -> None:
@@ -78,15 +67,16 @@ def add_session(session_data: Dict[str, Any]) -> None:
     Args:
         session_data: Session metadata dict
     """
-    runs = _load_runs()
     session_id = session_data["session_id"]
 
     # Add timestamp if not present
     if "created_at" not in session_data:
         session_data["created_at"] = time.time()
 
-    runs[session_id] = session_data
-    _save_runs(runs)
+    with _locked():
+        runs = _load_runs()
+        runs[session_id] = session_data
+        _save_runs(runs)
 
 
 def remove_session(session_id: str) -> None:
@@ -95,10 +85,11 @@ def remove_session(session_id: str) -> None:
     Args:
         session_id: Session identifier
     """
-    runs = _load_runs()
-    if session_id in runs:
-        del runs[session_id]
-        _save_runs(runs)
+    with _locked():
+        runs = _load_runs()
+        if session_id in runs:
+            del runs[session_id]
+            _save_runs(runs)
 
 
 def update_session(session_id: str, updates: Dict[str, Any]) -> None:
@@ -108,10 +99,11 @@ def update_session(session_id: str, updates: Dict[str, Any]) -> None:
         session_id: Session identifier
         updates: Dict of fields to update
     """
-    runs = _load_runs()
-    if session_id in runs:
-        runs[session_id].update(updates)
-        _save_runs(runs)
+    with _locked():
+        runs = _load_runs()
+        if session_id in runs:
+            runs[session_id].update(updates)
+            _save_runs(runs)
 
 
 def list_sessions(provider: Optional[str] = None) -> List[Dict[str, Any]]:

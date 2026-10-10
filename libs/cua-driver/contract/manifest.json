@@ -100,6 +100,7 @@
           },
           "element_token": {
             "default": null,
+            "pattern": "^s[0-9a-f]{8}:[0-9]+$",
             "type": "string"
           },
           "session": {
@@ -118,12 +119,10 @@
                     "type": "string"
                   },
                   "pid": {
-                    "format": "uint32",
                     "minimum": 0,
                     "type": "integer"
                   },
                   "window_id": {
-                    "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
                   }
@@ -176,7 +175,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -210,6 +208,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -247,6 +266,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -275,6 +300,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -516,12 +547,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -555,7 +584,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "to_x": {
             "type": "number"
@@ -579,7 +609,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -613,6 +642,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -650,6 +700,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -678,6 +734,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -766,6 +828,7 @@
             "type": "string"
           },
           "reason": {
+            "description": "Why the window-scoped attempt failed and desktop capture is needed.",
             "enum": [
               "ax_tree_pixel_mismatch",
               "background_delivery_failed",
@@ -776,6 +839,7 @@
             "type": "string"
           },
           "session": {
+            "description": "Public label of the legacy capture-scope session to escalate.",
             "type": "string"
           }
         },
@@ -874,6 +938,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
+            "description": "Public label of the session whose cursor to inspect.",
             "type": "string"
           }
         },
@@ -891,39 +956,79 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
+              "effects": {
+                "properties": {
+                  "glow": {
+                    "type": "boolean"
+                  },
+                  "magnet": {
+                    "type": "boolean"
+                  },
+                  "ripple": {
+                    "type": "boolean"
+                  },
+                  "squish": {
+                    "type": "boolean"
+                  },
+                  "trail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "trail",
+                  "glow",
+                  "magnet",
+                  "ripple",
+                  "squish"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
+              "style": {
+                "enum": [
+                  "signature_arc",
+                  "spring_settle",
+                  "magnetic",
+                  "comet_swoop",
+                  "adaptive",
+                  "classic"
+                ],
+                "type": "string"
+              },
+              "timing": {
+                "enum": [
+                  "native",
+                  "fitts",
+                  "fixed"
+                ],
+                "type": "string"
+              },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -941,21 +1046,26 @@
             "type": "object"
           },
           "position": {
-            "properties": {
-              "x": {
-                "format": "double",
-                "type": "number"
+            "anyOf": [
+              {
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "type": "object"
               },
-              "y": {
-                "format": "double",
-                "type": "number"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "x",
-              "y"
-            ],
-            "type": "object"
+            ]
           },
           "session": {
             "type": "string"
@@ -1002,7 +1112,6 @@
           "visual_state": {
             "properties": {
               "frame": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1016,7 +1125,6 @@
                 "type": "string"
               },
               "preempted_count": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1153,6 +1261,11 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "max_image_dimension": {
+            "description": "Optional long-edge cap for the returned PNG, in pixels. Omitted or 0\nreturns the full-size capture. When the cap downsizes the image,\ndesktop-scope x/y taken from it are mapped back automatically.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "screenshot_out_file": {
             "description": "Write the PNG here instead of returning base64.",
             "type": "string"
@@ -1168,6 +1281,46 @@
       "success_output_schema": {
         "additionalProperties": true,
         "properties": {
+          "agent_overlay_capture": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "const": "excluded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_present",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_excluded",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "display": {
             "type": "string"
           },
@@ -1316,12 +1469,10 @@
             "type": "boolean"
           },
           "expires_in_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "idle_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1501,6 +1652,10 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "full_output": {
+            "description": "Restore the previous full response (both representations, all\nmetadata, platform walk limits).",
+            "type": "boolean"
+          },
           "include_accessibility_tree": {
             "type": "boolean"
           },
@@ -1538,6 +1693,29 @@
           "session": {
             "type": "string"
           },
+          "since": {
+            "description": "Return only what changed since this earlier `snapshot_id`.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000 on every platform). A walk that runs out returns a\npartial tree flagged `truncated` rather than failing.",
+            "maximum": 120000,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "tree_format": {
+            "description": "Tree representation to return: `markdown` (default), `elements`, or\n`both`.",
+            "enum": [
+              "markdown",
+              "elements",
+              "both"
+            ],
+            "type": "string"
+          },
+          "verbose": {
+            "description": "Include `_note` and the full `background_input` report.",
+            "type": "boolean"
+          },
           "window_id": {
             "minimum": 1,
             "type": "integer"
@@ -1571,7 +1749,6 @@
             ]
           },
           "element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1591,12 +1768,10 @@
                   ]
                 },
                 "depth": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "element_index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -1615,19 +1790,15 @@
                 "frame": {
                   "properties": {
                     "h": {
-                      "format": "double",
                       "type": "number"
                     },
                     "w": {
-                      "format": "double",
                       "type": "number"
                     },
                     "x": {
-                      "format": "double",
                       "type": "number"
                     },
                     "y": {
-                      "format": "double",
                       "type": "number"
                     }
                   },
@@ -1655,21 +1826,18 @@
                   ]
                 },
                 "max": {
-                  "format": "double",
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "min": {
-                  "format": "double",
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "parent_index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -1717,7 +1885,6 @@
             ]
           },
           "filtered_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1725,12 +1892,10 @@
             ]
           },
           "pid": {
-            "format": "uint32",
             "minimum": 0,
             "type": "integer"
           },
           "returned_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1750,7 +1915,6 @@
             ]
           },
           "screenshot_height": {
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -1764,17 +1928,27 @@
             ]
           },
           "screenshot_scale": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "screenshot_width": {
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since_status": {
+            "type": [
+              "string",
               "null"
             ]
           },
@@ -1785,10 +1959,21 @@
             ]
           },
           "total_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "tree_diff": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tree_format": {
+            "type": [
+              "string",
               "null"
             ]
           },
@@ -1804,6 +1989,12 @@
               "null"
             ]
           },
+          "truncation_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "truncation_reason": {
             "type": [
               "string",
@@ -1813,19 +2004,15 @@
           "window_bounds": {
             "properties": {
               "height": {
-                "format": "double",
                 "type": "number"
               },
               "width": {
-                "format": "double",
                 "type": "number"
               },
               "x": {
-                "format": "double",
                 "type": "number"
               },
               "y": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -1841,7 +2028,6 @@
             ]
           },
           "window_id": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1911,12 +2097,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -1950,7 +2134,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           }
         },
         "required": [
@@ -1965,7 +2150,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -1999,6 +2183,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -2036,6 +2241,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2064,6 +2275,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2097,9 +2314,10 @@
       },
       "input_schema": {
         "additionalProperties": false,
-        "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive.",
+        "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive. On\nmacOS, three periods in a label also match the ellipsis character that\nnative menu titles use (`Save As...` finds `Save As…`).",
         "properties": {
           "path": {
+            "description": "Menu labels from the top-level menu to the item, e.g. `[\"File\", \"Save As...\"]`\n(1 to 16 labels).",
             "items": {
               "maxLength": 200,
               "minLength": 1,
@@ -2110,6 +2328,7 @@
             "type": "array"
           },
           "pid": {
+            "description": "Process ID of the application that owns the menu.",
             "minimum": 1,
             "type": "integer"
           },
@@ -2118,6 +2337,7 @@
             "type": "string"
           },
           "window_id": {
+            "description": "Window ID from list_windows whose menu is invoked.",
             "minimum": 1,
             "type": "integer"
           }
@@ -2136,7 +2356,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2170,6 +2389,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -2207,6 +2447,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2235,6 +2481,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2308,7 +2560,6 @@
                   "type": "string"
                 },
                 "pid": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2363,7 +2614,6 @@
           },
           "limit": {
             "description": "Maximum number of content-free summaries to return (default 50, max\n100). Ordinary agent transports are scoped to their own lease.",
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -2404,12 +2654,10 @@
                   "type": "boolean"
                 },
                 "expires_in_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "idle_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2509,7 +2757,6 @@
         "additionalProperties": true,
         "properties": {
           "current_space_id": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -2525,19 +2772,15 @@
                 "bounds": {
                   "properties": {
                     "height": {
-                      "format": "double",
                       "type": "number"
                     },
                     "width": {
-                      "format": "double",
                       "type": "number"
                     },
                     "x": {
-                      "format": "double",
                       "type": "number"
                     },
                     "y": {
-                      "format": "double",
                       "type": "number"
                     }
                   },
@@ -2550,7 +2793,6 @@
                   "type": "object"
                 },
                 "current_space_id": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -2589,7 +2831,6 @@
                 },
                 "space_ids": {
                   "items": {
-                    "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -2598,8 +2839,10 @@
                     "null"
                   ]
                 },
+                "title": {
+                  "type": "string"
+                },
                 "window_id": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2677,12 +2920,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2717,12 +2958,14 @@
                 "type": "null"
               }
             ],
-            "description": "Preferred per-call target. New callers should set this field."
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "x": {
+            "description": "Destination X: window-local screenshot pixels for a window target, native\nget_desktop_state screenshot pixels for the desktop.",
             "type": "number"
           },
           "y": {
+            "description": "Destination Y, in the same space as `x`.",
             "type": "number"
           }
         },
@@ -2739,7 +2982,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2773,6 +3015,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -2810,6 +3073,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2838,6 +3107,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2871,9 +3146,10 @@
       },
       "input_schema": {
         "additionalProperties": false,
-        "description": "Transport-free request. Runtime use requires the future capture registry.",
+        "description": "Parse one immutable screenshot capture. Pass the `capture_id` returned by\n`get_window_state` or `get_desktop_state`; the Driver capture registry\nresolves it to the exact pixels and action-coordinate transform.",
         "properties": {
           "capture_id": {
+            "description": "`capture_id` of a screenshot returned by get_window_state or get_desktop_state.",
             "minLength": 1,
             "type": "string"
           },
@@ -2899,13 +3175,16 @@
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "Region kinds to return (`text`, `icon`). Omit for all kinds."
               },
               "max_regions": {
+                "description": "Return at most this many regions.",
                 "minimum": 1,
                 "type": "integer"
               },
               "min_confidence": {
+                "description": "Drop regions below this confidence (0 to 1).",
                 "maximum": 1,
                 "minimum": 0,
                 "type": "number"
@@ -2946,27 +3225,21 @@
                         "type": "string"
                       },
                       "m11": {
-                        "format": "double",
                         "type": "number"
                       },
                       "m12": {
-                        "format": "double",
                         "type": "number"
                       },
                       "m21": {
-                        "format": "double",
                         "type": "number"
                       },
                       "m22": {
-                        "format": "double",
                         "type": "number"
                       },
                       "tx": {
-                        "format": "double",
                         "type": "number"
                       },
                       "ty": {
-                        "format": "double",
                         "type": "number"
                       }
                     },
@@ -3032,12 +3305,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3208,7 +3479,6 @@
                   ]
                 },
                 "reading_order": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -3245,12 +3515,10 @@
           "timing": {
             "properties": {
               "duration_ms": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
               "inference_ms": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3258,7 +3526,6 @@
                 ]
               },
               "preprocess_ms": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3405,12 +3672,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3444,7 +3709,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           }
         },
         "required": [
@@ -3459,7 +3725,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3493,6 +3758,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -3530,6 +3816,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3558,6 +3850,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3634,12 +3932,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3673,7 +3969,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "x": {
             "type": "number"
@@ -3696,7 +3993,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3730,6 +4026,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -3767,6 +4084,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3795,6 +4118,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3826,9 +4155,11 @@
         "additionalProperties": false,
         "properties": {
           "enabled": {
+            "description": "`true` shows the session's agent cursor overlay; `false` hides it.",
             "type": "boolean"
           },
           "session": {
+            "description": "Public label of the session that owns the cursor.",
             "type": "string"
           }
         },
@@ -3857,7 +4188,7 @@
     },
     {
       "name": "set_agent_cursor_motion",
-      "description": "Configure only movement physics and visibility timing for a session cursor.",
+      "description": "Configure the movement style, timing, effects and visibility timing for a session cursor.",
       "platforms": [
         "macos",
         "windows",
@@ -3877,66 +4208,133 @@
         "additionalProperties": false,
         "properties": {
           "arc_flow": {
-            "format": "double",
+            "description": "Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:\npositive moves the apex toward the destination. Clamped to -1..1 (default 0).",
             "type": [
               "number",
               "null"
             ]
           },
           "arc_size": {
-            "format": "double",
+            "description": "Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)\nkeeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.",
             "type": [
               "number",
               "null"
             ]
           },
           "dwell_after_click_ms": {
-            "format": "double",
+            "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
             "type": [
               "number",
               "null"
             ]
           },
+          "effects": {
+            "additionalProperties": false,
+            "description": "Turn single effects on or off. An omitted effect keeps its current setting; null\nrestores the style's default.",
+            "properties": {
+              "glow": {
+                "description": "Soft glow around the cursor that grows with speed.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "magnet": {
+                "description": "Target glow when the `magnetic` style locks on.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "ripple": {
+                "description": "Ring that expands from the hotspot on click.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "squish": {
+                "description": "Brief scale-down of the cursor on click.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "trail": {
+                "description": "Short fading trail behind the cursor.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "end_handle": {
-            "format": "double",
+            "description": "Arc control-point offset from the end, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
           "glide_duration_ms": {
-            "format": "double",
+            "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
             "type": [
               "number",
               "null"
             ]
           },
           "idle_hide_ms": {
-            "format": "double",
+            "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
             "type": [
               "number",
               "null"
             ]
           },
           "session": {
+            "description": "Public label of the session that owns the cursor. Omitted or null motion fields keep\ntheir current value.",
             "type": "string"
           },
           "spring": {
-            "format": "double",
+            "description": "Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped\nto 0.3..1 (default 0.72).",
             "type": [
               "number",
               "null"
             ]
           },
           "start_handle": {
-            "format": "double",
+            "description": "Arc control-point offset from the start, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
+          "style": {
+            "description": "Trajectory style. `signature_arc` (default) is one arc with a small follow-through;\n`spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;\n`comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for\nsmall targets and a swoop for long moves; `classic` is the previous Dubins glide. When\nthe theme's reduced motion is on, every move is a short straight glide with no effects.",
+            "enum": [
+              "signature_arc",
+              "spring_settle",
+              "magnetic",
+              "comet_swoop",
+              "adaptive",
+              "classic"
+            ],
+            "type": "string"
+          },
+          "timing": {
+            "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+            "enum": [
+              "native",
+              "fitts",
+              "fixed"
+            ],
+            "type": "string"
+          },
           "turn_radius": {
-            "format": "double",
+            "description": "Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.\nClamped to 1..1000 (default 80).",
             "type": [
               "number",
               "null"
@@ -3954,39 +4352,79 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
+              "effects": {
+                "properties": {
+                  "glow": {
+                    "type": "boolean"
+                  },
+                  "magnet": {
+                    "type": "boolean"
+                  },
+                  "ripple": {
+                    "type": "boolean"
+                  },
+                  "squish": {
+                    "type": "boolean"
+                  },
+                  "trail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "trail",
+                  "glow",
+                  "magnet",
+                  "ripple",
+                  "squish"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
+              "style": {
+                "enum": [
+                  "signature_arc",
+                  "spring_settle",
+                  "magnetic",
+                  "comet_swoop",
+                  "adaptive",
+                  "classic"
+                ],
+                "type": "string"
+              },
+              "timing": {
+                "enum": [
+                  "native",
+                  "fitts",
+                  "fixed"
+                ],
+                "type": "string"
+              },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -4037,6 +4475,7 @@
         "properties": {
           "reduced_motion": {
             "default": "auto",
+            "description": "Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always\nanimates, `auto` (default) leaves the choice to the host.",
             "enum": [
               "auto",
               "on",
@@ -4045,9 +4484,11 @@
             "type": "string"
           },
           "session": {
+            "description": "Public label of the session that owns the cursor.",
             "type": "string"
           },
           "theme_id": {
+            "description": "Id of an installed cursor theme (see `cua-driver cursor-theme list`).",
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
@@ -4137,10 +4578,12 @@
         "additionalProperties": false,
         "properties": {
           "height": {
+            "description": "New height, in the same units as list_windows bounds.",
             "minimum": 1,
             "type": "number"
           },
           "pid": {
+            "description": "Process ID that owns the window.",
             "minimum": 1,
             "type": "integer"
           },
@@ -4149,17 +4592,21 @@
             "type": "string"
           },
           "width": {
+            "description": "New width, in the same units as list_windows bounds.",
             "minimum": 1,
             "type": "number"
           },
           "window_id": {
+            "description": "Window ID from list_windows.",
             "minimum": 1,
             "type": "integer"
           },
           "x": {
+            "description": "New left edge in the desktop coordinate space reported by list_windows.",
             "type": "number"
           },
           "y": {
+            "description": "New top edge in the desktop coordinate space reported by list_windows.",
             "type": "number"
           }
         },
@@ -4180,7 +4627,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -4214,6 +4660,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -4251,6 +4718,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4279,6 +4752,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4321,6 +4800,145 @@
               "desktop"
             ],
             "type": "string"
+          },
+          "cursor_motion": {
+            "additionalProperties": false,
+            "description": "Optional initial cursor motion (style, timing, effects and tuning). The host applies it\nbefore the cursor is first made visible. A later `set_agent_cursor_motion` call wins;\nthis wins over the saved default (`cursor.motion.*` in the driver config) and the\nbuilt-in `signature_arc`. Reduced motion always wins.",
+            "properties": {
+              "arc_flow": {
+                "description": "Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:\npositive moves the apex toward the destination. Clamped to -1..1 (default 0).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "arc_size": {
+                "description": "Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)\nkeeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "dwell_after_click_ms": {
+                "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "effects": {
+                "additionalProperties": false,
+                "description": "Turn single effects on or off. An omitted effect keeps its current setting; null\nrestores the style's default.",
+                "properties": {
+                  "glow": {
+                    "description": "Soft glow around the cursor that grows with speed.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "magnet": {
+                    "description": "Target glow when the `magnetic` style locks on.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "ripple": {
+                    "description": "Ring that expands from the hotspot on click.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "squish": {
+                    "description": "Brief scale-down of the cursor on click.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "trail": {
+                    "description": "Short fading trail behind the cursor.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "end_handle": {
+                "description": "Arc control-point offset from the end, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "glide_duration_ms": {
+                "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "idle_hide_ms": {
+                "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "spring": {
+                "description": "Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped\nto 0.3..1 (default 0.72).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "start_handle": {
+                "description": "Arc control-point offset from the start, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "style": {
+                "description": "Trajectory style. `signature_arc` (default) is one arc with a small follow-through;\n`spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;\n`comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for\nsmall targets and a swoop for long moves; `classic` is the previous Dubins glide. When\nthe theme's reduced motion is on, every move is a short straight glide with no effects.",
+                "enum": [
+                  "signature_arc",
+                  "spring_settle",
+                  "magnetic",
+                  "comet_swoop",
+                  "adaptive",
+                  "classic"
+                ],
+                "type": "string"
+              },
+              "timing": {
+                "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+                "enum": [
+                  "native",
+                  "fitts",
+                  "fixed"
+                ],
+                "type": "string"
+              },
+              "turn_radius": {
+                "description": "Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.\nClamped to 1..1000 (default 80).",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "cursor_theme": {
             "description": "Optional initial cursor theme. The host applies it before the cursor is\nfirst made visible, avoiding a flash of the default theme.",
@@ -4367,6 +4985,127 @@
               "desktop"
             ],
             "type": "string"
+          },
+          "cursor_motion": {
+            "additionalProperties": false,
+            "properties": {
+              "arc_flow": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "arc_size": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "dwell_after_click_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "effects": {
+                "additionalProperties": false,
+                "properties": {
+                  "glow": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "magnet": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "ripple": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "squish": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "trail": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "end_handle": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "glide_duration_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "idle_hide_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "spring": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "start_handle": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "style": {
+                "enum": [
+                  "signature_arc",
+                  "spring_settle",
+                  "magnetic",
+                  "comet_swoop",
+                  "adaptive",
+                  "classic"
+                ],
+                "type": "string"
+              },
+              "timing": {
+                "enum": [
+                  "native",
+                  "fitts",
+                  "fixed"
+                ],
+                "type": "string"
+              },
+              "turn_radius": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "desktop_capture_authorized": {
             "type": "boolean"
@@ -4476,12 +5215,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -4515,7 +5252,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "text": {
             "type": "string"
@@ -4533,7 +5271,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -4567,6 +5304,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -4604,6 +5362,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4632,6 +5396,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4681,9 +5451,6 @@
                     },
                     "exists": {
                       "description": "Assert that at least one trusted element matches the selector.\n\nElement walks are not yet exhaustive on every platform, so absence\ncannot be proven. `false` is rejected instead of returning an\nindefinitely-unknown predicate.",
-                      "enum": [
-                        true
-                      ],
                       "type": "boolean"
                     },
                     "selected": {
@@ -4823,7 +5590,6 @@
         "additionalProperties": true,
         "properties": {
           "elapsed_ms": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -4831,7 +5597,6 @@
             "items": {
               "properties": {
                 "index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -4884,7 +5649,6 @@
             "type": "array"
           },
           "samples": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },

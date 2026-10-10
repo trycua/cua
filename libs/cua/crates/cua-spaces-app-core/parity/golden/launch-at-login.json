@@ -1,0 +1,237 @@
+{
+  "flow": "launch-at-login",
+  "frames": [
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "drive": null,
+        "driveStorage": null,
+        "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "lede": "Cua Spaces is in your menu bar.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Start using Cua Spaces",
+        "prompts": [
+          "qa my app on windows, macos and linux",
+          "use the cua sdk to build an agent app that runs codex in a space",
+          "open my app in a space and pip it",
+          "use the cua sdk to stream a space's window into my app",
+          "teleport my browser into a space and finish the checkout test",
+          "use the cua docs to set up a cua bench taskset",
+          "spin up a linux space and run the test suite there"
+        ],
+        "showMark": false,
+        "step": "done",
+        "summary": [
+          "cua command: not installed",
+          "Account: not signed in",
+          "AI agents: none",
+          "Shows in: Notch and menu bar",
+          "This machine: Access other machines"
+        ],
+        "title": "You're all set",
+        "usage": null
+      },
+      "launchAtLogin": true,
+      "onboarding": "mode-chosen"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "drive": null,
+        "driveStorage": null,
+        "launchAtLogin": "[ ] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "lede": "Cua Spaces is in your menu bar.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Start using Cua Spaces",
+        "prompts": [
+          "qa my app on windows, macos and linux",
+          "use the cua sdk to build an agent app that runs codex in a space",
+          "open my app in a space and pip it",
+          "use the cua sdk to stream a space's window into my app",
+          "teleport my browser into a space and finish the checkout test",
+          "use the cua docs to set up a cua bench taskset",
+          "spin up a linux space and run the test suite there"
+        ],
+        "showMark": false,
+        "step": "done",
+        "summary": [
+          "cua command: not installed",
+          "Account: not signed in",
+          "AI agents: none",
+          "Shows in: Notch and menu bar",
+          "This machine: Access other machines"
+        ],
+        "title": "You're all set",
+        "usage": null
+      },
+      "launchAtLogin": false,
+      "onboarding": "launch-at-login-toggled"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "drive": null,
+        "driveStorage": null,
+        "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "lede": "Cua Spaces is in your menu bar.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Start using Cua Spaces",
+        "prompts": [
+          "qa my app on windows, macos and linux",
+          "use the cua sdk to build an agent app that runs codex in a space",
+          "open my app in a space and pip it",
+          "use the cua sdk to stream a space's window into my app",
+          "teleport my browser into a space and finish the checkout test",
+          "use the cua docs to set up a cua bench taskset",
+          "spin up a linux space and run the test suite there"
+        ],
+        "showMark": false,
+        "step": "done",
+        "summary": [
+          "cua command: not installed",
+          "Account: not signed in",
+          "AI agents: none",
+          "Shows in: Notch and menu bar",
+          "This machine: Access other machines"
+        ],
+        "title": "You're all set",
+        "usage": null
+      },
+      "launchAtLogin": true,
+      "onboarding": "launch-at-login-toggled"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
+        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "enabled"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
+        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "not registered"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
+        "- launch-at-login-approve text: Approve in System Settings › Login Items [Open Login Items]",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "requires approval"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
+        "- launch-at-login-note note: Login items are not available for this copy of Cua Spaces.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "not found"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off} (disabled)",
+        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "turning on"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
+        "- launch-at-login-error error: Operation not permitted",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "failed"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
+        "- launch-at-login-note note: This machine provides Spaces, which stop after a restart until you open Cua Spaces.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "off, provides Spaces"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
+        "- launch-at-login-note note: This machine runs persistent agents, which stop after a restart until you open Cua Spaces.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "off, runs agents"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {On|*Off}",
+        "- launch-at-login-note note: This machine provides Spaces and runs persistent agents, which stop after a restart until you open Cua Spaces.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "off, both"
+    },
+    {
+      "general": [
+        "- launch-at-login toggle: Launch Cua Spaces at login {*On|Off}",
+        "- launch-at-login-note note: Keeps your Spaces and agents available after a restart.",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]"
+      ],
+      "step": "on, both"
+    },
+    {
+      "launch": "register false record null",
+      "step": "first run not finished"
+    },
+    {
+      "launch": "register false record null",
+      "step": "chosen on"
+    },
+    {
+      "launch": "register false record null",
+      "step": "chosen off on a serving machine"
+    },
+    {
+      "launch": "register true record true",
+      "step": "unchosen, serving"
+    },
+    {
+      "launch": "register false record null",
+      "step": "unchosen, not serving"
+    },
+    {
+      "launch": "register false record true",
+      "step": "unchosen, already on"
+    },
+    {
+      "launch": "register false record null",
+      "step": "unchosen, serving, not found"
+    }
+  ]
+}

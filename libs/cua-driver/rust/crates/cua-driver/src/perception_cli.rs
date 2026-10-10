@@ -547,7 +547,9 @@ fn days_in_month(year: u32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
         2 => 28,
         _ => 0,
     }
@@ -594,6 +596,13 @@ mod tests {
             "parse".into(),
             "--image".into(),
             "image.png".into(),
+            "--json".into(),
+        ])
+        .is_err());
+        assert!(parse_args(&[
+            "parse".into(),
+            "--image".into(),
+            "image.png".into(),
             "--capture".into(),
             "capture.json".into(),
         ])
@@ -627,30 +636,5 @@ mod tests {
         ] {
             assert!(!is_rfc3339(invalid), "accepted {invalid}");
         }
-    }
-
-    #[test]
-    fn successful_local_result_is_non_actionable_and_uses_a_separate_id_namespace() {
-        let digest = "ab".repeat(32);
-        let capture_id = local_capture_id(&digest);
-        let mut output = json!({
-            "schema": "cua.visual_regions_v1",
-            "capture": {"capture_id": capture_id}
-        });
-        insert_local_input(&mut output, Some("snapshot-1".into()), digest).unwrap();
-
-        assert_eq!(output["schema"], "cua.visual_regions_v1");
-        assert!(output["capture"]["capture_id"]
-            .as_str()
-            .unwrap()
-            .starts_with("local_png_"));
-        assert!(!output["capture"]["capture_id"]
-            .as_str()
-            .unwrap()
-            .starts_with("capture_"));
-        assert_eq!(output["local_input"]["action_eligible"], false);
-        assert_eq!(output["local_input"]["action_authority"], "none");
-        assert!(output["local_input"].get("image_path").is_none());
-        assert!(output["local_input"].get("capture_metadata_path").is_none());
     }
 }

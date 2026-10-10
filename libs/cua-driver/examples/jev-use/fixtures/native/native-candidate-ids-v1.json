@@ -1,0 +1,357 @@
+{
+ "_fixture": "Expected stable candidate IDs; generated from python/native.py and checked by both languages.",
+ "cases": [
+  {
+   "name": "collisions",
+   "platform": "macos",
+   "window_state": {
+    "pid": 7,
+    "window_id": 9,
+    "snapshot_id": "s0000000a",
+    "capture_id": "cap-1",
+    "elements_complete": false,
+    "window_bounds": {
+     "x": 0,
+     "y": 0,
+     "width": 500,
+     "height": 400
+    },
+    "elements": [
+     {
+      "element_index": 0,
+      "role": "AXWindow",
+      "depth": 0,
+      "label": "Main",
+      "element_token": "s0000000a:0",
+      "frame": {
+       "x": 0,
+       "y": 0,
+       "w": 500,
+       "h": 400
+      }
+     },
+     {
+      "element_index": 1,
+      "role": "AXButton",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:1",
+      "frame": {
+       "x": 11,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Options"
+     },
+     {
+      "element_index": 2,
+      "role": "AXButton",
+      "depth": 1,
+      "parent_index": 1,
+      "enabled": true,
+      "element_token": "s0000000a:2",
+      "frame": {
+       "x": 12,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "OK"
+     },
+     {
+      "element_index": 3,
+      "role": "AXButton",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:3",
+      "frame": {
+       "x": 13,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "OK"
+     },
+     {
+      "element_index": 4,
+      "role": "AXButton",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:4",
+      "frame": {
+       "x": 14,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "OK"
+     },
+     {
+      "element_index": 5,
+      "role": "AXButton",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:5",
+      "frame": {
+       "x": 15,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "你好"
+     },
+     {
+      "element_index": 6,
+      "role": "AXCheckBox",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:6",
+      "frame": {
+       "x": 16,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Café — réglages"
+     }
+    ]
+   },
+   "expected_ids": [
+    "ax:button:options",
+    "ax:button:ok:8f0f",
+    "ax:button:ok:88b0",
+    "ax:button:ok:33f5",
+    "ax:button:670d9743",
+    "ax:checkbox:caf-r-glages"
+   ]
+  },
+  {
+   "name": "linux",
+   "platform": "linux",
+   "window_state": {
+    "pid": 7,
+    "window_id": 9,
+    "snapshot_id": "s0000000a",
+    "capture_id": "cap-1",
+    "elements_complete": false,
+    "window_bounds": {
+     "x": 0,
+     "y": 0,
+     "width": 500,
+     "height": 400
+    },
+    "elements": [
+     {
+      "element_index": 0,
+      "role": "AXWindow",
+      "depth": 0,
+      "label": "Main",
+      "element_token": "s0000000a:0",
+      "frame": {
+       "x": 0,
+       "y": 0,
+       "w": 500,
+       "h": 400
+      }
+     },
+     {
+      "element_index": 1,
+      "role": "push button",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:1",
+      "frame": {
+       "x": 11,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Apply"
+     },
+     {
+      "element_index": 2,
+      "role": "toggle button",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:2",
+      "frame": {
+       "x": 12,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Bold"
+     },
+     {
+      "element_index": 3,
+      "role": "entry",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:3",
+      "frame": {
+       "x": 13,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Search"
+     },
+     {
+      "element_index": 4,
+      "role": "label",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:4",
+      "frame": {
+       "x": 14,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Static"
+     }
+    ]
+   },
+   "expected_ids": [
+    "ax:button:apply",
+    "ax:toggle:bold",
+    "ax:text_input:search"
+   ]
+  },
+  {
+   "name": "windows",
+   "platform": "windows",
+   "window_state": {
+    "pid": 7,
+    "window_id": 9,
+    "snapshot_id": "s0000000a",
+    "capture_id": "cap-1",
+    "elements_complete": false,
+    "window_bounds": {
+     "x": 0,
+     "y": 0,
+     "width": 500,
+     "height": 400
+    },
+    "elements": [
+     {
+      "element_index": 0,
+      "role": "AXWindow",
+      "depth": 0,
+      "label": "Main",
+      "element_token": "s0000000a:0",
+      "frame": {
+       "x": 0,
+       "y": 0,
+       "w": 500,
+       "h": 400
+      }
+     },
+     {
+      "element_index": 1,
+      "role": "SplitButton",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:1",
+      "frame": {
+       "x": 11,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "New"
+     },
+     {
+      "element_index": 2,
+      "role": "Edit",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:2",
+      "frame": {
+       "x": 12,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Name"
+     },
+     {
+      "element_index": 3,
+      "role": "Text",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:3",
+      "frame": {
+       "x": 13,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Static"
+     },
+     {
+      "element_index": 4,
+      "role": "Hyperlink",
+      "depth": 1,
+      "parent_index": 0,
+      "enabled": true,
+      "element_token": "s0000000a:4",
+      "frame": {
+       "x": 14,
+       "y": 10,
+       "w": 40,
+       "h": 20
+      },
+      "label": "Help"
+     }
+    ]
+   },
+   "expected_ids": [
+    "ax:button:new",
+    "ax:text_input:name",
+    "ax:link:help"
+   ]
+  }
+ ],
+ "slugs": {
+  "Click target (left / right / double)": "click-target-left-right-double",
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "你好": "670d9743",
+  "  --Save--  note  ": "save-note"
+ },
+ "risks": {
+  "Delete file": [
+   "destructive"
+  ],
+  "Don’t Save": [
+   "close_unsaved"
+  ],
+  "Buy now": [
+   "purchase"
+  ],
+  "Submit": [
+   "send"
+  ],
+  "Resetting": [],
+  "Save note": [],
+  "Clear All": [
+   "destructive"
+  ],
+  "Quit": [
+   "close_unsaved"
+  ]
+ }
+}

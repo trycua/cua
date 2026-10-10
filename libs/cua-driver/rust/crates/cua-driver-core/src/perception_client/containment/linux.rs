@@ -157,6 +157,8 @@ const BPF_ALU: u16 = 0x04;
 const BPF_AND: u16 = 0x50;
 const BPF_JMP: u16 = 0x05;
 const BPF_JEQ: u16 = 0x10;
+// Only x86_64 needs an ordered compare (the x32 syscall-number range check).
+#[cfg(target_arch = "x86_64")]
 const BPF_JGE: u16 = 0x30;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
@@ -430,7 +432,7 @@ fn open_path(path: &Path, required: bool) -> Result<Option<OwnedFd>, VisualParse
 /// reopen every route above.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn denied_syscalls() -> Vec<libc::c_long> {
-    let mut denied = vec![
+    let denied = vec![
         // Sockets: creation, connection and every operation on one.
         libc::SYS_socket,
         libc::SYS_socketpair,
@@ -507,7 +509,10 @@ fn denied_syscalls() -> Vec<libc::c_long> {
     // Process creation. Runtime threads stay available through the
     // `CLONE_THREAD` rule in the assembled filter.
     #[cfg(target_arch = "x86_64")]
-    denied.extend([libc::SYS_fork, libc::SYS_vfork]);
+    let denied: Vec<_> = denied
+        .into_iter()
+        .chain([libc::SYS_fork, libc::SYS_vfork])
+        .collect();
     denied
 }
 

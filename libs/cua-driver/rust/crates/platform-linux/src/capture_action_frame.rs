@@ -1,24 +1,11 @@
 use cua_driver_core::capture_runtime::{
-    CaptureActionError, CaptureActionRequest, CaptureIdParseError, CaptureLookupError,
-    CapturePublication, CaptureService, CaptureTarget, EncodedScreenshotDimensions,
-    NativeActionDimensions, ScreenshotToActionTransform,
+    CaptureActionRequest, CapturePublication, CaptureService, CaptureTarget,
+    EncodedScreenshotDimensions, NativeActionDimensions, ScreenshotToActionTransform,
 };
 use serde_json::Value;
 
 fn window_target(pid: u32, window_id: u64) -> CaptureTarget {
     CaptureTarget::Window { pid, window_id }
-}
-
-pub fn resolve_max_image_dimension(
-    configured: u32,
-    legacy_max_dimension: Option<u32>,
-    max_image_dimension: Option<u32>,
-) -> u32 {
-    max_image_dimension.unwrap_or_else(|| match legacy_max_dimension {
-        Some(value) if configured == 0 => value,
-        Some(value) => configured.min(value),
-        None => configured,
-    })
 }
 
 fn publish(
@@ -58,13 +45,6 @@ pub fn publish_window(
     encoded_dimensions: (u32, u32),
     native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
-    // The resizer preserves aspect ratio before rounding each encoded axis.
-    // Derive both ratios independently so a one-pixel rounded height does not
-    // skew Y coordinates in the native window frame.
-    let scale_x = f64::from(native_action_dimensions.0) / f64::from(encoded_dimensions.0);
-    let scale_y = f64::from(native_action_dimensions.1) / f64::from(encoded_dimensions.1);
-    let screenshot_to_action =
-        ScreenshotToActionTransform::new(scale_x, 0.0, 0.0, scale_y, 0.0, 0.0)?;
     publish(
         service,
         args,
@@ -72,7 +52,7 @@ pub fn publish_window(
         window_target(pid, window_id),
         encoded_dimensions,
         native_action_dimensions,
-        screenshot_to_action,
+        scaled_transform(encoded_dimensions, native_action_dimensions)?,
     )
 }
 
@@ -80,17 +60,40 @@ pub fn publish_desktop(
     service: &CaptureService,
     args: &Value,
     png_bytes: &[u8],
-    dimensions: (u32, u32),
+    encoded_dimensions: (u32, u32),
+    native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
+    // The desktop screenshot can be downsized below the action frame.
     publish(
         service,
         args,
         png_bytes,
         CaptureTarget::PrimaryDesktop,
-        dimensions,
-        dimensions,
-        ScreenshotToActionTransform::identity(),
+        encoded_dimensions,
+        native_action_dimensions,
+        scaled_transform(encoded_dimensions, native_action_dimensions)?,
     )
+}
+
+/// Screenshot-to-action scaling for a capture encoded at `encoded` pixels of
+/// a `native` action frame. The resizer preserves aspect ratio before rounding
+/// each encoded axis, so both ratios are derived independently: a one-pixel
+/// rounded height must not skew Y coordinates.
+fn scaled_transform(
+    encoded: (u32, u32),
+    native: (u32, u32),
+) -> anyhow::Result<ScreenshotToActionTransform> {
+    anyhow::ensure!(
+        encoded.0 > 0 && encoded.1 > 0,
+        "capture has an empty encoded frame: {}x{}",
+        encoded.0,
+        encoded.1
+    );
+    let scale_x = f64::from(native.0) / f64::from(encoded.0);
+    let scale_y = f64::from(native.1) / f64::from(encoded.1);
+    Ok(ScreenshotToActionTransform::new(
+        scale_x, 0.0, 0.0, scale_y, 0.0, 0.0,
+    )?)
 }
 
 fn admit(
@@ -167,9 +170,8 @@ fn live_action_dimensions(_target: &CaptureTarget) -> anyhow::Result<NativeActio
 
 #[cfg(target_os = "linux")]
 pub(crate) fn desktop_action_dimensions(native: (u32, u32)) -> anyhow::Result<(u32, u32)> {
-    let logical = if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let (width, height, _) = crate::wayland::hyprland::screen_size()?;
-        Some((width, height))
+    let logical = if crate::wayland::is_wayland() {
+        crate::wayland::compositor_logical_frame().transpose()?
     } else {
         None
     };
@@ -188,27 +190,6 @@ fn select_desktop_action_dimensions(
         dimensions.1
     );
     Ok(dimensions)
-}
-
-pub(crate) fn admission_error_code(error: &anyhow::Error) -> &'static str {
-    if error.downcast_ref::<CaptureIdParseError>().is_some() {
-        return "capture_id_invalid";
-    }
-    match error.downcast_ref::<CaptureActionError>() {
-        Some(CaptureActionError::Lookup(CaptureLookupError::Unknown)) => "capture_not_found",
-        Some(CaptureActionError::Lookup(CaptureLookupError::Expired)) => "capture_expired",
-        Some(CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)) => {
-            "capture_generation_mismatch"
-        }
-        Some(CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)) => {
-            "capture_target_mismatch"
-        }
-        Some(
-            CaptureActionError::InvalidScreenshotPoint | CaptureActionError::InvalidMappedPoint,
-        ) => "capture_coordinate_invalid",
-        Some(CaptureActionError::NativeActionFrameMismatch) => "capture_frame_mismatch",
-        None => "capture_action_refused",
-    }
 }
 
 pub fn admit_window_click(
@@ -254,6 +235,7 @@ pub fn retire_runtime(service: &CaptureService) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_driver_core::capture_runtime::admission_error_code;
     use sha2::{Digest, Sha256};
 
     fn png(width: u32, height: u32, value: u8) -> Vec<u8> {
@@ -355,7 +337,7 @@ mod tests {
     fn retired_session_capture_is_stale() {
         let service = CaptureService::default();
         let call_args = args("retired");
-        let id = publish_desktop(&service, &call_args, &png(3, 2, 0x77), (3, 2)).unwrap();
+        let id = publish_desktop(&service, &call_args, &png(3, 2, 0x77), (3, 2), (3, 2)).unwrap();
 
         let binding = service.binding_from_args(&call_args).unwrap();
         service.retire_session(&binding);
@@ -387,7 +369,7 @@ mod tests {
     fn another_session_cannot_admit_or_consume_a_capture() {
         let service = CaptureService::default();
         let owner = args("owner");
-        let id = publish_desktop(&service, &owner, &png(4, 3, 0x21), (4, 3)).unwrap();
+        let id = publish_desktop(&service, &owner, &png(4, 3, 0x21), (4, 3), (4, 3)).unwrap();
 
         let refusal = admit_desktop(&service, &args("other"), &id, (2.0, 1.0), (4, 3))
             .expect_err("cross-session admission must fail");
@@ -414,6 +396,7 @@ mod tests {
             &call_args,
             &png(logical.0, logical.1, 0x31),
             logical,
+            logical,
         )
         .unwrap();
         assert_eq!(
@@ -423,46 +406,21 @@ mod tests {
     }
 
     #[test]
-    fn capture_action_refusals_have_stable_specific_codes() {
-        for (error, code) in [
-            (
-                CaptureActionError::Lookup(CaptureLookupError::Unknown),
-                "capture_not_found",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::Expired),
-                "capture_expired",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
-                "capture_generation_mismatch",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::TargetMismatch),
-                "capture_target_mismatch",
-            ),
-            (
-                CaptureActionError::InvalidScreenshotPoint,
-                "capture_coordinate_invalid",
-            ),
-            (
-                CaptureActionError::InvalidMappedPoint,
-                "capture_coordinate_invalid",
-            ),
-            (
-                CaptureActionError::NativeActionFrameMismatch,
-                "capture_frame_mismatch",
-            ),
-        ] {
-            assert_eq!(admission_error_code(&anyhow::Error::new(error)), code);
-        }
+    fn downsized_desktop_capture_maps_back_to_the_action_frame() {
+        let service = CaptureService::default();
+        let call_args = args("downsized");
+        let id = publish_desktop(&service, &call_args, &png(4, 3, 0x42), (4, 3), (8, 6)).unwrap();
+        assert_eq!(
+            admit_desktop(&service, &call_args, &id, (2.0, 1.5), (8, 6)).unwrap(),
+            (4.0, 3.0)
+        );
     }
 
     #[test]
     fn desktop_publication_uses_the_post_normalization_bytes() {
         let service = CaptureService::default();
         let normalized = png(4, 3, 0x18);
-        let id = publish_desktop(&service, &args("desktop"), &normalized, (4, 3)).unwrap();
+        let id = publish_desktop(&service, &args("desktop"), &normalized, (4, 3), (4, 3)).unwrap();
         let binding = service.binding_from_args(&args("desktop")).unwrap();
         let capture = service
             .read_for_perception(service.parse_capture_id(&id).unwrap(), &binding)
@@ -473,22 +431,6 @@ mod tests {
             admit_desktop(&service, &args("desktop"), &id, (2.0, 1.0), (4, 3)).unwrap(),
             (2.0, 1.0)
         );
-    }
-
-    #[test]
-    fn explicit_image_dimension_override_wins_including_native_zero() {
-        assert_eq!(
-            resolve_max_image_dimension(1568, Some(800), Some(2048)),
-            2048
-        );
-        assert_eq!(resolve_max_image_dimension(1568, Some(800), Some(0)), 0);
-    }
-
-    #[test]
-    fn omitted_image_dimension_override_preserves_existing_behavior() {
-        assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
-        assert_eq!(resolve_max_image_dimension(0, None, None), 0);
-        assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
     }
 
     #[test]

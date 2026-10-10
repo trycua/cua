@@ -488,6 +488,55 @@ pub enum CaptureActionError {
     NativeActionFrameMismatch,
 }
 
+/// Wire code for a capture ID that does not parse.
+pub const CAPTURE_ID_INVALID_CODE: &str = "capture_id_invalid";
+
+/// Wire code for a capture-bound action refusal with no more specific cause.
+pub const CAPTURE_ACTION_REFUSED_CODE: &str = "capture_action_refused";
+
+impl CaptureIdParseError {
+    /// Stable structured `code` reported by every platform adapter.
+    pub const fn wire_code(&self) -> &'static str {
+        CAPTURE_ID_INVALID_CODE
+    }
+}
+
+impl CaptureLookupError {
+    /// Stable structured `code` reported by every platform adapter.
+    pub const fn wire_code(&self) -> &'static str {
+        match self {
+            Self::Unknown => "capture_not_found",
+            Self::Expired => "capture_expired",
+            Self::GenerationMismatch => "capture_generation_mismatch",
+            Self::TargetMismatch => "capture_target_mismatch",
+        }
+    }
+}
+
+impl CaptureActionError {
+    /// Stable structured `code` reported by every platform adapter when
+    /// capture-bound action admission refuses. Adapters must not remap it.
+    pub const fn wire_code(&self) -> &'static str {
+        match self {
+            Self::Lookup(lookup) => lookup.wire_code(),
+            Self::InvalidScreenshotPoint | Self::InvalidMappedPoint => "capture_coordinate_invalid",
+            Self::NativeActionFrameMismatch => "capture_frame_mismatch",
+        }
+    }
+}
+
+/// Maps an adapter's admission failure to its shared wire code. Parse and
+/// admission errors keep their core code; any other failure is a generic
+/// capture-bound action refusal.
+pub fn admission_error_code(error: &anyhow::Error) -> &'static str {
+    if let Some(parse) = error.downcast_ref::<CaptureIdParseError>() {
+        return parse.wire_code();
+    }
+    error
+        .downcast_ref::<CaptureActionError>()
+        .map_or(CAPTURE_ACTION_REFUSED_CODE, CaptureActionError::wire_code)
+}
+
 #[derive(Clone)]
 struct StoredCapture {
     id: CaptureId,
@@ -1132,6 +1181,33 @@ impl CaptureService {
         request: CaptureActionRequest,
     ) -> Result<CaptureActionAdmission, CaptureActionError> {
         self.registry.admit_action(request)
+    }
+
+    /// Predict, without consuming anything, whether a capture-bound action
+    /// with these trusted runtime arguments will be refused at admission.
+    /// Returns the stable refusal wire code (`capture_id_invalid`,
+    /// `capture_binding_failed`, `capture_not_found`, `capture_expired`,
+    /// `capture_generation_mismatch`) or `None` when the capture is currently
+    /// admissible or `args` carries no `capture_id`.
+    ///
+    /// This is advisory: admission in the platform adapter remains the only
+    /// authority. Callers use it to avoid expensive work (for example
+    /// recording evidence) for calls that cannot dispatch. The refusals it
+    /// reports are monotonic: an unknown, expired, or superseded capture never
+    /// becomes admissible again.
+    pub fn predict_action_refusal(&self, args: &serde_json::Value) -> Option<&'static str> {
+        let capture_id = args.get("capture_id")?.as_str()?;
+        let id = match capture_id.parse::<CaptureId>() {
+            Ok(id) => id,
+            Err(error) => return Some(error.wire_code()),
+        };
+        let Ok(binding) = self.binding_from_args(args) else {
+            return Some("capture_binding_failed");
+        };
+        self.registry
+            .read_for_perception_bound(id, &binding)
+            .err()
+            .map(|error| error.wire_code())
     }
 
     pub fn retire_session(&self, binding: &CaptureBinding) -> usize {
@@ -1871,5 +1947,124 @@ mod tests {
                 .session_generation(),
             1
         );
+    }
+
+    #[test]
+    fn capture_refusals_have_one_wire_code_table() {
+        for (error, code) in [
+            (
+                CaptureActionError::Lookup(CaptureLookupError::Unknown),
+                "capture_not_found",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::Expired),
+                "capture_expired",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
+                "capture_generation_mismatch",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::TargetMismatch),
+                "capture_target_mismatch",
+            ),
+            (
+                CaptureActionError::InvalidScreenshotPoint,
+                "capture_coordinate_invalid",
+            ),
+            (
+                CaptureActionError::InvalidMappedPoint,
+                "capture_coordinate_invalid",
+            ),
+            (
+                CaptureActionError::NativeActionFrameMismatch,
+                "capture_frame_mismatch",
+            ),
+        ] {
+            assert_eq!(error.wire_code(), code);
+            assert_eq!(admission_error_code(&anyhow::Error::new(error)), code);
+        }
+        assert_eq!(
+            admission_error_code(&anyhow::Error::new(CaptureIdParseError::InvalidFormat)),
+            "capture_id_invalid"
+        );
+        assert_eq!(
+            admission_error_code(&anyhow::anyhow!("live target unavailable")),
+            "capture_action_refused"
+        );
+    }
+
+    #[test]
+    fn refusal_prediction_matches_admission_without_consuming_the_capture() {
+        let clock = Arc::new(ManualClock::default());
+        let service = CaptureService::with_clock(config(4, 10_000), clock.clone()).unwrap();
+        let args = serde_json::json!({"_session_id": "predict"});
+        let binding = service.binding_from_args(&args).unwrap();
+        let publish = || {
+            service
+                .publish(CapturePublication {
+                    png_bytes: png(2, 2, 1),
+                    target: CaptureTarget::PrimaryDesktop,
+                    encoded_dimensions: EncodedScreenshotDimensions::new(2, 2).unwrap(),
+                    native_action_dimensions: NativeActionDimensions::new(2, 2).unwrap(),
+                    screenshot_to_action: ScreenshotToActionTransform::identity(),
+                    session_id: Arc::<str>::from("predict"),
+                    session_generation: binding.session_generation(),
+                })
+                .unwrap()
+        };
+        let with_capture = |id: &str, session: Option<&str>| {
+            let mut value = serde_json::json!({"capture_id": id, "x": 0, "y": 0});
+            if let Some(session) = session {
+                value["_session_id"] = serde_json::json!(session);
+            }
+            value
+        };
+        let admit = |id: CaptureId| {
+            service.admit_action(CaptureActionRequest {
+                capture_id: id,
+                binding: binding.clone(),
+                target: CaptureTarget::PrimaryDesktop,
+                current_native_action_dimensions: NativeActionDimensions::new(2, 2).unwrap(),
+                screenshot_x: 0.0,
+                screenshot_y: 0.0,
+            })
+        };
+
+        assert_eq!(service.predict_action_refusal(&args), None, "no capture_id");
+        assert_eq!(
+            service.predict_action_refusal(&with_capture("not-a-capture", Some("predict"))),
+            Some(CAPTURE_ID_INVALID_CODE)
+        );
+
+        let live = publish();
+        let live_text = live.to_string();
+        assert_eq!(
+            service.predict_action_refusal(&with_capture(&live_text, None)),
+            Some("capture_binding_failed")
+        );
+        assert_eq!(
+            service.predict_action_refusal(&with_capture(&live_text, Some("other"))),
+            Some("capture_generation_mismatch")
+        );
+        // Predicting admissibility must not consume the one-shot capture.
+        assert_eq!(
+            service.predict_action_refusal(&with_capture(&live_text, Some("predict"))),
+            None
+        );
+        admit(live).expect("prediction left the capture admissible");
+        assert_eq!(
+            service.predict_action_refusal(&with_capture(&live_text, Some("predict"))),
+            Some("capture_not_found")
+        );
+        assert_eq!(admit(live).unwrap_err().wire_code(), "capture_not_found");
+
+        let expiring = publish();
+        clock.advance(Duration::from_secs(11));
+        assert_eq!(
+            service.predict_action_refusal(&with_capture(&expiring.to_string(), Some("predict"))),
+            Some("capture_expired")
+        );
+        assert_eq!(admit(expiring).unwrap_err().wire_code(), "capture_expired");
     }
 }

@@ -10,6 +10,8 @@ enum LumeVersionCheck {
     private static let cacheRefreshSeconds: TimeInterval = 20 * 60 * 60
     private static let updateCheckEnv = "LUME_UPDATE_CHECK"
     private static let installScriptURLEnv = "LUME_INSTALL_SCRIPT_URL"
+    private static let backgroundServicePlistPath =
+        "Library/LaunchAgents/com.trycua.lume_daemon.plist"
 
     struct State: Codable {
         let currentVersion: String
@@ -208,16 +210,31 @@ enum LumeVersionCheck {
     static func runInstallScript(version: String) throws -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", manualInstallCommand()]
 
         var environment = ProcessInfo.processInfo.environment
         environment["LUME_VERSION"] = version
         environment["LUME_INSTALL_CHANNEL"] = "update_apply"
         process.environment = environment
+        let homeDirectory = environment["HOME"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        process.arguments = installScriptArguments(homeDirectory: homeDirectory)
 
         try process.run()
         process.waitUntilExit()
         return process.terminationStatus
+    }
+
+    static func installScriptArguments(
+        homeDirectory: URL,
+        installCommand: String = manualInstallCommand()
+    ) -> [String] {
+        let servicePlist = homeDirectory.appendingPathComponent(backgroundServicePlistPath)
+        let preserveService = FileManager.default.fileExists(atPath: servicePlist.path)
+        let command = preserveService
+            ? installCommand
+            : "\(installCommand) -s -- --no-background-service"
+        return ["-c", command]
     }
 
     static func isNewer(_ lhs: String, than rhs: String) -> Bool {

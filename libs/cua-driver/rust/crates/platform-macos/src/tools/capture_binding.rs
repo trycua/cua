@@ -5,8 +5,8 @@
 
 use cua_driver_core::{
     capture_runtime::{
-        CaptureActionError, CaptureActionRequest, CaptureLookupError, CapturePublication,
-        CaptureService, CaptureTarget, EncodedScreenshotDimensions, NativeActionDimensions,
+        CaptureActionRequest, CaptureIdParseError, CapturePublication, CaptureService,
+        CaptureTarget, EncodedScreenshotDimensions, NativeActionDimensions,
         ScreenshotToActionTransform,
     },
     protocol::ToolResult,
@@ -153,7 +153,7 @@ impl MacCaptureBindings {
             .map_err(|error| capture_error("capture_binding_failed", error))?;
         let parsed = capture_id
             .parse()
-            .map_err(|error| capture_error("capture_id_invalid", error))?;
+            .map_err(|error: CaptureIdParseError| capture_error(error.wire_code(), error))?;
         self.service
             .admit_action(CaptureActionRequest {
                 capture_id: parsed,
@@ -164,7 +164,7 @@ impl MacCaptureBindings {
                 screenshot_y: y,
             })
             .map(|admission| (admission.action_x, admission.action_y))
-            .map_err(|error| capture_error(action_error_code(&error), error))
+            .map_err(|error| capture_error(error.wire_code(), error))
     }
 
     pub(super) fn retire_session(&self, session_id: &str) {
@@ -255,22 +255,6 @@ fn capture_error(code: &str, error: impl std::fmt::Display) -> ToolResult {
     }))
 }
 
-fn action_error_code(error: &CaptureActionError) -> &'static str {
-    match error {
-        CaptureActionError::Lookup(CaptureLookupError::Unknown | CaptureLookupError::Expired) => {
-            "capture_stale"
-        }
-        CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch) => {
-            "capture_generation_mismatch"
-        }
-        CaptureActionError::Lookup(CaptureLookupError::TargetMismatch) => "capture_target_mismatch",
-        CaptureActionError::InvalidScreenshotPoint | CaptureActionError::InvalidMappedPoint => {
-            "capture_coordinate_invalid"
-        }
-        CaptureActionError::NativeActionFrameMismatch => "capture_frame_mismatch",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,8 +294,7 @@ mod tests {
         bindings: &MacCaptureBindings,
         capture_id: &str,
         args: &serde_json::Value,
-        pid: u32,
-        window_id: u64,
+        (pid, window_id): (u32, u64),
         x: f64,
         y: f64,
         native: (u32, u32),
@@ -350,30 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn action_errors_keep_stale_mismatch_and_coordinate_failures_distinct() {
-        assert_eq!(
-            action_error_code(&CaptureActionError::Lookup(CaptureLookupError::Expired)),
-            "capture_stale"
-        );
-        assert_eq!(
-            action_error_code(&CaptureActionError::Lookup(
-                CaptureLookupError::GenerationMismatch
-            )),
-            "capture_generation_mismatch"
-        );
-        assert_eq!(
-            action_error_code(&CaptureActionError::Lookup(
-                CaptureLookupError::TargetMismatch
-            )),
-            "capture_target_mismatch"
-        );
-        assert_eq!(
-            action_error_code(&CaptureActionError::InvalidScreenshotPoint),
-            "capture_coordinate_invalid"
-        );
-    }
-
-    #[test]
     fn publication_retains_exact_png_and_content_digest() {
         let service = Arc::new(CaptureService::default());
         let bindings = MacCaptureBindings::new(service.clone());
@@ -399,7 +358,7 @@ mod tests {
             .publish_desktop(&args, png(4, 4), (4, 4), (2, 2))
             .unwrap();
         let mut dispatched = false;
-        let mismatch = admit_window(&bindings, &capture_id, &args, 1, 1, 1.0, 1.0, (2, 2));
+        let mismatch = admit_window(&bindings, &capture_id, &args, (1, 1), 1.0, 1.0, (2, 2));
         if mismatch.is_ok() {
             dispatched = true;
         }
@@ -424,7 +383,7 @@ mod tests {
                 .unwrap_err()
                 .structured_content
                 .unwrap()["code"],
-            "capture_stale"
+            "capture_not_found"
         );
     }
 
@@ -452,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn session_retirement_makes_published_capture_stale() {
+    fn session_retirement_reports_capture_not_found() {
         let service = Arc::new(CaptureService::default());
         let bindings = MacCaptureBindings::new(service);
         let args = args("retired-session");
@@ -461,7 +420,10 @@ mod tests {
             .unwrap();
         bindings.retire_session("retired-session");
         let error = admit_desktop(&bindings, &capture_id, &args, 1.0, 1.0, (2, 2)).unwrap_err();
-        assert_eq!(error.structured_content.unwrap()["code"], "capture_stale");
+        assert_eq!(
+            error.structured_content.unwrap()["code"],
+            "capture_not_found"
+        );
     }
 
     #[test]
@@ -473,7 +435,7 @@ mod tests {
             .publish_window(&args, 8, 13, png(4, 3), (4, 3), (8, 6))
             .unwrap();
         let mut dispatches = 0;
-        let refusal = admit_window(&bindings, &capture_id, &args, 8, 13, 1.25, 1.5, (9, 6));
+        let refusal = admit_window(&bindings, &capture_id, &args, (8, 13), 1.25, 1.5, (9, 6));
         if refusal.is_ok() {
             dispatches += 1;
         }
@@ -483,7 +445,7 @@ mod tests {
             "capture_frame_mismatch"
         );
         assert_eq!(
-            admit_window(&bindings, &capture_id, &args, 8, 13, 1.25, 1.5, (8, 6)).unwrap(),
+            admit_window(&bindings, &capture_id, &args, (8, 13), 1.25, 1.5, (8, 6)).unwrap(),
             (2.5, 3.0)
         );
         assert!(service

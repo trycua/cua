@@ -7,9 +7,9 @@
     </picture>
   </a>
 
-  <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua provides open-source desktop automation, isolated cloud desktops, local macOS VMs, specialist decision models, and benchmarks for evaluating computer-use agents.</p>
+  <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua Spaces gives your agents full desktops on your Mac and on machines you own. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>
 
-  <p align="center"><strong><a href="https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme" target="_blank" rel="noopener noreferrer">Try Cua Fleets now at run.cua.ai</a></strong></p>
+  <p align="center"><strong><a href="https://spaces.cua.ai">Get Cua Spaces</a></strong></p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
@@ -17,7 +17,7 @@
     <a href="https://x.com/trycua" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/trycua?style=social" alt="Twitter"></a>
     <a href="https://cua.ai/docs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Docs-0ea5e9.svg" alt="Documentation"></a>
     <br>
-<a href="https://trendshift.io/repositories/13685" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13685" alt="trycua%2Fcua | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://www.star-history.com/#trycua/cua" target="_blank" rel="noopener noreferrer"><img src="https://api.star-history.com/badge?repo=trycua/cua&type=trending" alt="trycua/cua | GitHub Trending on Star History" width="266" height="64"/></a>
   </p>
 
 </div>
@@ -27,68 +27,70 @@
 <div align="center">
   <table width="100%">
     <tr>
-      <td colspan="2" align="center" valign="top" width="66.66%">
-        <a href="#cua-fleets">
-          <img src="img/card-cua-fleets-wide.gif" alt="Cua Fleets: isolated cloud desktops for your agents" width="100%">
-        </a>
-      </td>
-      <td align="center" valign="top" width="33.33%">
-        <a href="https://github.com/trycua/cua/tree/main/libs/cua-s1">
-          <img src="img/card-cua-s1.gif" alt="CUA-S1: small, specialized models for computer use." width="100%">
+      <td colspan="3" align="center" valign="top">
+        <a href="#cua-spaces">
+          <img src="img/card-cua-spaces-wide.webp" alt="Cua Spaces: full desktops for your agents. macOS and Linux Spaces on machines you own." width="100%">
         </a>
       </td>
     </tr>
     <tr>
       <td align="center" valign="top" width="33.33%">
         <a href="#cua-driver">
-          <img src="img/card-cua-driver.gif" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="100%">
+          <img src="img/card-cua-driver.webp" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="100%">
         </a>
       </td>
       <td align="center" valign="top" width="33.33%">
         <a href="#lume">
-          <img src="img/card-cua-lume.gif" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="100%">
+          <img src="img/card-cua-lume.webp" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="100%">
         </a>
       </td>
       <td align="center" valign="top" width="33.33%">
         <a href="#cua-bench">
-          <img src="img/card-cua-bench.gif" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="100%">
+          <img src="img/card-cua-bench.webp" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="100%">
         </a>
       </td>
     </tr>
   </table>
 </div>
 
-- **Cua Fleets:** [Provision a Linux desktop, run a command, and save a screenshot](https://cua.ai/docs/tutorials/your-first-cloud-fleet).
+- **Cua Spaces:** [Install the app and run your first Space](https://cua.ai/docs/spaces/quickstart).
+- **Cua Driver:** [Operate Calculator and verify its result](https://cua.ai/docs/cua-driver/quickstart).
+- **Lume:** [Create a Tahoe VM and connect over SSH](https://cua.ai/docs/lume/quickstart).
+- **Cua SDK and CLI:** [Install `cua` and create a local sandbox](#cua-sdk-and-cli).
 - **CUA-S1:** [Explore small, specialized models for computer-use decisions](#cua-s1).
-- **Cua Driver:** [Operate Calculator and verify its result](https://cua.ai/docs/tutorials/drive-your-first-app).
-- **Lume:** [Create a Tahoe VM and connect over SSH](https://cua.ai/docs/tutorials/create-your-first-lume-vm).
-- **Cua Bench:** [Create and verify a simulated task](https://cua.ai/docs/tutorials/your-first-cua-bench-task).
+- **Cua Bench:** [Create and verify a simulated task](https://cua.ai/docs/cua-bench/quickstart).
 
-Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/concepts/what-is-computer-use) describes an agent moving between code, APIs, and graphical interfaces within the same task.
-
-## See Cua Driver in action
-
-Two Cua Driver sessions select cells in LibreOffice Calc and objects in Inkscape on an Omarchy desktop while a terminal stays in the foreground. Watch the 50-second demo, then explore [Omarchy on Fleet](https://cua.ai/docs/how-to-guides/sandbox/run-omarchy-on-cloud-fleet).
-
-https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2
+Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/cua-driver/concepts/how-cua-driver-works) describes an agent moving between code, APIs, and graphical interfaces within the same task.
 
 ---
 
-## Cua Fleets
+## Cua Spaces
 
-Provision isolated cloud desktops at [run.cua.ai](https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme). A Fleet maintains sandbox capacity; your code claims a desktop from a pool and uses the Sandbox SDK to run commands, capture screenshots, and interact with apps inside it.
+Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/your-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
 
-**Your first result:** provision a Linux desktop, run `uname -a`, save a screenshot, and delete the cloud resources. The tutorial covers Fleet credentials, dependencies, and cleanup. Pools can retain paid capacity after a claim ends, so follow its cleanup steps.
+- **Teleport.** Move a signed-in app, such as Chrome or Slack, into a Space and it opens there still signed in. Your sessions stay in the Cua Keyvault, encrypted on your Mac, and reach a Space only after you approve.
+- **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.
+- **Agent-ready images.** Spaces images ship with [cua-spacesd](libs/cua-spacesd/README.md), so agents get processes, files, screenshots and input as soon as a Space starts.
 
-Local sandboxes and Fleets share the Sandbox SDK, but credentials, images, operations, and runtime requirements differ. Use the [runtime support reference](https://cua.ai/docs/reference/sandbox-sdk/runtime-support) to choose an environment. For your own hardware, see [Manage local sandbox lifecycle](https://cua.ai/docs/how-to-guides/sandbox/manage-local-lifecycle).
+https://github.com/user-attachments/assets/a2ccc86b-10d0-48c0-bee6-7ae652ba1c59
 
-**[Your first Cloud Fleet](https://cua.ai/docs/tutorials/your-first-cloud-fleet)** | **[Fleet overview](https://cua.ai/docs/cloud-fleets)** | **[Sandbox SDK reference](https://cua.ai/docs/reference/sandbox-sdk)**
+**Install on macOS 26 or later**
+
+```sh
+curl -fsSL https://cua.ai/install.sh | sh
+```
+
+On macOS the installer selects the Cua Spaces app by default and adds the `cua` CLI. You can also [download the signed `.dmg`](https://github.com/trycua/cua/releases/download/cua-spaces-v0.1.0/cua-spaces-0.1.0-darwin-universal.dmg), or get the `.pkg` from the [Cua Spaces 0.1.0 release](https://github.com/trycua/cua/releases/tag/cua-spaces-v0.1.0).
+
+Spaces is free for individuals. Pro and Teams plans are coming soon. The app is source-available under [FSL-1.1-MIT](#licensing).
+
+**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/start-here/host-spaces-on-your-spare-mac)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/your-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
 
 ---
 
 ## Cua Driver
 
-Give your agent tools to inspect and operate native desktop apps and browsers on macOS, Windows, and Linux. Connect through the CLI, MCP, or typed SDKs. Background delivery lets agents work without moving your pointer or taking focus when the app and platform support it; see [platform support](https://cua.ai/docs/reference/cua-driver/platform-support) for the boundaries.
+Give your agent tools to inspect and operate native desktop apps and browsers on macOS, Windows, and Linux. Connect through the CLI, MCP, or typed SDKs. Background delivery lets agents work without moving your pointer or taking focus when the app and platform support it; see [platform support](https://cua.ai/docs/cua-driver/concepts/platform-support) for the boundaries.
 
 **macOS / Linux**
 
@@ -104,9 +106,71 @@ irm https://cua.ai/driver/install.ps1 | iex
 
 **Your first result:** connect your agent, ask it to compute 6 × 7 in Calculator, and have it verify that the app displays 42. The tutorial covers platform setup, permissions, and agent connection.
 
-**[Drive your first app](https://cua.ai/docs/tutorials/drive-your-first-app)** | **[Installation](https://cua.ai/docs/how-to-guides/driver/install)** | **[CLI Reference](https://cua.ai/docs/reference/cua-driver/cli-reference)**
+**[Drive your first app](https://cua.ai/docs/cua-driver/quickstart)** | **[Installation](https://cua.ai/docs/cua-driver/quickstart)** | **[CLI Reference](https://cua.ai/docs/cua-driver/reference/cli)**
 
-Using Claude Code, Codex, Cursor, OpenClaw, or another agent? [Find your integration](https://cua.ai/docs/how-to-guides/driver/connect-your-agent). Source documentation and architecture notes live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+Using Claude Code, Codex, Cursor, OpenClaw, or another agent? [Find your integration](https://cua.ai/docs/cua-driver/guides/connect-your-agent). Source documentation and architecture notes live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+
+### See Cua Driver in action
+
+Two Cua Driver sessions select cells in LibreOffice Calc and objects in Inkscape on an Omarchy desktop while a terminal stays in the foreground. Watch the 50-second demo.
+
+https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2
+
+---
+
+## Lume
+
+Create and manage local macOS and Linux VMs on Apple Silicon using Apple's Virtualization.Framework.
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
+```
+
+**Your first result:** create a vanilla macOS Tahoe VM from an Apple restore image, start it, and connect over SSH. The tutorial uses the Lume CLI directly and explains the unattended setup defaults.
+
+**[Create your first Lume VM](https://cua.ai/docs/lume/quickstart)** | **[Installation](https://cua.ai/docs/lume/quickstart)** | **[CLI reference](https://cua.ai/docs/lume/reference/cli)**
+
+---
+
+## Cua SDK and CLI
+
+One SDK and one `cua` command for local VMs and containers, and for any machine that runs [cua-spacesd](libs/cua-spacesd/README.md).
+
+**macOS / Linux**
+
+```sh
+curl -fsSL https://cua.ai/install.sh | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://cua.ai/install.ps1 | iex
+```
+
+In a terminal the script shows a short checklist: the `cua` CLI, the Cua Spaces app (default on macOS), the cua-driver MCP and skill for your agents, and hosting this machine. It then runs `cua auth login`, which signs you in and offers to install cua skills and the cua MCP server into your AI coding agents (Claude Code, Codex, Cursor, and others). Preselect items with `sh -s -- --select cua-driver`, or skip the checklist with `--only cua-driver`. See [the installer options](scripts/install/README.md).
+
+```sh
+cua sb create ubuntu --name dev          # a gVisor container, set up on first use
+cua sb exec dev uname -a
+cua sb screenshot dev
+cua sb rm dev
+```
+
+The same sandbox from Python:
+
+```python
+from cua_sandbox import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+    print((await sb.shell.run("uname -a")).stdout)
+```
+
+- **SDK:** the same API in Python (`pip install cua`), TypeScript (`@trycua/cua`), Swift (`Cua`) and Kotlin (generated bindings), running embedded in your process or through a shared `cua daemon`.
+- **Sandboxes need no agent inside.** Readiness comes from the runtime and optional port probes. Images that ship cua-spacesd (port 3211) add processes, files, screenshots, input through cua-driver, and low-latency video and audio streaming.
+- **Your own machines.** `cua host setup` makes this machine reachable through the cua.ai relay with no port forwarding.
+
+**[SDK README](libs/cua/README.md)** | **[Quickstart](https://cua.ai/docs/cua-sdk/quickstart)** | **[CLI reference](https://cua.ai/docs/cua-cli/reference/cli)** | **[Sandbox SDK reference](https://cua.ai/docs/cua-sdk/reference/sandbox)**
 
 ---
 
@@ -124,20 +188,6 @@ The project includes Python model code, synthetic-data generation, training, and
 
 ---
 
-## Lume
-
-Create and manage local macOS and Linux VMs on Apple Silicon using Apple's Virtualization.Framework.
-
-```bash
-/bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
-```
-
-**Your first result:** create a vanilla macOS Tahoe VM from an Apple restore image, start it, and connect over SSH. The tutorial uses the Lume CLI directly and explains the unattended setup defaults.
-
-**[Create your first Lume VM](https://cua.ai/docs/tutorials/create-your-first-lume-vm)** | **[Installation](https://cua.ai/docs/how-to-guides/lume/install-lume)** | **[CLI reference](https://cua.ai/docs/reference/lume/cli-reference)**
-
----
-
 ## Cua Bench
 
 Build computer-use tasks, evaluate agents, and export trajectories for training. Start with a simulated task that requires no VM, Docker, or model API key.
@@ -151,17 +201,48 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 
 **Your first result:** create a small task, run its reference solution, and verify that its evaluator reports a reward of `1.0`. Then try the same task yourself.
 
-**[Build your first task](https://cua.ai/docs/tutorials/your-first-cua-bench-task)** | **[What is Cua-Bench?](https://cua.ai/docs/concepts/what-is-cua-bench)** | **[CLI reference](https://cua.ai/docs/reference/cua-bench/cli-reference)** | **[Partner with us](https://cuabench.ai/)**
+**[Build your first task](https://cua.ai/docs/cua-bench/quickstart)** | **[What is Cua-Bench?](https://cua.ai/docs/cua-bench)** | **[CLI reference](https://cua.ai/docs/cua-bench/reference/cli)** | **[Partner with us](https://cuabench.ai/)**
+
+---
+
+## Packages
+
+| Package                                                 | Description                                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [cua-driver](libs/cua-driver/README.md)                 | Background computer-use agent for macOS, Windows, and Linux                          |
+| [cua SDK and CLI](libs/cua/README.md)                   | Rust core and the `cua` command: sandboxes, local runtimes, images, Spaces           |
+| [cua (Python)](libs/cua/python/README.md)               | The cua SDK for Python (`pip install cua`)                                           |
+| [@trycua/cua](libs/cua/typescript/README.md)            | The cua SDK for Node and the browser, plus `@trycua/cua/spaces`                      |
+| [Cua (Swift)](libs/cua/swift/README.md)                 | The cua SDK for Swift (SwiftPM, XCFramework)                                         |
+| [cua-sandbox](libs/python/cua-sandbox/README.md)        | High-level Python `Sandbox`/`Image`/`Pool` API, a thin wrapper over the cua SDK      |
+| [cua-spacesd](libs/cua-spacesd/README.md)         | In-sandbox daemon on port 3211: processes, files, desktop, streaming (gRPC)          |
+| [Cua Spaces for macOS](apps/cua-spaces-macos/README.md) | The Spaces app on macOS: menu bar and notch, live streams, teleport, agent threads   |
+| [Cua Spaces core](apps/cua-spaces/README.md)            | The shared Spaces app core, and the Tauri app for Linux and Windows                  |
+| [cua-bench](libs/cua-bench/README.md)                   | Benchmarks and RL environments for computer-use                                      |
+| [lume](https://cua.ai/docs/lume/reference/cli) | macOS/Linux VM management on Apple Silicon                                          |
+| [lumier](libs/lumier/README.md)                         | Docker-compatible interface for Lume VMs                                             |
+
+### Deprecated packages
+
+Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).
+
+| Package                                                  | Registry | Use instead                                                                                                                                      |
+| -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [cuabot](libs/cuabot/README.md)                          | npm      | **Do not run it:** it has known security issues. Stop it and uninstall it ([how](libs/cuabot/README.md)), then use Cua Driver or the `cua` CLI. |
+| `cua-computer`                                           | PyPI     | The [`cua` SDK](#cua-sdk-and-cli) for sandboxes, [Cua Driver](#cua-driver) for the machine you are on                                           |
+| `cua-computer-server`                                    | PyPI     | Images that ship [cua-spacesd](libs/cua-spacesd/README.md), or [Cua Driver](#cua-driver)                                                         |
+| [cua-agent](libs/python/agent/README.md)                 | PyPI     | A coding agent with the [Cua Driver MCP](https://cua.ai/docs/cua-driver/guides/connect-your-agent), or `sandbox.agents()` in the `cua` SDK       |
+| [cua-som](libs/python/som/README.md)                     | PyPI     | [Cua Driver](#cua-driver)                                                                                                                        |
 
 ---
 
 ## Resources
 
-- [Documentation](https://cua.ai/docs) — Guides, examples, and API reference
-- [Blog](https://cua.ai/blog) — Tutorials, updates, and research
-- [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
-- [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
-- [Security](SECURITY.md) — Private vulnerability reporting
+- [Documentation](https://cua.ai/docs): guides, examples, and API reference
+- [Blog](https://cua.ai/blog): tutorials, updates, and research
+- [Discord](https://discord.com/invite/mVnXXpdE85): community support and discussions
+- [GitHub Issues](https://github.com/trycua/cua/issues): bug reports and feature requests
+- [Security](SECURITY.md): private vulnerability reporting
 
 ## Citation
 
@@ -181,11 +262,14 @@ For reproducibility, include the Cua release or commit used in your experiments.
 
 ## Contributing
 
-We welcome contributions! See our [Contributing Guidelines](CONTRIBUTING.md) for details.
+We welcome contributions. See our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
-## License
+## Licensing
 
-MIT License — see [LICENSE](LICENSE.md) for details.
+Everything outside Cua Spaces is MIT-licensed ([LICENSE](LICENSE.md)): the cua SDK and its Python, TypeScript, Swift and Kotlin packages, the `cua` command and `cua daemon`, Cua Driver, Lume and the rest of this repository unless a directory says otherwise.
+Cua Spaces is source-available under [FSL-1.1-MIT](https://fsl.software): the Spaces apps, cua-spacesd, the Cua Keyvault, teleport, Cua Volume (`cua-volume`) and the streaming client, codecs and viewers. The streaming wire protocol stays MIT. It is free to use, self-host and build on, with no competing hosted service, and each release becomes MIT two years after it ships.
+The MIT parts never depend on the FSL parts. Some subdirectories carry their own licence; [LICENSING.md](LICENSING.md) lists each one and how the two fit together.
+Offering Spaces as a hosted or managed service? See [COMMERCIAL.md](COMMERCIAL.md). For use of our names and logo, see [TRADEMARKS.md](TRADEMARKS.md).
 
 Third-party components have their own licenses:
 
@@ -199,10 +283,14 @@ Third-party components have their own licenses:
   repository are distinct artifacts; verify the terms published with the exact
   model revision before redistributing them.
 - The optional `cua-perception` extension is installed separately from the MIT
-  Cua Driver. Its reviewed candidate combines an AGPL-3.0-only OmniParser model
-  artifact, Apache-2.0 PP-OCR model artifacts, and a separately packaged ONNX
-  Runtime. See the [perception third-party notices](libs/cua-driver/docs/perception-third-party-notices.md)
-  before using or redistributing an extension artifact.
+  Cua Driver, from the signed assets of a `cua-perception-v<version>` GitHub
+  release. Each release combines an AGPL-3.0-only OmniParser model artifact,
+  Apache-2.0 PP-OCR model artifacts, and a separately packaged ONNX Runtime.
+  The extension is not MIT licensed. Redistributing it, or offering it
+  to users over a network, can trigger AGPL-3.0 source obligations. Cua does
+  not relicense the detector and cannot grant other terms for it. Read the
+  [perception third-party notices and precautions](libs/cua-driver/docs/perception-third-party-notices.md)
+  before you install, redistribute, or host an extension artifact.
 
 ## Trademarks
 
@@ -214,7 +302,7 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 
 <div align="center">
 
-Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
+Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua).
 
 |                                                       [Adam Cohen Hillel](https://github.com/adamcohenhillel)                                                        |                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |                                                         [Zephyr Cloud IO](https://github.com/ZephyrCloudIO)                                                         |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------: |

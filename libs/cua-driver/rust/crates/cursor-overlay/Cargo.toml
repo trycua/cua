@@ -2,6 +2,7 @@
 name = "cursor-overlay"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [features]
 default = []
@@ -9,10 +10,15 @@ theme-authoring = []
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
+# Motion math (paths, timing, effects geometry), shared with @trycua/cursor-motion.
+cua-cursor-motion = { path = "../cua-cursor-motion", features = ["serde"] }
+# Shared agent cursor lifecycle (idle timeout, fade, session end).
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+indexmap = "2"
 postcard.workspace = true
 sha2.workspace = true
 zstd.workspace = true

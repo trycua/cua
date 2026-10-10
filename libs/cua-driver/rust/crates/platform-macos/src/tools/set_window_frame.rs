@@ -118,6 +118,18 @@ fn corrective_mutations(requested: Frame, observed: Frame) -> &'static [FrameMut
     }
 }
 
+// A window whose size cannot be set, such as Calculator's, can still be moved. Writing the
+// size only when it changes keeps AXSize out of the request, so such a window only needs a
+// settable AXPosition.
+fn initial_mutations(requested: Frame, current: Frame) -> &'static [FrameMutation] {
+    const TOLERANCE: f64 = 2.0;
+    if requested.size_approximately_eq(current, TOLERANCE) {
+        &POSITION_ONLY
+    } else {
+        &FRAME_MUTATION_ORDER
+    }
+}
+
 fn window_server_frame(window_id: u32) -> Option<Frame> {
     crate::windows::window_bounds_by_id(window_id).map(|bounds| Frame {
         x: bounds.x,
@@ -125,6 +137,18 @@ fn window_server_frame(window_id: u32) -> Option<Frame> {
         width: bounds.width,
         height: bounds.height,
     })
+}
+
+/// True when the tool targets a window in the driver's own process.
+///
+/// AX writes to same-process windows run inline on the calling thread instead
+/// of IPC to the target's main thread. `mutate_and_verify` runs on a tokio
+/// `spawn_blocking` worker, so writing `AXPosition`/`AXSize` on our own window
+/// trips AppKit's main-thread assertion and takes the daemon down (see #4323).
+/// Refusing is consistent with pre-0.30.3 behavior, which rejected these
+/// windows via the then-unconditional settable-`AXSize` check.
+fn is_self_process_target(pid: u32) -> bool {
+    pid == std::process::id()
 }
 
 fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String> {
@@ -144,6 +168,16 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
     let requested = Frame::from_input(input);
     if !requested.is_valid() {
         return Err("x/y must be finite and width/height must be finite positive numbers".into());
+    }
+
+    // Same-process AX writes run inline on this `spawn_blocking` worker thread,
+    // tripping AppKit's main-thread assertion (SIGTRAP, daemon down). Refuse
+    // before touching WindowServer/AX state.
+    if is_self_process_target(input.pid) {
+        return Err(format!(
+            "refusing to move window_id {window_id} in the driver's own process (pid {}): AppKit window writes must run on the main thread",
+            input.pid
+        ));
     }
 
     match crate::windows::resolve_window_owner(pid, window_id) {
@@ -179,21 +213,27 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
 
         let result = if let Some(target) = target {
             AXUIElementSetMessagingTimeout(target, 2.0);
+            let before = window_server_frame(window_id);
+            let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
+                initial_mutations(requested, before)
+            });
             if !is_attribute_settable(target, "AXPosition") {
                 Err(format!(
                     "window_id {window_id} does not expose a settable AXPosition"
                 ))
-            } else if !is_attribute_settable(target, "AXSize") {
+            } else if mutations.contains(&FrameMutation::Size)
+                && !is_attribute_settable(target, "AXSize")
+            {
                 Err(format!(
                     "window_id {window_id} does not expose a settable AXSize"
                 ))
             } else {
-                let before = window_server_frame(window_id).ok_or_else(|| {
+                let before = before.ok_or_else(|| {
                     format!(
                         "could not read the current WindowServer frame of window_id {window_id}"
                     )
                 });
-                before.and_then(|before| {
+                before.map(|before| {
                     let mut mutation_errors = Vec::new();
                     let apply_mutations = |mutations: &[FrameMutation]| {
                         let mut errors = Vec::new();
@@ -220,7 +260,7 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                         }
                         errors
                     };
-                    mutation_errors.extend(apply_mutations(&FRAME_MUTATION_ORDER));
+                    mutation_errors.extend(apply_mutations(mutations));
 
                     let mut observed = None;
                     for attempt in 0..20 {
@@ -250,13 +290,13 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                         observed.is_some_and(|frame| frame.approximately_eq(requested, 2.0));
                     let changed =
                         observed.is_some_and(|frame| !frame.approximately_eq(before, 2.0));
-                    Ok(FrameOutcome {
+                    FrameOutcome {
                         requested,
                         observed,
                         confirmed,
                         changed,
                         mutation_errors,
-                    })
+                    }
                 })
             }
         } else {
@@ -398,6 +438,37 @@ mod tests {
     }
 
     #[test]
+    fn initial_pass_writes_the_size_only_when_it_changes() {
+        let current = Frame {
+            x: 414.0,
+            y: 560.0,
+            width: 230.0,
+            height: 408.0,
+        };
+        assert_eq!(
+            initial_mutations(
+                Frame {
+                    x: 454.0,
+                    y: 600.0,
+                    ..current
+                },
+                current
+            ),
+            &POSITION_ONLY
+        );
+        assert_eq!(
+            initial_mutations(
+                Frame {
+                    width: 500.0,
+                    ..current
+                },
+                current
+            ),
+            &FRAME_MUTATION_ORDER
+        );
+    }
+
+    #[test]
     fn corrective_pass_updates_only_the_component_that_did_not_settle() {
         let requested = Frame {
             x: 10.0,
@@ -426,6 +497,33 @@ mod tests {
                 }
             ),
             &SIZE_ONLY
+        );
+    }
+
+    #[test]
+    fn self_process_target_matches_only_the_driver_pid() {
+        let own = std::process::id();
+        assert!(is_self_process_target(own));
+        assert!(!is_self_process_target(own.wrapping_add(1)));
+    }
+
+    #[test]
+    fn set_window_frame_refuses_windows_in_the_driver_process() {
+        // Must fail before any WindowServer/AX access, so this runs without
+        // Accessibility permissions or a visible window.
+        let input = SetWindowFrameInput {
+            pid: std::process::id(),
+            window_id: 1,
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+            session: None,
+        };
+        let error = mutate_and_verify(&input).expect_err("own-process target must be refused");
+        assert!(
+            error.contains("own process"),
+            "unexpected refusal message: {error}"
         );
     }
 

@@ -20,7 +20,7 @@ pub fn contracts() -> Vec<ToolContract> {
         ),
         contract::<SetAgentCursorMotionInput, SetAgentCursorMotionOutput>(
             "set_agent_cursor_motion",
-            "Configure only movement physics and visibility timing for a session cursor.",
+            "Configure the movement style, timing, effects and visibility timing for a session cursor.",
             &["agent_cursor.set_motion"],
             false,
         ),
@@ -64,5 +64,49 @@ fn contract<I: ToolInput, O: ToolOutput>(
         success_output_schema: Some(O::output_schema()),
         error_output_schema: None,
         output_validator: crate::validate_typed_output::<O>,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{CursorMotionStyle, SetAgentCursorMotionInput, ToolInput};
+    use serde_json::json;
+
+    #[test]
+    fn motion_style_schema_lists_public_names_and_accepts_lab_ids() {
+        let schema = SetAgentCursorMotionInput::input_schema();
+        let names: Vec<&str> = schema["properties"]["style"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert_eq!(names, CursorMotionStyle::ALL.map(CursorMotionStyle::as_str));
+        for (alias, style) in [
+            ("dc-signature-arc", CursorMotionStyle::SignatureArc),
+            ("dc-spring-settle", CursorMotionStyle::SpringSettle),
+            ("dc-magnetic", CursorMotionStyle::Magnetic),
+            ("dc-comet-swoop", CursorMotionStyle::CometSwoop),
+            ("adaptive-auto", CursorMotionStyle::Adaptive),
+            ("dubins-glide", CursorMotionStyle::Classic),
+        ] {
+            let input: SetAgentCursorMotionInput =
+                serde_json::from_value(json!({"session": "s", "style": alias})).unwrap();
+            assert_eq!(input.style, Some(style));
+        }
+        assert!(serde_json::from_value::<SetAgentCursorMotionInput>(
+            json!({"session": "s", "effects": {"sparkle": true}})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn unset_effects_are_omitted_on_the_wire() {
+        let input: SetAgentCursorMotionInput =
+            serde_json::from_value(json!({"session": "s", "effects": {"trail": false}})).unwrap();
+        assert_eq!(
+            serde_json::to_value(&input).unwrap()["effects"],
+            json!({"trail": false})
+        );
     }
 }

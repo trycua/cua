@@ -143,7 +143,7 @@ for a new run. Do not attach the cache, staged envelopes, or plaintext to a PR.
 Native macOS certification remains separate from the Windows/Linux candidate
 workflow. This proof runs directly in a logged-in, TCC-authorized Lume guest. A maintainer
 dispatches `.github/workflows/e2e-rust-macos.yml` in `lume` mode, whose exact-SHA gate runs
-`libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser` and
+`libs/cua-driver/tests/runners/macos-lume/run-all.sh` and
 publishes a certification artifact without live-provider credentials. The
 candidate workflow does not schedule macOS execution, and no GitHub Actions
 workflow represents the macOS gate. macOS recordings remain private on the

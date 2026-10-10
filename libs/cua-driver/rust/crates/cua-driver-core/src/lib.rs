@@ -3,6 +3,13 @@
 //! Stdio supports legacy initialization and modern per-request negotiation.
 //! Protocol metadata does not grant Driver permissions or session ownership.
 
+// `ToolResult` is the tool reply itself: fallible helpers return
+// `Result<_, ToolResult>` so an early exit is already the finished response,
+// built once per call and handed straight to the caller. clippy's
+// result_large_err assumes an error that propagates through hot paths; boxing
+// here would churn every adapter's call sites for no runtime gain.
+#![allow(clippy::result_large_err)]
+
 pub mod mcp_skills;
 pub mod mcp_wire;
 
@@ -43,9 +50,12 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 
 pub mod action_record;
 pub mod action_target;
+pub mod agent_cursor;
 pub mod authorization;
 pub mod background_input;
+pub mod batch_tools;
 pub mod browser;
+pub mod build_info;
 pub mod capture_mode;
 pub(crate) mod capture_registry;
 pub mod capture_runtime;
@@ -58,7 +68,9 @@ pub mod cursor_hook;
 pub mod cursor_sampler;
 pub mod cursor_shape;
 pub mod daemon;
-pub mod element_cache;
+pub mod delivery;
+pub mod desktop_capture_scale;
+pub mod element_frame;
 pub mod element_query;
 pub mod element_token;
 pub mod expectation;
@@ -66,11 +78,15 @@ pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
 pub mod image_utils;
+pub mod interactive_input;
+pub mod key_pacing;
+pub mod launch_guard;
 pub mod mcp_result;
 pub mod page;
 pub mod perception_client;
 pub mod perception_tools;
 pub mod pip_hook;
+pub mod pointer_shape;
 pub mod policy;
 pub mod protocol;
 pub mod recording;
@@ -78,21 +94,29 @@ pub mod recording_loader;
 pub mod recording_render;
 pub mod recording_tools;
 pub mod recording_zoom;
+#[cfg(feature = "script")]
+pub mod script_tool;
 pub mod server;
 pub mod session;
 pub mod session_authorization;
 pub mod session_manifest;
 pub mod session_tools;
+pub mod single_flight;
+pub mod snapshot_store;
 #[cfg(test)]
 pub(crate) mod snapshot_test_support;
 pub mod socket_io;
 pub mod text_sanitize;
+pub mod timestamp;
 pub mod tool;
 pub mod tool_args;
 pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
+pub mod walk_budget;
 pub mod window_inspection;
+pub mod window_observation;
+pub mod window_state_view;
 pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};

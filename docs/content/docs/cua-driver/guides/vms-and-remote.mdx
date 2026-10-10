@@ -1,0 +1,139 @@
+---
+title: Run in a VM or over SSH
+description: Run Cua Driver inside a macOS Lume VM or drive a Windows desktop over SSH.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver always runs on the machine whose desktop it drives. To reach a VM or
+a remote computer, run the driver there and carry MCP over SSH.
+
+## macOS Lume VM
+
+On an Apple Silicon host with [Lume](/lume/quickstart) and `jq`, pull the
+published Tahoe image (150 GB sparse disk; login and password `lume`):
+
+```bash test="cli-shape" id="lume-pull"
+IMAGE=macos-tahoe-cua:26.5.2
+VM=cua-driver-dev-26.5.2
+
+lume pull "$IMAGE" "$VM"
+lume run "$VM"
+```
+
+The image has SIP disabled to match the maintainer test base; that grants no
+permissions, and Cua Driver works with SIP on too. In Terminal inside the VM
+display, install and grant consent:
+
+```bash skip="macos-vm"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+```
+
+```bash test="cli-shape" id="cua-driver-permissions-grant"
+/Users/lume/.local/bin/cua-driver permissions grant
+/Users/lume/.local/bin/cua-driver list_apps '{}'
+/Users/lume/.local/bin/cua-driver call get_desktop_state '{}' > /tmp/desktop.json
+```
+
+Approve three kinds of prompt: Accessibility and Screen Recording for
+CuaDriver, CuaDriver controlling System Events (from `list_apps`), and Tahoe's
+separate direct screen capture (from `get_desktop_state`). Rerun the last two
+commands; they must finish without prompts. Then confirm the daemon's grants:
+
+```bash test="cli-shape" id="cua-driver-permissions-status"
+/Users/lume/.local/bin/cua-driver permissions status --json
+```
+
+Expect `accessibility: true`, `screen_recording: true`, and
+`source.attribution: "driver-daemon"`. `unknown` means no app-owned daemon
+answered: start it with `open -n -g -a CuaDriver --args serve`.
+
+Run an agent inside the VM with the usual
+[`mcp-config`](/cua-driver/guides/connect-your-agent), or from the host over
+SSH. Copy only your public key into the guest, then register the SSH command
+as a stdio server:
+
+```bash skip="macos-vm"
+VM_IP="$(lume get "$VM" --format json | jq -r '.[0].ipAddress')"
+cat ~/.ssh/id_ed25519.pub | ssh "lume@${VM_IP}" \
+  'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'
+
+codex mcp add cua-driver-vm -- \
+  ssh -T -o BatchMode=yes "lume@${VM_IP}" /Users/lume/.local/bin/cua-driver mcp
+```
+
+The remote `cua-driver mcp` proxies to the daemon in the logged-in guest
+session, so screenshots and input keep the guest app's permission identity.
+Do initial consent and GUI checks in the VM display, not over SSH.
+
+Save a reusable copy while stopped. Keep it local, with no tokens, private
+keys, or personal files inside:
+
+```bash test="cli-shape" id="lume-stop"
+lume stop "$VM"
+lume clone "$VM" "${VM}-backup"
+lume ls
+```
+
+A clone keeps its grants only while `/Applications/CuaDriver.app` keeps the
+release signature; an ad-hoc source build gets a new permission identity.
+Maintainers running the driver's macOS E2E suite in Lume follow
+`libs/cua-driver/tests/runners/macos-lume/README.md` in the repository.
+
+## Windows over SSH
+
+Windows OpenSSH runs in Session 0, which has no desktop, so window tools
+return empty results there. `cua-driver doctor` reports
+`running in Session 0 (services)`. Run the daemon in your interactive session
+and let the SSH side proxy to it over the named pipe:
+
+```text output
+Session 1+ (RDP or console)   cua-driver serve (autostart task)
+        ▲  \\.\pipe\cua-driver
+Session 0 (SSH)               cua-driver call …  /  cua-driver mcp --socket \\.\pipe\cua-driver
+```
+
+**1. From RDP or the local console**, register and start the task:
+
+```powershell test="cli-shape" id="cua-driver-autostart-enable"
+cua-driver autostart enable
+cua-driver autostart kick
+```
+
+`query session` must show your user as `Active` or `Disc`. If you have never
+signed in with RDP, do it once.
+
+<Callout type="warn">
+  Sign in through SSH with the same Windows account that owns the interactive daemon. The named
+  pipe is private to that account; another account can see the pipe but gets `Access is denied`.
+  Run `whoami /user` in both sessions and compare the SIDs, which must match exactly.
+</Callout>
+
+**2. From SSH**, check the daemon and call tools:
+
+```powershell test="cli-shape" id="cua-driver-status"
+cua-driver status
+# Cua Driver daemon is running
+#   socket: \\.\pipe\cua-driver
+cua-driver call list_apps
+```
+
+If the endpoint exists but belongs to another Windows account, `status` reports
+it as not reachable and tells you to compare the two account SIDs.
+
+**3. Register the agent with an explicit socket:**
+
+```powershell skip="third-party-cli"
+claude mcp add --transport stdio cua-driver -- cua-driver.exe mcp --socket \\.\pipe\cua-driver
+```
+
+<Callout type="warn">
+  Bare `cua-driver mcp` owns its own runtime on Windows and fails in Session 0. Always pass
+  `--socket`. If the interactive daemon is gone, MCP startup fails instead of acting from the
+  wrong session.
+</Callout>
+
+Still empty? Check that `whoami /user` shows the same SID over SSH and on the
+desktop, that `cua-driver --version` matches over SSH, that
+`cua-driver autostart status` shows the task, and that `cua-driver doctor` from
+RDP reports `session N has an attached interactive desktop`.

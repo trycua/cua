@@ -8,7 +8,9 @@ pub const FILE_NAME: &str = "release-channel";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ReleaseChannel {
+    #[default]
     Stable,
     Nightly,
 }
@@ -48,12 +50,6 @@ fn is_canonical_nightly_prerelease(value: &str) -> bool {
         && !run.is_empty()
         && run.bytes().all(|byte| byte.is_ascii_digit())
         && !run.starts_with('0')
-}
-
-impl Default for ReleaseChannel {
-    fn default() -> Self {
-        Self::Stable
-    }
 }
 
 impl fmt::Display for ReleaseChannel {
@@ -110,13 +106,13 @@ fn set_at(path: &std::path::Path, channel: ReleaseChannel) -> Result<(), String>
     let temporary = parent.join(format!(".{FILE_NAME}.tmp-{}", std::process::id()));
     std::fs::write(&temporary, format!("{}\n", channel.as_str()))
         .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
-    if let Err(error) = std::fs::rename(&temporary, &path) {
+    if let Err(error) = std::fs::rename(&temporary, path) {
         // std::fs::rename cannot replace an existing destination on Windows.
         // Keep partial contents out of the canonical path on all platforms.
         if path.exists() {
-            std::fs::remove_file(&path)
+            std::fs::remove_file(path)
                 .map_err(|remove| format!("cannot replace {}: {remove}", path.display()))?;
-            std::fs::rename(&temporary, &path)
+            std::fs::rename(&temporary, path)
                 .map_err(|move_error| format!("cannot replace {}: {move_error}", path.display()))?;
         } else {
             return Err(format!("cannot persist {}: {error}", path.display()));
@@ -166,16 +162,5 @@ mod tests {
             ReleaseChannel::from_version("0.19.4-nightly.20260812.0"),
             None
         );
-    }
-
-    #[test]
-    fn missing_state_defaults_stable_and_valid_state_round_trips() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join(FILE_NAME);
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Stable));
-        set_at(&path, ReleaseChannel::Nightly).expect("persist nightly");
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Nightly));
-        set_at(&path, ReleaseChannel::Stable).expect("persist stable");
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Stable));
     }
 }

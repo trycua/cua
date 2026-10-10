@@ -1,60 +1,30 @@
-"""Docker image tags, port mappings, and runtime constants."""
+"""Default image references, port mappings, and runtime constants."""
 
-# ── Docker image tags ────────────────────────────────────────────────────────
+from typing import Optional
 
-UBUNTU_XFCE = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest"
-QEMU_LINUX = "trycua/cua-qemu-linux:latest"
-QEMU_WINDOWS = "trycua/cua-qemu-windows:latest"
-QEMU_ANDROID = "trycua/cua-qemu-android:latest"
-MACOS_SEQUOIA = "trycua/macos-sequoia:latest"
+# Default images live in one place: the native resolver's canonical images
+# (``cua_sandbox.image.canonical_image``: ghcr.io/trycua/{linux,windows,macos}).
 
-# ── macOS version → OCI image ref ────────────────────────────────────────────
-# Maps macOS version strings (and codename aliases) to ghcr.io image refs.
-# Codenames: Sequoia = 15, Tahoe = 26
-MACOS_VERSION_IMAGES: dict[str, str] = {
-    "15": "ghcr.io/trycua/macos-sequoia-cua:latest",
-    "sequoia": "ghcr.io/trycua/macos-sequoia-cua:latest",
-    "26": "ghcr.io/trycua/macos-tahoe-cua:latest",
-    "tahoe": "ghcr.io/trycua/macos-tahoe-cua:latest",
-}
+# ── Guest ports ──────────────────────────────────────────────────────────────
 
-# ── Internal ports (inside the container) ────────────────────────────────────
+#: cua-spacesd (gRPC + gRPC-Web, and the HTML5 viewer at ``/viewer/``)
+#: inside every SDK image. The canonical images publish no VNC port.
+SPACESD_PORT = 3211
 
-XFCE_API_PORT = 8000
-XFCE_VNC_PORT = 6080
-
-QEMU_API_PORT = 5000
-QEMU_VNC_PORT = 8006
-
-ANDROID_API_PORT = 8000
-ANDROID_VNC_PORT = 6080
-
-LUME_API_PORT = 8443
 LUME_PROVIDER_PORT = 7777
+#: Lume guests run cua-spacesd on the same port as every other image.
+LUME_API_PORT = SPACESD_PORT
 
-# ── Default host-side ports ──────────────────────────────────────────────────
+# ── Default host-side ports (hints; the SDK allocates free ports) ─────────────
 
-DEFAULT_API_PORT = 8000
+DEFAULT_API_PORT = SPACESD_PORT
 DEFAULT_VNC_PORT = 6901
 
 
-def resolve_image(os_type: str, registry: str | None = None) -> str:
-    """Map an os_type to a default Docker image tag."""
-    if registry:
-        return registry
-    return {
-        "linux": UBUNTU_XFCE,
-        "windows": QEMU_WINDOWS,
-        "macos": MACOS_SEQUOIA,
-        "android": QEMU_ANDROID,
-    }.get(os_type, UBUNTU_XFCE)
+def internal_ports(docker_image: str) -> tuple[int, Optional[int]]:
+    """Return (spacesd port, VNC port) inside the given container image.
 
-
-def internal_ports(docker_image: str) -> tuple[int, int]:
-    """Return (api_port, vnc_port) for the given Docker image."""
-    img = docker_image.lower()
-    if "qemu-android" in img:
-        return ANDROID_API_PORT, ANDROID_VNC_PORT
-    if "qemu" in img:
-        return QEMU_API_PORT, QEMU_VNC_PORT
-    return XFCE_API_PORT, XFCE_VNC_PORT
+    The canonical images serve their display through the cua-spacesd viewer
+    on the spacesd port and run no VNC server, so the VNC port is ``None``.
+    """
+    return SPACESD_PORT, None

@@ -325,6 +325,7 @@ class NativeWindowTests(unittest.IsolatedAsyncioTestCase):
                     max_depth=3,
                     max_dimension=800,
                     max_image_dimension=1600,
+                    timeout_ms=None,
                 )
             )
             self.assertIsInstance(state, sdk.WindowStateOutput)
@@ -345,6 +346,8 @@ class NativeWindowTests(unittest.IsolatedAsyncioTestCase):
                     "max_depth": 3,
                     "max_dimension": 800,
                     "max_image_dimension": 1600,
+                    # The typed SDK keeps the full response unless told otherwise.
+                    "full_output": True,
                 },
             )
 

@@ -1,0 +1,68 @@
+name: "CI: cua-spacesd-html5"
+
+# The HTML5 viewer embedded in cua-spacesd: unit tests, type check, and the
+# drift gate (generated protobuf TypeScript and the committed build in
+# assets/ must match the sources), plus the Rust crate (embedded router and
+# the standalone multi-sandbox proxy). The browser e2e (web/e2e/run-e2e.sh)
+# starts containers and stays opt-in.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-spacesd-html5/**"
+      - "libs/cua/proto/**"
+      - ".github/workflows/ci-cua-spacesd-html5.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-spacesd-html5/**"
+      - "libs/cua/proto/**"
+      - ".github/workflows/ci-cua-spacesd-html5.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-spacesd-html5-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  web:
+    name: vitest + typecheck + drift
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: libs/cua/crates/cua-spacesd-html5/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: libs/cua/crates/cua-spacesd-html5/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm check
+
+  rust:
+    name: cargo test
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt -p cua-spacesd-html5 -- --check
+      - run: cargo test --locked -p cua-spacesd-html5 --features standalone

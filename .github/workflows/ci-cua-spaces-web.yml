@@ -1,0 +1,126 @@
+name: "CI: Cua Spaces web UI and Electron shell"
+
+# The web UI the desktop shells share (apps/cua-spaces-web) and the Electron
+# shell (apps/cua-spaces-desktop): typecheck, unit tests (with the bridge
+# contract: every operation's shape, the coverage table against the Swift
+# host's method list, the demo host and the Electron router's answers), the
+# build and the channel check, then the parity flows in the browser and on
+# the built Electron shell (Playwright `_electron`, demo mode). The SwiftUI
+# side of the contract runs in ci-cua-spaces-macos.yml.
+#
+# Locally: `pnpm contract` (and `pnpm contract -- --electron`) in
+# apps/cua-spaces-web runs the same contract steps.
+
+# Pull requests that touch these paths. workflow_dispatch needs this file on
+# the default branch.
+on:
+  pull_request:
+    paths:
+      - "apps/cua-spaces-web/**"
+      - "apps/cua-spaces-desktop/**"
+      - "apps/cua-spaces/core-wasm/**"
+      - "apps/cua-spaces-macos/Sources/CuaSpacesMacKit/WebHost/**"
+      - "libs/cua/crates/cua-spaces-app-core/**"
+      - ".github/workflows/ci-cua-spaces-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-spaces-web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  test:
+    name: typecheck, tests, bridge contract, build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust, the wasm32 target and wasm-bindgen
+        working-directory: apps/cua-spaces/core-wasm
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
+      # root package.json pins pnpm 9 for the rest of the repo.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install (web UI, Electron shell)
+        run: |
+          (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)
+          # Its own pnpm-workspace.yaml (allowBuilds: Electron's download); with
+          # --ignore-workspace pnpm skips it and fails on electron-winstaller.
+          (cd apps/cua-spaces-desktop && pnpm install --frozen-lockfile)
+      - name: Web UI typecheck and tests (with the bridge contract)
+        working-directory: apps/cua-spaces-web
+        run: pnpm check
+      - name: Web UI build
+        working-directory: apps/cua-spaces-web
+        run: pnpm build
+      - name: Electron shell typecheck, tests (router contract) and build (channel check)
+        working-directory: apps/cua-spaces-desktop
+        run: |
+          pnpm test
+          pnpm build
+
+  parity:
+    name: parity flows (${{ matrix.host }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [browser, electron]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust, the wasm32 target and wasm-bindgen
+        working-directory: apps/cua-spaces/core-wasm
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
+      # root package.json pins pnpm 9 for the rest of the repo.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)
+          # Its own pnpm-workspace.yaml (allowBuilds: Electron's download); with
+          # --ignore-workspace pnpm skips it and fails on electron-winstaller.
+          (cd apps/cua-spaces-desktop && pnpm install --frozen-lockfile)
+      - name: Parity flows in the browser
+        if: matrix.host == 'browser'
+        working-directory: apps/cua-spaces-web
+        run: |
+          npx playwright install --with-deps chromium
+          pnpm parity
+      - name: Parity flows and the bridge on the Electron shell (demo mode)
+        if: matrix.host == 'electron'
+        working-directory: apps/cua-spaces-web
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libnss3 libgbm1 libasound2t64
+          xvfb-run -a pnpm parity:electron
+      # The parity table (parity-summary) and, for a failure, its traces.
+      - name: Upload the Playwright results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-web-parity-${{ matrix.host }}
+          path: apps/cua-spaces-web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

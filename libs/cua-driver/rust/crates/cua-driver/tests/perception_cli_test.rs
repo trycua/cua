@@ -341,6 +341,9 @@ fn installed_fixture_parses_local_input_without_action_authority() {
 
     assert_eq!(value["local_input"]["action_authority"], "none");
     assert_eq!(value["local_input"]["action_eligible"], false);
+    // Local input paths stay private to the caller.
+    assert!(value["local_input"].get("image_path").is_none());
+    assert!(value["local_input"].get("capture_metadata_path").is_none());
     assert_eq!(
         value["local_input"]["snapshot_id"],
         "snapshot-local-fixture"
@@ -443,28 +446,6 @@ fn invalid_installed_extension_fails_as_artifact_invalid() {
     fs::write(extension.join("active.json"), b"not json").unwrap();
     let output = run_parse(temp.path(), &image, &capture);
     assert_eq!(parse_error(&output)["error"]["code"], "artifact_invalid");
-}
-
-#[test]
-fn parser_rejects_missing_json_or_paths() {
-    let temp = TempDir::new().unwrap();
-    for args in [
-        vec!["perception", "parse", "--json"],
-        vec!["perception", "parse", "--image", "input.png", "--json"],
-        vec![
-            "perception",
-            "parse",
-            "--image",
-            "input.png",
-            "--capture",
-            "capture.json",
-        ],
-    ] {
-        assert!(
-            !run(temp.path(), &args).status.success(),
-            "accepted {args:?}"
-        );
-    }
 }
 
 #[test]

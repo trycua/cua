@@ -42,6 +42,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
@@ -57,7 +58,7 @@
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Acts on a given agent when its parent skills dir already exists. For
-//! Claude Code and Codex, whose fresh installs may not create that directory,
+//! Claude Code, Codex, and Pi, whose fresh installs may not create that directory,
 //! the explicit `skills install` verb also creates it when the client's own
 //! home directory proves that client is installed. Never clobbers an existing
 //! `<agent_skills>/cua-driver` link — preserves dev users' hand-rolled symlinks.
@@ -215,6 +216,14 @@ const AGENTS: &[Agent] = &[
         label: "Codex",
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".codex"),
+    },
+    Agent {
+        label: "Pi",
+        // Pi discovers both ~/.pi/agent/skills and ~/.agents/skills. Reuse the
+        // latter so Pi + Codex converge on one managed cua-driver link instead
+        // of making Pi report a duplicate skill-name collision.
+        parent: AgentParent::Home(".agents/skills"),
+        install_marker: Some(".pi/agent"),
     },
     Agent {
         label: "Prime Agent",
@@ -1019,6 +1028,54 @@ mod tests {
     }
 
     #[test]
+    fn pi_target_matches_its_native_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Pi")
+            .expect("Pi must remain a supported skill target");
+
+        assert!(matches!(target.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(target.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn codex_and_pi_share_one_managed_global_skill_directory() {
+        let codex = AGENTS.iter().find(|agent| agent.label == "Codex").unwrap();
+        let pi = AGENTS.iter().find(|agent| agent.label == "Pi").unwrap();
+
+        assert!(matches!(codex.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(pi.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(codex.install_marker, Some(".codex")));
+        assert!(matches!(pi.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn pi_marker_creates_shared_link_and_codex_reuses_it() {
+        let home = tempdir().unwrap();
+        let parent = home.path().join(".agents/skills");
+        let pi_marker = home.path().join(".pi/agent");
+        let local_skill = home.path().join(".cua-driver/skills/cua-driver");
+
+        std::fs::create_dir_all(&pi_marker).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+
+        assert_eq!(
+            link_agent_paths("Pi", &parent, Some(&pi_marker), &local_skill).unwrap(),
+            LinkStatus::Created
+        );
+        assert!(parent.join("cua-driver").exists());
+
+        // Codex and Pi intentionally share ~/.agents/skills. Once Pi has
+        // created the managed link, the Codex path must converge on that same
+        // link rather than creating or replacing another skill entry.
+        assert_eq!(
+            link_agent_paths("Codex", &parent, None, &local_skill).unwrap(),
+            LinkStatus::Existing
+        );
+        assert!(parent.join("cua-driver").exists());
+    }
+
+    #[test]
     fn prime_agent_target_matches_its_native_global_skill_directory() {
         let target = AGENTS
             .iter()
@@ -1187,7 +1244,7 @@ mod tests {
             "screen_recording_capturable` is `null",
             "direct_capture_status` is `\"not_checked\"",
             "include_screenshot:false",
-            "element-indexed AX actions",
+            "`element_token` AX actions",
         ] {
             assert!(
                 macos.contains(required),
@@ -1292,7 +1349,7 @@ mod tests {
     }
 
     #[test]
-    fn extracted_skill_pack_keeps_history_consultation_policy() {
+    fn extracted_skill_pack_keeps_canonical_skill_bytes() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let files = SKILL_FILES
             .iter()
@@ -1315,7 +1372,15 @@ mod tests {
 
         let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
             .expect("extracted skill must be readable");
-        assert_history_consultation_policy(&packaged, "extracted skill pack");
+        // The canonical guidance phrases are owned by the bundled_skill_* tests;
+        // extraction must deliver those exact bytes.
+        assert_eq!(
+            packaged.as_bytes(),
+            std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+                .unwrap()
+                .as_slice(),
+            "extracted SKILL.md must equal the canonical skill"
+        );
         for reference in ["WORKFLOW.md", "RUNTIME.md"] {
             assert!(
                 packaged.contains(&format!("]({reference})")),

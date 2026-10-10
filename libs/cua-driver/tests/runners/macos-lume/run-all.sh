@@ -46,7 +46,7 @@ RETRYABLE_LANES=(
 
 usage() {
   cat <<'EOF'
-Usage: run-all.sh [--no-build] [--standalone-browser]
+Usage: run-all.sh [--no-build]
                   [--retry-cell <cell-id> [--retry-harness <harness>]
                    [--retry-attempts <1-3>] [--retry-only]]
 
@@ -54,8 +54,8 @@ Run the canonical cua-driver macOS GUI E2E matrix in a disposable clone of
 the maintainer Lume golden image. Start this command from Terminal in the VM's
 logged-in desktop session, not over SSH.
 
---standalone-browser also runs the optional installed Chrome/Edge browser-tool
-matrix after the canonical repo-local harness matrix.
+Every complete run also executes the installed Chrome/Edge browser-tool matrix
+after the canonical repo-local harness matrix.
 
 --retry-cell authorizes exactly one bounded retry selection. After a failing
 full matrix the runner retries that single cell only when it was the matrix's
@@ -71,7 +71,6 @@ unrestricted worker daemon first.
 EOF
 }
 
-RUN_STANDALONE_BROWSER=0
 NO_BUILD=0
 RETRY_CELL=""
 RETRY_HARNESS=""
@@ -79,7 +78,6 @@ RETRY_ATTEMPTS=""
 RETRY_ONLY=0
 
 parse_arguments() {
-  RUN_STANDALONE_BROWSER=0
   NO_BUILD=0
   RETRY_CELL=""
   RETRY_HARNESS=""
@@ -88,7 +86,10 @@ parse_arguments() {
   while (($#)); do
     case "$1" in
       --no-build) NO_BUILD=1 ;;
-      --standalone-browser) RUN_STANDALONE_BROWSER=1 ;;
+      --standalone-browser)
+        echo "--standalone-browser was removed; every complete run includes the standalone browser matrix" >&2
+        return 2
+        ;;
       --retry-only) RETRY_ONLY=1 ;;
       --retry-cell=*) RETRY_CELL="${1#*=}" ;;
       --retry-harness=*) RETRY_HARNESS="${1#*=}" ;;
@@ -148,10 +149,6 @@ validate_arguments() {
     echo "--retry-attempts must be between 1 and ${RETRY_ATTEMPTS_LIMIT}" >&2
     return 2
   fi
-  if [[ "${RETRY_ONLY}" == 1 && "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-    echo "--retry-only cannot be combined with --standalone-browser" >&2
-    return 2
-  fi
 
   if [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
     if [[ -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != swiftui ]]; then
@@ -189,6 +186,35 @@ output_contains() {
     return 1
   fi
   [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
+}
+
+require_golden_image_dependencies() {
+  for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
+    command -v "${command_name}" >/dev/null 2>&1 || {
+      echo "Missing golden-image dependency: ${command_name}" >&2
+      return 2
+    }
+  done
+}
+
+# The Tk pointer and perception rows skip when python3 has no tkinter, and
+# Apple's Tk 8.5.9 renders the canvas fixture too poorly for OCR. The canonical
+# lane must run them, so require a modern Tk instead of a shrunken matrix.
+require_modern_tk() {
+  local version
+  if ! version="$(python3 -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))' 2>/dev/null)"; then
+    echo "python3 has no usable tkinter; install Homebrew python-tk so the Tk rows run" >&2
+    return 2
+  fi
+  if ! python3 - "${version}" <<'PY'
+import sys
+major, minor = (int(part) for part in sys.argv[1].split(".")[:2])
+raise SystemExit(0 if (major, minor) >= (8, 6) else 1)
+PY
+  then
+    echo "python3 uses Tk ${version}; install Homebrew python-tk (Tk 8.6 or later) and put it first on PATH" >&2
+    return 2
+  fi
 }
 
 run_bounded_command() {
@@ -327,6 +353,25 @@ prepare_keychain() {
   keychain_password=""
 }
 
+# Computer History adds its key to the default (login) Keychain and reads it back
+# through the user search list. A list that omits the login Keychain lets the add
+# succeed while every read-back misses, which the daemon reports as
+# history_key_unavailable.
+require_login_keychain_searchable() {
+  local keychain="$1"
+  local listed
+  if ! listed="$(security list-keychains -d user 2>&1)"; then
+    echo "Could not read the user Keychain search list: ${listed}" >&2
+    return 2
+  fi
+  if [[ "${listed}" != *"\"${keychain}\""* ]]; then
+    echo "The login Keychain is missing from the user Keychain search list, so Computer History cannot read back its key" >&2
+    echo "Keep it searchable next to the signing keychain:" >&2
+    echo "  security list-keychains -d user -s \"${SIGNING_KEYCHAIN}\" \"${keychain}\"" >&2
+    return 2
+  fi
+}
+
 unlock_required_keychains() {
   local provided_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
   unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
@@ -343,6 +388,7 @@ unlock_required_keychains() {
   prepare_keychain "Login keychain" "${LOGIN_KEYCHAIN}" \
     "${provided_password}" login
   provided_password=""
+  require_login_keychain_searchable "${LOGIN_KEYCHAIN}"
 }
 
 json_string_array() {
@@ -718,7 +764,7 @@ run_computer_history_gate() {
   echo "[HISTORY] Recording one packaged action before daemon restart"
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_records_agent_action_before_restart -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-before-restart.log"
@@ -727,7 +773,7 @@ run_computer_history_gate() {
   restart_unrestricted_daemon
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_reopens_after_restart_and_cryptographically_purges -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-after-restart.log"
@@ -920,12 +966,8 @@ if [[ "${SIP_STATUS}" != *"System Integrity Protection status: disabled."* ]]; t
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
-  command -v "${command_name}" >/dev/null 2>&1 || {
-    echo "Missing golden-image dependency: ${command_name}" >&2
-    exit 2
-  }
-done
+require_golden_image_dependencies || exit $?
+require_modern_tk || exit $?
 
 if [[ ! -f "${SIGNING_KEYCHAIN}" ]]; then
   echo "Missing golden-image signing keychain: ${SIGNING_KEYCHAIN}" >&2
@@ -1001,6 +1043,16 @@ if ! osascript -e \
     'tell application "System Events" to get name of first application process whose frontmost is true' \
     > "${ARTIFACT_DIR}/terminal-system-events.txt"; then
   echo "Terminal cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
+  exit 2
+fi
+echo "[AUTOMATION] Verifying Terminal can read accessibility attributes through System Events"
+# The bring_to_front oracles raise fixture windows and read AXFocusedWindow
+# through System Events UI scripting, which needs Accessibility for Terminal.
+if ! osascript -e \
+    'tell application "System Events" to get value of attribute "AXRole" of (first application process whose frontmost is true)' \
+    > "${ARTIFACT_DIR}/terminal-accessibility.txt" 2>&1; then
+  cat "${ARTIFACT_DIR}/terminal-accessibility.txt" >&2
+  echo "Terminal cannot use System Events UI scripting; grant Terminal Accessibility in the seed" >&2
   exit 2
 fi
 
@@ -1104,25 +1156,23 @@ elif [[ -n "${RETRY_CELL}" ]]; then
   echo "[RETRY] The full matrix passed; no retry of ${RETRY_CELL} was needed"
 fi
 
-if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-  echo "[E2E] Running the optional standalone browser matrix"
-  BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
-  if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
-      && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
-    BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
-    mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-    echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-  fi
-  ensure_unrestricted_daemon
-  set +e
-  CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
-    "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
-  BROWSER_STATUS=$?
-  set -e
+echo "[E2E] Running the standalone browser matrix"
+BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
+    && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
+  BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
+  mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+  echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+fi
+ensure_unrestricted_daemon
+set +e
+CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
+  "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
+BROWSER_STATUS=$?
+set -e
 
-  if [[ "${BROWSER_STATUS}" != 0 ]]; then
-    exit "${BROWSER_STATUS}"
-  fi
+if [[ "${BROWSER_STATUS}" != 0 ]]; then
+  exit "${BROWSER_STATUS}"
 fi
 
 jq -n \
@@ -1130,9 +1180,8 @@ jq -n \
   --arg source_sha "${SOURCE_SHA}" \
   --arg run_id "${RUN_ID}" \
   --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --argjson standalone_browser "${RUN_STANDALONE_BROWSER}" \
   '{schema: $schema, source_sha: $source_sha, run_id: $run_id,
-    completed_at: $completed_at, standalone_browser: ($standalone_browser == 1),
+    completed_at: $completed_at, standalone_browser: true,
     passed: true}' > "${ARTIFACT_DIR}/direct-result.json"
 
 echo "macOS direct Lume run passed: ${RUN_ID}"

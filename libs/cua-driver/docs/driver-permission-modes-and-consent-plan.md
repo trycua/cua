@@ -75,7 +75,7 @@ Adopt three user-facing modes:
 | Mode | Intended experience | Security meaning |
 |---|---|---|
 | `standard` | One protected approval for a high-risk resource, then additional approval only for consequential actions or scope expansion | Human remains in the loop at defined boundaries |
-| `autonomous` | One protected session-start approval, then unattended work inside a declared capability envelope | Prompts are replaced by narrow, pre-authorized technical policy—not by model judgment |
+| `autonomous` | One protected session-start approval, then unattended work inside a declared capability envelope | Prompts are replaced by narrow, pre-authorized technical policy, not by model judgment |
 | `unrestricted` | No runtime approval prompts after explicit trusted launch | User accepts prompt-injection and unintended-action risk; the same built-in capability ceiling, managed/user policy, and hard integrity controls still apply |
 
 `yolo` may be a deliberately alarming CLI alias, but `unrestricted` is the
@@ -204,7 +204,7 @@ risk, not a secure mode.
 
 ## Mode contract
 
-### `standard` — default
+### `standard`: default
 
 `standard` permits ordinary work inside policy without prompt fatigue but
 requires protected consent for:
@@ -223,7 +223,7 @@ Ordinary read/navigation/input inside the approved resource and scope does not
 prompt again. Exact-identity reconnect does not prompt again while the grant is
 live and within its reconnect budget.
 
-### `autonomous` — bounded unattended operation
+### `autonomous`: bounded unattended operation
 
 The human approves a session manifest before work begins. The manifest names:
 
@@ -241,7 +241,7 @@ denied, not inferred from the task prompt.
 This is the preferred long-running mode. It provides the productivity goal of
 Codex/Claude-style automation while retaining a technical sandbox.
 
-### `unrestricted` — explicit bypass
+### `unrestricted`: explicit bypass
 
 `unrestricted` bypasses interactive Cua approval prompts, but it does not
 bypass:
@@ -403,8 +403,8 @@ The repository already exposes a versioned dotted capability vocabulary from
 the centralized `default_capabilities_for` map in `tool.rs`. The first
 autonomous manifest uses canonical existing tool names plus that live map; it
 does not invent tokens outside the advertised vocabulary. Static reviewed risk
-metadata maps each canonical tool—and narrowly defined sub-operations where
-the implementation can prove them—to R0-R4 before mode resolution.
+metadata maps each canonical tool (and narrowly defined sub-operations where
+the implementation can prove them) to R0-R4 before mode resolution.
 
 Resource bindings such as PID, window, profile, tab, origin, and destination
 remain typed grant fields enforced by the relevant adapter; they are not
@@ -583,7 +583,7 @@ covered by the grant.
   shell routes that could bypass typed browser restrictions.
 - Apply origin policy to every top-level navigation, including redirects,
   `window.open`, target creation, history traversal, form submission, and
-  server/client-driven navigation—not only `browser_navigate(url)` arguments.
+  server/client-driven navigation, not only `browser_navigate(url)` arguments.
 - Pause or detach on unapproved cross-origin expansion.
 - Gate downloads, uploads, file pickers, clipboard, credential entry,
   notifications, external-protocol launches, and permission prompts as
@@ -889,7 +889,7 @@ platform guarantee.
 
 ## Delivery sequence
 
-### Phase 0 — immediate containment
+### Phase 0: immediate containment
 
 1. Mark the current `existing_profile` approval path experimental.
 2. Disable it by default for agent-facing production use unless an explicit
@@ -903,7 +903,7 @@ platform guarantee.
 Exit: no accidental policy typo or ordinary agent transport silently gets a
 logged-in profile attachment.
 
-### Phase 1 — mode and policy foundation
+### Phase 1: mode and policy foundation
 
 1. Refactor `serve.rs` and `server.rs` to call one canonical daemon-side
    authorization function; retain the separate proxy check as early denial.
@@ -916,7 +916,7 @@ logged-in profile attachment.
 Exit: standard/autonomous/unrestricted decisions are deterministic and the
 agent cannot change them in-process.
 
-### Phase 2 — approval broker and grants
+### Phase 2: approval broker and grants
 
 1. Add broker protocol, request digest, private channel, grant store, and audit
    vocabulary.
@@ -929,7 +929,7 @@ agent cannot change them in-process.
 
 Exit: adversarial PTY and synthetic-MCP accept tests cannot mint a grant.
 
-### Phase 3 — indicator and revocation
+### Phase 3: indicator and revocation
 
 1. Add persistent status UI independent of agent cursor.
 2. Add Stop, emergency shortcut, trusted CLI revoke, and self-target denial.
@@ -937,7 +937,7 @@ Exit: adversarial PTY and synthetic-MCP accept tests cannot mint a grant.
 
 Exit: no R2+ grant can remain live without indicator and revocation coverage.
 
-### Phase 4 — migrate `existing_profile`
+### Phase 4: migrate `existing_profile`
 
 1. Replace public artifact consumption with generic protected grants.
 2. Add tab/origin/capability scoping and redirect/popup enforcement.
@@ -948,7 +948,7 @@ Exit: no R2+ grant can remain live without indicator and revocation coverage.
 Exit: one protected approval supports ordinary autonomous browser work, with
 new intervention only for scope expansion or consequential actions.
 
-### Phase 5 — autonomous and unrestricted UX
+### Phase 5: autonomous and unrestricted UX
 
 1. Add session manifests and human review UI.
 2. Add managed limits and non-interactive deny behavior for undeclared actions.
@@ -958,7 +958,7 @@ new intervention only for scope expansion or consequential actions.
 Exit: long-running tasks need one bounded approval; bypass cannot be entered by
 an already-running standard/autonomous agent.
 
-### Phase 6 — driver-wide coverage
+### Phase 6: driver-wide coverage
 
 Migrate screen, input, clipboard/files, devices, shell/network, and
 consequential typed workflows in the priority order above. Each group ships
@@ -1040,7 +1040,7 @@ apply the appropriate release label/type, and wait for release-metadata CI.
 
 ## Review record
 
-### Claude Code / Fable — 2026-07-20
+### Claude Code / Fable: 2026-07-20
 
 - **Method:** Read-only security and architecture review against exact base
   `767acf25f`, including `policy.rs`, `serve.rs`, `server.rs`, `proxy.rs`,

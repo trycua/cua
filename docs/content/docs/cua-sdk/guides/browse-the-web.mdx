@@ -1,0 +1,153 @@
+---
+title: Browse the web from your agent with Cua
+description: Give a coding agent (Claude Code, Codex, Cursor and others) a real browser inside a disposable sandbox with nothing but the cua MCP server. Discover an image, create a browser sandbox, read, click, fill and screenshot pages, teleport a signed-in session with consent, and clean up.
+---
+
+Once Cua is installed, a coding agent can browse the web with no other tool or
+setup. The browser runs inside a sandbox, never on your machine: a local
+container (gVisor when installed), a VM, or a Cua Fleet sandbox. The agent
+drives it through the sandbox's own Cua Driver, whose typed browser tools the
+`cua` MCP server reaches with `call_tool`.
+
+## Set up your agent
+
+`cua agents setup` installs the Cua skills (the `cua-sandboxes` skill carries
+the browsing recipe) and adds the `cua` MCP server to every agent it finds.
+
+```bash test="cli-shape" id="browse-setup"
+cua agents setup --agents claude,codex,cursor -y
+```
+
+Restart the agent. Everything below is what it does with the `cua` MCP tools.
+
+## 1. Pick an image
+
+`images_list` returns the image catalog the
+[image catalog details](/cua-sdk/reference/os-image-catalog) is generated from:
+each image's OS, container or VM form, runtimes, whether it ships cua-spacesd,
+and its browsers. `browser_tools: true` marks the images whose browser the
+Cua Driver browser tools drive.
+
+```python test="excerpt" id="browse-discover" source="tests/e2e/browse/e2e_browse.py#discover"
+cat = await agent.ok("images_list", {"browser": True})
+images = [i for i in cat["images"] if i["browser_tools"]]
+```
+
+The same list from a terminal:
+
+```bash test="cli-shape" id="browse-images"
+cua images ls --browser
+```
+
+## 2. Create a sandbox with a browser
+
+`sandbox_create` with `browser: true` starts the canonical Linux image
+(`ghcr.io/trycua/linux:24.04`), launches Chromium with a fresh throwaway
+profile inside it, binds the window for the browser tools and, with `url`,
+opens a first page. It runs on this machine by default. It returns the
+sandbox `id` and the `session`, `target_id` and `tab_id` every browser call
+takes.
+
+```python test="excerpt" id="browse-create" source="tests/e2e/browse/e2e_browse.py#create"
+sb = await agent.ok("sandbox_create", create)
+space = sb["id"]
+ids = {
+    "session": sb["session"],
+    "target_id": sb["browser"]["target_id"],
+    "tab_id": sb["browser"]["tab_id"],
+}
+```
+
+From a terminal, the same sandbox (watch it with `cua sb view`):
+
+```bash test="cli-shape" id="browse-create-cli"
+cua sb create --browser --open https://example.com --name web
+```
+
+## 3. Read, click, type
+
+Every browser action is a `call_tool` on the sandbox with the ids above plus
+the tool's own arguments:
+
+| Tool | Arguments | Does |
+|---|---|---|
+| `get_browser_state` | `snapshot_format: "semantic_v2"`, `include_screenshot` | Reads the page: an outline and refs such as `p2:0`; optionally the tab as an image |
+| `browser_navigate` | `url` | Opens a URL |
+| `browser_click` | `ref`, `delivery_mode: "foreground"` | Clicks an element |
+| `browser_type` | `ref`, `text`, `replace` | Types; `replace: true` fills a field; text `"\n"` with `mode: "keystrokes"` presses Enter |
+| `browser_pointer` | `action`, `ref` | Hover, double-click, right-click, scroll, drag |
+
+A small helper keeps the calls short:
+
+```python test="excerpt" id="browse-helpers" source="tests/e2e/browse/e2e_browse.py#helpers"
+async def driver(tool: str, **args) -> dict:
+    return await agent.ok(
+        "call_tool", {"space": space, "tool": tool, "arguments": {**ids, **args}}
+    )
+
+async def read() -> dict:
+    return await driver("get_browser_state", snapshot_format="semantic_v2")
+
+async def click(ref: str) -> None:
+    # In a sandbox nobody else uses the browser window, so the
+    # trusted route may activate it (Linux Chromium needs that).
+    await driver("browser_click", ref=ref, delivery_mode="foreground")
+```
+
+Refs belong to the read that returned them and stay valid until the page
+changes. Read again after a navigation or a submit.
+
+## 4. Test a page served in the sandbox
+
+The sandbox is a whole computer: serve your app in it (`space_write`,
+`space_bash`) and browse `http://127.0.0.1:<port>`. This fills and submits a
+form:
+
+```python test="excerpt" id="browse-fill" source="tests/e2e/browse/e2e_browse.py#fill"
+await driver("browser_navigate", url=f"http://127.0.0.1:{FORM_PORT}/")
+# One read; its refs stay valid until the page changes.
+page = await read()
+name_ref = find_ref(page, "textbox", "Name")
+agree_ref = find_ref(page, "checkbox", "I agree")
+submit_ref = find_ref(page, "button", "Submit")
+await driver("browser_type", ref=name_ref, text="Ada Lovelace", replace=True)
+await click(agree_ref)
+await click(submit_ref)
+```
+
+## 5. Sign in with your own session (with consent)
+
+To browse as you on a site you are signed in to, the agent can teleport that
+site's session from your browser (Firefox or Chrome) into the sandbox with
+`teleport_browser_session`. It names the exact sites; nothing is selected by
+default and there is no "all sessions" option. The first call moves nothing:
+it returns what would move and a consent requirement, which the agent shows
+you. Only your explicit approval moves those sites' sessions into the
+sandbox. Delete the sandbox, or sign out there, to end them.
+
+## 6. Clean up
+
+```python test="excerpt" id="browse-cleanup" source="tests/e2e/browse/e2e_browse.py#cleanup"
+await agent.call("sandbox_delete", {"name": space})
+```
+
+## Run the whole session
+
+[`tests/e2e/browse/e2e_browse.py`](https://github.com/trycua/cua/blob/main/tests/e2e/browse/e2e_browse.py)
+runs every step above as an MCP client (the official MCP Python SDK) against
+`cua mcp`, with no model in the loop. CI runs it in the container lane.
+
+```bash skip="host-install"
+pip install mcp
+CUA_E2E_BROWSE=1 python tests/e2e/browse/e2e_browse.py
+```
+
+## What the browser tools cover
+
+Reading pages (outline, refs, text, a scoped `query`), navigation, clicks,
+typing and filling, Enter, hover, scroll, drag, uploads (`browser_set_input_files`),
+downloads (`browser_download`), page dialogs (`browser_dialog`) and tab
+screenshots. They drive Chromium-family browsers over the Chrome DevTools
+Protocol. Firefox ships in the image too; drive it with the desktop tools
+(`computer_screenshot`, `computer_click`). Waiting is a bounded loop of reads;
+there is no JavaScript `eval`, network interception or cookie editing tool.

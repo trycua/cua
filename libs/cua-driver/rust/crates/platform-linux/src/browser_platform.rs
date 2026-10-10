@@ -3,14 +3,14 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -18,10 +18,31 @@ use cua_driver_core::browser::types::{
     EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
+    parse_devtools_active_port, BrowserCursorTracker,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[derive(Debug, Default)]
-pub struct LinuxBrowserPlatform;
+pub struct LinuxBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Mutex<BrowserCursorTracker>,
+}
+
+impl LinuxBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Mutex::new(BrowserCursorTracker::default()),
+        }
+    }
+}
+
+impl Default for LinuxBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -64,7 +85,7 @@ fn run_existing_profile_cleanup<T: Send + 'static>(
         })
 }
 
-fn is_chromium(name: &str) -> bool {
+pub(crate) fn is_chromium_identity(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -74,14 +95,8 @@ fn is_chromium(name: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
-fn is_firefox(name: &str) -> bool {
-    name.to_ascii_lowercase().split_whitespace().any(|word| {
-        word.rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(word)
-            .trim_end_matches(".exe")
-            == "firefox"
-    })
+fn is_chromium(name: &str) -> bool {
+    is_chromium_identity(name)
 }
 
 fn browser_product(identity: &str) -> BrowserProduct {
@@ -173,18 +188,6 @@ fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole
     } else {
         BrowserProcessRole::Unknown
     }
-}
-
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
-        .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
 }
 
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
@@ -293,21 +296,6 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     listeners.sort_unstable();
     listeners.dedup();
     Ok(listeners)
-}
-
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
 }
 
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
@@ -419,25 +407,12 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let tail = stat
-        .rsplit_once(')')
-        .map(|(_, tail)| tail.trim())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process identity for pid {pid}"),
-            )
-        })?;
-    let started = tail
-        .split_whitespace()
-        .nth(19)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process start time for pid {pid}"),
-            )
-        })?;
+    let started = crate::proc_fs::process_start_time_from_stat(&stat).ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not parse process start time for pid {pid}"),
+        )
+    })?;
     let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
         .map(|path| path.to_string_lossy().into_owned());
@@ -507,6 +482,76 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
+    }
+
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command_for(
+                key,
+                cursor_overlay::OverlayCommand::SetEnabled(enabled),
+            );
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+
+        crate::overlay::send_command_for(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(action.window_id),
+        );
+        crate::overlay::animate_cursor_to_for(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command_for(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -803,7 +848,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let owned = tokio::task::spawn_blocking(move || {
             crate::x11::list_windows(Some(pid_u32))
                 .into_iter()
-                .map(|window| u64::from(window.xid))
+                .map(|window| window.xid)
                 .collect::<Vec<_>>()
         })
         .await
@@ -1327,6 +1372,53 @@ mod tests {
         assert!(cleaned);
     }
 
+    #[tokio::test]
+    async fn browser_visual_feedback_updates_the_declared_session_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-test".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-A".to_owned(),
+                tab_is_active: true,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-test")
+            .expect("browser action should materialize its session cursor");
+        assert_eq!((state.x, state.y), (Some(321.0), Some(456.0)));
+    }
+
+    #[tokio::test]
+    async fn inactive_tab_feedback_materializes_but_does_not_move_its_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-hidden".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-hidden".to_owned(),
+                tab_is_active: false,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-hidden")
+            .expect("browser action should establish its session-to-tab binding");
+        assert!(
+            state.x.is_none() && state.y.is_none(),
+            "an inactive tab must not animate or move its visible cursor"
+        );
+    }
+
     #[test]
     fn isolated_browser_candidates_use_only_root_managed_payloads() {
         let candidates = isolated_browser_candidates();
@@ -1394,47 +1486,6 @@ mod tests {
         assert_eq!(
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
-        );
-    }
-
-    #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("firefox --new-instance"));
-        assert!(is_firefox("Mozilla Firefox"));
-        assert!(!is_firefox("firefox-helper"));
-        assert!(!is_firefox("waterfox"));
-    }
-
-    #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
-        assert_eq!(
-            loopback_websocket_port("ws://localhost:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://[::1]:9333/devtools/browser/foreign"),
-            Some(9222)
-        );
-        assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
-    }
-
-    #[test]
-    fn active_port_parser_requires_one_exact_browser_path() {
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/abc-123\n"),
-            Some((9222, "/devtools/browser/abc-123"))
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/abc\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
-            None
         );
     }
 }

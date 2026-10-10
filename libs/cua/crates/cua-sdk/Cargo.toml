@@ -1,0 +1,116 @@
+[package]
+name = "cua-sdk"
+description = "The cua SDK: the MIT #[uniffi::export] crate. One Cua object (embedded or connected to `cua daemon`) exposing env, fleet, sandboxes, local and spaces modules to Python, TypeScript, Swift and Kotlin."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "cua_sdk"
+# rlib: Rust hosts (cua-cli, Tauri apps). cdylib: Python/Node/Kotlin.
+# staticlib: the Swift XCFramework.
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+default = ["local", "spaces", "host", "media", "byoc"]
+# `Cua.local()`: local runtimes and images. Placeholder surface that returns
+# `Unsupported` until cua-vmm / cua-image are merged.
+local = []
+# `Cua.spaces()`: the Spaces registry and primitives (cua-spaces), embedded
+# or through `cua daemon`'s SpaceService.
+spaces = ["dep:cua-spaces", "cua-daemon/spaces", "dep:pbjson-types"]
+# `Relay` (the account's machines on a cua-relay) and `Host` (set this
+# machine up for unattended access): cua-host.
+host = ["dep:cua-host"]
+# Media sessions (`SpacesdClient.open_media`) with FrameSink/AudioSink callbacks.
+media = []
+# Your own cloud account as a location (`on="aws"`, `"gcp"`, `"modal"`) for
+# sandboxes and Spaces: the cua-byoc providers and `cua cloud`.
+byoc = ["cua-daemon/byoc"]
+# Contrib sandbox providers (`on="e2b"`, ...), off by default.
+contrib = ["cua-daemon/contrib"]
+contrib-e2b = ["cua-daemon/contrib-e2b"]
+contrib-daytona = ["cua-daemon/contrib-daytona"]
+contrib-modal = ["cua-daemon/contrib-modal"]
+# The browser API on the host (UBRN reads its metadata to generate the
+# browser bindings); wasm32 builds always use it.
+web = ["dep:tonic-web-wasm-client", "dep:cyclops-sdk"]
+
+[dependencies]
+# Contract types (both targets). The server half never builds for wasm32.
+cua-proto = { path = "../cua-proto", default-features = false, features = ["client", "serde"] }
+uniffi.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tonic-web-wasm-client = { version = "0.9", optional = true }
+cyclops-sdk = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# `Cua.agent_setup()`: coding-agent detection, skills and MCP config.
+cua-agent-setup.workspace = true
+# `Sandbox.agents()`: coding agents over ACP in any sandbox.
+cua-agents.workspace = true
+# `Cua.auth()`: sign-in and the shared credential store.
+cua-auth.workspace = true
+cua-spacesd-client.workspace = true
+cua-fleet.workspace = true
+# `resolve_image` / `canonical_image`: the one image resolver.
+cua-image.workspace = true
+# Anonymous usage telemetry.
+cua-telemetry.workspace = true
+cua-sandbox-core.workspace = true
+async-trait.workspace = true
+cua-host = { workspace = true, optional = true }
+cua-daemon = { workspace = true, features = ["client"] }
+cua-spaces = { path = "../cua-spaces", optional = true }
+pbjson-types = { workspace = true, optional = true }
+tokio = { workspace = true }
+tonic = { workspace = true, default-features = false, features = ["codegen"] }
+tonic-prost.workspace = true
+prost.workspace = true
+http.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+base64.workspace = true
+# Overlays: sha256 of injected binaries.
+sha2.workspace = true
+hex.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+http-body-util.workspace = true
+cua-sandbox-core = { workspace = true, features = ["testing"] }
+cua-spaces = { path = "../cua-spaces" }
+cua-host = { workspace = true, features = ["testing"] }
+serde_json.workspace = true
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { workspace = true, features = ["testing"] }
+cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+tempfile.workspace = true
+# Paused time for the keyframe ticker test.
+tokio = { workspace = true, features = ["test-util"] }
+prost-types.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `GlobalFetch`: cyclops-sdk's HttpClient over globalThis.fetch (Node, workers).
+async-trait = "0.1"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["AbortSignal", "Headers", "ReadableStream", "ReadableStreamDefaultReader", "Request", "RequestInit", "RequestRedirect", "RequestCredentials", "Response"] }
+tonic = { workspace = true, default-features = false, features = ["codegen"] }
+tonic-prost.workspace = true
+tonic-web-wasm-client = "0.9"
+prost.workspace = true
+http.workspace = true
+cyclops-sdk.workspace = true
+
+[dev-dependencies]
+cua-icon-cache.workspace = true
+cua-home.workspace = true

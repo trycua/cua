@@ -1,0 +1,166 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Network tunnels between a client and the guest, carried over WebSocket
+// upgrades on the spacesd port so they work through the Fleet gateway,
+// the relay and gRPC-Web-only networks.
+//
+// - `Forward`: client-to-guest TCP. Each WebSocket connection to
+//   `ws_path` becomes one TCP connection to the guest port; binary frames
+//   carry the byte stream in both directions.
+// - Hotspot: guest-to-client egress (reverse SOCKS5). A SOCKS5 listener on
+//   guest loopback relays each outbound connection over the client's
+//   WebSocket, and the client dials it from its own network. Replaces the
+//   unauthenticated rcdp-socks.
+service TunnelService {
+  // Authorizes TCP forwarding to a guest port and returns the WebSocket to
+  // connect to.
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+  // Lists active forwards.
+  rpc ListForwards(ListForwardsRequest) returns (ListForwardsResponse);
+  // Revokes a forward and closes its connections.
+  rpc CloseForward(CloseForwardRequest) returns (CloseForwardResponse);
+  // Starts the reverse-SOCKS hotspot for the calling client.
+  rpc StartHotspot(StartHotspotRequest) returns (StartHotspotResponse);
+  // Stops the hotspot.
+  rpc StopHotspot(StopHotspotRequest) returns (StopHotspotResponse);
+  // Reports hotspot state and counters.
+  rpc GetHotspotStatus(GetHotspotStatusRequest) returns (GetHotspotStatusResponse);
+}
+
+// Request for `TunnelService.Forward`.
+message ForwardRequest {
+  // Guest TCP port to reach.
+  uint32 port = 1;
+  // Guest host to connect to. Empty means "127.0.0.1". Only loopback and
+  // the guest's own addresses are allowed.
+  string host = 2;
+  // How long the ticket accepts new connections. Unset means 10 minutes; at
+  // most 24 hours. Open connections survive expiry.
+  google.protobuf.Duration ttl = 3;
+}
+
+// Response for `TunnelService.Forward`.
+message ForwardResponse {
+  // Forward id.
+  string forward_id = 1;
+  // Ticket accepted by the tunnel WebSocket. Reusable for many connections
+  // until expiry.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the
+  // ticket, for example "/tunnel?ticket=…".
+  string ws_path = 3;
+  // When the ticket expires.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// An active forward.
+message ForwardInfo {
+  // Forward id.
+  string forward_id = 1;
+  // Guest host.
+  string host = 2;
+  // Guest port.
+  uint32 port = 3;
+  // Open connections.
+  uint32 active_connections = 4;
+  // Bytes sent to the guest port.
+  uint64 bytes_in = 5;
+  // Bytes received from the guest port.
+  uint64 bytes_out = 6;
+  // Ticket expiry.
+  google.protobuf.Timestamp expires_at = 7;
+}
+
+// Request for `TunnelService.ListForwards`.
+message ListForwardsRequest {}
+
+// Response for `TunnelService.ListForwards`.
+message ListForwardsResponse {
+  // Active forwards.
+  repeated ForwardInfo forwards = 1;
+}
+
+// Request for `TunnelService.CloseForward`.
+message CloseForwardRequest {
+  // Which forward.
+  string forward_id = 1;
+}
+
+// Response for `TunnelService.CloseForward`.
+message CloseForwardResponse {}
+
+// Request for `TunnelService.StartHotspot`.
+message StartHotspotRequest {
+  // Guest loopback port for the SOCKS5 listener. 0 means 1080.
+  uint32 socks_port = 1;
+  // Point the guest's system proxy settings (and HTTP(S)_PROXY for new
+  // processes) at the hotspot.
+  bool set_system_proxy = 2;
+  // Destinations (CIDRs or host suffixes) that bypass the hotspot and use
+  // the guest's own network.
+  repeated string bypass = 3;
+  // How long the ticket accepts the client's WebSocket. Unset means 60
+  // seconds.
+  google.protobuf.Duration ticket_ttl = 4;
+}
+
+// Response for `TunnelService.StartHotspot`.
+message StartHotspotResponse {
+  // Hotspot id.
+  string hotspot_id = 1;
+  // Ticket for the hotspot WebSocket.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the
+  // ticket, for example "/hotspot?ticket=…". The client keeps this socket
+  // open; the hotspot stops when it closes.
+  string ws_path = 3;
+  // Guest-side SOCKS5 address, for example "127.0.0.1:1080".
+  string socks_address = 4;
+}
+
+// Request for `TunnelService.StopHotspot`.
+message StopHotspotRequest {
+  // Which hotspot.
+  string hotspot_id = 1;
+}
+
+// Response for `TunnelService.StopHotspot`.
+message StopHotspotResponse {}
+
+// Request for `TunnelService.GetHotspotStatus`.
+message GetHotspotStatusRequest {}
+
+// Hotspot state.
+enum HotspotState {
+  // Not reported.
+  HOTSPOT_STATE_UNSPECIFIED = 0;
+  // No hotspot.
+  HOTSPOT_STATE_STOPPED = 1;
+  // Started, waiting for the client WebSocket.
+  HOTSPOT_STATE_WAITING_FOR_PEER = 2;
+  // Relaying.
+  HOTSPOT_STATE_ACTIVE = 3;
+}
+
+// Response for `TunnelService.GetHotspotStatus`.
+message GetHotspotStatusResponse {
+  // State.
+  HotspotState state = 1;
+  // Hotspot id, when not stopped.
+  string hotspot_id = 2;
+  // Id of the principal whose client provides egress.
+  string peer_principal_id = 3;
+  // Guest-side SOCKS5 address.
+  string socks_address = 4;
+  // Open relayed connections.
+  uint32 active_connections = 5;
+  // Bytes sent from the guest through the hotspot.
+  uint64 bytes_out = 6;
+  // Bytes received into the guest through the hotspot.
+  uint64 bytes_in = 7;
+}

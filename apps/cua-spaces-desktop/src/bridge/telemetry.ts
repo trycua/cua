@@ -11,7 +11,6 @@ import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 
 const WORD = /^[a-z0-9_]{1,64}$/;
-/** An error enum case (`InsufficientDisk`), or empty when the shell has none. */
 const VARIANT = /^[A-Za-z0-9_]{0,64}$/;
 
 /** One page signal as the core's, or null when any part is not a fixed word, flag or duration. */

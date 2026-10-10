@@ -352,7 +352,6 @@ extension WebUIBridge {
                   n.doubleValue == n.doubleValue.rounded() else { return nil }
             return n.uint64Value
         }
-        /// An error enum case (`InsufficientDisk`), or empty when the shell has none.
         func variant(_ k: String) -> String? {
             guard let v = s[k] as? String, v.count <= 64,
                   v.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return nil }

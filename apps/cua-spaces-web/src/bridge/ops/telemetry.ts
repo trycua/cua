@@ -87,7 +87,6 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
 /** A fixed word from the schema (`space_create_local`, `this_mac`). Names,
  * emails, paths and URLs never match. */
 const WORD = /^[a-z0-9_]{1,64}$/;
-/** An error enum case (`InsufficientDisk`), or empty when the shell has none. */
 const VARIANT = /^[A-Za-z0-9_]{0,64}$/;
 
 function valid(kind: Field, v: unknown): boolean {

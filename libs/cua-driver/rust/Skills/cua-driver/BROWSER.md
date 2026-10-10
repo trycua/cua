@@ -153,6 +153,28 @@ or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
+### Driver-owned headless browser
+
+When no display, compositor, or visible window is needed, add
+`"headless":true` to an `isolated_new` launch. The driver starts Chromium with
+`--headless=new` and needs no native window, desktop input, or focus:
+
+```text
+browser_prepare
+  '{"session":"browser-run-1","allow_launch":true,"headless":true,
+    "profile":{"mode":"isolated_new"}}'
+get_browser_state
+  '{"session":"browser-run-1","headless_target":"<attachment.headless_target>"}'
+```
+
+The bind reports `binding_route: "driver_owned_headless"` and is exact. Only
+the session (and transport) that prepared it can use `headless_target`.
+Every mutation re-proves the launch record, process start identity, and
+endpoint owner. Ending the session kills the browser's process group and
+deletes its profile. `headless` is refused with `isolated_named`,
+`existing_profile`, `pid`, `window_id`, or without `allow_launch`. Use
+`input_route: "dom_event"` for clicks; there is no screen for visual feedback.
+
 ### Existing profile
 
 Attaching to an authenticated profile requires explicit trusted launch or host

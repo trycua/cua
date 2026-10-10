@@ -75,7 +75,7 @@ pub(super) struct FixtureState {
     /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
     primary_window_error: Option<(i64, String)>,
     /// Every incoming CDP call: (sessionId, method, params).
-    calls: Vec<(Option<String>, String, Value)>,
+    pub(super) calls: Vec<(Option<String>, String, Value)>,
 }
 
 impl Default for FixtureState {
@@ -119,7 +119,7 @@ fn screenshot_png_base64(width: u32, height: u32) -> String {
     BASE64.encode(encoded.into_inner())
 }
 
-type SharedState = Arc<StdMutex<FixtureState>>;
+pub(super) type SharedState = Arc<StdMutex<FixtureState>>;
 
 /// Main-frame document: a plain button, an open shadow root with an
 /// input, a user-agent shadow root (must be skipped), a same-process
@@ -427,7 +427,7 @@ fn oopif_document() -> Value {
     })
 }
 
-fn fixture_handler(state: SharedState) -> MockHandler {
+pub(super) fn fixture_handler(state: SharedState) -> MockHandler {
     Arc::new(move |call| {
         let mut st = state.lock().unwrap();
         st.calls.push((
@@ -1072,7 +1072,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
     )
 }
 
-fn structured(result: &ToolResult) -> &Value {
+pub(super) fn structured(result: &ToolResult) -> &Value {
     result
         .structured_content
         .as_ref()
@@ -1636,7 +1636,7 @@ async fn semantic_snapshot_with(f: &Fixture, target_id: &str, tab_id: &str, extr
 
 /// The `ref` string of the first snapshot entry in the given frame kind
 /// with the given backing label fragment (or any, if empty).
-fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
+pub(super) fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
     snapshot["refs"]
         .as_array()
         .unwrap()

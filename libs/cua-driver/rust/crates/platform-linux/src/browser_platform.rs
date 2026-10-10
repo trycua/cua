@@ -1741,4 +1741,143 @@ mod tests {
             BrowserProduct::GoogleChrome
         );
     }
+
+    /// Real driver-owned headless Chrome: prepare, bind by anchor, type,
+    /// click, read back, clean up. Opt-in only; it launches the installed
+    /// root-owned Chrome with a fresh throwaway profile and never touches
+    /// another browser. Run:
+    /// `CUA_TEST_REAL_HEADLESS_CHROME=1 env -u DISPLAY -u WAYLAND_DISPLAY \
+    ///  cargo test -p platform-linux real_headless_chrome -- --ignored --test-threads=1`
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn real_headless_chrome_types_clicks_reads_back_and_cleans_up() {
+        use cua_driver_core::browser::tools::{
+            BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool,
+            GetBrowserStateTool,
+        };
+        use cua_driver_core::browser::BrowserEngine;
+        use cua_driver_core::tool::Tool;
+        use serde_json::{json, Value};
+        use std::io::{Read, Write};
+
+        if std::env::var("CUA_TEST_REAL_HEADLESS_CHROME").as_deref() != Ok("1") {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        std::env::set_var("CUA_DRIVER_BROWSER_PROFILE_ROOT", root.path());
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("WAYLAND_DISPLAY");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            const PAGE: &str = "<!doctype html><title>headless</title>\
+                <input id=\"q\" aria-label=\"query\">\
+                <button id=\"go\" onclick=\"this.setAttribute('aria-label', \
+                'done:' + document.getElementById('q').value)\">Go</button>";
+            for mut stream in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
+                    PAGE.len()
+                );
+            }
+        });
+
+        let engine = BrowserEngine::new(Arc::new(LinuxBrowserPlatform::default()));
+        let session = format!("real-headless-{}", std::process::id());
+        let call = |tool: Box<dyn Tool>, args: Value| async move {
+            let result = tool.invoke(args).await;
+            result.structured_content.expect("structured result")
+        };
+        let prepared = call(
+            Box::new(BrowserPrepareTool::new(engine.clone())),
+            json!({"session": session, "headless": true, "allow_launch": true,
+                   "profile": {"mode": "isolated_new"}}),
+        )
+        .await;
+        assert_eq!(prepared["status"], "ok", "{prepared}");
+        let pid = prepared["prepared_pid"].as_i64().unwrap();
+        let anchor = prepared["attachment"]["headless_target"].as_str().unwrap();
+
+        let bound = call(
+            Box::new(GetBrowserStateTool::new(engine.clone())),
+            json!({"session": session, "headless_target": anchor}),
+        )
+        .await;
+        assert_eq!(bound["binding_route"], "driver_owned_headless", "{bound}");
+        assert_eq!(bound["mutation_allowed"], true);
+        let target = bound["target_id"].as_str().unwrap().to_owned();
+        let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+        let page = json!({"session": session, "target_id": target, "tab_id": tab});
+        let with = |extra: Value| {
+            let mut args = page.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+
+        let navigated = call(
+            Box::new(BrowserNavigateTool::new(engine.clone())),
+            with(json!({"url": format!("http://127.0.0.1:{port}/")})),
+        )
+        .await;
+        assert_eq!(navigated["status"], "ok", "{navigated}");
+        let snapshot = || {
+            let engine = engine.clone();
+            let args = with(json!({"snapshot_format": "dom_refs_v1"}));
+            async move {
+                GetBrowserStateTool::new(engine)
+                    .invoke(args)
+                    .await
+                    .structured_content
+                    .unwrap()
+            }
+        };
+        let ref_with = |snap: &Value, label: &str| {
+            snap["refs"].as_array().and_then(|refs| {
+                refs.iter()
+                    .find(|r| r["label"].as_str().unwrap_or("").contains(label))
+                    .and_then(|r| r["ref"].as_str())
+                    .map(str::to_owned)
+            })
+        };
+        let mut snap = snapshot().await;
+        for _ in 0..50 {
+            if ref_with(&snap, "id=go").is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            snap = snapshot().await;
+        }
+        let typed = call(
+            Box::new(BrowserTypeTool::new(engine.clone())),
+            with(json!({"ref": ref_with(&snap, "id=q").expect("input ref"), "text": "hello"})),
+        )
+        .await;
+        assert_eq!(typed["status"], "ok", "{typed}");
+        let clicked = call(
+            Box::new(BrowserClickTool::new(engine.clone())),
+            with(json!({"ref": ref_with(&snap, "id=go").expect("button ref"),
+                        "input_route": "dom_event"})),
+        )
+        .await;
+        assert_eq!(clicked["status"], "ok", "{clicked}");
+        let fresh = snapshot().await;
+        assert!(
+            ref_with(&fresh, "aria-label=done:hello").is_some(),
+            "{fresh}"
+        );
+
+        cua_driver_core::session::fire_session_end(&session);
+        assert_eq!(
+            std::fs::read_dir(root.path()).unwrap().count(),
+            0,
+            "the isolated_new profile is removed"
+        );
+        assert_ne!(unsafe { libc::kill(pid as i32, 0) }, 0, "browser reaped");
+    }
 }

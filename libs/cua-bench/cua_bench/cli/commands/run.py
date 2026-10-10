@@ -1736,6 +1736,34 @@ async def _cmd_run_dataset_async(args) -> int:
 
         log_print(summary)
 
+        # Persist actual TaskRunner outcomes for downstream consumers rather
+        # than forcing them to parse colored console messages.
+        import json
+        receipt_rows = []
+        for (task_path, variant_id), result in zip(task_variants, results):
+            valid_result = result is not None and not isinstance(result, BaseException)
+            receipt_rows.append({
+                "task": task_path.name,
+                "variant_id": variant_id,
+                "success": bool(result.success) if valid_result else False,
+                "error": (str(result) if isinstance(result, BaseException)
+                          else ("task failed without result" if result is None else None)),
+            })
+        receipt = {
+            "schema_version": "cua-bench-dataset-run/v1",
+            "run_id": run_id,
+            "total_tasks": len(results),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "tasks": receipt_rows,
+        }
+        identity_path = output_dir / "dataset-identity.json"
+        if identity_path.is_file():
+            receipt["dataset_identity"] = json.loads(identity_path.read_text(encoding="utf-8"))
+        (output_dir / "run-result.json").write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
         # Summary
         model_name = getattr(args, "model", None) or "default"
         print("\n")

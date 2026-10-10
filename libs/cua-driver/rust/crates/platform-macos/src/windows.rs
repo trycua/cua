@@ -66,22 +66,27 @@ extern "C" {
 
 /// Enumerate all windows (including off-screen).
 pub fn all_windows() -> Vec<WindowInfo> {
-    all_windows_with_space_snapshot().windows
+    all_windows_with_space_snapshot(None).windows
 }
 
-pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::ZeroOnly)
+pub(crate) fn all_windows_with_space_snapshot(pid: Option<i32>) -> WindowEnumeration {
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        pid,
+    )
 }
 
 /// Enumerate only on-screen windows.
 pub fn visible_windows() -> Vec<WindowInfo> {
-    visible_windows_with_space_snapshot().windows
+    visible_windows_with_space_snapshot(None).windows
 }
 
-pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
+pub(crate) fn visible_windows_with_space_snapshot(pid: Option<i32>) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
+        pid,
     )
 }
 
@@ -95,7 +100,12 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
 /// `get_window_state` tell "no such window" apart from "exists, but is not a
 /// layer-0 window" (issue #2237).
 fn all_windows_any_layer() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer).windows
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        None,
+    )
+    .windows
 }
 
 /// Which CGWindow layers an enumeration admits.
@@ -107,7 +117,7 @@ enum LayerFilter {
     AnyLayer,
 }
 
-fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
+fn enumerate_windows(options: u32, layers: LayerFilter, pid: Option<i32>) -> WindowEnumeration {
     use core_foundation::{
         array::CFArray,
         base::{CFGetTypeID, CFTypeRef, TCFType},
@@ -253,24 +263,37 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
     }
 
     if layers == LayerFilter::ZeroOnly {
-        let Some(query) = &space_query else {
-            return WindowEnumeration {
-                windows: results,
-                current_space_id,
+        query_window_spaces(&mut results, pid, |window_id| {
+            let Some(query) = &space_query else {
+                return (None, None);
             };
-        };
-        for window in &mut results {
-            let space_ids = query.window_space_ids(window.window_id);
+            let space_ids = query.window_space_ids(window_id);
             let display_space_id = space_ids
                 .as_ref()
-                .and_then(|_| query.current_space_for_window(window.window_id));
-            apply_window_space_metadata(window, space_ids, display_space_id);
-        }
+                .and_then(|_| query.current_space_for_window(window_id));
+            (space_ids, display_space_id)
+        });
     }
 
     WindowEnumeration {
         windows: results,
         current_space_id,
+    }
+}
+
+fn query_window_spaces(
+    windows: &mut Vec<WindowInfo>,
+    pid: Option<i32>,
+    mut query: impl FnMut(u32) -> (Option<Vec<u64>>, Option<u64>),
+) {
+    // Preserve WindowServer's global z_index while avoiding per-window Space
+    // queries for processes excluded from this enumeration.
+    if let Some(pid) = pid {
+        windows.retain(|window| window.pid == pid);
+    }
+    for window in windows {
+        let (space_ids, display_space_id) = query(window.window_id);
+        apply_window_space_metadata(window, space_ids, display_space_id);
     }
 }
 
@@ -522,6 +545,55 @@ fn poll_until_no_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pid_filter_precedes_space_queries_and_preserves_window_metadata() {
+        let mut target = window(42, 800, "Target");
+        target.z_index = 7;
+        let mut off_space = window(43, 800, "Target");
+        off_space.is_on_screen = false;
+        let mut windows = vec![window(41, 900, "Other"), target, off_space];
+        let mut queried = Vec::new();
+        query_window_spaces(&mut windows, Some(800), |id| {
+            queried.push(id);
+            match id {
+                42 => (Some(vec![2, 4]), Some(4)),
+                43 => (Some(vec![3]), Some(4)),
+                _ => panic!("must not query another process's Space"),
+            }
+        });
+        assert_eq!(queried, [42, 43]);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].window_id, 42);
+        assert_eq!(windows[0].z_index, 7);
+        assert_eq!(windows[0].space_ids, Some(vec![2, 4]));
+        assert_eq!(windows[0].current_space_id, Some(4));
+        assert_eq!(windows[0].on_current_space, Some(true));
+        assert_eq!(windows[1].window_id, 43);
+        assert_eq!(windows[1].space_ids, Some(vec![3]));
+        assert_eq!(windows[1].on_current_space, Some(false));
+        assert!(!windows[1].is_on_screen);
+
+        query_window_spaces(&mut windows, Some(900), |_| {
+            panic!("empty PID must not query")
+        });
+        assert!(windows.is_empty());
+    }
+
+    #[test]
+    fn unfiltered_space_queries_keep_all_processes_and_unknown_metadata() {
+        let mut windows = vec![window(41, 900, "Other"), window(42, 800, "Target")];
+        let mut queried = Vec::new();
+        query_window_spaces(&mut windows, None, |id| {
+            queried.push(id);
+            (None, None)
+        });
+        assert_eq!(queried, [41, 42]);
+        assert_eq!(windows.len(), 2);
+        assert!(windows.iter().all(|window| window.space_ids.is_none()
+            && window.current_space_id.is_none()
+            && window.on_current_space.is_none()));
+    }
 
     #[test]
     fn space_membership_checks_all_spaces_for_a_window() {

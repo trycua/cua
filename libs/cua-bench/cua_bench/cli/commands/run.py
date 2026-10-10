@@ -1745,6 +1745,16 @@ async def _cmd_run_dataset_async(args) -> int:
                 "task": task_path.name,
                 "variant_id": variant_id,
                 "success": passed,
+                "exit_code": (
+                    getattr(outcome, "exit_code", None)
+                    if outcome is not None and not isinstance(outcome, BaseException)
+                    else None
+                ),
+                "error": (
+                    str(outcome) if isinstance(outcome, BaseException)
+                    else "task failed without result" if outcome is None
+                    else getattr(outcome, "error", None)
+                ),
                 "failure_type": (
                     type(outcome).__name__ if isinstance(outcome, BaseException)
                     else "MissingResult" if outcome is None

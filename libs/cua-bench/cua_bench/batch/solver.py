@@ -366,6 +366,7 @@ async def main():
         evaluation_receipt = {
             "schema_version": "cua-bench-oracle-result/v1",
             "task_index": task_index,
+            "execution_id": os.environ.get("CUA_EXECUTION_ID"),
             "evaluated": False,
             "success": False,
             "rewards": None,

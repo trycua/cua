@@ -93,3 +93,42 @@ def test_cleanup_failure_cannot_produce_success(should_fail_close, reward):
         assert result.error is None
         assert result.reward == reward
         assert result.success is (reward >= 0.5)
+
+
+@settings(max_examples=80, deadline=None)
+@given(
+    st.one_of(st.booleans(), st.text(max_size=16), st.none()),
+    st.sampled_from(["scalar", "list", "dict"]),
+)
+def test_evaluator_rejects_non_numeric_reward_payloads(value, shape):
+    observed = {"closed": False}
+
+    class InvalidRewardEnvironment:
+        evaluate_task_fn = object()
+        solve_task_fn = None
+
+        async def reset(self, task_id=0):
+            return b"initial", SimpleNamespace()
+
+        async def step(self, action):
+            return b"next"
+
+        async def evaluate(self):
+            if shape == "list":
+                return [value]
+            if shape == "dict":
+                return {"reward": value}
+            return value
+
+        async def close(self):
+            observed["closed"] = True
+
+    with patch("cua_bench.runners.make", return_value=InvalidRewardEnvironment()):
+        outcome = asyncio.run(run_single_task(
+            Path("invalid-evaluator"), agent_fn=lambda screenshot, task: DoneAction(), max_steps=2
+        ))
+    assert observed["closed"]
+    assert outcome.steps == 1
+    assert outcome.success is False
+    assert outcome.reward == 0.0
+    assert outcome.error is not None

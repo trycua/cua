@@ -1,0 +1,22 @@
+name: "CI: cua-bench focused score contract"
+on:
+  push:
+    branches:
+      - fix/cua-bench-upstream-score-contract-20261010
+  workflow_dispatch:
+
+jobs:
+  score-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install Chromium system dependencies
+        working-directory: libs/cua-bench
+        run: uv run --extra dev python -m playwright install --with-deps chromium
+      - name: Run upstream runner regressions
+        working-directory: libs/cua-bench
+        run: xvfb-run -a uv run --extra dev pytest cua_bench/tests/test_run_benchmark.py -q

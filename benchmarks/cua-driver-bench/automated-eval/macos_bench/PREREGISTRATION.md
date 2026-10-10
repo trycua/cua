@@ -1227,6 +1227,10 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 4 (diagnostic, registered before it runs):** v2s3b4, background, IR-01 and CDB-G04, 2 runs each, AX only, same build, with a WindowServer log stream of key-focus events running beside it to time the raise against the theft and its release. Validation only.
 
+**Round 4 outcome (v2s3b4):** 4 trials, all passed, no key loss, and the same raise in all four. The log shows the guard releasing BenchLab's menu theft within a millisecond; the raise comes right after, when BenchLab orders the menu window group.
+
+**Round 5 (diagnostic, registered before it runs):** v2s3b5, background, IR-01, 1 run, AX only, same build, with a DTrace of BenchLab's window-ordering calls beside it. Validation only.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

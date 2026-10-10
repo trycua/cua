@@ -113,6 +113,10 @@ fn lock() -> std::sync::MutexGuard<'static, State> {
 
 /// The id the next theft is expected to take (0 = unknown).
 static NEXT_THEFT_ID: AtomicI32 = AtomicI32::new(0);
+/// Calibration notices the tap has dropped.
+static OWN_NOTICES: AtomicU64 = AtomicU64::new(0);
+/// A front app whose tap missed a calibration notice (0 = none).
+static UNVERIFIED_FRONT: AtomicI32 = AtomicI32::new(0);
 static RELEASED: AtomicU64 = AtomicU64::new(0);
 static MISSED: AtomicU64 = AtomicU64::new(0);
 
@@ -150,9 +154,20 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     if std::env::var_os("CUA_DRIVER_DISABLE_KEY_FOCUS_GUARD").is_some() {
         return None;
     }
-    let front = crate::apps::frontmost_pid()?;
     let own = std::process::id() as i32;
-    if front == target_pid || front == own || !skylight::key_focus_theft_available() {
+    if !skylight::key_focus_theft_available() {
+        return None;
+    }
+    // Tap the process that holds key focus now. That is the one WindowServer
+    // tells when a menu steals it, and it may be a non-activating panel
+    // rather than the frontmost app. Only guard when it is the frontmost app:
+    // otherwise a launcher-style panel would see the calibration theft.
+    let front = crate::apps::frontmost_pid()?;
+    let holder = skylight::key_focus_pid().unwrap_or(front);
+    if holder != front || front == target_pid || front == own {
+        return None;
+    }
+    if UNVERIFIED_FRONT.load(Ordering::SeqCst) == front {
         return None;
     }
     // Register first, so an idle teardown cannot remove the tap between
@@ -167,18 +182,37 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     if !ensure_tap(front) {
         return None;
     }
-    calibrate();
+    if !calibrate() {
+        // The tap did not see the calibration notice, so it would not see a
+        // menu's either. Stop calibrating against this app.
+        UNVERIFIED_FRONT.store(front, Ordering::SeqCst);
+        tracing::warn!(
+            front,
+            "key-focus guard: tap did not observe the calibration notice"
+        );
+        return None;
+    }
     Some(lease)
 }
 
 /// Learn the id the next theft will take: steal and release key focus on the
 /// driver's own connection. The tap drops the notice this sends to the user's
-/// app, so it never sees the round trip.
-fn calibrate() {
-    if let Some(id) = skylight::steal_key_focus() {
-        skylight::release_key_focus(id);
-        NEXT_THEFT_ID.store(id.wrapping_add(1), Ordering::SeqCst);
+/// app, so it never sees the round trip. Returns whether the tap saw it.
+fn calibrate() -> bool {
+    let seen_before = OWN_NOTICES.load(Ordering::SeqCst);
+    let Some(id) = skylight::steal_key_focus() else {
+        return false;
+    };
+    skylight::release_key_focus(id);
+    NEXT_THEFT_ID.store(id.wrapping_add(1), Ordering::SeqCst);
+    let deadline = Instant::now() + Duration::from_millis(150);
+    while OWN_NOTICES.load(Ordering::SeqCst) == seen_before {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
+    true
 }
 
 fn is_guarded(pid: i32) -> bool {
@@ -265,7 +299,10 @@ extern "C" fn tap_callback(
         is_guarded,
     ) {
         NoticeAction::Pass => event,
-        NoticeAction::DropOwn => std::ptr::null_mut(),
+        NoticeAction::DropOwn => {
+            OWN_NOTICES.fetch_add(1, Ordering::SeqCst);
+            std::ptr::null_mut()
+        }
         NoticeAction::ReleaseAndDrop => {
             if release_target_theft() {
                 RELEASED.fetch_add(1, Ordering::Relaxed);

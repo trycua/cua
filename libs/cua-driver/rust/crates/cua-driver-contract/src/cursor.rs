@@ -313,9 +313,6 @@ impl<'de> Deserialize<'de> for CursorEffectSetting {
     }
 }
 
-/// Decode a present effect field without collapsing JSON null into omission.
-/// Omitted fields get the Serde default None; explicitly supplied null is the
-/// legacy "restore style default" value, equivalent to "default".
 fn deserialize_present_cursor_effect<'de, D>(
     deserializer: D,
 ) -> Result<Option<CursorEffectSetting>, D::Error>

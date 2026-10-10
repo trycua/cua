@@ -253,9 +253,6 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
 /// validation, so a batch step accepts what a direct call accepts. `Err` is a
 /// refusal detail for an alias that cannot be translated.
 pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
-    // Linux historically accepts numeric set_value inputs. Publish a string
-    // schema for providers, but preserve the handler's number.to_string()
-    // semantics before both direct dispatch and run_actions schema validation.
     if cfg!(target_os = "linux") && tool_name == "set_value" {
         if let Some(value @ Value::Number(_)) = args.get_mut("value") {
             *value = Value::String(value.to_string());

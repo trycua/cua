@@ -6149,17 +6149,22 @@ async fn web_document_origin_for_visited(
 
 fn screen_extent_rebase(
     x11_origin: (i32, i32),
-    accessible_frame_origin: (i32, i32),
+    accessible_frame_extents: (i32, i32, i32, i32),
 ) -> Option<(i32, i32)> {
+    // A frame that reports no real extents has no origin to rebase from.
+    // Java's ATK wrapper answers (-1, -1, -1, -1) for every top-level window,
+    // which would otherwise pass for Chromium's (0, 0) frame below and shift
+    // its correct screen coordinates by the client origin.
+    if !crate::snapshot_queries::plausible_raw_extents(accessible_frame_extents) {
+        return None;
+    }
+    let (frame_x, frame_y, _, _) = accessible_frame_extents;
     // Chromium's broken "Screen" provider is rooted at the renderer-local
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
-    if accessible_frame_origin.0.abs() <= 2 && accessible_frame_origin.1.abs() <= 2 {
-        Some((
-            x11_origin.0 - accessible_frame_origin.0,
-            x11_origin.1 - accessible_frame_origin.1,
-        ))
+    if frame_x.abs() <= 2 && frame_y.abs() <= 2 {
+        Some((x11_origin.0 - frame_x, x11_origin.1 - frame_y))
     } else {
         None
     }
@@ -6293,11 +6298,11 @@ async fn element_bounds_for_visited(
                 )
         });
         if let (Some(origin), Some(frame)) = (x11_origin, frame) {
-            let accessible_origin = match call(frame.acc.proxies()).await {
+            let accessible_frame = match call(frame.acc.proxies()).await {
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
                         match call(component.get_extents(CoordType::Screen)).await {
-                            Some(Ok((x, y, _, _))) => Some((x, y)),
+                            Some(Ok(extents)) => Some(extents),
                             _ => None,
                         }
                     }
@@ -6305,7 +6310,7 @@ async fn element_bounds_for_visited(
                 },
                 _ => None,
             };
-            accessible_origin.and_then(|frame_origin| screen_extent_rebase(origin, frame_origin))
+            accessible_frame.and_then(|frame_extents| screen_extent_rebase(origin, frame_extents))
         } else {
             None
         }
@@ -7038,9 +7043,20 @@ mod coord_tests {
 
     #[test]
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
-        assert_eq!(screen_extent_rebase((604, 80), (0, 0)), Some((604, 80)));
-        assert_eq!(screen_extent_rebase((604, 100), (604, 80)), None);
-        assert_eq!(screen_extent_rebase((604, 80), (604, 80)), None);
+        assert_eq!(
+            screen_extent_rebase((604, 80), (0, 0, 800, 600)),
+            Some((604, 80))
+        );
+        assert_eq!(screen_extent_rebase((604, 100), (604, 80, 800, 600)), None);
+        assert_eq!(screen_extent_rebase((604, 80), (604, 80, 800, 600)), None);
+    }
+
+    #[test]
+    fn sentinel_frame_extents_are_not_a_renderer_origin() {
+        // java-atk-wrapper reports every Swing top-level as (-1, -1, -1, -1):
+        // its frames have no accessible parent to measure from.
+        assert_eq!(screen_extent_rebase((155, 149), (-1, -1, -1, -1)), None);
+        assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0)), None);
     }
 
     #[test]

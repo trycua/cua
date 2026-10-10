@@ -1498,6 +1498,19 @@ async def _cmd_run_dataset_async(args) -> int:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if manifest_path:
+        import hashlib
+        import json
+        # Record the exact manifest identity used at dispatch time.
+        canonical_manifest = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+        identity = hashlib.sha256(canonical_manifest.encode("utf-8")).hexdigest()
+        (output_dir / "dataset-identity.json").write_text(
+            json.dumps({"schema_version": "cua-dataset-identity/v1",
+                        "dataset_manifest_sha256": identity,
+                        "manifest_path": str(Path(manifest_path).resolve())},
+                       indent=2) + "\n", encoding="utf-8"
+        )
+
     # Detect env type from first task
     first_task = task_variants[0][0] if task_variants else None
     if first_task:
@@ -1798,6 +1811,10 @@ async def _cmd_run_dataset_async(args) -> int:
             cmd.extend(["--task-filter", task_filter])
         if user_output_dir:
             cmd.extend(["--output-dir", str(user_output_dir)])
+        if manifest_path:
+            # Re-verify in the actual background worker; the dataset can change
+            # after the parent preflight and before subprocess startup.
+            cmd.extend(["--dataset-manifest", str(Path(manifest_path).resolve())])
 
         # Set UTF-8 encoding
         env_vars = os.environ.copy()

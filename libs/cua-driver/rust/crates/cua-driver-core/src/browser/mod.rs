@@ -41,6 +41,9 @@ pub mod cdp_ws;
 pub mod download;
 pub mod engine;
 mod grant;
+// The fixture fakes Unix process exit statuses and process groups.
+#[cfg(all(test, unix))]
+mod headless_tests;
 mod keyed_gates;
 #[cfg(test)]
 pub(crate) mod mock_cdp;

@@ -39,12 +39,17 @@ libc = "0.2"
 # subprocess bridge so accessibility input/readback needs no Python or GI
 # typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
 # re-exports the bus types we need (fdo::DBusProxy for pid resolution).
-# `p2p` (a default feature) opens a private socket to every application that
-# advertises one; LibreOffice advertises a socket its VCL main loop never
-# services, and the crate's peer bookkeeping then wedges every call on the
-# shared connection once LibreOffice registers. The session a11y bus is what
-# gdbus/pyatspi use and is the only route this crate takes.
-atspi = { version = "0.30", default-features = false, features = ["connection", "proxies", "wrappers", "tokio", "zbus"] }
+atspi = { version = "0.30", default-features = false, features = ["proxies", "wrappers", "tokio", "zbus"] }
+# Declared directly rather than through the facade's `connection` feature:
+# `atspi` forwards atspi-connection's default features, and `default-features
+# = false` on the facade does not reach them, so `p2p` stayed enabled. `p2p`
+# subscribes to every bus-name change and awaits a peer-discovery round trip
+# per application on the shared connection; 64 queued name changes stall the
+# socket reader and the connection never reads another event (#4894).
+# LibreOffice also advertises a private socket its VCL main loop never
+# services. The session a11y bus is what gdbus/pyatspi use and is the only
+# route this crate takes; the CI feature-graph guard keeps `p2p` out.
+atspi-connection = { version = "0.14", default-features = false, features = ["wrappers"] }
 evdev = "0.12"
 # Math-expression evaluator for parallel_mouse_drag `fn` paths (y = f(x)).
 meval = "0.2"

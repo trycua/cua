@@ -81,7 +81,11 @@ class Driver:
 
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         result = await self.session.call_tool(name, {**arguments, "session": self.label})
-        if result.isError:
+        # ActionResult refusals need not set MCP's isError flag.
+        if result.isError or (
+            isinstance(getattr(result, "structuredContent", None), dict)
+            and result.structuredContent.get("effect") == "refused"
+        ):
             structured = getattr(result, "structuredContent", None)
             structured = structured if isinstance(structured, dict) else {}
             code = structured.get("code")

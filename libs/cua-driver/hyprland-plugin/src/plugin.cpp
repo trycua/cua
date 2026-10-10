@@ -250,6 +250,7 @@ std::string status_output(bool json) {
             if (mutation_at != std::string::npos)
                 result.replace(mutation_at, old_mutation.size(), input_mutation);
             result.pop_back();
+            g_experiment->refresh_input_watch();
             result += input_field + g_experiment->status_json() + "}";
         }
 #endif
@@ -258,8 +259,10 @@ std::string status_output(bool json) {
 
     auto result = cua::hyprland::render_status_text(report);
 #ifdef CUA_HYPRLAND_INPUT
-    if (g_experiment)
+    if (g_experiment) {
+        g_experiment->refresh_input_watch();
         result += "\nInput v3 candidate: trusted-local per-action admission; " + g_experiment->status_json();
+    }
 #endif
     return result;
 }

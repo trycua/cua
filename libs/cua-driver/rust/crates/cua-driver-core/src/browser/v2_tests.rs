@@ -713,6 +713,19 @@ struct FixturePlatform {
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    focus_order: Arc<StdMutex<Vec<&'static str>>>,
+    /// The platform offers no consent focus guard (unattended desktop);
+    /// native window ownership is still provided.
+    no_focus_guard: bool,
+}
+
+/// Records when the consent focus guard is released.
+struct FocusGuardProbe(Arc<StdMutex<Vec<&'static str>>>);
+
+impl Drop for FocusGuardProbe {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().push("guard_released");
+    }
 }
 
 #[async_trait]
@@ -784,10 +797,24 @@ impl BrowserPlatform for FixturePlatform {
         self.discover_existing_profile_endpoint(pid).await
     }
 
+    fn existing_profile_consent_focus_guard(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Option<Box<dyn Send>> {
+        if self.no_focus_guard {
+            self.focus_order.lock().unwrap().push("no_guard");
+            return None;
+        }
+        self.focus_order.lock().unwrap().push("guard_captured");
+        Some(Box::new(FocusGuardProbe(self.focus_order.clone())))
+    }
+
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.focus_order.lock().unwrap().push("endpoint_contact");
         if !self.existing_endpoint_visible.load(Ordering::SeqCst) {
             return Ok(None);
         }
@@ -939,6 +966,8 @@ async fn fixture_with_platform(
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus_order: Default::default(),
+        no_focus_guard: false,
     }));
     Fixture {
         state,
@@ -993,6 +1022,8 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus_order: Default::default(),
+            no_focus_guard: false,
         }),
         Some(provider.clone()),
     );
@@ -1023,6 +1054,8 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus_order: Default::default(),
+            no_focus_guard: false,
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -1078,6 +1111,8 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus_order: Default::default(),
+        no_focus_guard: false,
     }));
 
     let result = GetBrowserStateTool::new(engine)
@@ -1137,6 +1172,165 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn unattended_attach_and_dom_work_without_any_focus_guard() {
+    // Unattended desktop (display off, session locked, no lock-screen or
+    // focus access): the platform offers no focus guard. Native ownership of
+    // the exact window is still proven; the guard is never a prerequisite.
+    const TRANSPORT: &str = "transport-v2-unattended";
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let order = Arc::new(StdMutex::new(Vec::new()));
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus_order: order.clone(),
+            no_focus_guard: true,
+        }),
+        Some(provider),
+    );
+    let prepare = BrowserPrepareTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+    let bound = GetBrowserStateTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT
+        }))
+        .await;
+    let bound = structured(&bound);
+    assert_eq!(bound["status"], "ok", "{bound}");
+    assert_eq!(bound["mutation_allowed"], true, "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+    let f = Fixture {
+        state,
+        _server: server,
+        engine: engine.clone(),
+        setup_invoked: Arc::new(AtomicBool::new(false)),
+    };
+    let snap = snapshot(&f, &target, &tab).await;
+    let clicked = BrowserClickTool::new(engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": ref_of(&snap, "main", "main-btn"),
+            "input_route": "dom_event",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    let typed = BrowserTypeTool::new(engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": ref_of(&snap, "main", "Shadow Input"),
+            "text": "unattended",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&typed)["status"], "ok", "{}", structured(&typed));
+    assert_eq!(*order.lock().unwrap(), ["no_guard", "endpoint_contact"]);
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn consent_focus_is_captured_before_any_endpoint_contact() {
+    // Probing a consumer browser's endpoint can already raise its consent
+    // prompt, which a focus-on-activate compositor focuses. The person's
+    // focus must be captured before that first contact and released only
+    // after consent settles.
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let order = Arc::new(StdMutex::new(Vec::new()));
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus_order: order.clone(),
+            no_focus_guard: false,
+        }),
+        Some(provider),
+    );
+    let prepare = BrowserPrepareTool::new(engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": "transport-v2-focus-order",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+    // The executor-safe release may finish on a blocking worker.
+    for _ in 0..100 {
+        if order.lock().unwrap().contains(&"guard_released") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let order = order.lock().unwrap().clone();
+    assert_eq!(order.first(), Some(&"guard_captured"), "{order:?}");
+    assert_eq!(order.last(), Some(&"guard_released"), "{order:?}");
+    assert!(order.contains(&"endpoint_contact"), "{order:?}");
+    assert_eq!(
+        order
+            .iter()
+            .filter(|event| **event == "guard_captured")
+            .count(),
+        1,
+        "{order:?}"
+    );
+    crate::session::fire_session_end("transport-v2-focus-order");
 }
 
 #[tokio::test]
@@ -1325,6 +1519,8 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus_order: Default::default(),
+            no_focus_guard: false,
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -1370,6 +1566,8 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: true,
+            focus_order: Default::default(),
+            no_focus_guard: false,
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),

@@ -3616,6 +3616,15 @@ async fn live_accessible<'a>(
 /// `Ok((action_name, suspected_noop))`. Errors when the object no longer
 /// exists so the caller can fall back to resolving the index afresh.
 pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
+    perform_action_ref_guarded(object_ref, || Ok(()))
+}
+
+/// Exact-object action with an invocation guard checked immediately before
+/// dispatch, after the potentially slow accessibility identity/proxy reads.
+pub(crate) fn perform_action_ref_guarded(
+    object_ref: &ObjectRef,
+    before_dispatch: impl Fn() -> Result<()>,
+) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3638,6 +3647,7 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
             // folded into `rejected`/`suspected_noop` (which would claim the
             // toolkit declined it) nor silently reported as a plain success.
             let mut unacknowledged = false;
+            before_dispatch()?;
             let rejected = match call(ap.do_action(chosen as i32)).await {
                 Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
@@ -3740,6 +3750,28 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
             }
         },
         || Err(anyhow!("element_showing (cached element) timed out")),
+    )
+}
+
+/// Whether a snapshot-cached tab currently carries `Selected` (or `Checked`,
+/// matching the walk's tab `selected` field): one `GetState` round-trip, no
+/// tree re-walk. Unlike [`element_showing_ref`], a missing state set is an
+/// error: callers use this as proof before acting on the selected tab.
+pub fn element_selected_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => {
+                    Ok(state.contains(State::Selected) || state.contains(State::Checked))
+                }
+                Some(Err(error)) => Err(anyhow!("cached element exposed no state set: {error}")),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_selected (cached element) timed out")),
     )
 }
 

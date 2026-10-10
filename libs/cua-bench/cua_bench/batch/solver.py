@@ -358,10 +358,33 @@ async def main():
         else:
             print("ℹ Dump mode: skipping solver")
 
-        # Evaluate
+        # Evaluate against the real environment. A successfully exited agent
+        # is not evidence of task completion; only the task oracle can decide.
+        import json
+        import math
+
+        evaluation_receipt = {
+            "schema_version": "cua-bench-oracle-result/v1",
+            "task_index": task_index,
+            "evaluated": False,
+            "success": False,
+            "rewards": None,
+        }
         if env.evaluate_task_fn:
             result = await env.evaluate_task_fn(task_cfg, session)
             print(f"✓ Evaluation result: {result}")
+            # Task evaluators return lists of numeric rewards (e.g. [1.0]).
+            # Reject missing, malformed, non-finite or partial outcomes.
+            rewards = result if isinstance(result, (list, tuple)) else []
+            valid = bool(rewards) and all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                for value in rewards
+            )
+            evaluation_receipt["evaluated"] = valid
+            evaluation_receipt["rewards"] = list(rewards) if valid else None
+            evaluation_receipt["success"] = valid and all(value >= 0.5 for value in rewards)
 
             # Record evaluation event
             try:
@@ -371,6 +394,16 @@ async def main():
                 )
             except Exception as e:
                 print(f"Warning: Failed to record evaluate event: {e}")
+        else:
+            print("✗ Task has no evaluation function; cannot claim success")
+
+        receipt_file = output_dir / "oracle-result.json"
+        pending_file = output_dir / "oracle-result.json.tmp"
+        pending_file.write_text(
+            json.dumps(evaluation_receipt, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        pending_file.replace(receipt_file)
 
         # Save trace (non-fatal - task success doesn't depend on trace saving)
         trace_dir = output_dir / f"task_{task_index}_trace"
@@ -394,7 +427,10 @@ async def main():
             await env.close()
         else:
             await session.close()
-        print(f"\n✓ Task {task_index} completed successfully!")
+        if not evaluation_receipt["success"]:
+            print(f"✗ Task {task_index} did not pass its environment oracle")
+            sys.exit(1)
+        print(f"\n✓ Task {task_index} passed its environment oracle!")
 
     except Exception as e:
         print(f"Error running task {task_index}: {e}")

@@ -1033,6 +1033,21 @@ impl BrowserEngine {
             ));
         }
 
+        // Any contact with the endpoint, from discovery's probe to the claim,
+        // can raise a browser-owned consent prompt that the compositor
+        // focuses. Capture the person's focus before the first contact; the
+        // platform hands it back once consent settles below. Wrap inside the
+        // worker: if this future is cancelled after capture completes, the
+        // abandoned output still drops off the executor.
+        let consent_focus = {
+            let platform = Arc::clone(&self.platform);
+            tokio::task::spawn_blocking(move || {
+                ConsentFocus(platform.existing_profile_consent_focus_guard(pid, window_id))
+            })
+            .await
+            .unwrap_or(ConsentFocus(None))
+        };
+
         let classification = self.platform.classify_browser(pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
             return Err(unsupported_engine_refusal(
@@ -1247,18 +1262,6 @@ impl BrowserEngine {
                 self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
         }
-        // The claim itself can raise a browser-owned prompt that the compositor
-        // focuses. The platform hands focus back once consent settles below.
-        // Wrap inside the worker: if this future is cancelled after capture
-        // completes, the abandoned output still drops off the executor.
-        let consent_focus = {
-            let platform = Arc::clone(&self.platform);
-            tokio::task::spawn_blocking(move || {
-                ConsentFocus(platform.existing_profile_consent_focus_guard(pid, window_id))
-            })
-            .await
-            .unwrap_or(ConsentFocus(None))
-        };
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
             |action| {

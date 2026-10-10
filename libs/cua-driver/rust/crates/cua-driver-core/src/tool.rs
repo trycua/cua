@@ -2370,7 +2370,7 @@ impl ToolRegistry {
             }
         }
 
-        if resolved_name != original_name && renamed_tool(original_name).is_some() {
+        if renamed_tool(original_name).is_some() {
             result.content.push(Content::text(deprecated_name_note(
                 original_name,
                 resolved_name,

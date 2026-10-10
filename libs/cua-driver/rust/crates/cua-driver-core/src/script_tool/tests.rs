@@ -260,6 +260,10 @@ async fn only_driver_tools_on_the_allowlist_are_reachable() {
             "not available to scripts",
         ),
         (
+            "await cua.call('run_actions', {steps: []})",
+            "not available to scripts",
+        ),
+        (
             "await cua.call('run_script', {script: '1'})",
             "not available to scripts",
         ),

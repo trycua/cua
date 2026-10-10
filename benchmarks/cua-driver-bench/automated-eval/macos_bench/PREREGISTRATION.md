@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, Amendment 5, the v036 validation run of the 0.36 fixes, Amendment 6, the mini-runs of the overnight hill-climb, Amendment 7, the full rerun v037-full, and Amendment 8, the full rerun v038). Where sections 0 to 12 differ from them, the amendments win.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, Amendment 5, the v036 validation run of the 0.36 fixes, Amendment 6, the mini-runs of the overnight hill-climb, Amendment 7, the full rerun v037-full, Amendment 8, the full rerun v038, and later amendments up to Amendment 13, run_script on by default in the driver). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -946,6 +946,16 @@ A change is reported as a speed or cost improvement only together with its succe
 ### A12.6 Harness changes for this amendment
 
 * `tools/analyze_speedcost.py`.
+
+## Amendment 13 (10 Oct 2026): run_script on by default in the driver; arm configs only
+
+Written before any trial on a build that includes trycua/cua#4936. It changes no trial, result or analysis of earlier runs.
+
+* **The driver change.** From #4936, Cua Driver offers `run_script` by default on macOS, Windows and Linux. `CUA_DRIVER_DISABLE_RUN_SCRIPT=1` (or `CUA_DRIVER_EXPERIMENTAL_SCRIPT=0`) turns it off; `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1` is ignored.
+* **AX (`cc-cua-driver-script`), reported as "Cua Driver".** On builds with #4936, its driver is the default configuration. It keeps its own app, the `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1` flag (needed by earlier builds, ignored by later ones) and the `run_script` addendum in the system prompt, so its trials are run exactly as before.
+* **A (`cc-cua-driver-main`) and A-skill (`cc-cua-driver-main-skill`).** They stay `run_steps`-only on every build: their daemon and MCP environment now carries `CUA_DRIVER_DISABLE_RUN_SCRIPT=1`. Builds before #4936 do not read it and have `run_script` off anyway, so A on those builds is unchanged.
+* **Preflight.** Unchanged: `run_script` is listed in AX only.
+* **Harness change:** `claude_arms.py` (`NO_SCRIPT_FLAG` on A and A-skill, arm descriptions) and its test.
 
 ## 0. Decisions made before the first trial, and why
 

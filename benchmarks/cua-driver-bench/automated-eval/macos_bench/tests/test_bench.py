@@ -710,7 +710,13 @@ class ArmsAndHostTest(unittest.TestCase):
             self.assertEqual(entry["command"], str(ca.CUA_SCRIPT_APP / "Contents/MacOS/cua-driver"))
             self.assertEqual(entry["args"], ["--socket", ca.SCRIPT_SOCKET, "mcp"])
             main, _ = ca.mcp_config_for("cc-cua-driver-main", Path(tmp) / "m")
-            self.assertNotIn("CUA_DRIVER_EXPERIMENTAL_SCRIPT", json.loads(main.read_text())["mcpServers"]["cua"]["env"])
+            main_env = json.loads(main.read_text())["mcpServers"]["cua"]["env"]
+            self.assertNotIn("CUA_DRIVER_EXPERIMENTAL_SCRIPT", main_env)
+            # Amendment 13: run_script is on by default from trycua/cua#4936, so A turns it off.
+            self.assertEqual(main_env["CUA_DRIVER_DISABLE_RUN_SCRIPT"], "1")
+            self.assertNotIn("CUA_DRIVER_DISABLE_RUN_SCRIPT", entry["env"])
+            for arm in ("cc-cua-driver-main", "cc-cua-driver-main-skill"):
+                self.assertIn(ca.NO_SCRIPT_FLAG, ca.CUA_BUILDS[arm].daemon_env)
         self.assertTrue(ca.system_prompt_for("cc-cua-driver-script").startswith(ca.SYSTEM_PROMPT))
         self.assertIn("run_script", ca.system_prompt_for("cc-cua-driver-script"))
         self.assertEqual(ca.system_prompt_for("cc-cua-driver-main"), ca.SYSTEM_PROMPT)

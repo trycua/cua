@@ -136,6 +136,16 @@ impl ScreenFrame {
         }
     }
 
+    /// Whether `(x, y)` lies inside this frame (inclusive).
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        self.width > 0.0
+            && self.height > 0.0
+            && x >= self.x
+            && x <= self.x + self.width
+            && y >= self.y
+            && y <= self.y + self.height
+    }
+
     /// Smallest frame containing every given frame, or `None` when empty.
     pub fn union(frames: impl IntoIterator<Item = ScreenFrame>) -> Option<ScreenFrame> {
         frames.into_iter().reduce(|a, b| {
@@ -150,14 +160,18 @@ impl ScreenFrame {
 
 /// Start point for a never-shown cursor whose first action targets
 /// `(target_x, target_y)`: up-left of the target by [`SEED_OFFSET`], clamped
-/// 2 points inside `frame`. When clamping collapses the seed onto the target
-/// (a target in the top-left corner), the seed flips down-right so the glide
-/// stays visible. Without a known frame the seed is only kept off negative
-/// coordinates, which would otherwise read as the off-screen sentinel.
+/// 2 points inside `frame` when `frame` contains the target. When clamping
+/// collapses the seed onto the target (a target in the top-left corner), the
+/// seed flips down-right so the glide stays visible. When `frame` is unknown
+/// or only covers a primary screen that does not contain a secondary-display
+/// target, positive axes are kept non-negative while negative-coordinate
+/// targets keep their local offset on that display.
 pub fn seed_position(target_x: f64, target_y: f64, frame: Option<ScreenFrame>) -> (f64, f64) {
     let mut sx = target_x - SEED_OFFSET;
     let mut sy = target_y - SEED_OFFSET;
-    match frame.filter(|frame| frame.width > 4.0 && frame.height > 4.0) {
+    match frame.filter(|frame| {
+        frame.width > 4.0 && frame.height > 4.0 && frame.contains(target_x, target_y)
+    }) {
         Some(frame) => {
             let (min_x, max_x) = (frame.x + 2.0, frame.x + frame.width - 2.0);
             let (min_y, max_y) = (frame.y + 2.0, frame.y + frame.height - 2.0);
@@ -169,8 +183,12 @@ pub fn seed_position(target_x: f64, target_y: f64, frame: Option<ScreenFrame>) -
             }
         }
         None => {
-            sx = sx.max(2.0);
-            sy = sy.max(2.0);
+            if target_x >= 0.0 {
+                sx = sx.max(2.0);
+            }
+            if target_y >= 0.0 {
+                sy = sy.max(2.0);
+            }
         }
     }
     (sx, sy)
@@ -307,7 +325,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             return false;
         };
         let core = cursor.core_mut();
-        if !(core.cfg.enabled && !crate::render_state::is_placed(core.pos)) {
+        if !(core.is_enabled() && !core.is_placed()) {
             return false;
         }
         core.pos = seed_position(target_x, target_y, frame);
@@ -545,8 +563,23 @@ mod tests {
         assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
         assert_eq!(map.cursors["sessA"].pos, (-2220.0, 980.0));
 
+        // A cursor placed on a negative-coordinate secondary display is still
+        // placed and must not be re-seeded on the next action (#4276).
+        let virtual_screen = Some(ScreenFrame::new(-1920.0, 0.0, 3840.0, 1080.0));
+        assert!(map.seed_start_if_sentinel("neg", -1800.0, 500.0, virtual_screen));
+        assert_eq!(map.cursors["neg"].pos, (-1918.0, 360.0));
+        assert!(!map.seed_start_if_sentinel("neg", -1750.0, 500.0, virtual_screen));
+        assert_eq!(map.cursors["neg"].pos, (-1918.0, 360.0));
+
         map.cursor_mut("disabled").unwrap().cfg.enabled = false;
         assert!(!map.seed_start_if_sentinel("disabled", 80.0, 80.0, frame));
+
+        // Runtime disable (`set_agent_cursor_enabled(false)`) also prevents seeding.
+        map.apply_command(
+            "runtime_disabled".to_owned(),
+            OverlayCommand::SetEnabled(false),
+        );
+        assert!(!map.seed_start_if_sentinel("runtime_disabled", 80.0, 80.0, frame));
     }
 
     #[test]
@@ -561,6 +594,9 @@ mod tests {
             seed_position(-1800.0, 500.0, Some(virtual_screen)),
             (-1918.0, 360.0)
         );
+        // A primary-only frame must not pull a secondary-display seed back
+        // onto the primary display (#4276).
+        assert_eq!(seed_position(-800.0, 1200.0, Some(frame)), (-940.0, 1060.0));
         // Unknown geometry never produces a sentinel-like negative seed.
         assert_eq!(seed_position(50.0, 500.0, None), (2.0, 360.0));
         // A degenerate frame is treated as unknown instead of panicking.

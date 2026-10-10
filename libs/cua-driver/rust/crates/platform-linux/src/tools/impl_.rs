@@ -5489,8 +5489,7 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
         overlay_move_to_target_for(cursor_id, sx, sy, None, target);
         return;
     }
-    let pos = crate::overlay::current_position_for(cursor_id);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if !crate::overlay::is_placed_for(cursor_id) {
         crate::overlay::send_command_for(
             cursor_id.to_owned(),
             cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },

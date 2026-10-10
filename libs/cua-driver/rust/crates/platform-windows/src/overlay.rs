@@ -224,6 +224,21 @@ pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
     if !draws_cursor(&key) {
         return;
     }
+    if matches!(
+        &cmd,
+        OverlayCommand::SetEnabled(_)
+            | OverlayCommand::SetMotion(_)
+            | OverlayCommand::SetTheme { .. }
+    ) {
+        if let Ok(mut guard) = RENDER.lock() {
+            if let Some(map) = guard.as_mut() {
+                map.apply_command(key.clone(), cmd.clone());
+            }
+        }
+        if matches!(&cmd, OverlayCommand::SetEnabled(false)) {
+            arrival_cancel(&key);
+        }
+    }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
         wake_overlay();
@@ -307,7 +322,7 @@ pub fn is_enabled(key: &str) -> bool {
         .ok()
         .and_then(|g| {
             g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
+                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.is_enabled()))
         })
         .unwrap_or(false)
 }
@@ -323,7 +338,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cfg.enabled && rs.core.is_revealed())
+                .map(|rs| rs.core.is_revealed())
         })
         .unwrap_or(false)
 }
@@ -372,6 +387,19 @@ pub fn current_position(key: &str) -> (f64, f64) {
         .unwrap_or(cursor_overlay::render_state::UNPLACED_POS)
 }
 
+/// Returns true if the cursor for `key` has been placed on screen at least once.
+pub fn is_placed(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.is_placed())
+        })
+        .unwrap_or(false)
+}
+
 /// Seed a brand-new (sentinel-positioned) cursor at an on-screen start point
 /// offset up-left of `(target_x, target_y)` so the immediately-following
 /// `MoveTo` glides INTO the target instead of silently snapping. No-op when the
@@ -408,7 +436,7 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
     if key.is_empty() {
         return;
     }
-    // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
+    // Seed an unplaced cursor on-screen so the MoveTo below glides instead of
     // being short-circuited.
     seed_start_if_sentinel(&key, x, y);
 
@@ -416,7 +444,7 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && cursor_overlay::render_state::is_placed(rs.core.pos)
+            Some(rs) if rs.core.is_enabled() && cursor_overlay::render_state::is_placed(rs.core.pos)
         )
     };
     if !should_animate {
@@ -525,7 +553,7 @@ impl RenderState {
             && self.core.click_t.is_none()
             && self.core.click_age.is_none()
             && self.core.motion.idle_hide_ms > 0.0
-            && self.core.visible
+            && self.core.is_enabled()
             && cursor_overlay::render_state::is_placed(self.core.pos)
             && self.core.idle_alpha >= 1.0
     }
@@ -969,6 +997,43 @@ thread_local! {
 fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
     let screen = &map.platform;
     let (w, h) = (screen.virt_w.max(1), screen.virt_h.max(1));
+
+    // Union of every cursor that will produce pixels this frame
+    // (mirrors paint_cursor's own visibility early-return).
+    let mut current: Option<DirtyRect> = None;
+    for rs in map.cursors.values() {
+        if !rs.core.is_revealed() {
+            continue;
+        }
+        let cx = (rs.core.pos.0 - screen.virt_x as f64).round() as i32;
+        let cy = (rs.core.pos.1 - screen.virt_y as f64).round() as i32;
+        let custom_theme = rs
+            .core
+            .theme
+            .as_deref()
+            .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+        let r = if custom_theme {
+            Some(DirtyRect {
+                x0: 0,
+                y0: 0,
+                x1: w,
+                y1: h,
+            })
+        } else {
+            DirtyRect {
+                x0: cx - CURSOR_PAD,
+                y0: cy - CURSOR_PAD,
+                x1: cx + CURSOR_PAD,
+                y1: cy + CURSOR_PAD,
+            }
+            .clamped(w, h)
+        };
+        current = DirtyRect::union(current, r);
+    }
+
+    let prev = PREV_DIRTY.with(std::cell::Cell::get);
+    let upload = DirtyRect::union(prev, current)?;
+
     SURFACE.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.as_ref().map(|s| (s.virt_x, s.virt_y, s.w, s.h))
@@ -1005,7 +1070,6 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
         }
         PREV_DIRTY.with(|p| p.set(current));
 
-        let upload = DirtyRect::union(prev, current)?;
         surf.swizzle_rect(upload);
         Some(upload)
     })
@@ -1302,7 +1366,7 @@ unsafe extern "system" fn wnd_proc(
                         // and sink the overlay behind everything.
                         let mut driven: Vec<u64> = Vec::new();
                         for rs in map.cursors.values() {
-                            if !rs.core.visible || rs.core.idle_alpha < 0.004 {
+                            if !rs.core.is_enabled() || rs.core.idle_alpha < 0.004 {
                                 continue;
                             }
                             if let Some(w) = rs.core.pinned_wid {
@@ -1768,6 +1832,29 @@ mod tests {
         let frame = map.platform.frame();
         assert!(map.seed_start_if_sentinel("sessA", -1800.0, 500.0, frame));
         assert_eq!(map.cursors["sessA"].core.pos, (-1918.0, 360.0));
+        assert!(map.cursors["sessA"].core.is_revealed());
+
+        // Moving to a negative-X button and settling keeps the cursor placed,
+        // so the next click on a neighboring negative-X button does not re-seed (#4276).
+        apply_msg(&mut map, move_msg("sessA", -1800.0, 500.0));
+        settle(&mut map);
+        let settled_pos = map.cursors["sessA"].core.pos;
+        assert!(settled_pos.0 < -1700.0);
+        assert!(!map.seed_start_if_sentinel("sessA", -1750.0, 500.0, frame));
+        assert_eq!(map.cursors["sessA"].core.pos, settled_pos);
+
+        // Runtime disable (`set_agent_cursor_enabled(false)`) prevents seeding
+        // and marks the cursor not enabled/revealed.
+        apply_msg(
+            &mut map,
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessB".to_owned(),
+                cmd: OverlayCommand::SetEnabled(false),
+            }),
+        );
+        assert!(!map.seed_start_if_sentinel("sessB", -1800.0, 500.0, frame));
+        assert!(!map.cursors["sessB"].core.is_enabled());
+        assert!(!map.cursors["sessB"].core.is_revealed());
 
         map.platform.virt_w = 0;
         assert_eq!(map.platform.frame(), None);
@@ -1843,6 +1930,41 @@ mod tests {
         assert!(
             !map.needs_frame_tick(),
             "fully faded cursor must be quiescent"
+        );
+    }
+
+    #[test]
+    fn runtime_disabled_placed_cursor_quiesces_and_skips_animation() {
+        let mut map = empty_map();
+        let frame = map.platform.frame();
+        assert!(map.seed_start_if_sentinel("sessA", 100.0, 100.0, frame));
+        assert!(map.cursors["sessA"].core.is_placed());
+        assert!(map.cursors["sessA"].core.is_enabled());
+
+        // Disabling mid-session clears in-flight animation state
+        map.apply_command(
+            "sessA".to_owned(),
+            OverlayCommand::MoveTo {
+                x: 500.0,
+                y: 500.0,
+                end_heading_radians: 0.0,
+                target: None,
+            },
+        );
+        map.cursors.get_mut("sessA").unwrap().core.click_t = Some(0.1);
+        assert!(map.cursors["sessA"].core.trajectory.is_some());
+        map.apply_command("sessA".to_owned(), OverlayCommand::SetEnabled(false));
+
+        let core = &map.cursors["sessA"].core;
+        assert!(!core.is_enabled());
+        assert!(
+            core.trajectory.is_none(),
+            "SetEnabled(false) quiesces trajectory"
+        );
+        assert!(core.click_t.is_none(), "SetEnabled(false) quiesces click_t");
+        assert!(
+            !map.needs_frame_tick(),
+            "disabled cursor demands no frame ticks"
         );
     }
 }

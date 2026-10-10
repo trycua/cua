@@ -62,7 +62,7 @@ const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
 /// Health probes can tolerate the same budget without delaying window listing.
 const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
-enum UiaDeadlineError {
+pub(crate) enum UiaDeadlineError {
     Timeout,
     Busy,
     Unavailable,
@@ -161,6 +161,22 @@ where
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
+}
+
+/// Run a focused-document input probe through the same bounded UIA worker as
+/// window enumeration and hit testing. A timeout is reported to the caller as
+/// an unknown effect; the caller must not fall through to another input path.
+pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    run_uia_with_deadline_cancelable(
+        "focused document typing",
+        SUBTREE_OP_TIMEOUT,
+        "an unknown-effect result without another input attempt",
+        f,
+    )
 }
 
 struct ComInit {

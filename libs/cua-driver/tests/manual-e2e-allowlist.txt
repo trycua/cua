@@ -45,3 +45,6 @@ protocol_schema_test::cursor_motion_knobs_are_applied | Ignored on macOS only, w
 transport_config_persistence_test::cli_set_config_visible_across_daemon_backed_invocations | Mutates the real per-user driver config through a daemon-backed CLI; manual only
 private_worker_test::service_untrusted_child_probe | Subprocess probe that the routed private_worker_test parent spawns itself; never a standalone row
 authorized_live_jev_use_demo_test::authorized_live_jev_no_matching_action_control | Needs the reviewed live Jev chooser and a protected credential; Actions deliberately runs only the mock chooser
+
+# Packaged Notepad reads VK_PACKET ahead of translation (#4830). Manual on the Windows Space image.
+installed_app_notepad_windows_test::foreground_type_text_round_trips_through_notepad_save | Windows Space gate: packaged Notepad VK_PACKET read-ahead (#4830); record build, Notepad version, layout and IME

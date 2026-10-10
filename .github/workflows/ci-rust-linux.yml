@@ -145,7 +145,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            imagemagick xvfb xauth x11-utils ffmpeg
+            imagemagick xvfb xauth x11-utils ffmpeg \
+            dbus at-spi2-core python3-dbus python3-gi
+      - name: Run private AT-SPI Unicode insertion regressions
+        working-directory: libs/cua-driver/rust
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY -u AT_SPI_BUS_ADDRESS \
+            -u DBUS_SESSION_BUS_ADDRESS -u NO_AT_BRIDGE \
+            dbus-run-session -- env CUA_NATIVE_GTK_TEST=1 \
+            cargo test --locked -p platform-linux --test set_value_fallback -- \
+            --ignored --nocapture --test-threads=1
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         env:

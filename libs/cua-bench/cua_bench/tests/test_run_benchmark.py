@@ -410,3 +410,49 @@ async def setup(task, session):
             assert task_cfg.description == "Interactive task"
         finally:
             await env.close()
+
+
+class TestEvaluatorRewardFailClosed:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [True, False, "1.0", None, float("nan"), float("inf"), -0.1, 1.1])
+    async def test_invalid_reward_cannot_claim_success(self, tmp_path, monkeypatch, value):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class FakeEnvironment:
+            evaluate_task_fn = object()
+            solve_task_fn = None
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+            async def step(self, action):
+                return b"screen"
+            async def evaluate(self):
+                return value
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(runners, "make", lambda *args, **kwargs: FakeEnvironment())
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert result.success is False
+        assert result.reward == 0.0
+        assert result.error is not None
+
+    @pytest.mark.asyncio
+    async def test_missing_evaluator_cannot_claim_success(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class FakeEnvironment:
+            evaluate_task_fn = None
+            solve_task_fn = None
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+            async def step(self, action):
+                return b"screen"
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(runners, "make", lambda *args, **kwargs: FakeEnvironment())
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert result.success is False
+        assert result.error is not None

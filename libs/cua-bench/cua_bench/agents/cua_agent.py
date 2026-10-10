@@ -2,9 +2,6 @@
 
 import asyncio
 import base64
-import hashlib
-import json
-from datetime import datetime, timezone
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
@@ -82,52 +79,6 @@ class CuaAgent(BaseAgent):
             WaitAction,
         )
 
-        # Evidence originates at the actual desktop execution boundary, not
-        # from model output or a post-hoc interpretation of console logs.
-        evidence_path = None
-        if logging_dir is not None:
-            logging_dir.mkdir(parents=True, exist_ok=True)
-            evidence_path = logging_dir / "executed-actions.jsonl"
-
-        async def execute_and_record(action):
-            from ..actions import action_to_dict
-
-            action_data = action_to_dict(action)
-            # Typed text may contain secrets; store its length, not content.
-            if "text" in action_data:
-                action_data["text_length"] = len(action_data.pop("text"))
-                action_data["text_redacted"] = True
-
-            async def observe():
-                try:
-                    screenshot_bytes = await session.screenshot()
-                    return {"sha256": hashlib.sha256(screenshot_bytes).hexdigest(),
-                            "size_bytes": len(screenshot_bytes)}
-                except Exception as exc:
-                    return {"observation_error": type(exc).__name__}
-
-            before = await observe() if evidence_path else None
-            error = None
-            try:
-                return await session.execute_action(action)
-            except Exception as exc:
-                error = type(exc).__name__
-                raise
-            finally:
-                if evidence_path:
-                    after = await observe()
-                    event = {
-                        "schema_version": "cua-bench-executed-action/v1",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "action": action_data,
-                        "before": before,
-                        "after": after,
-                        "execution_status": "failed" if error else "returned",
-                        "error_type": error,
-                    }
-                    with evidence_path.open("a", encoding="utf-8") as stream:
-                        stream.write(json.dumps(event, sort_keys=True) + "\n")
-
         # Screenshot function (required)
         async def screenshot():
             """Take a screenshot and return as base64 string."""
@@ -145,19 +96,19 @@ class CuaAgent(BaseAgent):
                 action = MiddleClickAction(x=x, y=y)
             else:
                 raise ValueError(f"Unknown button type: {button}")
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Double click function
         async def double_click(x: int, y: int):
             """Double click at coordinates."""
             action = DoubleClickAction(x=x, y=y)
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Type function
         async def type_text(text: str):
             """Type text."""
             action = TypeAction(text=text)
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Keypress function
         async def keypress(keys):
@@ -166,13 +117,13 @@ class CuaAgent(BaseAgent):
                 action = KeyAction(key=keys)
             else:
                 action = HotkeyAction(keys=list(keys))
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Move function
         async def move(x: int, y: int):
             """Move cursor to coordinates."""
             action = MoveToAction(x=x, y=y)
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Scroll function
         async def scroll(x: int, y: int, scroll_x: int, scroll_y: int):
@@ -184,7 +135,7 @@ class CuaAgent(BaseAgent):
                 direction = "down"
                 amount = abs(scroll_y)
             action = ScrollAction(direction=direction, amount=amount)
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Drag function
         async def drag(path: List[Dict[str, int]]):
@@ -194,13 +145,13 @@ class CuaAgent(BaseAgent):
             start = path[0]
             end = path[-1]
             action = DragAction(from_x=start["x"], from_y=start["y"], to_x=end["x"], to_y=end["y"])
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Wait function
         async def wait(ms: int = 1000):
             """Wait for specified milliseconds."""
             action = WaitAction(seconds=ms / 1000.0)
-            await execute_and_record(action)
+            await session.execute_action(action)
 
         # Get dimensions
         async def get_dimensions():

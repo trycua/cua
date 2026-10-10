@@ -39,7 +39,7 @@ use std::ffi::{CStr, CString};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
@@ -52,6 +52,9 @@ const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
 /// The longest [`sync_client`] waits for a client's `_NET_WM_PING` reply.
 const PING_TIMEOUT: Duration = Duration::from_secs(1);
+/// Identifies each `_NET_WM_PING` in its timestamp field, so a late reply to an
+/// earlier ping cannot confirm a later one.
+static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug)]
 pub struct VirtualPointerDrag {
@@ -3393,6 +3396,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     // silently dropped — see keycode_for_keysym's doc and the analogous fix
     // in mpx_keyboard::plan_text_with_fallback for the background path.
     let mut remap_guards = Vec::new();
+    let mut client = TextClient::new(Some(window));
 
     for (typed, ch) in text.chars().enumerate() {
         // Resolve the keycode and whether Shift must be held — without it,
@@ -3405,12 +3409,13 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
                     &conn,
                     &mapping,
                     &mut remap_guards,
-                    Some(window),
+                    &mut client,
                     mpx_keyboard::keysym_for_char(ch),
                     &ch.to_string(),
                 ) {
                     Ok(keycode) => (keycode, false),
                     Err(error) => {
+                        client.release(&conn, std::mem::take(&mut remap_guards));
                         bail!(
                             "typed {typed} of {} characters: {error:#}",
                             text.chars().count()
@@ -3467,9 +3472,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     }
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
-    if !remap_guards.is_empty() {
-        sync_client(&conn, Some(window));
-    }
+    client.release(&conn, remap_guards);
     Ok(())
 }
 
@@ -3494,7 +3497,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .unwrap_or(50);
     // Remap guards live until the function returns — see send_type_text_with_delay.
     let mut remap_guards = Vec::new();
-    let client = targeted::active_window(&conn, conn.setup().roots[0].root);
+    let mut client = TextClient::new(targeted::active_window(&conn, conn.setup().roots[0].root));
     for (typed, ch) in text.chars().enumerate() {
         let cp = mpx_keyboard::keysym_for_char(ch);
         let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
@@ -3503,12 +3506,13 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
                 &conn,
                 &mapping,
                 &mut remap_guards,
-                client,
+                &mut client,
                 cp,
                 &ch.to_string(),
             ) {
                 Ok(keycode) => (keycode, false),
                 Err(error) => {
+                    client.release(&conn, std::mem::take(&mut remap_guards));
                     bail!(
                         "typed {typed} of {} characters: {error:#}",
                         text.chars().count()
@@ -3531,9 +3535,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
     let _ = conn.get_input_focus()?.reply();
-    if !remap_guards.is_empty() {
-        sync_client(&conn, client);
-    }
+    client.release(&conn, remap_guards);
     Ok(())
 }
 
@@ -4301,14 +4303,14 @@ fn keycode_for_keysym_except<'a>(
 /// binding of the keysym, else borrows a spare keycode that no earlier
 /// character of the text holds: a client may still be translating that
 /// character, and rebinding its keycode would change what it reads. With every
-/// spare held, it rebinds the oldest one once `client` has read its keys. A new
-/// binding is used once `client` has seen it: Chrome drops keys on a keycode
-/// bound after the last mapping change it handled.
+/// spare held, it rebinds the oldest one only once `client` confirms it has
+/// read its keys. A new binding is used once `client` has seen it: Chrome drops
+/// keys on a keycode bound after the last mapping change it handled.
 fn text_keycode<'a>(
     conn: &'a RustConnection,
     mapping: &GetKeyboardMappingReply,
     guards: &mut Vec<RemappedKeycode<'a>>,
-    client: Option<Window>,
+    client: &mut TextClient,
     keysym: u32,
     key: &str,
 ) -> Result<u8> {
@@ -4317,24 +4319,80 @@ fn text_keycode<'a>(
     }
     let mut held: Vec<u8> = guards.iter().map(|guard| guard.keycode).collect();
     if !held.is_empty() && spare_keycode(mapping, &held).is_none() {
-        sync_client(conn, client);
+        if client.sync(conn) != ClientSync::Confirmed {
+            bail!(
+                "no spare keycode for key '{key}': every one holds an earlier character the client has not confirmed reading"
+            );
+        }
         guards.remove(0);
         held.remove(0);
     }
     let (keycode, guard) = keycode_for_keysym_except(conn, mapping, keysym, key, &held)?;
     if guard.is_some() {
-        sync_client(conn, client);
+        client.sync(conn);
     }
     guards.extend(guard);
     Ok(keycode)
 }
 
+/// How a client answered [`sync_client`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientSync {
+    /// The client answered this ping, so it has handled every earlier event.
+    Confirmed,
+    /// There is no client window, or it does not take `_NET_WM_PING`.
+    Unsupported,
+    /// The client takes `_NET_WM_PING` but did not answer this ping in time.
+    Unanswered,
+}
+
+/// The client that reads one text's keys.
+struct TextClient {
+    window: Option<Window>,
+    /// Cleared once the client leaves a ping unanswered: it is not pinged again
+    /// for this text, so a stalled client costs at most one [`PING_TIMEOUT`].
+    answering: bool,
+}
+
+impl TextClient {
+    fn new(window: Option<Window>) -> Self {
+        Self {
+            window,
+            answering: true,
+        }
+    }
+
+    fn sync(&mut self, conn: &RustConnection) -> ClientSync {
+        if !self.answering {
+            return ClientSync::Unanswered;
+        }
+        let sync = sync_client(conn, self.window);
+        self.answering = sync != ClientSync::Unanswered;
+        sync
+    }
+
+    /// Restores the text's borrowed keycodes once the client has read its keys.
+    /// A client without the protocol gets the restore at once; one that does not
+    /// answer keeps the keycodes bound, since its keys may still be unread.
+    fn release(&mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
+        if guards.is_empty() || self.sync(conn) != ClientSync::Unanswered {
+            return;
+        }
+        tracing::warn!(
+            keycodes = guards.len(),
+            "client did not confirm reading typed keys; leaving their borrowed keycodes bound"
+        );
+        guards.into_iter().for_each(std::mem::forget);
+    }
+}
+
 /// Waits until `window`'s client has handled the events sent before this call,
 /// so a borrowed keycode can be restored or rebound without changing keys the
 /// client has not translated yet. Clients answer an EWMH `_NET_WM_PING` in
-/// event order; a client without the protocol is not waited for, and none is
-/// waited for longer than [`PING_TIMEOUT`].
-fn sync_client(conn: &RustConnection, window: Option<Window>) {
+/// event order, echoing its timestamp field, which carries a fresh serial so
+/// only the reply to this ping counts. No client is waited for longer than
+/// [`PING_TIMEOUT`].
+fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
     let atom = |name: &str| {
         conn.intern_atom(false, name.as_bytes())
             .ok()?
@@ -4345,7 +4403,7 @@ fn sync_client(conn: &RustConnection, window: Option<Window>) {
     let (Some(window), Some(protocols), Some(ping)) =
         (window, atom("WM_PROTOCOLS"), atom("_NET_WM_PING"))
     else {
-        return;
+        return ClientSync::Unsupported;
     };
     let supported = conn
         .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
@@ -4353,33 +4411,36 @@ fn sync_client(conn: &RustConnection, window: Option<Window>) {
         .and_then(|cookie| cookie.reply().ok())
         .and_then(|reply| reply.value32().map(|mut atoms| atoms.any(|a| a == ping)))
         .unwrap_or(false);
+    if !supported {
+        return ClientSync::Unsupported;
+    }
     let root = conn.setup().roots[0].root;
     let listen = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
-    let event = ClientMessageEvent::new(32, window, protocols, [ping, 0, window, 0, 0]);
-    if !supported
-        || conn.change_window_attributes(root, &listen).is_err()
+    let serial = PING_SERIAL.fetch_add(1, Ordering::Relaxed).max(1);
+    let event = ClientMessageEvent::new(32, window, protocols, [ping, serial, window, 0, 0]);
+    if conn.change_window_attributes(root, &listen).is_err()
         || conn
             .send_event(false, window, EventMask::NO_EVENT, event)
             .is_err()
         || conn.flush().is_err()
     {
-        return;
+        return ClientSync::Unanswered;
     }
     let deadline = std::time::Instant::now() + PING_TIMEOUT;
     while std::time::Instant::now() < deadline {
         match conn.poll_for_event() {
             Ok(Some(x11rb::protocol::Event::ClientMessage(pong)))
                 if pong.type_ == protocols
-                    && pong.data.as_data32()[0] == ping
-                    && pong.data.as_data32()[2] == window =>
+                    && pong.data.as_data32()[..3] == [ping, serial, window] =>
             {
-                return;
+                return ClientSync::Confirmed;
             }
             Ok(Some(_)) => {}
             Ok(None) => sleep(Duration::from_millis(1)),
-            Err(_) => return,
+            Err(_) => return ClientSync::Unanswered,
         }
     }
+    ClientSync::Unanswered
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {

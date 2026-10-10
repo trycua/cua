@@ -362,15 +362,11 @@ fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {
     Ok(())
 }
 
-/// A borrowed keycode is restored only after the focused client answers a
-/// `_NET_WM_PING` sent after its keys, so a client that is slow to read its
-/// events still translates them under the borrowed binding.
-#[test]
-#[ignore = "requires an isolated X11 display with XTEST"]
-fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping() -> Result<()> {
-    let (conn, screen) = connect()?;
+/// Makes the focused input window take `_NET_WM_PING` and names it in
+/// `_NET_ACTIVE_WINDOW`; returns the root and the two protocol atoms.
+fn ping_window(conn: &RustConnection, screen: usize) -> Result<(Window, Atom, Atom)> {
     let root = conn.setup().roots[screen].root;
-    let window = focused_input_window(&conn, screen)?;
+    let window = focused_input_window(conn, screen)?;
     let atom = |name: &str| -> Result<Atom> {
         Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
     };
@@ -388,47 +384,227 @@ fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping()
     )?;
     conn.change_property32(PropMode::REPLACE, root, active, AtomEnum::WINDOW, &[window])?;
     conn.get_input_focus()?.reply()?;
-    let before = spare_keycodes(&conn)?;
+    Ok((root, protocols, ping))
+}
 
-    let typing = std::thread::spawn(|| send_type_text_xtest("\u{4f60}"));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let (mut pings, mut pressed) = (0, None);
+fn clear_active_window(conn: &RustConnection, root: Window) -> Result<()> {
+    let active = conn
+        .intern_atom(false, b"_NET_ACTIVE_WINDOW")?
+        .reply()?
+        .atom;
+    conn.delete_property(root, active)?;
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+fn pong(conn: &RustConnection, root: Window, protocols: Atom, data: [u32; 5]) -> Result<()> {
+    let event = ClientMessageEvent::new(32, root, protocols, data);
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+        event,
+    )?;
+    conn.flush()?;
+    Ok(())
+}
+
+fn keysyms_of(conn: &RustConnection, keycode: u8) -> Result<Vec<u32>> {
+    Ok(conn.get_keyboard_mapping(keycode, 1)?.reply()?.keysyms)
+}
+
+fn bind(conn: &RustConnection, keycodes: &[u8], keysym: u32) -> Result<()> {
+    for &keycode in keycodes {
+        let per = conn
+            .get_keyboard_mapping(keycode, 1)?
+            .reply()?
+            .keysyms_per_keycode;
+        conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
+    }
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+struct Typed {
+    result: Result<()>,
+    pings: Vec<[u32; 5]>,
+    presses: Vec<u8>,
+    elapsed: Duration,
+}
+
+/// Types `text` through XTest while `on_ping` handles each `_NET_WM_PING` the
+/// driver sends, given its data and the keycodes pressed so far.
+fn type_with_pings(
+    conn: &RustConnection,
+    text: &'static str,
+    protocols: Atom,
+    ping: Atom,
+    mut on_ping: impl FnMut([u32; 5], &[u8]) -> Result<()>,
+) -> Result<Typed> {
+    let start = Instant::now();
+    let typing = std::thread::spawn(move || send_type_text_xtest(text));
+    let deadline = start + Duration::from_secs(5);
+    let (mut pings, mut presses) = (Vec::new(), Vec::new());
     while !typing.is_finished() && Instant::now() < deadline {
         match conn.poll_for_event()? {
-            Some(Event::KeyPress(event)) => pressed = Some(event.detail),
+            Some(Event::KeyPress(event)) => presses.push(event.detail),
             Some(Event::ClientMessage(event))
                 if event.type_ == protocols && event.data.as_data32()[0] == ping =>
             {
-                pings += 1;
-                std::thread::sleep(Duration::from_millis(200));
-                if let Some(keycode) = pressed {
-                    let keysyms = conn.get_keyboard_mapping(keycode, 1)?.reply()?.keysyms;
-                    assert!(
-                        keysyms.contains(&0x0100_4f60),
-                        "keycode {keycode} restored before the pong"
-                    );
-                }
-                let pong = ClientMessageEvent::new(32, root, protocols, event.data);
-                conn.send_event(
-                    false,
-                    root,
-                    EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
-                    pong,
-                )?;
-                conn.flush()?;
+                let data = event.data.as_data32();
+                pings.push(data);
+                on_ping(data, &presses)?;
             }
             Some(Event::Error(error)) => bail!("X11 observer error: {error:?}"),
             _ => std::thread::sleep(Duration::from_millis(1)),
         }
     }
     let result = typing.join().expect("typing thread panicked");
-    conn.delete_property(root, active)?;
-    result?;
-    assert!(pressed.is_some(), "the key never arrived");
+    let elapsed = start.elapsed();
+    conn.get_input_focus()?.reply()?;
+    while let Some(event) = conn.poll_for_event()? {
+        if let Event::KeyPress(event) = event {
+            presses.push(event.detail);
+        }
+    }
+    Ok(Typed {
+        result,
+        pings,
+        presses,
+        elapsed,
+    })
+}
+
+const NI: u32 = 0x0100_4f60;
+
+/// A borrowed keycode is restored only after the focused client answers a
+/// `_NET_WM_PING` sent after its keys, so a client that is slow to read its
+/// events still translates them under the borrowed binding. Each ping carries
+/// its own serial.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |data, presses| {
+        std::thread::sleep(Duration::from_millis(200));
+        if let Some(&keycode) = presses.last() {
+            assert!(
+                keysyms_of(&conn, keycode)?.contains(&NI),
+                "keycode {keycode} restored before the pong"
+            );
+        }
+        pong(&conn, root, protocols, data)
+    })?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
     assert_eq!(
-        pings, 2,
-        "expected a ping after the binding and one before the restore"
+        typed.pings.len(),
+        2,
+        "a ping after the binding and one before the restore"
     );
+    assert_ne!(typed.pings[0][1], 0);
+    assert_ne!(typed.pings[0][1], typed.pings[1][1], "pings share a serial");
     assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+/// A late reply to an earlier ping must not count as the reply to the current
+/// one: the keycode stays bound until the current ping is answered.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_ignores_a_late_reply_to_an_earlier_ping() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let mut earlier: Option<[u32; 5]> = None;
+    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |data, presses| {
+        let Some(stale) = earlier else {
+            earlier = Some(data);
+            return pong(&conn, root, protocols, data);
+        };
+        pong(&conn, root, protocols, stale)?;
+        std::thread::sleep(Duration::from_millis(200));
+        let keycode = *presses
+            .last()
+            .expect("the key arrives before the last ping");
+        assert!(
+            keysyms_of(&conn, keycode)?.contains(&NI),
+            "keycode {keycode} restored on the reply to an earlier ping"
+        );
+        pong(&conn, root, protocols, data)
+    })?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    assert_eq!(typed.pings.len(), 2);
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+/// A client that takes `_NET_WM_PING` but never answers costs one timeout per
+/// text, and its keys may still be unread, so the borrowed keycode stays bound.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_keeps_the_keycode_bound_for_a_client_that_never_answers() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |_, _| Ok(()))?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    let keycode = typed.presses[0];
+    let still_bound = keysyms_of(&conn, keycode)?.contains(&NI);
+    bind(&conn, &[keycode], 0)?;
+    assert!(still_bound, "keycode {keycode} restored without a reply");
+    assert_eq!(
+        typed.pings.len(),
+        1,
+        "a client that missed a ping is pinged again"
+    );
+    assert!(
+        typed.elapsed < Duration::from_millis(2500),
+        "typing took {:?}",
+        typed.elapsed
+    );
+    Ok(())
+}
+
+/// With every spare keycode held, the oldest is rebound only after the client
+/// confirms it has read its key; a client that does not answer gets an error
+/// instead of a rebind.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_rebinds_a_held_keycode_only_after_the_client_confirms() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    let (free, others) = spare
+        .split_last()
+        .expect("the test display has a spare keycode");
+    bind(&conn, others, 0x7e1)?;
+
+    let silent = type_with_pings(&conn, "\u{4f60}\u{597d}", protocols, ping, |_, _| Ok(()))?;
+    let silent_binding = keysyms_of(&conn, *free)?;
+    bind(&conn, &[*free], 0)?;
+    let answered = type_with_pings(&conn, "\u{4f60}\u{597d}", protocols, ping, |data, _| {
+        pong(&conn, root, protocols, data)
+    })?;
+    let after = spare_keycodes(&conn)?;
+    bind(&conn, others, 0)?;
+    clear_active_window(&conn, root)?;
+
+    let error = silent
+        .result
+        .expect_err("rebound a keycode the client had not confirmed");
+    assert!(
+        error.to_string().starts_with("typed 1 of 2 characters"),
+        "{error:#}"
+    );
+    assert_eq!(silent.presses, vec![*free]);
+    assert!(silent_binding.contains(&NI), "keycode {free} was rebound");
+    answered.result?;
+    assert_eq!(answered.presses, vec![*free, *free]);
+    assert_eq!(after, vec![*free]);
     Ok(())
 }

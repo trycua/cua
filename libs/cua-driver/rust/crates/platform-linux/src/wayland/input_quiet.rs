@@ -65,43 +65,46 @@ pub(crate) struct InputQuiet {
     connection: Connection,
     queue: EventQueue<State>,
     state: State,
-    notification: ExtIdleNotificationV1,
+    notification: Option<ExtIdleNotificationV1>,
 }
 
 impl InputQuiet {
-    /// Start watching and wait up to `barrier_wait` for the person's input
-    /// to go quiet. Refuses when it does not.
-    pub(crate) fn begin(barrier_wait: Duration) -> Result<Self> {
+    /// Start watching and wait for the person's input to go quiet. Every
+    /// compositor exchange shares the one `budget`; nothing here blocks past
+    /// it. Refuses when the barrier does not arrive in time.
+    pub(crate) fn begin(budget: Duration) -> Result<Self> {
+        let deadline = Instant::now() + budget;
         let connection = super::hyprland::wayland_connection()?;
         super::hyprland::verify_capture_peer(&connection)?;
-        let mut queue = connection.new_event_queue();
+        let queue = connection.new_event_queue();
         let qh = queue.handle();
         connection.display().get_registry(&qh, ());
-        let mut state = State::default();
-        queue.roundtrip(&mut state).context("Wayland registry")?;
-        queue.roundtrip(&mut state).context("Wayland seat names")?;
-        let seat = state
+        let mut watch = Self {
+            connection,
+            queue,
+            state: State::default(),
+            notification: None,
+        };
+        watch.sync_by(deadline).context("Wayland registry")?;
+        // Seat names arrive after their bind.
+        watch.sync_by(deadline).context("Wayland seat names")?;
+        let seat = watch
+            .state
             .seats
             .selected()
             .context("no person-owned Wayland seat")?;
-        let (notifier, version) = state
+        let (notifier, version) = watch
+            .state
             .notifier
             .clone()
             .context("the compositor does not offer ext-idle-notify")?;
         // Version 2 ignores idle inhibitors (a playing video), which would
         // otherwise hold back the barrier indefinitely.
-        let notification = if version >= 2 {
+        watch.notification = Some(if version >= 2 {
             notifier.get_input_idle_notification(BARRIER_TIMEOUT_MS, &seat, &qh, ())
         } else {
             notifier.get_idle_notification(BARRIER_TIMEOUT_MS, &seat, &qh, ())
-        };
-        let mut watch = Self {
-            connection,
-            queue,
-            state,
-            notification,
-        };
-        let deadline = Instant::now() + barrier_wait;
+        });
         while !watch.state.marks.barrier {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -116,16 +119,17 @@ impl InputQuiet {
     }
 
     /// Whether no physical input arrived since the barrier, after draining
-    /// everything the compositor sent up to now. Any failure is "no".
+    /// everything the compositor sent up to now. Any failure is "no". Call it
+    /// again immediately before each change made on the person's behalf.
     pub(crate) fn quiet_since_begin(&mut self, budget: Duration) -> bool {
-        self.drain(budget).is_ok() && self.state.marks.quiet()
+        self.sync_by(Instant::now() + budget).is_ok() && self.state.marks.quiet()
     }
 
-    fn drain(&mut self, budget: Duration) -> Result<()> {
+    /// One bounded `wl_display.sync`: every event sent before it is handled.
+    fn sync_by(&mut self, deadline: Instant) -> Result<()> {
         let qh = self.queue.handle();
         self.state.synced = false;
         self.connection.display().sync(&qh, ());
-        let deadline = Instant::now() + budget;
         while !self.state.synced {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -166,7 +170,9 @@ impl InputQuiet {
 
 impl Drop for InputQuiet {
     fn drop(&mut self) {
-        self.notification.destroy();
+        if let Some(notification) = self.notification.take() {
+            notification.destroy();
+        }
         let _ = self.connection.flush();
     }
 }

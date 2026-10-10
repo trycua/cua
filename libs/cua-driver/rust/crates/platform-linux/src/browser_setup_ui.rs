@@ -125,17 +125,31 @@ impl FocusRestore {
     fn capture(&self, pid: u32, target: u64) -> anyhow::Result<()> {
         let mut prior = self.0.lock().unwrap();
         if prior.is_none() {
-            *prior = Some(PriorFocus {
-                pid,
-                target,
-                window: crate::wayland::hyprland::active_window_address()?,
-                workspace: crate::wayland::hyprland::single_output_workspace()?,
-                cursor: crate::wayland::hyprland::cursor_position()?,
-                input: crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(400))
+            // Watch first: the barrier must precede the state it protects, or
+            // a switch the person made while the watch started would be undone.
+            let mut input =
+                crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(400))
                     .map_err(|error| {
                         tracing::debug!(%error, "focus hand-back disabled: no physical-input watch")
                     })
-                    .ok(),
+                    .ok();
+            let window = crate::wayland::hyprland::active_window_address()?;
+            let workspace = crate::wayland::hyprland::single_output_workspace()?;
+            let cursor = crate::wayland::hyprland::cursor_position()?;
+            if input
+                .as_mut()
+                .is_some_and(|watch| !watch.quiet_since_begin(Duration::from_millis(200)))
+            {
+                tracing::debug!("focus hand-back disabled: the person acted during capture");
+                input = None;
+            }
+            *prior = Some(PriorFocus {
+                pid,
+                target,
+                window,
+                workspace,
+                cursor,
+                input,
             });
         }
         Ok(())
@@ -205,9 +219,15 @@ impl FocusRestore {
             tracing::debug!("browser setup or consent left focus where the person has it");
             return;
         };
-        match hand_back(plan, prior.cursor, &mut HyprlandHandBack) {
+        let Some(input) = prior.input.as_mut() else {
+            return;
+        };
+        match hand_back(plan, prior.cursor, &mut HyprlandHandBack { input }) {
             Ok(HandBackOutcome::Restored) => {
                 tracing::info!("restored prior focus and pointer after browser setup or consent")
+            }
+            Ok(HandBackOutcome::PersonActed) => {
+                tracing::debug!("the person acted during the hand-back; leaving focus to them")
             }
             Ok(HandBackOutcome::FocusStayed { realigned }) => tracing::warn!(
                 realigned,
@@ -235,6 +255,7 @@ enum HandBack {
 enum HandBackOutcome {
     Restored,
     FocusStayed { realigned: bool },
+    PersonActed,
 }
 
 /// The compositor operations a hand-back needs, separable for tests.
@@ -246,11 +267,16 @@ trait HandBackOps {
     fn window_workspace(&mut self, address: u64) -> Option<i64>;
     fn visible_workspace(&mut self) -> Option<i64>;
     fn settle(&mut self);
+    /// Fresh proof, immediately before a change, that the person has not
+    /// touched keyboard or pointer since the transaction began.
+    fn person_quiet(&mut self) -> bool;
 }
 
-struct HyprlandHandBack;
+struct HyprlandHandBack<'a> {
+    input: &'a mut crate::wayland::input_quiet::InputQuiet,
+}
 
-impl HandBackOps for HyprlandHandBack {
+impl HandBackOps for HyprlandHandBack<'_> {
     fn focus_window(&mut self, address: u64) -> anyhow::Result<()> {
         crate::wayland::hyprland::restore_focus_to_window(address)
     }
@@ -274,6 +300,9 @@ impl HandBackOps for HyprlandHandBack {
     fn settle(&mut self) {
         std::thread::sleep(Duration::from_millis(50));
     }
+    fn person_quiet(&mut self) -> bool {
+        self.input.quiet_since_begin(Duration::from_millis(200))
+    }
 }
 
 /// Hand focus back and prove it. A dispatcher's `ok` is not focus: on
@@ -287,6 +316,9 @@ fn hand_back(
     pointer: (f64, f64),
     ops: &mut impl HandBackOps,
 ) -> anyhow::Result<HandBackOutcome> {
+    if !ops.person_quiet() {
+        return Ok(HandBackOutcome::PersonActed);
+    }
     match plan {
         HandBack::Window(window) => ops.focus_window(window)?,
         HandBack::Workspace(id) => ops.show_workspace(id)?,
@@ -316,10 +348,18 @@ fn hand_back(
     if !ok {
         let focused_workspace = active.and_then(|window| ops.window_workspace(window));
         let realigned = match focused_workspace {
-            Some(id) if ops.visible_workspace() != Some(id) => ops.show_workspace(id).is_ok(),
+            Some(id) if ops.visible_workspace() != Some(id) => {
+                if !ops.person_quiet() {
+                    return Ok(HandBackOutcome::PersonActed);
+                }
+                ops.show_workspace(id).is_ok()
+            }
             _ => false,
         };
         return Ok(HandBackOutcome::FocusStayed { realigned });
+    }
+    if !ops.person_quiet() {
+        return Ok(HandBackOutcome::PersonActed);
     }
     ops.move_pointer(pointer)?;
     // With follow-mouse focus the pointer move can itself refocus whatever
@@ -1638,6 +1678,8 @@ mod tests {
         visible: Option<i64>,
         workspaces: HashMap<u64, i64>,
         log: Vec<String>,
+        /// Quiet checks that pass before the person acts; `None` never acts.
+        acts_after: Option<usize>,
     }
 
     impl HandBackOps for FakeHandBack {
@@ -1669,6 +1711,64 @@ mod tests {
             self.visible
         }
         fn settle(&mut self) {}
+        fn person_quiet(&mut self) -> bool {
+            match self.acts_after.as_mut() {
+                None => true,
+                Some(0) => false,
+                Some(left) => {
+                    *left -= 1;
+                    true
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hand_back_stops_the_moment_the_person_acts() {
+        let (chrome, t3) = (0x55fe0d6b8140, 0x55fe0d713130);
+        let workspaces = HashMap::from([(chrome, 5), (t3, 1)]);
+        // Acted before anything changed: nothing is touched.
+        let mut ops = FakeHandBack {
+            active: Some(chrome),
+            follows_focus: true,
+            visible: Some(5),
+            workspaces: workspaces.clone(),
+            acts_after: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Window(t3), (942.0, 1047.0), &mut ops).unwrap(),
+            HandBackOutcome::PersonActed
+        );
+        assert!(ops.log.is_empty());
+        // Acted after focus returned: their pointer is not overwritten.
+        let mut ops = FakeHandBack {
+            active: Some(chrome),
+            follows_focus: true,
+            visible: Some(5),
+            workspaces: workspaces.clone(),
+            acts_after: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Window(t3), (942.0, 1047.0), &mut ops).unwrap(),
+            HandBackOutcome::PersonActed
+        );
+        assert_eq!(ops.log, ["focus 55fe0d713130"]);
+        // Acted while focus stayed: no realignment over their choice.
+        let mut ops = FakeHandBack {
+            active: Some(chrome),
+            follows_focus: false,
+            visible: Some(5),
+            workspaces,
+            acts_after: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Window(t3), (942.0, 1047.0), &mut ops).unwrap(),
+            HandBackOutcome::PersonActed
+        );
+        assert_eq!(ops.log, ["focus 55fe0d713130"]);
     }
 
     #[test]

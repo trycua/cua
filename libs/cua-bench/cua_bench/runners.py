@@ -135,6 +135,11 @@ async def run_single_task(
                 step_count += 1
                 done = isinstance(action, DoneAction)
 
+        # A setup-only run is not agent execution, even if the initial
+        # environment state already satisfies the evaluator.
+        if not oracle and agent_fn is None:
+            raise ValueError("No agent_fn supplied; task was not executed")
+
         # Evaluate
         if env.evaluate_task_fn is None:
             raise ValueError("Task has no evaluator")

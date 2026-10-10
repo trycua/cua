@@ -1968,7 +1968,7 @@ def execute(args):
             output = Path(args.output)
             if output.resolve().is_relative_to(Path(args.dataset_path).resolve()):
                 raise ValueError("Manifest output must be outside the dataset to avoid self-inclusion")
-            output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+            output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         except (OSError, ValueError) as exc:
             print(f"{RED}Error: Cannot create manifest: {exc}{RESET}")
             return 1

@@ -87,7 +87,7 @@ RUN_SCRIPT_ADDENDUM = (
     "body that uses `cua.getApp(\"<App>\")` and app.click/typeText/setValue/pressKey/scroll with {role, name} "
     "targets, app.waitFor({text}) between screens, and `return`s what you need to check the result. Use loops and "
     "if/else instead of separate calls. A failed call throws with the script line and the nearest elements; fix the "
-    "script and run it again from the step that failed. Use run_actions or single tools only for one-off actions.\n"
+    "script and run it again from the step that failed. Use run_steps or single tools only for one-off actions.\n"
 )
 # From mini-run v037b (A6.5): run_script's wall-time limit is a per-call argument (default 30 s, max 120 s); v037-full
 # saw 14 script timeouts, so the AX addendum asks for the maximum on every call. The driver binary is unchanged.

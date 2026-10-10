@@ -203,7 +203,7 @@ def call_breakdown(run: Path, rows: list[dict]) -> dict:
                     acts += a
                     obs += o
                 continue
-            if name == "run_actions":
+            if name in ("run_actions", "run_steps"):  # run_steps is the 0.35.0 name
                 steps = inp.get("steps") or []
                 acts += len(steps) if isinstance(steps, list) else 1
                 obs += 1 if inp.get("observe") else 0

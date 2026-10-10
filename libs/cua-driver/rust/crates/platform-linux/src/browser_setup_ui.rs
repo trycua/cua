@@ -11,7 +11,7 @@ use cua_driver_core::browser::{
     EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
 
-use crate::atspi::AtspiNode;
+use crate::atspi::{native::ObjectRef, AtspiNode, AtspiTreeResult};
 use crate::wayland::hyprland_input::{self, Action, ActionCancellation};
 
 /// Invocation-scoped input authority. Only the platform adapter can construct it
@@ -240,24 +240,131 @@ fn omnibox_holds_setup_url(node: &AtspiNode, descriptor: &BrowserSetupDescriptor
         .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
 }
 
+#[derive(Debug)]
+struct BrowserTabs {
+    objects: Vec<ObjectRef>,
+    selected: ObjectRef,
+}
+
+fn browser_tabs(tree: &AtspiTreeResult) -> Result<BrowserTabs, BrowserRefusal> {
+    require_window_scope(tree.trusted, tree.window_scoped)?;
+    if tree.truncated {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "a complete browser tab tree is required to prove setup tab ownership",
+        ));
+    }
+    let mut objects = Vec::new();
+    let mut selected = None;
+    for tab in tree
+        .nodes
+        .iter()
+        .filter(|node| !node.in_web_content && role_is(node, &["page tab", "tab", "tab item"]))
+    {
+        let object = tab
+            .object_ref
+            .as_ref()
+            .filter(|object| !object.bus.is_empty() && !object.path.is_empty())
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "a browser tab has no stable accessibility object identity",
+                )
+            })?;
+        if objects.contains(object) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "duplicate browser tab identities prevent exact setup ownership",
+            ));
+        }
+        let is_selected = tab.selected.ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "a browser tab has no verifiable selected state",
+            )
+        })?;
+        if is_selected && selected.replace(object.clone()).is_some() {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "multiple browser tabs claim to be selected",
+            ));
+        }
+        objects.push(object.clone());
+    }
+    let selected = selected.ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the browser exposes no uniquely selected tab identity",
+        )
+    })?;
+    Ok(BrowserTabs { objects, selected })
+}
+
+fn created_tab(
+    baseline: &BrowserTabs,
+    current: &BrowserTabs,
+) -> Result<Option<ObjectRef>, BrowserRefusal> {
+    if baseline
+        .objects
+        .iter()
+        .any(|object| !current.objects.contains(object))
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "a pre-existing browser tab changed while setup was creating its tab",
+        ));
+    }
+    let added = current
+        .objects
+        .iter()
+        .filter(|object| !baseline.objects.contains(object))
+        .collect::<Vec<_>>();
+    match added.as_slice() {
+        [] if current.selected == baseline.selected => Ok(None),
+        [object] if **object == current.selected => Ok(Some((*object).clone())),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "setup did not create exactly one uniquely selected browser tab",
+        )),
+    }
+}
+
 /// Navigate the approved window to its fixed setup page.
 ///
 /// Hyprland uses the existing exact-window, US-layout-guarded plugin route.
 /// Other backends retain their existing whole-value clipboard delivery. Every
 /// route still proves arrival at the fixed setup page before toggling anything.
 fn trusted_setup_navigation(
-    pid: u32,
-    window_id: u64,
-    descriptor: &BrowserSetupDescriptor,
-    input: &SetupInput,
+    handle: &mut SetupUiHandle,
+    initial: &AtspiTreeResult,
 ) -> anyhow::Result<()> {
+    let (pid, window_id, descriptor) = (handle.pid, handle.window_id, handle.descriptor);
+    let input = handle.input.clone();
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
 
-    // A fresh tab preserves the existing page. Each Hyprland operation
-    // reattests PID/window identity and refuses physical-input conflicts.
-    input.hotkey(pid, window_id, "t", &["ctrl"])?;
-    std::thread::sleep(Duration::from_millis(100));
-    input.hotkey(pid, window_id, "l", &["ctrl"])?;
+    // A shortcut acknowledgement is not tab ownership. Preserve every tab
+    // from a complete baseline and prove one new, uniquely selected object.
+    let baseline = browser_tabs(initial).map_err(|error| anyhow::anyhow!(error.message))?;
+    handle.hotkey("t", &["ctrl"])?;
+    let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
+    loop {
+        input.check()?;
+        let tree =
+            window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
+        let current = browser_tabs(&tree).map_err(|error| anyhow::anyhow!(error.message))?;
+        if let Some(object) =
+            created_tab(&baseline, &current).map_err(|error| anyhow::anyhow!(error.message))?
+        {
+            handle.owned_setup_tab = Some(object);
+            handle.opened_setup_page = true;
+            break;
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("the setup shortcut did not produce a verifiably owned browser tab");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    handle.hotkey("l", &["ctrl"])?;
 
     // Wait for the new tab to publish its address field before writing to it.
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
@@ -265,10 +372,14 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
+        handle
+            .require_owned_selected_tab(&tree)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
         if exact_omnibox(&tree.nodes, descriptor)
             .map_err(|error| anyhow::anyhow!(error.message))?
             .is_some()
         {
+            handle.focused_setup_address_field = true;
             break;
         }
         if Instant::now() >= deadline {
@@ -283,8 +394,11 @@ fn trusted_setup_navigation(
     if input.hyprland {
         // No clipboard access: the plugin refuses unsupported layouts and
         // guards every packet, including punctuation and held modifiers.
-        input.hotkey(pid, window_id, "a", &["ctrl"])?;
-        input.type_setup_url(pid, window_id, descriptor.setup_url)?;
+        handle.hotkey("a", &["ctrl"])?;
+        handle
+            .owned_tab_tree()
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        handle.record_input_result(input.type_setup_url(pid, window_id, descriptor.setup_url))?;
     } else {
         use cua_driver_core::clipboard::ClipboardBackend;
         let clipboard = crate::clipboard::LinuxClipboard::new();
@@ -310,7 +424,10 @@ fn trusted_setup_navigation(
         }
         paste?;
     }
-    input.hotkey(pid, window_id, "enter", &[])?;
+    handle
+        .owned_tab_tree()
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    handle.hotkey("enter", &[])?;
 
     // Verify the destination, not the input. Chromium exposes no readable text
     // on its omnibox over AT-SPI — no Value interface and no Text content even
@@ -324,13 +441,11 @@ fn trusted_setup_navigation(
         input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
-        if tree.nodes.iter().any(|node| {
-            role_is(node, &["document web", "document frame"])
-                && descriptor
-                    .page_titles
-                    .iter()
-                    .any(|title| field_equals(node, title))
-        }) {
+        handle
+            .require_owned_selected_tab(&tree)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        if setup_page_proven(&tree.nodes, descriptor, true) {
+            handle.trusted_setup_navigation = true;
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -406,7 +521,9 @@ pub struct SetupUiHandle {
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
     pub(crate) input: SetupInput,
+    owned_setup_tab: Option<ObjectRef>,
     trusted_setup_navigation: bool,
+    input_delivery_unknown: bool,
     armed: bool,
     enabling: bool,
     enable_attempted: bool,
@@ -457,6 +574,58 @@ impl Drop for SetupUiHandle {
 }
 
 impl SetupUiHandle {
+    fn record_input_result(&mut self, result: anyhow::Result<()>) -> anyhow::Result<()> {
+        match result {
+            Ok(()) => {
+                self.foregrounded_window = true;
+                self.injected_global_input = true;
+                Ok(())
+            }
+            Err(error) => {
+                self.input_delivery_unknown |= error.is::<hyprland_input::DispatchUnknown>();
+                Err(error)
+            }
+        }
+    }
+
+    fn hotkey(&mut self, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+        let result = self.input.hotkey(self.pid, self.window_id, key, modifiers);
+        self.record_input_result(result)
+    }
+
+    fn require_owned_selected_tab(&self, tree: &AtspiTreeResult) -> Result<(), BrowserRefusal> {
+        let owned = self.owned_setup_tab.as_ref().ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "this setup has no independently proven created tab",
+            )
+        })?;
+        if browser_tabs(tree)?.selected != *owned {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the selected browser tab is no longer this setup's created tab",
+            ));
+        }
+        Ok(())
+    }
+
+    fn owned_tab_tree(&self) -> Result<AtspiTreeResult, BrowserRefusal> {
+        let tree = window_scoped_tree(self.pid, self.window_id)?;
+        self.require_owned_selected_tab(&tree)?;
+        Ok(tree)
+    }
+
+    fn require_owned_setup_page(&self, tree: &AtspiTreeResult) -> Result<(), BrowserRefusal> {
+        self.require_owned_selected_tab(tree)?;
+        if !setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the owned temporary tab no longer shows the exact fixed setup page",
+            ));
+        }
+        Ok(())
+    }
+
     fn cleanup_input(&mut self) -> Option<AbandonedSetupLane> {
         crate::browser_platform::verify_setup_identity(
             i64::from(self.pid),
@@ -546,6 +715,7 @@ impl SetupUiHandle {
                 "enabled_remote_debugging": enabled_remote_debugging,
                 "foregrounded_window": foregrounded_window,
                 "injected_global_input": injected_global_input,
+                "input_delivery_unknown": self.input_delivery_unknown,
                 "restored_remote_debugging": restored_remote_debugging,
             },
             "cause": cause,
@@ -561,11 +731,7 @@ impl SetupUiHandle {
             Ok(tree) => tree,
             Err(error) => return Err(self.abort(error)),
         };
-        if !setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation) {
-            let error = refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the temporary setup page was no longer exact before cleanup",
-            );
+        if let Err(error) = self.require_owned_setup_page(&tree) {
             return Err(self.abort(error));
         }
         if let Err(error) = close_tab(self.pid, self.window_id, &self.input) {
@@ -576,6 +742,7 @@ impl SetupUiHandle {
             return Err(self.abort(error));
         }
         self.opened_setup_page = false;
+        self.owned_setup_tab = None;
         self.armed = false;
         Ok(Some(true))
     }
@@ -587,9 +754,12 @@ impl SetupUiHandle {
         let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
             return Some(false);
         };
-        let closed = setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
+        let closed = self.require_owned_setup_page(&tree).is_ok()
             && close_tab(self.pid, self.window_id, &self.input).is_ok();
         self.opened_setup_page &= !closed;
+        if closed {
+            self.owned_setup_tab = None;
+        }
         Some(closed)
     }
 }
@@ -695,41 +865,26 @@ fn set_remote_debugging(
     })?;
     let initial = window_scoped_tree(pid, window_id)?;
     let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor, false)?;
-    let mut handle = if initial_checkbox.is_some() {
-        SetupUiHandle {
-            pid,
-            window_id,
-            descriptor,
-            input: input.clone(),
-            trusted_setup_navigation: false,
-            armed: true,
-            enabling: desired_enabled,
-            enable_attempted: false,
-            trusted_checkbox_fallback_attempted: false,
-            opened_setup_page: false,
-            enabled_remote_debugging: false,
-            focused_setup_address_field: false,
-            foregrounded_window: false,
-            injected_global_input: false,
-        }
-    } else {
-        let handle = SetupUiHandle {
-            pid,
-            window_id,
-            descriptor,
-            input: input.clone(),
-            trusted_setup_navigation: true,
-            armed: true,
-            enabling: desired_enabled,
-            enable_attempted: false,
-            trusted_checkbox_fallback_attempted: false,
-            opened_setup_page: true,
-            enabled_remote_debugging: false,
-            focused_setup_address_field: true,
-            foregrounded_window: true,
-            injected_global_input: true,
-        };
-        if let Err(error) = trusted_setup_navigation(pid, window_id, descriptor, &input) {
+    let mut handle = SetupUiHandle {
+        pid,
+        window_id,
+        descriptor,
+        input: input.clone(),
+        owned_setup_tab: None,
+        trusted_setup_navigation: false,
+        input_delivery_unknown: false,
+        armed: true,
+        enabling: desired_enabled,
+        enable_attempted: false,
+        trusted_checkbox_fallback_attempted: false,
+        opened_setup_page: false,
+        enabled_remote_debugging: false,
+        focused_setup_address_field: false,
+        foregrounded_window: false,
+        injected_global_input: false,
+    };
+    if initial_checkbox.is_none() {
+        if let Err(error) = trusted_setup_navigation(&mut handle, &initial) {
             return Err(handle.abort(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!(
@@ -738,8 +893,7 @@ fn set_remote_debugging(
                 ),
             )));
         }
-        handle
-    };
+    }
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
@@ -940,7 +1094,9 @@ mod tests {
                 },
                 cancellation: ActionCancellation::default(),
             },
+            owned_setup_tab: None,
             trusted_setup_navigation: false,
+            input_delivery_unknown: false,
             armed: false,
             enabling: true,
             enable_attempted: false,
@@ -1013,6 +1169,239 @@ mod tests {
             in_web_content: false,
             object_ref: None,
         }
+    }
+
+    fn tab(path: &str, selected: bool) -> AtspiNode {
+        let mut tab = node("page tab", path, None, &["activate"]);
+        tab.selected = Some(selected);
+        tab.object_ref = Some(ObjectRef {
+            bus: ":1.5156".to_owned(),
+            path: path.to_owned(),
+        });
+        tab
+    }
+
+    fn setup_tree(tabs: Vec<AtspiNode>) -> AtspiTreeResult {
+        let mut nodes = tabs;
+        nodes.extend([
+            node(
+                "entry",
+                "Address and search bar",
+                Some(descriptor().setup_url),
+                &["activate"],
+            ),
+            node("document web", descriptor().page_titles[0], None, &[]),
+            node("heading", descriptor().page_heading, None, &[]),
+        ]);
+        AtspiTreeResult {
+            tree_markdown: String::new(),
+            nodes_visited: nodes.len(),
+            nodes,
+            bounds: Vec::new(),
+            trusted: true,
+            degraded_reason: None,
+            window_scoped: true,
+            truncated: false,
+            truncation_reason: None,
+            nodes_pending: 0,
+            bounds_complete: true,
+            elapsed_ms: 0,
+        }
+    }
+
+    fn inert_setup_handle() -> SetupUiHandle {
+        SetupUiHandle {
+            pid: 0,
+            window_id: 0,
+            descriptor: descriptor(),
+            input: SetupInput {
+                owner: "setup-ownership-private".to_owned(),
+                lane_owner: "setup-ownership-private".to_owned(),
+                fingerprint: cua_driver_core::browser::ProcessFingerprint {
+                    pid: 0,
+                    start_time: Some(0),
+                    executable: None,
+                },
+                hyprland: true,
+                cancellation: ActionCancellation::default(),
+            },
+            owned_setup_tab: None,
+            trusted_setup_navigation: false,
+            input_delivery_unknown: false,
+            armed: false,
+            enabling: true,
+            enable_attempted: false,
+            trusted_checkbox_fallback_attempted: false,
+            opened_setup_page: false,
+            enabled_remote_debugging: false,
+            focused_setup_address_field: false,
+            foregrounded_window: false,
+            injected_global_input: false,
+        }
+    }
+
+    #[test]
+    fn refused_first_shortcut_cannot_cleanup_a_preexisting_setup_page() {
+        let existing = setup_tree(vec![tab("/existing", true)]);
+        assert!(setup_page_proven(&existing.nodes, descriptor(), false));
+        assert!(exact_setup_checkbox(&existing.nodes, descriptor(), false)
+            .unwrap()
+            .is_none());
+        let mut handle = inert_setup_handle();
+        let (cancel, cancellation) = ActionCancellation::invocation();
+        handle.input.cancellation = cancellation;
+        drop(cancel);
+
+        // Exercise the real navigation boundary: the first shortcut refuses
+        // before native delivery, despite the pre-existing fixed page labels.
+        assert!(trusted_setup_navigation(&mut handle, &existing).is_err());
+        assert!(!handle.opened_setup_page);
+        assert!(handle.owned_setup_tab.is_none());
+        assert!(!handle.foregrounded_window);
+        assert!(!handle.injected_global_input);
+        assert_eq!(
+            handle.require_owned_setup_page(&existing).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(handle.close_for_success().unwrap(), None);
+
+        let mut refused = inert_setup_handle();
+        assert!(refused
+            .record_input_result(foreground_ack(serde_json::json!({
+                "ok": false,
+                "code": "primary_target_busy",
+                "detail": "foreground_grab",
+            })))
+            .is_err());
+        assert!(!refused.foregrounded_window);
+        assert!(!refused.injected_global_input);
+        assert_eq!(refused.close(), None);
+    }
+
+    #[test]
+    fn unknown_or_acknowledged_input_alone_cannot_authorize_setup_cleanup() {
+        let existing = setup_tree(vec![tab("/existing", true)]);
+        let mut handle = inert_setup_handle();
+        assert!(handle
+            .record_input_result(Err(hyprland_input::unknown_dispatch(
+                anyhow::anyhow!("shortcut final reply lost"),
+                0,
+            )))
+            .is_err());
+        assert!(handle.input_delivery_unknown);
+        assert!(!handle.foregrounded_window);
+        assert!(!handle.injected_global_input);
+        assert!(!handle.opened_setup_page);
+        assert!(handle.owned_setup_tab.is_none());
+        assert_eq!(
+            handle.require_owned_setup_page(&existing).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(handle.close(), None);
+
+        // An acknowledged shortcut records delivery, not ownership or arrival.
+        handle.record_input_result(Ok(())).unwrap();
+        assert!(handle.foregrounded_window);
+        assert!(handle.injected_global_input);
+        assert!(!handle.opened_setup_page);
+        assert!(!handle.trusted_setup_navigation);
+        assert_eq!(
+            handle.require_owned_setup_page(&existing).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(handle.close_for_success().unwrap(), None);
+    }
+
+    #[test]
+    fn owned_setup_cleanup_requires_the_same_uniquely_selected_created_tab() {
+        let baseline = setup_tree(vec![tab("/existing", true)]);
+        let current = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
+        let mut handle = inert_setup_handle();
+        handle.owned_setup_tab = created_tab(
+            &browser_tabs(&baseline).unwrap(),
+            &browser_tabs(&current).unwrap(),
+        )
+        .unwrap();
+        handle.opened_setup_page = true;
+        handle.trusted_setup_navigation = true;
+        assert!(handle.require_owned_setup_page(&current).is_ok());
+
+        let drifted = setup_tree(vec![tab("/existing", true), tab("/created", false)]);
+        assert_eq!(
+            handle.require_owned_setup_page(&drifted).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        let ambiguous = setup_tree(vec![tab("/existing", true), tab("/created", true)]);
+        assert_eq!(
+            handle
+                .require_owned_setup_page(&ambiguous)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserBindingAmbiguous
+        );
+        let missing = setup_tree(vec![tab("/existing", true)]);
+        assert!(handle.require_owned_setup_page(&missing).is_err());
+
+        let mut incomplete = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
+        incomplete.truncated = true;
+        assert_eq!(
+            handle
+                .require_owned_setup_page(&incomplete)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserRouteUnavailable
+        );
+        let mut another_page = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
+        another_page
+            .nodes
+            .retain(|node| role_is(node, &["page tab"]));
+        assert!(handle.require_owned_setup_page(&another_page).is_err());
+    }
+
+    #[test]
+    fn setup_tab_creation_requires_a_complete_preserved_native_tab_baseline() {
+        let baseline = browser_tabs(&setup_tree(vec![tab("/existing", true)])).unwrap();
+        let unchanged = setup_tree(vec![tab("/existing", true)]);
+        assert!(created_tab(&baseline, &browser_tabs(&unchanged).unwrap())
+            .unwrap()
+            .is_none());
+        let replaced = setup_tree(vec![tab("/created", true)]);
+        assert_eq!(
+            created_tab(&baseline, &browser_tabs(&replaced).unwrap())
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        let extra = setup_tree(vec![
+            tab("/existing", false),
+            tab("/created", true),
+            tab("/unexpected", false),
+        ]);
+        assert_eq!(
+            created_tab(&baseline, &browser_tabs(&extra).unwrap())
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserBindingAmbiguous
+        );
+        let mut incomplete = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
+        incomplete.truncated = true;
+        assert_eq!(
+            browser_tabs(&incomplete).unwrap_err().code,
+            BrowserRefusalCode::BrowserRouteUnavailable
+        );
+        let mut unidentified = setup_tree(vec![tab("/existing", false), tab("/created", true)]);
+        unidentified.nodes[1].object_ref = None;
+        assert_eq!(
+            browser_tabs(&unidentified).unwrap_err().code,
+            BrowserRefusalCode::BrowserRouteUnavailable
+        );
+
+        let mut web_tab = tab("/web-content-tab", true);
+        web_tab.in_web_content = true;
+        let web_content = setup_tree(vec![tab("/existing", true), web_tab]);
+        assert!(created_tab(&baseline, &browser_tabs(&web_content).unwrap())
+            .unwrap()
+            .is_none());
     }
 
     #[test]

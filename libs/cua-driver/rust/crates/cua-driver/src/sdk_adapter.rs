@@ -153,6 +153,7 @@ impl SdkAdapter {
 
     pub fn is_known_tool(&self, name: &str) -> bool {
         name == "type_text_chars"
+            || cua_driver_core::tool::renamed_tool(name).is_some()
             || self
                 .tools_list
                 .get("tools")

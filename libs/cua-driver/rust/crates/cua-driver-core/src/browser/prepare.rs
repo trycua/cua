@@ -1249,16 +1249,15 @@ impl BrowserEngine {
         }
         // The claim itself can raise a browser-owned prompt that the compositor
         // focuses. The platform hands focus back once consent settles below.
+        // Wrap inside the worker: if this future is cancelled after capture
+        // completes, the abandoned output still drops off the executor.
         let consent_focus = {
             let platform = Arc::clone(&self.platform);
-            ConsentFocus(
-                tokio::task::spawn_blocking(move || {
-                    platform.existing_profile_consent_focus_guard(pid, window_id)
-                })
-                .await
-                .ok()
-                .flatten(),
-            )
+            tokio::task::spawn_blocking(move || {
+                ConsentFocus(platform.existing_profile_consent_focus_guard(pid, window_id))
+            })
+            .await
+            .unwrap_or(ConsentFocus(None))
         };
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
@@ -1422,6 +1421,37 @@ impl BrowserEngine {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn consent_focus_guard_drops_off_the_async_executor() {
+        struct Probe(std::sync::mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+        let executor = std::thread::current().id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(super::ConsentFocus(Some(Box::new(Probe(tx.clone())))));
+        let dropped_on = tokio::task::spawn_blocking(move || rx.recv().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(dropped_on, executor);
+
+        // A completed worker output abandoned by a cancelled caller.
+        let (tx2, rx2) = std::sync::mpsc::channel();
+        let worker =
+            tokio::task::spawn_blocking(move || super::ConsentFocus(Some(Box::new(Probe(tx2)))));
+        while !worker.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        drop(worker);
+        let dropped_on = tokio::task::spawn_blocking(move || rx2.recv().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(dropped_on, executor);
+        drop(tx);
+    }
+
     use super::*;
 
     #[tokio::test]

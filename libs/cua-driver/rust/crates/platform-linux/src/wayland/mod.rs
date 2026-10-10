@@ -15,6 +15,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub(crate) mod input_quiet;
 pub mod kwin_helper;
 pub mod overlay;
 pub mod persistent_vptr;

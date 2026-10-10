@@ -60,6 +60,9 @@ struct PriorFocus {
     window: Option<u64>,
     workspace: Option<i64>,
     cursor: (f64, f64),
+    /// Proof that the person gave no physical input during the transaction.
+    /// `None` (unsupported, no quiet barrier, watcher failure) never restores.
+    input: Option<crate::wayland::input_quiet::InputQuiet>,
 }
 
 /// Restore only when focus provably still sits on the setup target and the
@@ -128,6 +131,11 @@ impl FocusRestore {
                 window: crate::wayland::hyprland::active_window_address()?,
                 workspace: crate::wayland::hyprland::single_output_workspace()?,
                 cursor: crate::wayland::hyprland::cursor_position()?,
+                input: crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(400))
+                    .map_err(|error| {
+                        tracing::debug!(%error, "focus hand-back disabled: no physical-input watch")
+                    })
+                    .ok(),
             });
         }
         Ok(())
@@ -147,9 +155,19 @@ impl FocusRestore {
     }
 
     fn restore(&self) {
-        let Some(prior) = self.0.lock().unwrap().take() else {
+        let Some(mut prior) = self.0.lock().unwrap().take() else {
             return;
         };
+        // Location is only corroboration: without proof that the person did
+        // not touch keyboard or pointer since capture, their focus is theirs.
+        if !prior
+            .input
+            .as_mut()
+            .is_some_and(|watch| watch.quiet_since_begin(Duration::from_millis(500)))
+        {
+            tracing::debug!("person used the desktop or input quiet is unproven; leaving focus");
+            return;
+        }
         let target_active = || {
             crate::wayland::hyprland::target_is_active(prior.target, Some(prior.pid))
                 .unwrap_or(false)
@@ -207,6 +225,7 @@ impl FocusRestore {
     }
 }
 
+#[derive(Clone, Copy)]
 enum HandBack {
     Window(u64),
     Workspace(i64),
@@ -268,25 +287,33 @@ fn hand_back(
     pointer: (f64, f64),
     ops: &mut impl HandBackOps,
 ) -> anyhow::Result<HandBackOutcome> {
-    let expected = match plan {
-        HandBack::Window(window) => {
-            ops.focus_window(window)?;
-            Some(window)
-        }
-        HandBack::Workspace(id) => {
-            ops.show_workspace(id)?;
-            None
-        }
+    match plan {
+        HandBack::Window(window) => ops.focus_window(window)?,
+        HandBack::Workspace(id) => ops.show_workspace(id)?,
+    }
+    // Keyboard focus and the visible workspace must agree with the plan: the
+    // prior window focused, or the prior (empty) workspace shown with no
+    // window focused anywhere else.
+    let consistent = |ops: &mut dyn HandBackOps| -> anyhow::Result<(bool, Option<u64>)> {
+        let active = ops.active_window()?;
+        let ok = match plan {
+            HandBack::Window(window) => active == Some(window),
+            HandBack::Workspace(id) => {
+                ops.visible_workspace() == Some(id)
+                    && active.is_none_or(|window| ops.window_workspace(window) == Some(id))
+            }
+        };
+        Ok((ok, active))
     };
-    let mut active = ops.active_window()?;
+    let (mut ok, mut active) = consistent(ops)?;
     for _ in 0..10 {
-        if expected.is_none() || active == expected {
+        if ok {
             break;
         }
         ops.settle();
-        active = ops.active_window()?;
+        (ok, active) = consistent(ops)?;
     }
-    if expected.is_some() && active != expected {
+    if !ok {
         let focused_workspace = active.and_then(|window| ops.window_workspace(window));
         let realigned = match focused_workspace {
             Some(id) if ops.visible_workspace() != Some(id) => ops.show_workspace(id).is_ok(),
@@ -297,7 +324,7 @@ fn hand_back(
     ops.move_pointer(pointer)?;
     // With follow-mouse focus the pointer move can itself refocus whatever
     // lies under it; say so rather than claim a restore.
-    if expected.is_some() && ops.active_window()? != expected {
+    if !consistent(ops)?.0 {
         anyhow::bail!("focus moved again after the pointer was restored");
     }
     Ok(HandBackOutcome::Restored)
@@ -1680,10 +1707,13 @@ mod tests {
     }
 
     #[test]
-    fn hand_back_of_an_empty_workspace_restores_the_pointer_after_showing_it() {
+    fn hand_back_of_an_empty_workspace_requires_focus_to_leave_the_browser() {
+        let chrome = 0x55fe0d6b8140;
+        // Focus followed: nothing focused, workspace 1 shown.
         let mut ops = FakeHandBack {
-            active: Some(0x55fe0d6b8140),
+            active: None,
             visible: Some(5),
+            workspaces: HashMap::from([(chrome, 5)]),
             ..Default::default()
         };
         assert_eq!(
@@ -1691,6 +1721,21 @@ mod tests {
             HandBackOutcome::Restored
         );
         assert_eq!(ops.log, ["workspace 1", "pointer 10 20"]);
+
+        // Workspace 1 shown but keyboard focus still on Chrome on 5: hidden
+        // focus is not a restore. Show Chrome again; leave the pointer.
+        let mut ops = FakeHandBack {
+            active: Some(chrome),
+            visible: Some(5),
+            workspaces: HashMap::from([(chrome, 5)]),
+            ..Default::default()
+        };
+        assert_eq!(
+            hand_back(HandBack::Workspace(1), (10.0, 20.0), &mut ops).unwrap(),
+            HandBackOutcome::FocusStayed { realigned: true }
+        );
+        assert_eq!(ops.log, ["workspace 1", "workspace 5"]);
+        assert_eq!(ops.visible, Some(5));
     }
 
     #[test]

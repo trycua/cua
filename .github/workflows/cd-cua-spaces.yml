@@ -1137,7 +1137,10 @@ jobs:
           ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          PUBLISHER: ${{ vars.AZURE_ARTIFACT_SIGNING_PUBLISHER_NAME }}
+          # The certificate's CN (electron-builder requires it with
+          # azureSignOptions; electron-updater accepts only installers signed
+          # by it): the Azure profile's, Cua AI, Inc., unless the variable says.
+          PUBLISHER: ${{ vars.AZURE_ARTIFACT_SIGNING_PUBLISHER_NAME || 'Cua AI, Inc.' }}
         run: |
           set -euo pipefail
           if [ "$SIGNED" = true ]; then

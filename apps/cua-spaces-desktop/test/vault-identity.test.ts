@@ -104,7 +104,7 @@ describe("the Linux policy", () => {
 
 describe("the Windows daemon's signature", () => {
   const configPath = require.resolve("../electron-builder.config.cjs");
-  const azure = { AZURE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net", AZURE_SIGNING_ACCOUNT: "acct", AZURE_SIGNING_PROFILE: "profile" };
+  const azure = { AZURE_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net", AZURE_SIGNING_ACCOUNT: "acct", AZURE_SIGNING_PROFILE: "profile", AZURE_SIGNING_PUBLISHER: "Cua AI, Inc." };
 
   /** The config as CI loads it with `env`. */
   function load(env: Record<string, string>) {

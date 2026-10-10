@@ -19,9 +19,9 @@
 //   AZURE_SIGNING_ENDPOINT        e.g. https://eus.codesigning.azure.net
 //   AZURE_SIGNING_ACCOUNT         signing account name
 //   AZURE_SIGNING_PROFILE         certificate profile name
-//   AZURE_SIGNING_PUBLISHER       optional: the certificate's CN; when set,
-//                                 electron-updater accepts only installers
-//                                 signed by it
+//   AZURE_SIGNING_PUBLISHER       the certificate's CN (electron-builder
+//                                 requires it); electron-updater accepts only
+//                                 installers signed by it
 //
 // Native layer: every package needs `pnpm native -- --target <triple>` for
 // its arch first (both mac triples for universal); `afterPack` refuses a
@@ -112,6 +112,9 @@ const macNotarize =
 const archs = (platform, all) => packageArchs(platform, all, env.CUA_SPACES_ARCHS);
 
 const azureSigning = ["AZURE_SIGNING_ENDPOINT", "AZURE_SIGNING_ACCOUNT", "AZURE_SIGNING_PROFILE"].every((k) => env[k]);
+if (azureSigning && !env.AZURE_SIGNING_PUBLISHER) {
+  throw new Error("AZURE_SIGNING_PUBLISHER (the signing certificate's CN, e.g. Cua AI, Inc.) is required with Azure signing");
+}
 
 /**
  * The native layer of the arch being packed (`pnpm native`): the
@@ -232,7 +235,7 @@ module.exports = {
             endpoint: env.AZURE_SIGNING_ENDPOINT,
             codeSigningAccountName: env.AZURE_SIGNING_ACCOUNT,
             certificateProfileName: env.AZURE_SIGNING_PROFILE,
-            ...(env.AZURE_SIGNING_PUBLISHER ? { publisherName: env.AZURE_SIGNING_PUBLISHER } : {}),
+            publisherName: env.AZURE_SIGNING_PUBLISHER,
           },
         }
       : {}),

@@ -721,3 +721,66 @@ class TestActionTraceAggregateAttestation:
         assert report.success_count == 0
         assert report.avg_reward == 0.0
         assert "Invalid or misattributed" in report.task_results[0]["error"]
+
+
+class TestIndependentlyRecomputableActionTrace:
+    @pytest.mark.asyncio
+    async def test_aggregator_accepts_only_matching_redacted_events(self, tmp_path, monkeypatch):
+        import hashlib
+        import json
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        task = tmp_path / "case"
+        task.mkdir()
+        (task / "main.py").write_text("# discovery stub")
+        monkeypatch.setattr(runners, "make", lambda *a, **k: SimpleNamespace(
+            tasks_config_fn=lambda: [object()]
+        ))
+        events = [{"step": 1, "action_type": "DoneAction"}]
+        digest = hashlib.sha256(json.dumps(
+            events, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+
+        async def worker(path, task_index=0, **kwargs):
+            return TaskResult(
+                task_path=str(path), variant_id=task_index, success=True,
+                reward=1.0, steps=1, action_trace_digest=digest,
+                action_trace_events=[dict(event) for event in events],
+            )
+
+        monkeypatch.setattr(runners, "run_single_task", worker)
+        good = await runners.run_benchmark(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert good.success_count == 1
+        assert good.task_results[0]["action_trace_digest"] == digest
+        assert good.task_results[0]["action_trace_events"] == events
+
+        events[0]["action_type"] = "ClickAction"
+        tampered = await runners.run_benchmark(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert tampered.success_count == 0
+        assert "Invalid or misattributed" in tampered.task_results[0]["error"]
+
+
+    @pytest.mark.asyncio
+    async def test_digest_without_events_cannot_claim_success(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        task = tmp_path / "case"
+        task.mkdir()
+        (task / "main.py").write_text("# discovery stub")
+        monkeypatch.setattr(runners, "make", lambda *a, **k: SimpleNamespace(
+            tasks_config_fn=lambda: [object()]
+        ))
+
+        async def worker(path, task_index=0, **kwargs):
+            return TaskResult(
+                task_path=str(path), variant_id=task_index,
+                success=True, reward=1.0, steps=1,
+                action_trace_digest="a" * 64,
+            )
+
+        monkeypatch.setattr(runners, "run_single_task", worker)
+        report = await runners.run_benchmark(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert report.success_count == 0
+        assert report.avg_reward == 0.0

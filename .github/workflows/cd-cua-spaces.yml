@@ -1022,6 +1022,28 @@ jobs:
             unset APPLE_ID
           fi
           pnpm dist:mac
+      # electron-builder signs and notarizes the apps, not the disk images:
+      # each is signed (with a timestamp), notarized and stapled here like the
+      # SwiftUI app's, then its blockmap and its entry in the update feed
+      # files are made again for the stapled bytes.
+      - name: Sign, notarize and staple the disk images
+        if: steps.signing.outputs.apple == 'true'
+        working-directory: apps/cua-spaces-desktop
+        env:
+          SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
+          SIGNING_NAME: ${{ steps.keychain.outputs.name }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for dmg in dist/*.dmg; do
+            codesign --force --timestamp --keychain "$SIGNING_KEYCHAIN" \
+              --sign "Developer ID Application: $SIGNING_NAME" "$dmg"
+            ../cua-spaces-macos/scripts/notarize.sh "$dmg"
+            xcrun stapler staple "$dmg"
+          done
+          node scripts/refresh-update-info.mjs dist/*.dmg
       - name: Verify the apps and collect the assets
         working-directory: apps/cua-spaces-desktop
         env:
@@ -1037,6 +1059,13 @@ jobs:
               spctl -a -vv "$app"
             fi
           done
+          if [ "$SIGNED" = true ]; then
+            for dmg in dist/*.dmg; do
+              codesign --verify --strict "$dmg"
+              xcrun stapler validate "$dmg"
+              spctl -a -vv -t install "$dmg"
+            done
+          fi
           pnpm check:fuses
           mkdir -p electron-assets
           cp dist/*.dmg dist/*.zip dist/*.blockmap electron-assets/

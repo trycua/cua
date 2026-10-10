@@ -288,14 +288,24 @@ permission prompt the agent loop shouldn't be burning on app launch.
 
 The pixel click is routed through SkyLight's per-pid event path
 (`SLEventPostToPid`), not the system HID stream. The dispatch recipe
-is the backgrounded "noraise" sequence: focus-without-raise
-SLPS event records followed by an off-screen user-activation primer
-and the real click. The target app becomes AppKit-active for event
-routing but its window does **not** rise to the front of the
-z-stack, and macOS's "switch to Space with windows for app" follow
-is suppressed. Full mechanics in
-`Sources/CuaDriverCore/Input/MouseInput.swift` (`clickViaAuthSignedPost`)
-and the companion `FocusWithoutRaise.swift`.
+is the backgrounded "noraise" sequence: a focus-without-raise
+SLPS event record to the target window, followed by an off-screen
+user-activation primer and the real click. The target window becomes
+AppKit-key for event routing, but it does **not** rise to the front of
+the z-stack, macOS's "switch to Space with windows for app" follow is
+suppressed, and the user's front window keeps key status, so their
+typing keeps landing there.
+
+### Menus opened in the background keep the user's keyboard
+
+A popup button, a `<select>`, or a context menu opened in a background
+app takes key focus from the user's front window for as long as the menu
+is open (AppKit's menu tracking steals it). While a background action
+runs, Cua Driver watches for that and hands key focus straight back, so
+the user's window never loses it. The menu stays open and its items are
+chosen with `click` on the `AXMenuItem` (or in one call with
+`set_value` on the popup). Keyboard navigation of such a menu with
+`press_key` is not the route; pick the item by element.
 
 ### `delivery_mode` on the pointer family (macOS)
 

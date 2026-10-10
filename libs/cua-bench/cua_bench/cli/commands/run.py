@@ -1770,8 +1770,8 @@ async def _cmd_run_dataset_async(args) -> int:
         log_print(f"Machine-readable run result: {receipt_path}")
 
         # Summarize results
-        success_count = sum(1 for r in results if r and hasattr(r, "success") and r.success)
-        failed_count = len(results) - success_count
+        success_count = receipt["success_count"]
+        failed_count = receipt["failed_count"]
 
         summary = f"\n{CYAN}{'=' * 60}{RESET}\n"
         summary += f"{CYAN}Dataset Complete: {dataset_path.name}{RESET}\n"

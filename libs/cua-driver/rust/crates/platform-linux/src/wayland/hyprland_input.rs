@@ -250,6 +250,28 @@ impl std::fmt::Display for DispatchUnknown {
 
 impl std::error::Error for DispatchUnknown {}
 
+/// The plugin's fixed failure detail and availability predicate for an
+/// uncertain foreground reply. Only plain identifiers are carried; the
+/// outcome stays unknown and is never retried.
+fn partial_unknown_cause(reply: &Value) -> String {
+    let identifier = |field: &str| {
+        reply[field]
+            .as_str()
+            .filter(|text| {
+                !text.is_empty()
+                    && text.len() <= 64
+                    && text.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            })
+            .map(str::to_owned)
+    };
+    match (identifier("detail"), identifier("unavailable")) {
+        (Some(detail), Some(unavailable)) => format!(" ({detail}; unavailable: {unavailable})"),
+        (Some(detail), None) => format!(" ({detail})"),
+        (None, Some(unavailable)) => format!(" (unavailable: {unavailable})"),
+        (None, None) => String::new(),
+    }
+}
+
 pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -> anyhow::Error {
     DispatchUnknown {
         acknowledged_phases,
@@ -765,7 +787,10 @@ impl Client {
             && reply["code"] == "foreground_partial_unknown"
         {
             return Err(unknown_dispatch(
-                anyhow::anyhow!("foreground activation or input may have started"),
+                anyhow::anyhow!(
+                    "foreground activation or input may have started{}",
+                    partial_unknown_cause(&reply)
+                ),
                 u32::from(acknowledged),
             ));
         }
@@ -1382,8 +1407,46 @@ fn dispatch_in_slot(
         // Report the compositor-assigned lane for diagnostics. It is not a
         // credential or a caller-selected seat.
         value["lane"] = json!(lane);
+        explain_session_unavailable(value, super::hyprland::projected_unavailable);
     }
     result
+}
+
+/// `session_unavailable` alone does not tell a caller what to do. Name the
+/// plugin's failed availability predicate and the routes that still work;
+/// never wake the display, unlock, or retry here. For an older plugin that
+/// does not name it, use only what the compositor reports: a session lock,
+/// then an output in standby.
+fn explain_session_unavailable(
+    value: &mut Value,
+    projected: impl FnOnce() -> Option<&'static str>,
+) {
+    let unavailable = value["ok"] == false
+        && ["code", "detail", "reason"].iter().any(|field| {
+            value[*field] == "session_unavailable"
+                || value[*field] == "foreground_session_unavailable"
+        });
+    if !unavailable {
+        return;
+    }
+    let predicate = match value["unavailable"].as_str() {
+        Some(predicate) => Some(predicate.to_owned()),
+        None => projected().map(str::to_owned),
+    };
+    if predicate.as_deref() == Some("compositor_dpms_off") {
+        value["display_asleep"] = json!(true);
+        value["hint"] = json!(
+            "The display is powered off (DPMS standby), so Hyprland input is refused until it is \
+             on. Typed browser tools (browser_navigate, browser_type, browser_click with \
+             input_route dom_event) and accessibility actions do not need the display."
+        );
+    } else if predicate.as_deref() == Some("session_locked") {
+        value["session_locked"] = json!(true);
+        value["hint"] = json!(
+            "The Hyprland session is locked, so input is refused until the person unlocks it. \
+             Typed browser tools with input_route dom_event do not need input focus."
+        );
+    }
 }
 
 fn terminal_connection_result(value: &Value) -> bool {
@@ -2028,6 +2091,84 @@ mod tests {
             // A refused call retires its connection, like any other failure.
             assert!(slot.is_none());
             server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn production_foreground_session_refusals_keep_their_predicate() {
+        // The plugin's pre-activation foreground refusal: labelled.
+        let mut value = json!({"ok":false,"code":"foreground_unavailable",
+            "detail":"foreground_session_unavailable","unavailable":"session_locked"});
+        explain_session_unavailable(&mut value, || None);
+        assert_eq!(value["session_locked"], true);
+        // After activation may have started, the outcome stays unknown and
+        // never retries, but the fixed cause survives into the error.
+        let reply = json!({"ok":false,"code":"foreground_partial_unknown",
+            "detail":"foreground_session_unavailable","unavailable":"compositor_dpms_off"});
+        assert_eq!(
+            partial_unknown_cause(&reply),
+            " (foreground_session_unavailable; unavailable: compositor_dpms_off)"
+        );
+        let error = unknown_dispatch(
+            anyhow::anyhow!(
+                "foreground activation or input may have started{}",
+                partial_unknown_cause(&reply)
+            ),
+            1,
+        );
+        assert!(error.is::<DispatchUnknown>());
+        assert!(error
+            .to_string()
+            .contains("unavailable: compositor_dpms_off"));
+        // Anything but a plain identifier is dropped.
+        let hostile = json!({"ok":false,"code":"foreground_partial_unknown",
+            "detail":"Window \"secret\"","unavailable":"x y"});
+        assert_eq!(partial_unknown_cause(&hostile), "");
+    }
+
+    #[test]
+    fn session_refusals_name_the_failed_predicate_without_guessing() {
+        let refusal = |predicate: Option<&str>| {
+            let mut value =
+                json!({"ok":false,"code":"foreground_unavailable","detail":"session_unavailable"});
+            if let Some(predicate) = predicate {
+                value["unavailable"] = json!(predicate);
+            }
+            value
+        };
+        // The plugin's predicate wins over any compositor projection.
+        let mut value = refusal(Some("compositor_dpms_off"));
+        explain_session_unavailable(&mut value, || panic!("predicate present"));
+        assert_eq!(value["display_asleep"], true);
+        assert!(value["hint"].as_str().unwrap().contains("dom_event"));
+        let mut value = refusal(Some("session_locked"));
+        explain_session_unavailable(&mut value, || Some("compositor_dpms_off"));
+        assert_eq!(value["session_locked"], true);
+        assert!(value.get("display_asleep").is_none());
+        // Another named predicate is passed through unlabelled.
+        let mut value = refusal(Some("plugin_suspended"));
+        explain_session_unavailable(&mut value, || Some("compositor_dpms_off"));
+        assert_eq!(value, refusal(Some("plugin_suspended")));
+        // An older plugin: label only what the compositor reports. The live
+        // case was a lock with the display on: never "asleep".
+        let mut value = refusal(None);
+        explain_session_unavailable(&mut value, || Some("session_locked"));
+        assert_eq!(value["session_locked"], true);
+        assert!(value.get("display_asleep").is_none());
+        let mut value = refusal(None);
+        explain_session_unavailable(&mut value, || Some("compositor_dpms_off"));
+        assert_eq!(value["display_asleep"], true);
+        let mut value = refusal(None);
+        explain_session_unavailable(&mut value, || None);
+        assert_eq!(value, refusal(None));
+        // Not a session refusal, or a success: unchanged.
+        for mut value in [
+            json!({"ok":false,"code":"lane_busy","detail":"lane_busy"}),
+            json!({"ok":true}),
+        ] {
+            let before = value.clone();
+            explain_session_unavailable(&mut value, || Some("compositor_dpms_off"));
+            assert_eq!(value, before);
         }
     }
 

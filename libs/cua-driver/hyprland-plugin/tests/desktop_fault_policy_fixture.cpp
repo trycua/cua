@@ -79,6 +79,9 @@ struct Lane {
         drag.emplace(lease);
     }
     bool available() const { return !suspended && session; }
+    // The production refusal names the failed availability predicate; the
+    // policy under test only depends on it being a session refusal.
+    std::string unavailable_refusal() const { return refusal("session_unavailable"); }
     bool layout_qualified() const { return layout; }
     bool refresh(Client&) const { return refresh_ok; }
     template<typename T> bool primary_conflict(const T&) const { return primary_busy; }

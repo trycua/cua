@@ -1960,6 +1960,20 @@ def execute(args):
         return cmd_run_task(args)
     elif run_command == "dataset":
         return cmd_run_dataset(args)
+    elif run_command == "manifest":
+        import json
+        from cua_bench.dataset_manifest import scan_dataset
+        try:
+            manifest = scan_dataset(Path(args.dataset_path))
+            output = Path(args.output)
+            if output.resolve().is_relative_to(Path(args.dataset_path).resolve()):
+                raise ValueError("Manifest output must be outside the dataset to avoid self-inclusion")
+            output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+        except (OSError, ValueError) as exc:
+            print(f"{RED}Error: Cannot create manifest: {exc}{RESET}")
+            return 1
+        print(f"{GREEN}Recorded {len(manifest['tasks'])} tasks in {output}{RESET}")
+        return 0
     elif run_command == "list":
         return cmd_list(args)
     elif run_command == "watch":

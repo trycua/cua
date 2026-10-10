@@ -65,6 +65,7 @@ class TaskResult:
     steps: int
     error: Optional[str] = None
     action_trace_digest: Optional[str] = None
+    action_trace_events: Optional[List[Dict[str, Any]]] = None
 
 
 async def run_single_task(
@@ -114,6 +115,7 @@ async def run_single_task(
         if action_trace:
             serialized = json.dumps(action_trace, sort_keys=True, separators=(",", ":"))
             outcome.action_trace_digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+            outcome.action_trace_events = list(action_trace)
         return outcome
 
     try:
@@ -391,6 +393,26 @@ async def run_benchmark(
                         or result.steps == 0
                     )
                 )
+                or (
+                    result.action_trace_digest is not None
+                    and (
+                        not isinstance(result.action_trace_events, list)
+                        or len(result.action_trace_events) != result.steps
+                        or any(
+                            not isinstance(event, dict)
+                            or set(event) != {"step", "action_type"}
+                            or type(event["step"]) is not int
+                            or event["step"] != index
+                            or not isinstance(event["action_type"], str)
+                            or not event["action_type"].isidentifier()
+                            for index, event in enumerate(result.action_trace_events, start=1)
+                        )
+                        or hashlib.sha256(
+                            json.dumps(result.action_trace_events, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                        ).hexdigest() != result.action_trace_digest
+                    )
+                )
+                or (result.action_trace_digest is None and result.action_trace_events is not None)
                 or (bool(result.error) and (result.success or result.reward != 0.0))
                 or (not result.error and result.success != (result.reward >= 0.5))
             )
@@ -416,6 +438,7 @@ async def run_benchmark(
                     "steps": result.steps,
                     "error": result.error,
                     "action_trace_digest": result.action_trace_digest,
+                    "action_trace_events": result.action_trace_events,
                 }
             )
             rewards.append(result.reward)

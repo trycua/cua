@@ -134,7 +134,7 @@
      "type": "String"
     }
    ],
-   "discussion": "Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin.",
+   "discussion": "Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin. Each call without a `session` label runs in its own disposable session, so element tokens and screenshots from one call are stale in the next. To chain calls, pass the same non-default `session` label in every call's JSON arguments, and address elements by `element_token`.",
    "examples": [
     {
      "command": "cua-driver call list_apps",
@@ -155,6 +155,18 @@
     {
      "command": "cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"tree_format\":\"elements\"}'",
      "description": "Return the structured elements instead of the markdown tree"
+    },
+    {
+     "command": "cua-driver call get_window_state '{\"session\":\"run-1\",\"pid\":844,\"window_id\":10725}'",
+     "description": "Read a window in a named session so later calls can use its element tokens"
+    },
+    {
+     "command": "cua-driver call click '{\"session\":\"run-1\",\"element_token\":\"s0000002a:11\"}'",
+     "description": "Click row [11] of that read; repeat the same session label"
+    },
+    {
+     "command": "cua-driver call end_session '{\"session\":\"run-1\"}'",
+     "description": "End the named session when the run is done"
     }
    ],
    "flags": [],

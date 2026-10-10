@@ -1431,7 +1431,11 @@ fn launch_daemon_with_state_and_wait(
     let app_name = crate::bundle::app_name();
     let app_path = crate::bundle::app_bundle_path();
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let open_args = daemon_launch_arguments(app_name, socket_path, state, experimental_history);
+    // Launch the resolved bundle by path rather than `-a <name>`: when more
+    // than one copy is registered (for example `/Applications` and
+    // `~/Applications`), LaunchServices may otherwise pick a different copy
+    // than the one this CLI belongs to, with different TCC grants.
+    let open_args = daemon_launch_arguments(&app_path, socket_path, state, experimental_history);
     // Thread the Claude-Code compat flag through to the daemon. Without this
     // the proxy-spawned daemon always called build_macos_registry() (compat
     // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
@@ -1464,8 +1468,8 @@ fn launch_daemon_with_state_and_wait(
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
-                "`open -n -g -a {app_name} --args serve{}` exited {:?}. \
-             Check that `{app_path}` is installed.",
+                "`open -n -g -a {app_path} --args serve{}` exited {:?}. \
+             Check that `{app_name}` is installed at `{app_path}`.",
                 if pass_socket {
                     format!(" --socket {socket_path}")
                 } else {
@@ -1727,7 +1731,7 @@ fn restart_managed_daemon_if_present(_executable: &std::path::Path) -> bool {
 
 #[cfg(target_os = "macos")]
 fn daemon_launch_arguments(
-    app_name: &str,
+    app: &str,
     socket_path: &str,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
@@ -1736,7 +1740,7 @@ fn daemon_launch_arguments(
         "-n".to_owned(),
         "-g".to_owned(),
         "-a".to_owned(),
-        app_name.to_owned(),
+        app.to_owned(),
         "--args".to_owned(),
         "serve".to_owned(),
     ];
@@ -4221,7 +4225,7 @@ fn cli_docs_literal() -> serde_json::Value {
             {
                 "name": "call",
                 "abstract": "Invoke an MCP tool through the running daemon.",
-                "discussion": "Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin.",
+                "discussion": "Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin. Each call without a `session` label runs in its own disposable session, so element tokens and screenshots from one call are stale in the next. To chain calls, pass the same non-default `session` label in every call's JSON arguments, and address elements by `element_token`.",
                 "arguments": [
                     {"name":"tool-name","help":"Name of the MCP tool to invoke.","type":"String","is_optional":false},
                     {"name":"json-args","help":"JSON object for the tool input schema. If omitted, stdin is read when piped.","type":"String","is_optional":true}
@@ -4610,6 +4614,9 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725}' --screenshot-out-file state.png", "Save the screenshot from a tool response"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"since\":\"s0000002a\"}'", "Read only what changed since an earlier snapshot_id"),
         ("cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725,\"tree_format\":\"elements\"}'", "Return the structured elements instead of the markdown tree"),
+        ("cua-driver call get_window_state '{\"session\":\"run-1\",\"pid\":844,\"window_id\":10725}'", "Read a window in a named session so later calls can use its element tokens"),
+        ("cua-driver call click '{\"session\":\"run-1\",\"element_token\":\"s0000002a:11\"}'", "Click row [11] of that read; repeat the same session label"),
+        ("cua-driver call end_session '{\"session\":\"run-1\"}'", "End the named session when the run is done"),
     ]),
     ("serve", &[
         ("cua-driver serve", "Run the daemon in the foreground"),
@@ -4799,7 +4806,7 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
 ///   - running process identity (path, pid, version)
 ///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
 ///   - AX + screen recording TCC status (check_permissions tool)
-///   - install layout (/Applications/CuaDriver.app, ~/.local/bin/cua-driver)
+///   - install layout (CuaDriver.app in /Applications or ~/Applications, ~/.local/bin/cua-driver)
 ///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
 ///   - config + state paths with existence booleans
 pub fn run_diagnose_cmd() {
@@ -4917,7 +4924,11 @@ fn diagnose_install_layout_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let mut lines = vec!["## install layout".to_owned()];
 
-    let app_path = "/Applications/CuaDriver.app";
+    #[cfg(target_os = "macos")]
+    let app_path = crate::bundle::app_bundle_path();
+    #[cfg(not(target_os = "macos"))]
+    let app_path = format!("/Applications/{}.app", crate::bundle::app_name());
+    let app_path = app_path.as_str();
     let app_exists = std::path::Path::new(app_path).exists();
     lines.push(format!("bundle:  {app_path}   exists={app_exists}"));
     if app_exists {
@@ -4959,11 +4970,18 @@ fn diagnose_install_layout_section() -> String {
         }
     }
 
-    let stale = format!("{home}/Applications/CuaDriver.app");
-    if std::path::Path::new(&stale).exists() {
-        lines.push(format!(
-            "stale:   {stale}   \u{2190} old install-local.sh path, consider removing"
-        ));
+    // A second copy in the other Applications folder is not used by this
+    // install but can still own TCC rows or LaunchServices registrations.
+    let app_file = format!("{}.app", crate::bundle::app_name());
+    for other in [
+        format!("/Applications/{app_file}"),
+        format!("{home}/Applications/{app_file}"),
+    ] {
+        if other != app_path && std::path::Path::new(&other).exists() {
+            lines.push(format!(
+                "other:   {other}   \u{2190} not the active bundle, consider removing"
+            ));
+        }
     }
 
     lines.join("\n")

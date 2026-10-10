@@ -851,9 +851,10 @@ fn trusted_setup_navigation(
             |handle| handle.input.ready(pid, window_id),
             |handle| handle.require_owned_tab_selected_now(),
             |handle| {
-                let typed = handle
-                    .input
-                    .type_setup_url(pid, window_id, descriptor.setup_url);
+                let typed =
+                    handle
+                        .owned_input()?
+                        .type_setup_url(pid, window_id, descriptor.setup_url);
                 handle.record_input_result(typed)
             },
         )?;
@@ -1073,12 +1074,35 @@ impl SetupUiHandle {
         Ok(())
     }
 
+    /// This setup's input, refusing each packet unless the owned tab is
+    /// still the selected one at the moment it would be dispatched.
+    fn owned_input(&self) -> anyhow::Result<SetupInput> {
+        let owned = self
+            .owned_setup_tab
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("this setup has no independently proven created tab"))?;
+        let mut input = self.input.clone();
+        input.cancellation = input.cancellation.with_dispatch_guard(move || {
+            if !crate::atspi::native::element_selected_ref(&owned)? {
+                anyhow::bail!("the selected browser tab is no longer this setup's created tab");
+            }
+            Ok(())
+        });
+        Ok(input)
+    }
+
     fn owned_hotkey(&mut self, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
         recheck_then_send(
             self,
             |handle| handle.input.ready(handle.pid, handle.window_id),
             |handle| handle.require_owned_tab_selected_now(),
-            |handle| handle.hotkey(key, modifiers),
+            |handle| {
+                let result =
+                    handle
+                        .owned_input()?
+                        .hotkey(handle.pid, handle.window_id, key, modifiers);
+                handle.record_input_result(result)
+            },
         )
     }
 
@@ -1099,7 +1123,13 @@ impl SetupUiHandle {
                 recheck_failed = result.is_err();
                 result
             },
-            |handle| handle.hotkey("w", &["ctrl"]),
+            |handle| {
+                let result =
+                    handle
+                        .owned_input()?
+                        .hotkey(handle.pid, handle.window_id, "w", &["ctrl"]);
+                handle.record_input_result(result)
+            },
         );
         if recheck_failed {
             return Ok(false);

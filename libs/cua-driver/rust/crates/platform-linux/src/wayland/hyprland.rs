@@ -814,23 +814,48 @@ pub fn cursor_position() -> Result<(f64, f64)> {
     Ok((pos.x, pos.y))
 }
 
-/// Move the pointer (`dispatch movecursor`), no button state. For the
-/// presence shape probe only.
+/// Move the pointer, no button state. For the presence shape probe and for
+/// handing the pointer back after a browser setup transaction.
 pub fn move_cursor(x: f64, y: f64) -> Result<()> {
-    let mut ipc = ipc_connection()?;
-    let command = format!(
-        "dispatch movecursor {} {}",
-        x.round() as i64,
-        y.round() as i64
-    );
-    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
-    if reply.trim_ascii() != b"ok" {
-        bail!(
-            "Hyprland movecursor refused: {}",
-            String::from_utf8_lossy(&reply)
-        );
+    let (x, y) = (x.round() as i64, y.round() as i64);
+    dispatch_compat(
+        &format!("hl.dsp.cursor.move({{ x = {x}, y = {y} }})"),
+        &format!("movecursor {x} {y}"),
+        |command| {
+            let mut ipc = ipc_connection()?;
+            read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)
+        },
+    )
+    .context("Hyprland cursor move refused")
+}
+
+/// Run one dispatcher on either config dialect. Hyprland 0.56 with a Lua
+/// config parses `dispatch` arguments as Lua and rejects the classic
+/// `dispatcher args` form; older or hyprlang configs reject the Lua form.
+/// Try Lua first, as Omarchy's own scripts do, and fall back once.
+fn dispatch_compat(
+    lua: &str,
+    legacy: &str,
+    mut send: impl FnMut(&str) -> Result<Vec<u8>>,
+) -> Result<()> {
+    let lua_reply = send(&format!("dispatch {lua}"))?;
+    if lua_reply.trim_ascii() == b"ok" {
+        return Ok(());
     }
-    Ok(())
+    let legacy_reply = send(&format!("dispatch {legacy}"))?;
+    if legacy_reply.trim_ascii() == b"ok" {
+        return Ok(());
+    }
+    bail!(
+        "{} / {}",
+        String::from_utf8_lossy(lua_reply.trim_ascii()),
+        String::from_utf8_lossy(legacy_reply.trim_ascii())
+    )
+}
+
+fn send_dispatch(command: &str) -> Result<Vec<u8>> {
+    let mut ipc = ipc_connection()?;
+    read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)
 }
 
 /// The active window's address, or `None` when no window has focus.
@@ -854,36 +879,33 @@ pub fn single_output_workspace() -> Result<Option<i64>> {
     })
 }
 
-/// Show one workspace (`dispatch workspace <id>`). Only for handing the
-/// person's empty workspace back after an exact-window browser setup or
-/// consent prompt moved them to the browser's.
+/// Show one workspace. Only for handing the person's empty workspace back
+/// after an exact-window browser setup or consent prompt moved them to the
+/// browser's.
 pub fn restore_workspace(id: i64) -> Result<()> {
-    let mut ipc = ipc_connection()?;
-    let command = format!("dispatch workspace {id}");
-    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
-    if reply.trim_ascii() != b"ok" {
-        bail!(
-            "Hyprland workspace switch refused: {}",
-            String::from_utf8_lossy(&reply)
-        );
-    }
-    Ok(())
+    dispatch_compat(
+        &format!("hl.dsp.focus({{ workspace = \"{id}\" }})"),
+        &format!("workspace {id}"),
+        send_dispatch,
+    )
+    .context("Hyprland workspace switch refused")
 }
 
-/// Focus one exact window (`dispatch focuswindow address:0x…`). Only for
-/// handing focus back to the window that held it before an exact-window
-/// browser setup transaction.
+/// Focus one exact window. Only for handing focus back to the window that
+/// held it before an exact-window browser setup transaction. An `ok` reply
+/// is not proof: callers re-read the active window.
 pub fn restore_focus_to_window(address: u64) -> Result<()> {
-    let mut ipc = ipc_connection()?;
-    let command = format!("dispatch focuswindow address:0x{address:x}");
-    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
-    if reply.trim_ascii() != b"ok" {
-        bail!(
-            "Hyprland focuswindow refused: {}",
-            String::from_utf8_lossy(&reply)
-        );
-    }
-    Ok(())
+    dispatch_compat(
+        &format!("hl.dsp.focus({{ window = \"address:0x{address:x}\" }})"),
+        &format!("focuswindow address:0x{address:x}"),
+        send_dispatch,
+    )
+    .context("Hyprland window focus refused")
+}
+
+/// The workspace that holds `address`, when it is a mapped client.
+pub fn window_workspace(address: u64) -> Option<i64> {
+    window_for_address(address).map(|window| window.workspace)
 }
 
 pub fn window_for_address(address: u64) -> Option<Window> {
@@ -994,6 +1016,48 @@ pub fn capture(address: u64, pid: Option<u32>) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dispatch_compat_prefers_lua_and_falls_back_once_to_the_classic_form() {
+        let mut sent = Vec::new();
+        dispatch_compat(
+            "hl.dsp.focus({ workspace = \"1\" })",
+            "workspace 1",
+            |command| {
+                sent.push(command.to_owned());
+                Ok(b"ok".to_vec())
+            },
+        )
+        .unwrap();
+        assert_eq!(sent, ["dispatch hl.dsp.focus({ workspace = \"1\" })"]);
+
+        // A Lua-config parser error on the classic form, or the reverse on a
+        // hyprlang config: exactly one fallback, then success.
+        let mut sent = Vec::new();
+        dispatch_compat(
+            "hl.dsp.cursor.move({ x = 1, y = 2 })",
+            "movecursor 1 2",
+            |command| {
+                sent.push(command.to_owned());
+                Ok(if command.starts_with("dispatch hl.") {
+                    b"error: unknown dispatcher".to_vec()
+                } else {
+                    b"ok".to_vec()
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            sent,
+            [
+                "dispatch hl.dsp.cursor.move({ x = 1, y = 2 })",
+                "dispatch movecursor 1 2"
+            ]
+        );
+
+        let error = dispatch_compat("lua()", "legacy", |_| Ok(b"nope".to_vec())).unwrap_err();
+        assert!(error.to_string().contains("nope / nope"), "{error}");
+    }
+
     use super::*;
 
     fn window(address: u64, pid: u32) -> Window {

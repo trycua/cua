@@ -35,6 +35,7 @@ export type TelemetrySignal =
       stalled: boolean;
       elapsedMs: number;
       gpu: boolean;
+      errorVariant: string;
     }
   | { type: "space-create-started"; location: string; guestOs: string; kind: string; gpu: boolean }
   | { type: "volume-setup"; surface: string; storage: string; addToFinder: boolean; mountMethod: string; outcome: string }
@@ -53,7 +54,7 @@ export interface TelemetryOps {
 
 /* ---- What may cross the bridge ------------------------------------------------ */
 
-type Field = "word" | "flag" | "maybe-flag" | "ms" | "words";
+type Field = "word" | "flag" | "maybe-flag" | "ms" | "words" | "variant";
 
 /** Every signal's fields and what each may hold. */
 const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
@@ -72,6 +73,7 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
     stalled: "flag",
     elapsedMs: "ms",
     gpu: "flag",
+    errorVariant: "variant",
   },
   "space-create-started": { location: "word", guestOs: "word", kind: "word", gpu: "flag" },
   "volume-setup": { surface: "word", storage: "word", addToFinder: "flag", mountMethod: "word", outcome: "word" },
@@ -85,6 +87,8 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
 /** A fixed word from the schema (`space_create_local`, `this_mac`). Names,
  * emails, paths and URLs never match. */
 const WORD = /^[a-z0-9_]{1,64}$/;
+/** An error enum case (`InsufficientDisk`), or empty when the shell has none. */
+const VARIANT = /^[A-Za-z0-9_]{0,64}$/;
 
 function valid(kind: Field, v: unknown): boolean {
   switch (kind) {
@@ -98,6 +102,8 @@ function valid(kind: Field, v: unknown): boolean {
       return typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
     case "words":
       return Array.isArray(v) && v.length <= 16 && v.every((w) => typeof w === "string" && WORD.test(w));
+    case "variant":
+      return typeof v === "string" && VARIANT.test(v);
   }
 }
 
@@ -116,7 +122,8 @@ export function sanitizeSignals(signals: readonly unknown[]): TelemetrySignal[] 
     const clean: Record<string, unknown> = { type };
     let ok = true;
     for (const [key, kind] of Object.entries(shape)) {
-      const v = (s as Record<string, unknown>)[key];
+      let v = (s as Record<string, unknown>)[key];
+      if (kind === "variant" && v === undefined) v = "";
       if (!valid(kind, v)) {
         ok = false;
         break;

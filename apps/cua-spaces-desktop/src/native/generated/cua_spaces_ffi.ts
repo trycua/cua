@@ -12348,7 +12348,11 @@ export type AppSandboxImage = {
     /**
      * How big it is per platform, when measured.
      */
-    sizes?: AppImageSizes
+    sizes?: AppImageSizes,
+    /**
+     * `false`: its guest cannot use GPU acceleration.
+     */
+    gpu: boolean
 }
 
 /**
@@ -12385,7 +12389,8 @@ const FfiConverterTypeAppSandboxImage = (() => {
                 published: FfiConverterBool.read(from),
                 distro: FfiConverterOptionalTypeAppImageDistro.read(from),
                 arch: FfiConverterSequenceString.read(from),
-                sizes: FfiConverterOptionalTypeAppImageSizes.read(from)
+                sizes: FfiConverterOptionalTypeAppImageSizes.read(from),
+                gpu: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12403,6 +12408,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
             FfiConverterOptionalTypeAppImageDistro.write(value.distro, into);
             FfiConverterSequenceString.write(value.arch, into);
             FfiConverterOptionalTypeAppImageSizes.write(value.sizes, into);
+            FfiConverterBool.write(value.gpu, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.imageRef) +
@@ -12418,7 +12424,8 @@ const FfiConverterTypeAppSandboxImage = (() => {
              FfiConverterBool.allocationSize(value.published) +
              FfiConverterOptionalTypeAppImageDistro.allocationSize(value.distro) +
              FfiConverterSequenceString.allocationSize(value.arch) +
-             FfiConverterOptionalTypeAppImageSizes.allocationSize(value.sizes);
+             FfiConverterOptionalTypeAppImageSizes.allocationSize(value.sizes) +
+             FfiConverterBool.allocationSize(value.gpu);
 
         }
     };
@@ -43127,7 +43134,7 @@ inner: {id: string; spaceId: string }): Finish_ {
     type Fail__interface = {
         tag: AppCreateAction_Tags.Fail;
         inner:
-Readonly<{id: string; error: string}>
+Readonly<{id: string; error: string; errorVariant: string}>
     };
     /**
      * The create failed.
@@ -43140,15 +43147,15 @@ Readonly<{id: string; error: string}>
         readonly [uniffiTypeNameSymbol] = "AppCreateAction";
         readonly tag = AppCreateAction_Tags.Fail;
         readonly inner:
-Readonly<{id: string; error: string}>;
+Readonly<{id: string; error: string; errorVariant: string}>;
         constructor(
-inner: {id: string; error: string }) {
+inner: {id: string; error: string; errorVariant: string }) {
             super("AppCreateAction", "Fail");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {id: string; error: string }): Fail_ {
+inner: {id: string; error: string; errorVariant: string }): Fail_ {
             return new Fail_(inner);
         }
 
@@ -43443,7 +43450,7 @@ const FfiConverterTypeAppCreateAction = (() => {
                 case 5: return new AppCreateAction.CancelFail({id: FfiConverterString.read(from), error: FfiConverterString.read(from) });
                 case 6: return new AppCreateAction.Tick({now: FfiConverterInt64.read(from) });
                 case 7: return new AppCreateAction.Finish({id: FfiConverterString.read(from), spaceId: FfiConverterString.read(from) });
-                case 8: return new AppCreateAction.Fail({id: FfiConverterString.read(from), error: FfiConverterString.read(from) });
+                case 8: return new AppCreateAction.Fail({id: FfiConverterString.read(from), error: FfiConverterString.read(from), errorVariant: FfiConverterString.read(from) });
                 case 9: return new AppCreateAction.Dismiss({id: FfiConverterString.read(from) });
                 case 10: return new AppCreateAction.DeleteStart({id: FfiConverterString.read(from), now: FfiConverterInt64.read(from) });
                 case 11: return new AppCreateAction.DeleteFail({id: FfiConverterString.read(from) });
@@ -43521,6 +43528,7 @@ const FfiConverterTypeAppCreateAction = (() => {
                     const inner = value.inner;
                     FfiConverterString.write(inner.id, into);
                     FfiConverterString.write(inner.error, into);
+                    FfiConverterString.write(inner.errorVariant, into);
                     return;
                 }
                 case AppCreateAction_Tags.Dismiss: {
@@ -43641,6 +43649,7 @@ const FfiConverterTypeAppCreateAction = (() => {
                     let size = ordinalConverter.allocationSize(8);
                     size += FfiConverterString.allocationSize(inner.id);
                     size += FfiConverterString.allocationSize(inner.error);
+                    size += FfiConverterString.allocationSize(inner.errorVariant);
                     return size;
                 }
                 case AppCreateAction_Tags.Dismiss: {
@@ -50772,7 +50781,7 @@ inner: {action: string }): SpaceWizard_ {
     type SpaceCreate__interface = {
         tag: AppTelemetrySignal_Tags.SpaceCreate;
         inner:
-Readonly<{location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean}>
+Readonly<{location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean; errorVariant: string}>
     };
     /**
      * A Space create reached ready or failed (`cua_space_create`).
@@ -50785,15 +50794,15 @@ Readonly<{location: string; guestOs: string; kind: string; outcome: string; fail
         readonly [uniffiTypeNameSymbol] = "AppTelemetrySignal";
         readonly tag = AppTelemetrySignal_Tags.SpaceCreate;
         readonly inner:
-Readonly<{location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean}>;
+Readonly<{location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean; errorVariant: string}>;
         constructor(
-inner: {location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean }) {
+inner: {location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean; errorVariant: string }) {
             super("AppTelemetrySignal", "SpaceCreate");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean }): SpaceCreate_ {
+inner: {location: string; guestOs: string; kind: string; outcome: string; failedPhase: string; stalled: boolean; elapsedMs: bigint; gpu: boolean; errorVariant: string }): SpaceCreate_ {
             return new SpaceCreate_(inner);
         }
 
@@ -51084,7 +51093,7 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                 case 4: return new AppTelemetrySignal.SignInFailed({errorKind: FfiConverterString.read(from) });
                 case 5: return new AppTelemetrySignal.OnboardingPage({page: FfiConverterString.read(from), action: FfiConverterString.read(from), choice: FfiConverterString.read(from) });
                 case 6: return new AppTelemetrySignal.SpaceWizard({action: FfiConverterString.read(from) });
-                case 7: return new AppTelemetrySignal.SpaceCreate({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), outcome: FfiConverterString.read(from), failedPhase: FfiConverterString.read(from), stalled: FfiConverterBool.read(from), elapsedMs: FfiConverterUInt64.read(from), gpu: FfiConverterBool.read(from) });
+                case 7: return new AppTelemetrySignal.SpaceCreate({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), outcome: FfiConverterString.read(from), failedPhase: FfiConverterString.read(from), stalled: FfiConverterBool.read(from), elapsedMs: FfiConverterUInt64.read(from), gpu: FfiConverterBool.read(from), errorVariant: FfiConverterString.read(from) });
                 case 8: return new AppTelemetrySignal.SpaceCreateStarted({location: FfiConverterString.read(from), guestOs: FfiConverterString.read(from), kind: FfiConverterString.read(from), gpu: FfiConverterBool.read(from) });
                 case 9: return new AppTelemetrySignal.VolumeSetup({surface: FfiConverterString.read(from), storage: FfiConverterString.read(from), addToFinder: FfiConverterBool.read(from), mountMethod: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
                 case 10: return new AppTelemetrySignal.Share({action: FfiConverterString.read(from), role: FfiConverterString.read(from), outcome: FfiConverterString.read(from) });
@@ -51147,6 +51156,7 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                     FfiConverterBool.write(inner.stalled, into);
                     FfiConverterUInt64.write(inner.elapsedMs, into);
                     FfiConverterBool.write(inner.gpu, into);
+                    FfiConverterString.write(inner.errorVariant, into);
                     return;
                 }
                 case AppTelemetrySignal_Tags.SpaceCreateStarted: {
@@ -51261,6 +51271,7 @@ const FfiConverterTypeAppTelemetrySignal = (() => {
                     size += FfiConverterBool.allocationSize(inner.stalled);
                     size += FfiConverterUInt64.allocationSize(inner.elapsedMs);
                     size += FfiConverterBool.allocationSize(inner.gpu);
+                    size += FfiConverterString.allocationSize(inner.errorVariant);
                     return size;
                 }
                 case AppTelemetrySignal_Tags.SpaceCreateStarted: {

@@ -127,12 +127,13 @@ impl FocusRestore {
         if prior.is_none() {
             // Watch first: the barrier must precede the state it protects, or
             // a switch the person made while the watch started would be undone.
-            let mut input =
-                crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(400))
-                    .map_err(|error| {
-                        tracing::debug!(%error, "focus hand-back disabled: no physical-input watch")
-                    })
-                    .ok();
+            let mut input = crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(
+                400,
+            ))
+            .map_err(
+                |error| tracing::info!(%error, "focus hand-back disabled: no physical-input watch"),
+            )
+            .ok();
             let window = crate::wayland::hyprland::active_window_address()?;
             let workspace = crate::wayland::hyprland::single_output_workspace()?;
             let cursor = crate::wayland::hyprland::cursor_position()?;
@@ -140,7 +141,7 @@ impl FocusRestore {
                 .as_mut()
                 .is_some_and(|watch| !watch.quiet_since_begin(Duration::from_millis(200)))
             {
-                tracing::debug!("focus hand-back disabled: the person acted during capture");
+                tracing::info!("focus hand-back disabled: the person acted during capture");
                 input = None;
             }
             *prior = Some(PriorFocus {
@@ -162,7 +163,7 @@ impl FocusRestore {
     pub(crate) fn guard_consent_prompt(pid: u32, target: u64) -> Option<RestoreFocusOnDrop> {
         let focus = Self::default();
         if let Err(error) = focus.capture(pid, target) {
-            tracing::debug!(%error, "could not capture focus before browser consent");
+            tracing::info!(%error, "could not capture focus before browser consent");
             return None;
         }
         Some(focus.restore_on_drop())
@@ -179,7 +180,9 @@ impl FocusRestore {
             .as_mut()
             .is_some_and(|watch| watch.quiet_since_begin(Duration::from_millis(500)))
         {
-            tracing::debug!("person used the desktop or input quiet is unproven; leaving focus");
+            tracing::info!(
+                "focus hand-back skipped: the person used the desktop or input quiet is unproven"
+            );
             return;
         }
         let target_active = || {
@@ -216,7 +219,15 @@ impl FocusRestore {
         ) {
             HandBack::Workspace(workspace)
         } else {
-            tracing::debug!("browser setup or consent left focus where the person has it");
+            // One content-free line per transaction, so a skipped hand-back
+            // is diagnosable without debug logging.
+            tracing::info!(
+                prior_was_browser = prior.window == Some(prior.target),
+                prior_window_present = prior.window.is_some(),
+                browser_active = target_active(),
+                pointer_left_alone = pointer_unmoved(),
+                "focus hand-back skipped: focus is where the person or browser left it"
+            );
             return;
         };
         let Some(input) = prior.input.as_mut() else {
@@ -227,7 +238,7 @@ impl FocusRestore {
                 tracing::info!("restored prior focus and pointer after browser setup or consent")
             }
             Ok(HandBackOutcome::PersonActed) => {
-                tracing::debug!("the person acted during the hand-back; leaving focus to them")
+                tracing::info!("focus hand-back stopped: the person acted during it")
             }
             Ok(HandBackOutcome::FocusStayed { realigned }) => tracing::warn!(
                 realigned,

@@ -232,12 +232,22 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     } else {
         "arguments"
     };
+    // `element_index` was the pre-token way to address a row. A caller still
+    // sending it needs the token form, and the session that keeps it live.
+    let retired_element_index = unknown.contains(&"element_index")
+        && properties.is_some_and(|properties| properties.contains_key("element_token"));
     let hint = if name_targeted {
         format!(
             ". To target by role/name/app/window, send the same arguments as one run_steps \
              step: run_steps {{\"steps\":[{{\"{}\": {{...}}}}]}}",
             def.name
         )
+    } else if retired_element_index {
+        ". element_index was replaced by element_token: pass the \"<snapshot_id>:<row>\" \
+         token that get_window_state printed for the row, and pass the same `session` label \
+         to the read and to this call (one-shot `cua-driver call` commands without one each \
+         run in their own session, so their tokens go stale)"
+            .to_owned()
     } else {
         String::new()
     };
@@ -6975,6 +6985,37 @@ mod argument_shape_tests {
         assert!(detail.contains("one run_steps step"), "{detail}");
         let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
         assert!(!other.contains("run_steps"), "{other}");
+    }
+
+    #[test]
+    fn a_retired_element_index_points_to_element_token_and_session() {
+        let click = ToolDef {
+            name: "element_fixture".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "integer"},
+                    "element_token": {"type": "string"},
+                    "session": {"type": "string"},
+                },
+                "additionalProperties": false,
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let detail = unknown_argument(&click, &json!({"pid": 1, "element_index": 4})).unwrap();
+        assert!(
+            detail.starts_with("argument element_index; accepted: element_token, pid. "),
+            "{detail}"
+        );
+        assert!(detail.contains("replaced by element_token"), "{detail}");
+        assert!(detail.contains("same `session` label"), "{detail}");
+
+        let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
+        assert!(!other.contains("element_token:"), "{other}");
     }
 
     #[test]

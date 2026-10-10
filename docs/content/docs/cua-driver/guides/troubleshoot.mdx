@@ -25,9 +25,10 @@ before sharing.
 | `libXi.so.6: cannot open shared object file` | `sudo apt install libxi6 at-spi2-core`. |
 | `doctor` warns AT-SPI is unreachable | `get_window_state` needs the accessibility bus; start the app inside a full desktop session. |
 | Action returned success but nothing changed | Check `effect` and follow `escalation`; see [the action ladder](/cua-driver/concepts/how-cua-driver-works#the-action-ladder). |
-| `stale_element_token` | Call `get_window_state` again and use a fresh `element_token`. The refusal lists the process's current snapshots, so you can tell whether you already hold a newer one. The accessibility route still works. |
+| `stale_element_token` | Call `get_window_state` again and use a fresh `element_token`. The refusal lists the process's current snapshots, so you can tell whether you already hold a newer one. With one-shot `cua-driver call` commands, pass the same `session` label to the read and to the action: without one, each call's snapshots end with that call. The accessibility route still works. |
 | `screenshot_context_missing` | A window-relative pixel action came before a screenshot read of that window in the same session. Call `get_window_state` (with its screenshot) first, using the same `session` label for one-shot CLI calls. |
-| `invalid_arguments` (`unknown argument element_index`) | Action tools take `element_token` only; read it from the latest `get_window_state` row. |
+| `invalid_arguments` (`unknown argument element_index`) | Action tools take `element_token` only; read it from the latest `get_window_state` row, in the same `session` as the action. |
+| Installer reports `/Applications` is not writable | Current installers put the app in `~/Applications/CuaDriver.app` for users who cannot write to `/Applications`; rerun the installer. Use that path wherever this page says `/Applications/CuaDriver.app`. |
 | `desktop_scope_disabled` | A legacy window-less call: pass a window target, or `target: {kind: "desktop", display_id: "primary"}`. |
 
 ## Reset stale macOS permissions

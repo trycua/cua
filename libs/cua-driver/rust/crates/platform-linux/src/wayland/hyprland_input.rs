@@ -172,9 +172,14 @@ pub(crate) fn scroll_actions(
     Ok(actions)
 }
 
+/// A caller's last word before each packet leaves: runs after connection,
+/// attestation and target binding, immediately before dispatch, on every
+/// retry and every text character. An error sends nothing.
+type DispatchGuard = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+
 /// Cancellation belongs to one invocation, never to its session's next call.
 #[derive(Clone, Default)]
-pub(crate) struct ActionCancellation(Arc<AtomicBool>);
+pub(crate) struct ActionCancellation(Arc<AtomicBool>, Option<DispatchGuard>);
 
 pub(crate) struct CancelOnDrop(ActionCancellation);
 
@@ -189,6 +194,23 @@ impl ActionCancellation {
             return Err(ActionCancelled.into());
         }
         Ok(())
+    }
+
+    /// The same cancellation, with `guard` run immediately before each
+    /// packet is dispatched.
+    pub(crate) fn with_dispatch_guard(
+        &self,
+        guard: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self(self.0.clone(), Some(Arc::new(guard)))
+    }
+
+    fn before_dispatch(&self) -> Result<()> {
+        self.check()?;
+        match &self.1 {
+            Some(guard) => guard(),
+            None => Ok(()),
+        }
     }
 }
 
@@ -726,6 +748,7 @@ impl Client {
             width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
             "invalid target geometry"
         );
+        self.cancellation.before_dispatch()?;
         self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
         let packet = action.packet(self.sequence, &token, revision, width, height)?;
         let mut reply = self.dispatch_routed_with_started(&packet, is_drag, &mut started, route)?;
@@ -2072,6 +2095,47 @@ mod tests {
             let before = value.clone();
             explain_session_unavailable(&mut value, || Some("compositor_dpms_off"));
             assert_eq!(value, before);
+        }
+    }
+
+    #[test]
+    fn dispatch_guard_runs_after_binding_and_sends_nothing_on_refusal() {
+        for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
+            reset_test_attestations();
+            let (mut client, peer) = production_test_client();
+            // The caller's condition fails after the target is bound (the
+            // person selected another tab while the input layer attested).
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let seen = calls.clone();
+            client.cancellation = ActionCancellation::default().with_dispatch_guard(move || {
+                seen.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("owned tab no longer selected")
+            });
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), target_command(route));
+                peer.send(
+                    json!({"ok":true,"route":route.acknowledgement(),
+                        "target":format!("{:032x}", 1),"revision":11,"width":100,"height":100})
+                    .to_string()
+                    .as_bytes(),
+                )
+                .unwrap();
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0,
+                    "no packet may follow a refused dispatch guard"
+                );
+            });
+
+            let mut slot = Some(client);
+            let error = dispatch_production_key(&mut slot, route).unwrap_err();
+            assert!(!error.is::<DispatchUnknown>(), "{error}");
+            assert!(error.to_string().contains("owned tab"), "{error}");
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            // A refused call retires its connection, like any other failure.
+            assert!(slot.is_none());
+            server.join().unwrap();
         }
     }
 

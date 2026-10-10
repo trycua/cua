@@ -370,6 +370,21 @@ fn hand_back(
     Ok(HandBackOutcome::Restored)
 }
 
+/// Order for every owned-tab keystroke: finish anything slow (the focus
+/// capture waits for input to go quiet), then recheck that the owned tab is
+/// still selected, then send at once. A tab the person selects during the
+/// slow step is seen by the recheck instead of receiving the key.
+fn recheck_then_send<C, T>(
+    context: &mut C,
+    ready: impl FnOnce(&mut C) -> anyhow::Result<()>,
+    recheck: impl FnOnce(&mut C) -> anyhow::Result<()>,
+    send: impl FnOnce(&mut C) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    ready(context)?;
+    recheck(context)?;
+    send(context)
+}
+
 /// Ends a setup transaction on every path, including errors and panics.
 pub(crate) struct RestoreFocusOnDrop(FocusRestore);
 
@@ -384,6 +399,16 @@ impl SetupInput {
         self.cancellation.check()?;
         if cua_driver_core::session::is_session_ending(&self.lane_owner) {
             anyhow::bail!("browser setup lifecycle is ending");
+        }
+        Ok(())
+    }
+
+    /// Finish the one-time focus capture before an owned-tab recheck: the
+    /// capture waits for the person's input to go quiet, and a tab switch
+    /// during that wait must be seen by the recheck, not follow it.
+    fn ready(&self, pid: u32, window_id: u64) -> anyhow::Result<()> {
+        if self.hyprland {
+            self.focus.capture(pid, window_id)?;
         }
         Ok(())
     }
@@ -821,8 +846,17 @@ fn trusted_setup_navigation(
         handle
             .owned_tab_tree()
             .map_err(|error| anyhow::anyhow!(error.message))?;
-        handle.require_owned_tab_selected_now()?;
-        handle.record_input_result(input.type_setup_url(pid, window_id, descriptor.setup_url))?;
+        recheck_then_send(
+            handle,
+            |handle| handle.input.ready(pid, window_id),
+            |handle| handle.require_owned_tab_selected_now(),
+            |handle| {
+                let typed = handle
+                    .input
+                    .type_setup_url(pid, window_id, descriptor.setup_url);
+                handle.record_input_result(typed)
+            },
+        )?;
     } else {
         handle.require_owned_tab_selected_now()?;
         use cua_driver_core::clipboard::ClipboardBackend;
@@ -1040,8 +1074,12 @@ impl SetupUiHandle {
     }
 
     fn owned_hotkey(&mut self, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-        self.require_owned_tab_selected_now()?;
-        self.hotkey(key, modifiers)
+        recheck_then_send(
+            self,
+            |handle| handle.input.ready(handle.pid, handle.window_id),
+            |handle| handle.require_owned_tab_selected_now(),
+            |handle| handle.hotkey(key, modifiers),
+        )
     }
 
     /// Close the owned tab with the window's shortcut, then prove its exact
@@ -1052,10 +1090,21 @@ impl SetupUiHandle {
             .owned_setup_tab
             .clone()
             .ok_or_else(|| anyhow::anyhow!("this setup has no independently proven created tab"))?;
-        if self.require_owned_tab_selected_now().is_err() {
+        let mut recheck_failed = false;
+        let sent = recheck_then_send(
+            self,
+            |handle| handle.input.ready(handle.pid, handle.window_id),
+            |handle| {
+                let result = handle.require_owned_tab_selected_now();
+                recheck_failed = result.is_err();
+                result
+            },
+            |handle| handle.hotkey("w", &["ctrl"]),
+        );
+        if recheck_failed {
             return Ok(false);
         }
-        if let Err(error) = self.hotkey("w", &["ctrl"]) {
+        if let Err(error) = sent {
             // A refused shortcut was never sent. One that may have landed
             // must not be followed by rollback input on whatever tab
             // Chromium selected next.
@@ -1721,6 +1770,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_tab_selected_during_slow_preparation_never_receives_the_key() {
+        struct Browser {
+            owned_selected: bool,
+            sent: Vec<&'static str>,
+        }
+        let mut browser = Browser {
+            owned_selected: true,
+            sent: Vec::new(),
+        };
+        // The person selects their own tab while the capture waits.
+        let result = recheck_then_send(
+            &mut browser,
+            |browser| {
+                browser.owned_selected = false;
+                Ok(())
+            },
+            |browser| {
+                if browser.owned_selected {
+                    Ok(())
+                } else {
+                    anyhow::bail!("owned tab no longer selected")
+                }
+            },
+            |browser| {
+                browser.sent.push("ctrl+w");
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(browser.sent.is_empty());
+
+        browser.owned_selected = true;
+        recheck_then_send(
+            &mut browser,
+            |_| Ok(()),
+            |browser| {
+                assert!(browser.owned_selected);
+                Ok(())
+            },
+            |browser| {
+                browser.sent.push("ctrl+w");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(browser.sent, ["ctrl+w"]);
     }
 
     #[test]

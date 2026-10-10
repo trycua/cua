@@ -27,6 +27,7 @@ pub const PROVIDER_IDS: &[&str] = &[
     electron::DISCORD.id,
     electron::VSCODE.id,
     electron::NOTION.id,
+    electron::CLAUDE_DESKTOP.id,
     electron::UNITY_HUB.id,
     steam::ID,
     whatsapp::ID,
@@ -413,6 +414,19 @@ pub mod electron {
         home_extra: &[],
     };
 
+    /// Claude (the desktop app, not the `claude-code` CLI). Besides the
+    /// `sessionKey` cookies, `config.json` holds its OAuth token cache.
+    pub const CLAUDE_DESKTOP: ElectronApp = ElectronApp {
+        id: "claude-desktop",
+        display: "Claude",
+        // Not "claude": that already names the Claude Code CLI provider.
+        app_ids: &["com.anthropic.claudefordesktop", "claude-desktop"],
+        support_dir: "Claude",
+        keychain_services: &["Claude Safe Storage"],
+        extra: &["config.json"],
+        home_extra: &[],
+    };
+
     /// Unity Hub.
     ///
     /// Login lives in accounts.db plus the "unity" Keychain item (service
@@ -461,7 +475,7 @@ pub mod electron {
     };
 
     /// The built-in Electron apps, in registry order.
-    pub const APPS: &[ElectronApp] = &[SLACK, DISCORD, VSCODE, NOTION, UNITY_HUB];
+    pub const APPS: &[ElectronApp] = &[SLACK, DISCORD, VSCODE, NOTION, CLAUDE_DESKTOP, UNITY_HUB];
 
     /// The built-in Electron app with provider id `id`.
     pub fn app(id: &str) -> Option<ElectronApp> {
@@ -788,6 +802,7 @@ mod tests {
                 "discord",
                 "vscode",
                 "notion",
+                "claude-desktop",
                 "unity-hub",
                 "steam",
                 "whatsapp",

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use cua_teleport_bundle::bundle::{BundleReader, DEFAULT_MAX_TOTAL_BYTES};
 use cua_teleport_bundle::cookies::COOKIES_ENTRY;
 use cua_teleport_bundle::layout::electron::{
-    launch_spec_for, process_pattern, profile_dir, remap, ElectronApp, DISCORD, NOTION, SLACK,
-    UNITY_HUB, VSCODE,
+    launch_spec_for, process_pattern, profile_dir, remap, ElectronApp, CLAUDE_DESKTOP, DISCORD,
+    NOTION, SLACK, UNITY_HUB, VSCODE,
 };
 use cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY;
 use cua_teleport_bundle::{LaunchSpec, Platform};
@@ -67,6 +67,11 @@ impl ElectronImporter {
     /// Notion.
     pub fn notion() -> Self {
         Self::new(NOTION)
+    }
+
+    /// Claude (the desktop app).
+    pub fn claude_desktop() -> Self {
+        Self::new(CLAUDE_DESKTOP)
     }
 
     /// Unity Hub.

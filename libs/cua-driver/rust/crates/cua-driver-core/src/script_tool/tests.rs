@@ -433,30 +433,77 @@ async fn bad_requests_are_rejected_before_running() {
 }
 
 #[test]
-fn the_tool_is_off_unless_the_operator_opts_in() {
+fn the_tool_is_on_unless_the_operator_turns_it_off() {
+    use super::disabled_from as off;
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.json");
-    assert!(!super::enabled_from(None, None), "off by default");
-    assert!(!super::enabled_from(None, Some(&config)), "no config file");
+    assert_eq!(off(None, None, None), None, "on by default");
+    assert_eq!(off(None, None, Some(&config)), None, "no config file");
+    std::fs::write(&config, "not json").unwrap();
+    assert_eq!(off(None, None, Some(&config)), None, "unreadable config");
     std::fs::write(&config, r#"{"experimental_pip": true}"#).unwrap();
-    assert!(!super::enabled_from(None, Some(&config)));
-    std::fs::write(&config, r#"{"experimental_script": true}"#).unwrap();
-    assert!(super::enabled_from(None, Some(&config)), "config opt-in");
-    assert!(
-        !super::enabled_from(Some("0"), Some(&config)),
-        "the environment wins"
-    );
-    assert!(super::enabled_from(Some("1"), None));
-    assert!(super::enabled_from(Some(" TRUE "), None));
-    assert!(!super::enabled_from(Some("maybe"), None));
+    assert_eq!(off(None, None, Some(&config)), None, "other keys");
+
+    // The opt-outs.
+    assert!(off(Some("1"), None, None)
+        .unwrap()
+        .contains("CUA_DRIVER_DISABLE_RUN_SCRIPT"));
+    assert!(off(Some(" TRUE "), None, None).is_some());
+    assert_eq!(off(Some("0"), None, None), None);
+    assert_eq!(off(Some("maybe"), None, None), None);
+    std::fs::write(&config, r#"{"disable_run_script": true}"#).unwrap();
+    assert!(off(None, None, Some(&config))
+        .unwrap()
+        .contains("disable_run_script"));
+    std::fs::write(&config, r#"{"disable_run_script": false}"#).unwrap();
+    assert_eq!(off(None, None, Some(&config)), None);
+    std::fs::write(&config, r#"{"experimental_script": false}"#).unwrap();
+    assert!(off(None, None, Some(&config))
+        .unwrap()
+        .contains("experimental_script"));
 }
 
 #[test]
-fn an_unflagged_registry_does_not_offer_the_tool() {
+fn the_legacy_opt_in_flag_can_only_turn_the_tool_off() {
+    use super::disabled_from as off;
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.json");
+    // `=1` and `true` were the old opt-in: now they change nothing.
+    assert_eq!(off(None, Some("1"), None), None);
+    std::fs::write(&config, r#"{"experimental_script": true}"#).unwrap();
+    assert_eq!(off(None, None, Some(&config)), None);
+    // ...and they do not override an opt-out.
+    assert!(off(Some("1"), Some("1"), Some(&config)).is_some());
+    std::fs::write(
+        &config,
+        r#"{"experimental_script": true, "disable_run_script": true}"#,
+    )
+    .unwrap();
+    assert!(off(None, Some("1"), Some(&config)).is_some());
+    std::fs::write(&config, r#"{"experimental_script": false}"#).unwrap();
+    assert!(off(None, Some("1"), Some(&config)).is_some());
+    // `=0` turns it off, even over a config opt-in.
+    std::fs::write(&config, r#"{"experimental_script": true}"#).unwrap();
+    assert!(off(None, Some("0"), Some(&config))
+        .unwrap()
+        .contains("CUA_DRIVER_EXPERIMENTAL_SCRIPT=0"));
+    assert!(off(None, Some("false"), None).is_some());
+}
+
+#[test]
+fn a_default_registry_offers_the_tool() {
     let mut registry = ToolRegistry::new();
     registry.register_session_tools();
-    // The flag is off in the test environment unless someone set it.
-    if !super::enabled() {
+    // On unless whoever runs the tests turned it off.
+    if super::enabled() {
+        assert!(registry.get_def(super::RUN_SCRIPT_TOOL).is_some());
+        let listed = registry.tools_list();
+        assert!(listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == super::RUN_SCRIPT_TOOL));
+    } else {
         assert!(registry.get_def(super::RUN_SCRIPT_TOOL).is_none());
     }
     assert!(registry

@@ -99,6 +99,22 @@ impl Tool for SetConfigTool {
                 "replacement": "action.target",
             }));
         }
+        // Whether run_script is offered is the operator's choice, made in
+        // config.json or the environment; a model cannot change it.
+        if let Some(key) = args
+            .get("key")
+            .and_then(Value::as_str)
+            .filter(|key| matches!(*key, "disable_run_script" | "experimental_script"))
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
+        }
         // The daemon injects `_session_id` for non-anonymous MCP sessions.
         // Absent => anonymous/global session (CLI one-shot, legacy proxy) =>
         // today's behavior: write the shared global DriverConfig + persist to

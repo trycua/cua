@@ -221,6 +221,13 @@ instead of `null`, and the always-empty `windows: []` is gone. The typed SDKs
 already treat them as optional. For an app's windows, call
 `list_windows({app: "Name"})`.
 
+`tools/list` also grows by one: `run_script` (sandboxed JavaScript that drives
+the driver's own tools in one call) is on by default. Client allowlists and
+tool-count checks need the new name. Turn it off with
+`CUA_DRIVER_DISABLE_RUN_SCRIPT=1` or `"disable_run_script": true` in
+`~/.cua-driver/config.json`; the old opt-in `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1`
+is no longer needed and is ignored.
+
 ### Before updating to token-only element targeting
 
 Releases that include [#3873](https://github.com/trycua/cua/pull/3873) address

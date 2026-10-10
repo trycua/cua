@@ -289,6 +289,7 @@ class TaskRunner:
 
         # Track log streaming process for cleanup
         log_stream_process = None
+        completed_result: Optional[TaskResult] = None
 
         try:
             # 1. Create network
@@ -381,7 +382,7 @@ class TaskRunner:
                 and oracle_result is not None
                 and oracle_result["success"] is True
             )
-            return TaskResult(
+            completed_result = TaskResult(
                 success=exit_code == 0 and oracle_passed,
                 exit_code=exit_code,
                 agent_logs=agent_logs,
@@ -393,6 +394,7 @@ class TaskRunner:
                 ),
                 oracle_result=oracle_result,
             )
+            return completed_result
 
         except Exception as e:
             # Collect logs on error
@@ -430,7 +432,18 @@ class TaskRunner:
                 await self._cleanup_task(task_id)
             finally:
                 if output_dir:
-                    await self._write_cleanup_receipt(task_id, output_dir)
+                    try:
+                        await self._write_cleanup_receipt(task_id, output_dir)
+                        cleanup = json.loads(
+                            (Path(output_dir) / "cleanup-result.json").read_text(encoding="utf-8")
+                        )
+                        if completed_result is not None and cleanup.get("verified") is not True:
+                            completed_result.success = False
+                            completed_result.error = "Task Docker resources not fully cleaned up"
+                    except Exception as exc:
+                        if completed_result is not None:
+                            completed_result.success = False
+                            completed_result.error = f"Unable to verify Docker cleanup: {type(exc).__name__}"
 
     async def run_task_interactively(
         self,

@@ -157,14 +157,17 @@ async def run_single_task(
         # Evaluate
         if env.evaluate_task_fn is not None:
             result = await env.evaluate()
-            if isinstance(result, (int, float)):
-                reward = float(result)
+            if isinstance(result, (int, float)) and not isinstance(result, bool):
+                raw_reward = result
             elif isinstance(result, list) and len(result) > 0:
-                reward = float(result[0])
+                raw_reward = result[0]
             elif isinstance(result, dict) and "reward" in result:
-                reward = float(result["reward"])
+                raw_reward = result["reward"]
             else:
                 raise ValueError("Evaluator returned an unsupported reward format")
+            if isinstance(raw_reward, bool) or not isinstance(raw_reward, (int, float)):
+                raise ValueError("Evaluator reward must be a numeric value, not a boolean or string")
+            reward = float(raw_reward)
             if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
                 raise ValueError(f"Evaluator reward must be finite and within [0, 1], got {reward!r}")
         else:

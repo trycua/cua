@@ -1409,6 +1409,20 @@ async def _cmd_run_dataset_async(args) -> int:
             print(f"{RED}Error: Dataset not found: {args.dataset_path}{RESET}")
             return 1
 
+    # Validate the pinned dataset before provider detection, task imports,
+    # session creation or asynchronous subprocess launch.
+    manifest_path = getattr(args, "dataset_manifest", None)
+    if manifest_path:
+        import json
+        from cua_bench.dataset_manifest import verify_dataset
+        try:
+            manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+            task_count = verify_dataset(dataset_path, manifest)
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"{RED}Error: Dataset manifest verification failed: {exc}{RESET}")
+            return 1
+        print(f"{GREEN}Verified pinned dataset: {task_count} tasks{RESET}")
+
     # Discover tasks in dataset
     tasks = []
 

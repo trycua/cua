@@ -833,6 +833,59 @@ pub fn move_cursor(x: f64, y: f64) -> Result<()> {
     Ok(())
 }
 
+/// The active window's address, or `None` when no window has focus.
+pub fn active_window_address() -> Result<Option<u64>> {
+    let active: serde_json::Value = query("j/activewindow")?;
+    let Some(address) = active.get("address").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    let address = u64::from_str_radix(address.strip_prefix("0x").unwrap_or(address), 16)
+        .context("invalid Hyprland active window address")?;
+    Ok((address != 0).then_some(address))
+}
+
+/// The only output's active (non-special) workspace, or `None` with several
+/// outputs, where one workspace id cannot describe what the person sees.
+pub fn single_output_workspace() -> Result<Option<i64>> {
+    let monitors: Vec<Monitor> = query("j/monitors")?;
+    Ok(match monitors.as_slice() {
+        [monitor] if monitor.active_workspace.id != 0 => Some(monitor.active_workspace.id),
+        _ => None,
+    })
+}
+
+/// Show one workspace (`dispatch workspace <id>`). Only for handing the
+/// person's empty workspace back after an exact-window browser setup or
+/// consent prompt moved them to the browser's.
+pub fn restore_workspace(id: i64) -> Result<()> {
+    let mut ipc = ipc_connection()?;
+    let command = format!("dispatch workspace {id}");
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if reply.trim_ascii() != b"ok" {
+        bail!(
+            "Hyprland workspace switch refused: {}",
+            String::from_utf8_lossy(&reply)
+        );
+    }
+    Ok(())
+}
+
+/// Focus one exact window (`dispatch focuswindow address:0x…`). Only for
+/// handing focus back to the window that held it before an exact-window
+/// browser setup transaction.
+pub fn restore_focus_to_window(address: u64) -> Result<()> {
+    let mut ipc = ipc_connection()?;
+    let command = format!("dispatch focuswindow address:0x{address:x}");
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if reply.trim_ascii() != b"ok" {
+        bail!(
+            "Hyprland focuswindow refused: {}",
+            String::from_utf8_lossy(&reply)
+        );
+    }
+    Ok(())
+}
+
 pub fn window_for_address(address: u64) -> Option<Window> {
     list_windows()
         .ok()?

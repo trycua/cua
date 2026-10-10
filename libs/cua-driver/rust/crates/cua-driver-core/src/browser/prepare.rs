@@ -73,7 +73,7 @@ where
     let mut consent = Box::pin(consent);
     let (result, outcome) = {
         let mut bounded = Box::pin(tokio::time::timeout(
-            Duration::from_secs(4),
+            super::EXISTING_PROFILE_CONSENT_TIMEOUT,
             consent.as_mut(),
         ));
         tokio::select! {
@@ -117,6 +117,33 @@ where
         },
         accepted,
     ))
+}
+
+/// A platform consent focus guard whose capture and restoration may do
+/// blocking compositor IPC; both stay off the async executor, including the
+/// implicit drop on an early return or cancellation.
+struct ConsentFocus(Option<Box<dyn Send>>);
+
+impl ConsentFocus {
+    async fn settle(mut self) {
+        if let Some(guard) = self.0.take() {
+            let _ = tokio::task::spawn_blocking(move || drop(guard)).await;
+        }
+    }
+}
+
+impl Drop for ConsentFocus {
+    fn drop(&mut self) {
+        let Some(guard) = self.0.take() else {
+            return;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(move || drop(guard));
+            }
+            Err(_) => drop(guard),
+        }
+    }
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -1220,6 +1247,19 @@ impl BrowserEngine {
                 self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
         }
+        // The claim itself can raise a browser-owned prompt that the compositor
+        // focuses. The platform hands focus back once consent settles below.
+        let consent_focus = {
+            let platform = Arc::clone(&self.platform);
+            ConsentFocus(
+                tokio::task::spawn_blocking(move || {
+                    platform.existing_profile_consent_focus_guard(pid, window_id)
+                })
+                .await
+                .ok()
+                .flatten(),
+            )
+        };
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
             |action| {
@@ -1297,6 +1337,7 @@ impl BrowserEngine {
                     return Err(error);
                 }
             };
+        consent_focus.settle().await;
         let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
         if let Err(_final_claim_error) = claimed {
             self.revoke_existing_profile_grant(
@@ -1499,7 +1540,10 @@ mod tests {
                     if outcome >= 2 {
                         // Model Linux's non-cancellable native action worker.
                         tokio::task::spawn_blocking(|| {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(
+                                super::super::EXISTING_PROFILE_CONSENT_TIMEOUT
+                                    + Duration::from_millis(100),
+                            );
                         })
                         .await
                         .unwrap();
@@ -1560,7 +1604,10 @@ mod tests {
                 action
                     .perform(|| {
                         tokio::task::spawn_blocking(move || {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(
+                                super::super::EXISTING_PROFILE_CONSENT_TIMEOUT
+                                    + Duration::from_millis(100),
+                            );
                             assert!(!dropped_during_worker.load(Ordering::SeqCst));
                             finished.store(true, Ordering::SeqCst);
                         })

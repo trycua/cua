@@ -90,6 +90,7 @@ impl SetupDispatch {
                 hyprland: std::env::var_os("WAYLAND_DISPLAY").is_some()
                     && crate::wayland::hyprland::is_session(),
                 cancellation,
+                focus: Default::default(),
             },
             lifecycle: Arc::new(lifecycle),
             _cancel,
@@ -104,6 +105,7 @@ impl SetupDispatch {
         let lifecycle = self.lifecycle.clone();
         tokio::task::spawn_blocking(move || {
             let _lifecycle = lifecycle;
+            let _restore = input.focus.restore_on_drop();
             work(input)
         })
         .await
@@ -1294,7 +1296,19 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 return Err(error);
             }
         };
-        crate::browser_setup_ui::retain_pending(pid_u32, window_id, handle)?;
+        // Retain synchronously so cancellation cannot strand an armed handle;
+        // a duplicate's abort does blocking AT-SPI and input work, which must
+        // not run on the async executor.
+        if let Err(handle) = crate::browser_setup_ui::retain_pending(pid_u32, window_id, handle) {
+            let error = dispatch
+                .run(move |input| {
+                    let mut handle = *handle;
+                    handle.input = input;
+                    handle.abort(crate::browser_setup_ui::duplicate_pending_refusal())
+                })
+                .await?;
+            return Err(error);
+        }
 
         Ok(ExistingProfileSetupOutcome {
             opened_setup_page,
@@ -1363,7 +1377,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 hyprland: std::env::var_os("WAYLAND_DISPLAY").is_some()
                     && crate::wayland::hyprland::is_session(),
                 cancellation,
+                focus: Default::default(),
             };
+            let _restore = input.focus.restore_on_drop();
             let _lane = lane;
             let dismissed_before = crate::browser_consent_ui::dismiss(pid, window_id)?;
             let closed_setup_page =
@@ -1399,7 +1415,9 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 hyprland: std::env::var_os("WAYLAND_DISPLAY").is_some()
                     && crate::wayland::hyprland::is_session(),
                 cancellation,
+                focus: Default::default(),
             };
+            let _restore = input.focus.restore_on_drop();
             let _lane = lane;
             if verify_setup_process(&request).is_err() {
                 // Remove only this owner's cached handle, without input to a
@@ -1423,6 +1441,24 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         request: BrowserConsentRequest,
     ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
         crate::browser_consent_ui::handle(request).await
+    }
+
+    fn existing_profile_consent_focus_guard(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn Send>> {
+        // Hyprland's focus-on-activate lets Chromium's own consent prompt
+        // pull focus and workspace although the driver sends no input.
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() || !crate::wayland::hyprland::is_session()
+        {
+            return None;
+        }
+        let guard = crate::browser_setup_ui::FocusRestore::guard_consent_prompt(
+            u32::try_from(pid).ok()?,
+            window_id,
+        )?;
+        Some(Box::new(guard))
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
@@ -1499,6 +1535,7 @@ mod tests {
                 },
                 hyprland: true,
                 cancellation,
+                focus: Default::default(),
             },
             lifecycle: Arc::new(lifecycle),
             _cancel: cancel,

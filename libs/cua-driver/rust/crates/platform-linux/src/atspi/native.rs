@@ -3753,6 +3753,28 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached tab currently carries `Selected` (or `Checked`,
+/// matching the walk's tab `selected` field): one `GetState` round-trip, no
+/// tree re-walk. Unlike [`element_showing_ref`], a missing state set is an
+/// error: callers use this as proof before acting on the selected tab.
+pub fn element_selected_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => {
+                    Ok(state.contains(State::Selected) || state.contains(State::Checked))
+                }
+                Some(Err(error)) => Err(anyhow!("cached element exposed no state set: {error}")),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_selected (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(

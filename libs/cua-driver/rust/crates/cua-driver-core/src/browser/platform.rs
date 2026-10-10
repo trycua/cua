@@ -510,6 +510,18 @@ pub trait BrowserPlatform: Send + Sync {
         ))
     }
 
+    /// Held across an existing-profile endpoint claim and its consent. A
+    /// platform whose compositor may hand focus to a browser-owned prompt can
+    /// capture the person's focus here and hand it back when the guard drops.
+    /// Capturing must not deliver input or change focus. Default: no guard.
+    fn existing_profile_consent_focus_guard(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Option<Box<dyn Send>> {
+        None
+    }
+
     /// Current identity fingerprint for `pid`. Used to detect pid reuse
     /// between binding and mutation.
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal>;

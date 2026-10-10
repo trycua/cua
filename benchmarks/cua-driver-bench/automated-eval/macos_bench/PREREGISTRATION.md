@@ -1159,6 +1159,24 @@ The background condition is checked by a smoke run before any scored run. It is 
 |---|---|---|---|---|---|
 | v2s2 | background | IR-01, IR-02, IR-03, IR-04, CDB-G04, MB-10; 1 run each (`--smoke --bench-v2 --condition background`) | AX, B (26.930), `cc-claude-cu-helper` | `815dfd96a10c` (pins as in v2s1); VM `cdb-v2` | 2026-10-10T13:54Z |
 
+**Smoke v2s2 outcome (recorded 10 Oct 2026 after it ran; validation only, not analysed).**
+
+* **The run:** 18 trials, 0 infrastructure exclusions, seat 4.
+* **The user window worked in every trial.** It typed while it had focus, logged blocked ticks when it did not, and its text was never disrupted.
+* **Overlays** were logged as metadata only: "Cua Driver Bench Script" and "ChatGPT Computer Use".
+* **Background completion against success:**
+
+  | Setup | Background completion | Passed |
+  |---|---|---|
+  | Cua Driver | 2/6 | 6/6 |
+  | Codex | 4/6 | 5/6 |
+  | Claude helper | 2/6 | 3/6 |
+
+* **Cua Driver** made no focus steal, but the user window lost key status without the app changing, in IR-01, IR-03, CDB-G04 and MB-10. The user's typing was swallowed for 3 to 65 ticks. In MB-10 it also moved the real pointer.
+* **Codex** raised CDB windows over the user window 14 times in CDB-G04, without activating them.
+* **The helper** stole focus 25 times in CDB-G04.
+* **No harness or app defect was found.** The definitions stand.
+
 ### A15.6 Harness changes for this amendment
 
 * `swift/BenchSentinel.swift`: `--user-activity` (title, simulated typing, the `user_type`, `user_blocked`, `user_text_disrupted` and `user_text` events) and `--frame`.

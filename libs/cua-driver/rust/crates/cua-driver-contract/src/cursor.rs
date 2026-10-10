@@ -278,7 +278,7 @@ pub enum CursorEffectSetting {
 
 impl CursorEffectSetting {
     /// Advertised spellings, plus unadvertised bool / `"true"` / `"false"` / null.
-    /// Null is `Default` here; a typed `Option` still treats JSON null as absent.
+    /// An explicit null resets the effect to its default.
     pub fn from_json(value: &Value) -> Option<Self> {
         Some(match value {
             Value::Null => Self::Default,

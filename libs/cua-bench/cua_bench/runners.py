@@ -6,6 +6,7 @@ interactive environments, using the core gym interface (make, reset, step, evalu
 
 import asyncio
 import fnmatch
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -99,7 +100,18 @@ async def run_single_task(
 
         result = await run_single_task(Path("./task"), agent_fn=my_agent)
     """
+    if type(max_steps) is not int or max_steps < 1:
+        raise ValueError("max_steps must be a positive integer")
+
     env = None
+    step_count = 0
+    outcome = None
+
+    def finish(**kwargs):
+        nonlocal outcome
+        outcome = TaskResult(**kwargs)
+        return outcome
+
     try:
         # Create environment using gym interface
         env = make(str(env_path), split=split)
@@ -117,7 +129,7 @@ async def run_single_task(
                 await env.solve()
                 step_count = env.step_count
             else:
-                return TaskResult(
+                return finish(
                     task_path=str(env_path),
                     variant_id=task_index,
                     success=False,
@@ -134,17 +146,30 @@ async def run_single_task(
                 step_count += 1
                 done = isinstance(action, DoneAction)
 
-        # Evaluate
-        if env.evaluate_task_fn is not None:
-            result = await env.evaluate()
-            if isinstance(result, (int, float)):
-                reward = float(result)
-            elif isinstance(result, list) and len(result) > 0:
-                reward = float(result[0])
-            elif isinstance(result, dict) and "reward" in result:
-                reward = float(result["reward"])
+        # A setup-only run is not agent execution, even if the initial
+        # environment state already satisfies the evaluator.
+        if not oracle and agent_fn is None:
+            raise ValueError("No agent_fn supplied; task was not executed")
 
-        return TaskResult(
+        # Evaluate
+        if env.evaluate_task_fn is None:
+            raise ValueError("Task has no evaluator")
+        result = await env.evaluate()
+        if isinstance(result, (int, float)) and not isinstance(result, bool):
+            raw_reward = result
+        elif isinstance(result, list) and result:
+            raw_reward = result[0]
+        elif isinstance(result, dict) and "reward" in result:
+            raw_reward = result["reward"]
+        else:
+            raise ValueError("Unsupported evaluator reward")
+        if isinstance(raw_reward, bool) or not isinstance(raw_reward, (int, float)):
+            raise ValueError("Evaluator reward must be numeric")
+        reward = float(raw_reward)
+        if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
+            raise ValueError("Evaluator reward must be finite and within [0, 1]")
+
+        return finish(
             task_path=str(env_path),
             variant_id=task_index,
             success=reward >= 0.5,  # Common threshold
@@ -153,20 +178,24 @@ async def run_single_task(
         )
 
     except Exception as e:
-        return TaskResult(
+        return finish(
             task_path=str(env_path),
             variant_id=task_index,
             success=False,
             reward=0.0,
-            steps=0,
+            steps=step_count,
             error=str(e),
         )
     finally:
         if env is not None:
             try:
                 await env.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                if outcome is not None:
+                    outcome.success = False
+                    outcome.reward = 0.0
+                    detail = f"Environment cleanup failed: {close_error}"
+                    outcome.error = f"{outcome.error}; {detail}" if outcome.error else detail
 
 
 async def run_benchmark(

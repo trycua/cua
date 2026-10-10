@@ -153,7 +153,18 @@ cua-driver serve \
 
 For a standalone standard-mode launch instead, use
 `cua-driver mcp --grant existing-profile` or
-`cua-driver serve --grant existing-profile`. Then request the exact window:
+`cua-driver serve --grant existing-profile`. The grant is read once at
+startup, so a daemon that is already running (for example the one the
+quickstart started) keeps refusing until you restart it:
+
+```bash skip="host-install"
+cua-driver stop
+open -n -g -a CuaDriver --args serve --grant existing-profile   # macOS
+cua-driver serve --grant existing-profile                       # Windows, Linux
+```
+
+The refusal carries the same command in
+`detail.recovery.grant_restart_command`. Then request the exact window:
 
 ```jsonc skip="pseudo"
 browser_prepare({
@@ -173,6 +184,15 @@ profile. The result's `side_effects` reports what it did (for example
 that page's accessibility tree, a bounded pixel click on the setup page may
 briefly foreground the approved window and then restore focus.
 
+Each new session repeats this setup: the browser comes to the front, the setup
+tab opens, and Chrome asks **Allow remote debugging?** before the driver
+accepts it. Leave the keyboard and mouse alone while it runs: if another
+window takes focus before the setup URL is entered, `browser_prepare` returns
+`browser_wrong_target_refused` ("setup page did not become ready"). On a busy
+desktop it can also return `browser_reconnect_exhausted`. In both cases, retry
+once. Chrome shows a "Chrome is being controlled by automated test software"
+bar while the connection is open.
+
 After `attached_existing_profile`, bind again with `get_browser_state`; old
 ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 8 hours, and ends with the session or runtime. Ending the session does not turn
@@ -187,7 +207,7 @@ with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 | Code | Meaning |
 | --- | --- |
 | `browser_requires_setup` | No approved endpoint: call `browser_prepare`. |
-| `browser_consent_required` | Existing profile without a grant, host approval, or matching manifest. |
+| `browser_consent_required` | Existing profile without a grant, host approval, or matching manifest. `detail.recovery` names the restart command and the isolated alternative. |
 | `browser_consent_revoked` | The host denied, or the browser's prompt was dismissed. |
 | `browser_ref_stale`, `browser_binding_stale` | Snapshot or bind again. |
 | `browser_wrong_target_refused`, `browser_endpoint_owner_mismatch` | Window, prompt, or endpoint identity is not exact. |

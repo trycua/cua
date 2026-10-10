@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
       - name: Install Chromium system dependencies
         working-directory: libs/cua-bench
-        run: uv run --extra dev python -m playwright install --with-deps chromium
+        run: uv run --extra dev --with playwright python -m playwright install --with-deps chromium
       - name: Run upstream runner regressions
         working-directory: libs/cua-bench
-        run: xvfb-run -a uv run --extra dev pytest cua_bench/tests/test_run_benchmark.py -q
+        run: xvfb-run -a uv run --extra dev --with playwright pytest cua_bench/tests/test_run_benchmark.py -q

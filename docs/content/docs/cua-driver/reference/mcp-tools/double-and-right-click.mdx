@@ -149,7 +149,7 @@ Right-click against a target pid. Two addressing modes:
 
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`): posts WM_RBUTTONDOWN/UP to the deepest child window at that point.
 
-Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required in both modes. `modifier` is accepted for parity (no-op on Windows: PostMessage doesn't propagate modifier-key state).
+Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required in both modes. `modifier` holds keys during delivery_mode:"foreground" via SendInput. Background right-clicks with modifiers return background_unavailable because PostMessage cannot carry live modifier-key state.
 
 **Windows parameters**
 

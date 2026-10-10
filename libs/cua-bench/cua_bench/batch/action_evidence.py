@@ -11,6 +11,8 @@ class EvidenceSession:
     def __init__(self, session, output_dir, execution_id):
         self._session = session
         self._path = output_dir / "executed-actions.jsonl"
+        # A new agent execution must never append to a previous run's evidence.
+        self._path.unlink(missing_ok=True)
         self._execution_id = execution_id
         self._sequence = 0
 

@@ -1256,6 +1256,26 @@ The background run goes first, then the foreground run, in the same VM. Everythi
 
 **A16.3 outcome (10 Oct 2026, 22:27Z).** The owner redirected the work before the run finished: first a driver concept that keeps background-targeted windows from ever becoming frontmost or key (CUA-1309), then a rerun. v2full-ba was stopped with the STOP file after 35 trials (phase 1 of CDB-G02, G03 and G04 complete, 3 of 20 blocks); v2full-fo never started. Those rows are labelled **pre-CUA-1309, superseded**, are kept and are not analysed as a result. The rerun gets its own amendment.
 
+## Amendment 17 (10 Oct 2026, before it runs): the no-raise fix (CUA-1309), re-check v2s4, and the Bench v2 rerun
+
+Written and committed before smoke v2s4 and before the rerun. The owner asked on 10 Oct for a driver concept that keeps background-targeted windows from becoming frontmost or key, even when the app opens a popup, menu, sheet or dialog, then a rerun. No definition of A14 to A16 changes.
+
+### A17.1 The fix
+
+trycua/cua PR #4955 (CUA-1309); the concept and the options measured are in `research/cua-driver-bench/2026-10-10_no-focus-concept.md`. The raise of A16.2 round 7 comes from WindowServer ordering a menu's window group to the front, which no client can prevent. The driver now re-activates the user's already-active front app with all its windows as soon as the target's menu is on screen, and again when the action ends, so the raise lasts at most a frame or two. The key-focus guard of #4943 is unchanged.
+
+### A17.2 Smoke v2s4 (validation only, never analysed)
+
+| Id | Condition | Tasks | Arms | Driver | Written (UTC) |
+|---|---|---|---|---|---|
+| v2s4b | background | the tasks whose v2 trials opened popups or menus: CDB-G02, CDB-G03, CDB-G04, MB-10, IR-01, IR-02; 3 runs each | AX (`cc-cua-driver-script`) | PR #4955 head `a8dc43a34`; VM `cdb-v2` | 2026-10-10T23:30Z |
+
+**What it checks:** no window raised over the user window, no key loss and no swallowed keystroke in any trial. Background completion is reported against the A16 foreground results. A failure is fixed and re-checked, each round logged here before it runs. The PR merges after this check.
+
+### A17.3 The rerun
+
+Registered here by its own dated line before its first trial, on the main commit that contains #4955, built once in the VM: both conditions, the three headline setups and the ten A14.6 tasks at 3 + 2 runs, as A16.3. The A16.3 rows stay superseded.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

@@ -28,14 +28,14 @@
     }
   },
   "cua_main": {
-    "note": "Amendment 6, 12, 14 and 16 runs: main at the commit of the latest registered run (A16.3 full Bench v2 run: e32127764, the #4943 merge; A16.2 smoke v2s3 round 7: cab0edf4d; rounds 3-6: df3791d0a; round 2: c92ca8aa4; round 1: 066532c91, PR #4943 head on main cfc95fd70; before it A14.8/A15.5 smokes v2s1/v2s2: 815dfd96a). Earlier: Amendment 6 and 12 mini-runs: main at the commit of the latest mini-run (A6.5 and A12.5 list every one); built in the VM with tools/vm_main_build. Earlier builds: v038 5a364bbe6 (Amendment 8), v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
-    "git_sha": "e321277644369e179798f07cfdad07499ded63e9",
+    "note": "Amendment 6, 12, 14 and 16 runs: main at the commit of the latest registered run (A17.2 smoke v2s4: a8dc43a34, PR #4955 head; A16.3 full run: e32127764, the #4943 merge; A16.2 smoke v2s3 round 7: cab0edf4d; rounds 3-6: df3791d0a; round 2: c92ca8aa4; round 1: 066532c91, PR #4943 head on main cfc95fd70; before it A14.8/A15.5 smokes v2s1/v2s2: 815dfd96a). Earlier: Amendment 6 and 12 mini-runs: main at the commit of the latest mini-run (A6.5 and A12.5 list every one); built in the VM with tools/vm_main_build. Earlier builds: v038 5a364bbe6 (Amendment 8), v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
+    "git_sha": "a8dc43a3402b3e1067aa82bcf4992ad9275c742e",
     "version": "0.34.0",
     "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "03e8ec402ad2160d604b4cde0caee1496af3db69fb648f05a3f524eaa5ecbee6",
+    "binary_sha256": "37b2e503007c4617a6909c78468d77cbf558b41467a8213b96873dbae89b2add",
     "skills_tree_sha256": "820559825d57078eb4697d9c5f7b8cdf8c29a45e32826424404e502d72d0b752",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
-    "script_binary_sha256": "d1de8c3c4dec7f58fa5de1dcad510af45befe45c6ef341e11139c1c34dc8c661"
+    "script_binary_sha256": "aa69e22732e27bee91f7704ae324e865c20c1e7dc66a8f8ae2617ee532116550"
   },
   "arc_driver": {
     "note": "Amendment 9 (CUA-1241): arc-cua 0.1.1, the PyPI wheel, checked identical to tag v0.1.1. Installed in the VM with tools/arc_driver/install_arc_driver.sh. site_packages_tree_sha256, launcher_sha256 and python_version are filled from that install before the first arc trial (A9.2).",

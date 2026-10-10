@@ -1009,8 +1009,16 @@ class TaskRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await process.communicate()
-        return process.returncode == 1
+        stdout, stderr = await process.communicate()
+        # Docker inspect uses 1 for a missing object, but also for daemon
+        # failures. A nonzero exit must not be mistaken for verified cleanup.
+        if process.returncode == 0:
+            return False
+        message = stderr.decode("utf-8", errors="replace").lower()
+        missing = ("no such object", "no such container", "no such network")
+        if process.returncode == 1 and any(token in message for token in missing):
+            return True
+        raise RuntimeError(f"Docker {kind} inspection failed: {message[:300]}")
 
     async def _write_cleanup_receipt(self, task_id: str, output_dir: str) -> None:
         """Persist resource inspection results even when cleanup failed."""
@@ -1030,7 +1038,13 @@ class TaskRunner:
                 observations[label] = {
                     "name": name, "absent": False, "error": type(exc).__name__
                 }
-        # Simulated tasks do not create a separate environment container.
+        # Check the task's isolated QEMU overlay as well as Docker objects.
+        # Never inspect or delete the shared golden disk here.
+        overlay = get_overlays_path() / task_id
+        observations["overlay"] = {
+            "name": str(overlay),
+            "absent": not overlay.exists(),
+        }
         receipt = {
             "schema_version": "cua-bench-cleanup/v1",
             "task_id": task_id,

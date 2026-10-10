@@ -546,3 +546,17 @@ class TestEvaluatorRewardFailClosed:
         assert result.steps == 2
         assert "third step failure" in result.error
         assert env.closed is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("budget", [0, -1, False, True, 1.5, "2"])
+    async def test_invalid_step_budget_cannot_score_initial_state(self, tmp_path, monkeypatch, budget):
+        import cua_bench.runners as runners
+
+        def forbidden_make(*args, **kwargs):
+            raise AssertionError("must reject before creating a task environment")
+
+        monkeypatch.setattr(runners, "make", forbidden_make)
+        with pytest.raises(ValueError, match="max_steps must be a positive integer"):
+            await runners.run_single_task(
+                tmp_path, agent_fn=lambda *_: DoneAction(), max_steps=budget
+            )

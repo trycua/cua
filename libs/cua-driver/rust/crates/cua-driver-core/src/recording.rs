@@ -1436,7 +1436,7 @@ fn write_turn_with_after(
         "arguments": args,
         "result_summary": result_text,
         "result_error": result_is_error,
-        "timestamp": iso_now(),
+        "timestamp": iso8601_utc_from_unix_ms(now),
         "t_ms_from_session_start": now.saturating_sub(session_start_ms),
         "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
     });
@@ -1522,12 +1522,21 @@ pub fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn iso_now() -> String {
-    let d = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    // Format as fractional Unix seconds (simple, unambiguous, machine-readable).
-    format!("{:.3}", d.as_secs_f64())
+/// Format milliseconds since Unix epoch as an ISO-8601 UTC date-time with
+/// millisecond precision, e.g. `2026-01-01T00:00:00.000Z`.
+fn iso8601_utc_from_unix_ms(ms: u64) -> String {
+    let t = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        t.year(),
+        u8::from(t.month()),
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second(),
+        t.millisecond()
+    )
 }
 
 /// Build the `session.json` `video` field. Three shapes:

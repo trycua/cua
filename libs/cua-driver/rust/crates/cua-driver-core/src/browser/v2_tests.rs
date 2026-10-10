@@ -2349,6 +2349,36 @@ async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() 
 }
 
 #[tokio::test]
+async fn synthetic_scroll_awaits_page_readback_without_changing_routes() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "action": "scroll", "input_route": "dom_event",
+            "delta_y": 240, "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    let calls = recorded_calls(&f, "Runtime.callFunctionOn");
+    let scroll_calls: Vec<_> = calls
+        .iter()
+        .filter(|call| {
+            call.1["functionDeclaration"]
+                .as_str()
+                .is_some_and(|s| s.contains("target.scrollBy"))
+        })
+        .collect();
+    assert_eq!(scroll_calls.len(), 1, "scroll must not be retried");
+    assert_eq!(scroll_calls[0].1["awaitPromise"], true);
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
 async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable() {
     let f = fixture_with_platform(|_| {}, true).await;
     let (target, tab) = bind(&f).await;

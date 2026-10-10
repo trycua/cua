@@ -16,6 +16,82 @@ use cua_driver_core::browser::{
 
 use crate::atspi::AtspiNode;
 use crate::interaction::{session_policy, with_target_foreground};
+use crate::wayland::hyprland_input::{self, Action, ActionCancellation};
+
+/// Invocation-scoped input authority. Only the platform adapter can construct it
+/// from registry-admitted private lifecycle metadata; it is never deserialized.
+#[derive(Clone)]
+pub(crate) struct SetupInput {
+    pub owner: String,
+    pub lane_owner: String,
+    pub fingerprint: cua_driver_core::browser::ProcessFingerprint,
+    pub hyprland: bool,
+    pub cancellation: ActionCancellation,
+}
+
+fn foreground_ack(value: serde_json::Value) -> anyhow::Result<()> {
+    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+        && value.get("route").and_then(serde_json::Value::as_str) == Some("primary_foreground")
+    {
+        return Ok(());
+    }
+    anyhow::bail!("exact Hyprland setup input refused: {value}")
+}
+
+impl SetupInput {
+    fn check(&self) -> anyhow::Result<()> {
+        self.cancellation.check()?;
+        if cua_driver_core::session::is_session_ending(&self.lane_owner) {
+            anyhow::bail!("browser setup lifecycle is ending");
+        }
+        Ok(())
+    }
+
+    fn hotkey(
+        &self,
+        pid: u32,
+        window_id: u64,
+        key: &str,
+        modifiers: &[&str],
+    ) -> anyhow::Result<()> {
+        self.check()?;
+        if self.hyprland {
+            return foreground_ack(hyprland_input::execute_foreground(
+                Some(self.lane_owner.clone()),
+                pid,
+                window_id,
+                Action::Key {
+                    key: key.to_owned(),
+                    modifiers: modifiers.iter().map(|value| (*value).to_owned()).collect(),
+                },
+                self.cancellation.clone(),
+            )?);
+        }
+        with_target_foreground(pid, window_id, session_policy().setup, || {
+            if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
+                let mut keys = modifiers
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>();
+                keys.push(key.to_owned());
+                crate::wayland::hotkey_focused(&keys)
+            } else {
+                crate::input::send_key_xtest(key, modifiers)
+            }
+        })
+    }
+
+    fn type_setup_url(&self, pid: u32, window_id: u64, url: &str) -> anyhow::Result<()> {
+        self.check()?;
+        foreground_ack(hyprland_input::execute_foreground_text(
+            Some(self.lane_owner.clone()),
+            pid,
+            window_id,
+            url,
+            self.cancellation.clone(),
+        )?)
+    }
+}
 
 fn field_equals(node: &AtspiNode, expected: &str) -> bool {
     [
@@ -138,14 +214,8 @@ fn setup_not_ready_message(descriptor: &BrowserSetupDescriptor) -> String {
     )
 }
 
-fn close_tab(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, session_policy().setup, || {
-        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
-            crate::wayland::hotkey(window_id, &["ctrl".to_owned(), "w".to_owned()])
-        } else {
-            crate::input::send_key_xtest("w", &["ctrl"])
-        }
-    })
+fn close_tab(pid: u32, window_id: u64, input: &SetupInput) -> anyhow::Result<()> {
+    input.hotkey(pid, window_id, "w", &["ctrl"])
 }
 
 /// The exact address-and-search field of the approved window, or `None` while
@@ -180,55 +250,28 @@ fn omnibox_holds_setup_url(node: &AtspiNode, descriptor: &BrowserSetupDescriptor
 
 /// Navigate the approved window to its fixed setup page.
 ///
-/// This mirrors the macOS and Windows adapters rather than synthesizing the URL
-/// keystroke by keystroke: write the whole URL into the address field through
-/// the accessibility API, read it back to prove it landed, and only then commit
-/// with a single Enter. `set_text_contents` is the AT-SPI counterpart of UIA's
-/// `ValuePattern::SetValue` and AppKit's `AXValue`.
-///
-/// Per-character synthesis was the wrong primitive here. XTEST keysym lookup is
-/// keyboard-layout dependent and wlroots virtual-keyboard seats drop
-/// punctuation, so `chrome://inspect` could arrive as `inspect` — which the
-/// omnibox treats as a search term, silently navigating to a search-engine
-/// results page. Nothing downstream could tell that apart from a slow-loading
-/// setup page, so the flow reported a readiness timeout while leaving the user
-/// on someone else's website. Writing the value whole removes the layout
-/// dependency, and the read-back turns any residual mangling into an immediate,
-/// accurate refusal.
+/// Hyprland uses the existing exact-window, US-layout-guarded plugin route.
+/// Other backends retain their existing whole-value clipboard delivery. Every
+/// route still proves arrival at the fixed setup page before toggling anything.
 fn trusted_setup_navigation(
     pid: u32,
     window_id: u64,
     descriptor: &BrowserSetupDescriptor,
+    input: &SetupInput,
     clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
 ) -> anyhow::Result<()> {
     let wayland = crate::desktop::desktop() != crate::desktop::Desktop::X11;
 
-    // A fresh tab, so the setup page never displaces a page the user was on.
-    // `ctrl+l` then focuses the address field. Both are single letters, so
-    // neither depends on the keyboard layout the way punctuation does.
-    let focus_omnibox = || -> anyhow::Result<()> {
-        with_target_foreground(pid, window_id, session_policy().setup, || {
-            if wayland {
-                crate::wayland::hotkey_focused(&["ctrl".to_owned(), "l".to_owned()])
-            } else {
-                crate::input::send_key_xtest("l", &["ctrl"])
-            }
-        })
-    };
-
-    with_target_foreground(pid, window_id, session_policy().setup, || {
-        if wayland {
-            crate::wayland::hotkey_focused(&["ctrl".to_owned(), "t".to_owned()])
-        } else {
-            crate::input::send_key_xtest("t", &["ctrl"])
-        }
-    })?;
+    // A fresh tab preserves the existing page. Each Hyprland operation
+    // reattests PID/window identity and refuses physical-input conflicts.
+    input.hotkey(pid, window_id, "t", &["ctrl"])?;
     std::thread::sleep(Duration::from_millis(100));
-    focus_omnibox()?;
+    input.hotkey(pid, window_id, "l", &["ctrl"])?;
 
     // Wait for the new tab to publish its address field before writing to it.
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
+        input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
         if exact_omnibox(&tree.nodes, descriptor)
@@ -246,46 +289,44 @@ fn trusted_setup_navigation(
         std::thread::sleep(Duration::from_millis(150));
     }
 
-    // Transfer the URL through the clipboard rather than the keyboard.
-    //
-    // Chromium's AT-SPI bridge does not honour EditableText writes on the
-    // omnibox, so the accessibility set-value that macOS (`AXValue`) and
-    // Windows (`ValuePattern::SetValue`) rely on has no working counterpart
-    // here. A paste keeps the property that actually matters: the exact string
-    // arrives in one operation, with no per-keysym synthesis to be mistranslated
-    // by the active layout or dropped by a virtual-keyboard seat. `ctrl+a` and
-    // `ctrl+v` are plain letters, so they carry no layout dependency of their own.
-    let restore = clipboard.read_text().ok().flatten();
-    clipboard
-        .write_text(descriptor.setup_url.to_owned())
-        .map_err(|error| anyhow::anyhow!("could not stage the fixed setup URL: {error}"))?;
-    let paste = with_target_foreground(pid, window_id, session_policy().setup, || {
-        if wayland {
-            crate::wayland::hotkey_focused(&["ctrl".to_owned(), "a".to_owned()])?;
-            std::thread::sleep(Duration::from_millis(60));
-            crate::wayland::hotkey_focused(&["ctrl".to_owned(), "v".to_owned()])
-        } else {
-            crate::input::send_key_xtest("a", &["ctrl"])?;
-            std::thread::sleep(Duration::from_millis(60));
-            crate::input::send_key_xtest("v", &["ctrl"])
+    if input.hyprland {
+        // No clipboard access: the plugin refuses unsupported layouts and
+        // guards every packet, including punctuation and held modifiers.
+        input.hotkey(pid, window_id, "a", &["ctrl"])?;
+        input.type_setup_url(pid, window_id, descriptor.setup_url)?;
+    } else {
+        // Transfer the URL through the clipboard rather than the keyboard.
+        //
+        // Chromium's AT-SPI bridge does not honour EditableText writes on the
+        // omnibox, so the accessibility set-value that macOS (`AXValue`) and
+        // Windows (`ValuePattern::SetValue`) rely on has no working counterpart
+        // here. A paste keeps the property that actually matters: the exact string
+        // arrives in one operation, with no per-keysym synthesis to be mistranslated
+        // by the active layout or dropped by a virtual-keyboard seat. `ctrl+a` and
+        // `ctrl+v` are plain letters, so they carry no layout dependency of their own.
+        let restore = clipboard.read_text().ok().flatten();
+        clipboard
+            .write_text(descriptor.setup_url.to_owned())
+            .map_err(|error| anyhow::anyhow!("could not stage the fixed setup URL: {error}"))?;
+        let paste = with_target_foreground(pid, window_id, session_policy().setup, || {
+            if wayland {
+                crate::wayland::hotkey_focused(&["ctrl".to_owned(), "a".to_owned()])?;
+                std::thread::sleep(Duration::from_millis(60));
+                crate::wayland::hotkey_focused(&["ctrl".to_owned(), "v".to_owned()])
+            } else {
+                crate::input::send_key_xtest("a", &["ctrl"])?;
+                std::thread::sleep(Duration::from_millis(60));
+                crate::input::send_key_xtest("v", &["ctrl"])
+            }
+        });
+        // The user's clipboard is theirs; put it back whether or not the paste took.
+        std::thread::sleep(Duration::from_millis(120));
+        if let Some(previous) = restore {
+            let _ = clipboard.write_text(previous);
         }
-    });
-    // The user's clipboard is theirs; put it back whether or not the paste took.
-    std::thread::sleep(Duration::from_millis(120));
-    if let Some(previous) = restore {
-        let _ = clipboard.write_text(previous);
+        paste?;
     }
-    paste?;
-
-    // Commit. Enter is the one synthesized keystroke left, and it carries no
-    // layout dependency.
-    with_target_foreground(pid, window_id, session_policy().setup, || {
-        if wayland {
-            crate::wayland::hotkey_focused(&["enter".to_owned()])
-        } else {
-            crate::input::send_key_xtest("enter", &[])
-        }
-    })?;
+    input.hotkey(pid, window_id, "enter", &[])?;
 
     // Verify the destination, not the input. Chromium exposes no readable text
     // on its omnibox over AT-SPI — no Value interface and no Text content even
@@ -296,6 +337,7 @@ fn trusted_setup_navigation(
     // redirect alike, and it names what was reached instead of timing out.
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
+        input.check()?;
         let tree =
             window_scoped_tree(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))?;
         let arrived = match document_is_setup_page(&tree.nodes, descriptor) {
@@ -320,8 +362,7 @@ fn trusted_setup_navigation(
                 .unwrap_or_else(|| "no document".to_owned());
             anyhow::bail!(
                 "the approved {} window did not reach its fixed setup page; it is showing {:?}. \
-                 The address field is written through the clipboard, so this means the browser \
-                 rejected or redirected the URL rather than that a keystroke was dropped",
+                 The exact setup destination could not be verified",
                 descriptor.product_name,
                 landed
             );
@@ -339,19 +380,29 @@ fn trusted_setup_navigation(
 /// control by label across that tree can therefore find a control the caller did
 /// not name. Requiring proven window scope is what makes the exact-window
 /// contract real rather than assumed.
-fn window_scoped_tree(
+pub(crate) fn window_scoped_tree(
     pid: u32,
     window_id: u64,
 ) -> Result<crate::atspi::AtspiTreeResult, BrowserRefusal> {
     let tree = crate::atspi::walk_tree(pid, window_id, None);
-    if !tree.trusted {
+    require_window_scope(pid, window_id, tree.trusted, tree.window_scoped)?;
+    Ok(tree)
+}
+
+fn require_window_scope(
+    pid: u32,
+    window_id: u64,
+    trusted: bool,
+    window_scoped: bool,
+) -> Result<(), BrowserRefusal> {
+    if !trusted {
         return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no trusted AT-SPI tree for the approved browser window; \
              the accessibility bus must be reachable to prove which window a control belongs to",
         ));
     }
-    if !tree.window_scoped {
+    if !window_scoped {
         return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             format!(
@@ -361,14 +412,35 @@ fn window_scoped_tree(
             ),
         ));
     }
-    Ok(tree)
+    Ok(())
+}
+
+/// Act on a walked control of the approved window, with `before_dispatch`
+/// checked immediately before the action is sent. An action that failed
+/// after it was sent may have acted, so it counts as sent and the caller's
+/// read-back decides.
+pub(crate) fn perform_exact_action(
+    pid: u32,
+    window_id: u64,
+    node: &AtspiNode,
+    before_dispatch: impl Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    crate::atspi::action_sent(crate::atspi::perform_action_walked_guarded(
+        pid,
+        window_id,
+        node,
+        before_dispatch,
+    ))
 }
 
 pub struct SetupUiHandle {
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
+    pub(crate) input: SetupInput,
     trusted_setup_navigation: bool,
+    armed: bool,
+    enabling: bool,
     enable_attempted: bool,
     trusted_checkbox_fallback_attempted: bool,
     pub opened_setup_page: bool,
@@ -378,27 +450,120 @@ pub struct SetupUiHandle {
     pub injected_global_input: bool,
 }
 
+struct AbandonedSetupLane {
+    owner: String,
+    _cancel: hyprland_input::CancelOnDrop,
+}
+
+impl Drop for AbandonedSetupLane {
+    fn drop(&mut self) {
+        hyprland_input::cleanup_session(&self.owner);
+    }
+}
+
+impl Drop for SetupUiHandle {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        // A returned blocking result can be abandoned before core receives it.
+        // Keep its restoration authority on the resource, not on the caller.
+        // Drop may run on a Tokio executor when endpoint discovery is
+        // cancelled. AT-SPI's bounded runtime must run on a blocking thread.
+        std::thread::scope(|scope| {
+            if let Ok(worker) = std::thread::Builder::new()
+                .name("cua-abandoned-setup".into())
+                .spawn_scoped(scope, || {
+                    let Some(_cleanup) = self.cleanup_input() else {
+                        return;
+                    };
+                    let _ = self.rollback_remote_debugging();
+                    let _ = self.close();
+                })
+            {
+                let _ = worker.join();
+            }
+        });
+    }
+}
+
 impl SetupUiHandle {
+    fn cleanup_input(&mut self) -> Option<AbandonedSetupLane> {
+        crate::browser_platform::verify_setup_identity(
+            i64::from(self.pid),
+            self.window_id,
+            &self.input.fingerprint,
+        )
+        .ok()?;
+        static NEXT_ABANDON: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let owner = format!(
+            "{}:browser-abandon:{}",
+            self.input.owner,
+            NEXT_ABANDON.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let (_cancel, cancellation) = ActionCancellation::invocation();
+        self.input.lane_owner = owner.clone();
+        self.input.cancellation = cancellation;
+        Some(AbandonedSetupLane { owner, _cancel })
+    }
+
     fn rollback_remote_debugging(&mut self) -> bool {
-        if !self.enabled_remote_debugging {
+        if self.input.check().is_err() {
+            return false;
+        }
+        if !(self.enabled_remote_debugging || (self.enable_attempted && self.enabling)) {
             return true;
         }
-        let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
+        let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
+            return false;
+        };
         let restored =
             exact_setup_checkbox(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
                 .ok()
                 .flatten()
-                .filter(|node| node.checked == Some(true) && node.element_index.is_some())
                 .is_some_and(|node| {
-                    crate::atspi::perform_action_walked(self.pid, self.window_id, node).is_ok()
+                    node.checked == Some(false)
+                        || (node.checked == Some(true)
+                            && perform_exact_action(self.pid, self.window_id, node, || {
+                                self.input.check()
+                            })
+                            .is_ok())
                 });
-        if restored {
-            self.enabled_remote_debugging = false;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while restored && self.input.check().is_ok() {
+            if window_scoped_tree(self.pid, self.window_id)
+                .ok()
+                .and_then(|tree| {
+                    exact_setup_checkbox(
+                        &tree.nodes,
+                        self.descriptor,
+                        self.trusted_setup_navigation,
+                    )
+                    .ok()
+                    .flatten()
+                    .map(|node| node.checked == Some(false))
+                })
+                == Some(true)
+            {
+                self.enabled_remote_debugging = false;
+                return true;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        restored
+        false
     }
 
     pub fn abort(mut self, error: BrowserRefusal) -> BrowserRefusal {
+        self.armed = false;
+        let _cleanup = if self.input.check().is_err() {
+            self.cleanup_input()
+        } else {
+            None
+        };
         let enabled_remote_debugging = self.enabled_remote_debugging;
         let restored_remote_debugging = self.rollback_remote_debugging();
         let opened_setup_page = self.opened_setup_page;
@@ -424,9 +589,13 @@ impl SetupUiHandle {
 
     pub fn close_for_success(mut self) -> Result<Option<bool>, BrowserRefusal> {
         if !self.opened_setup_page {
+            self.armed = false;
             return Ok(None);
         }
-        let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
+        let tree = match window_scoped_tree(self.pid, self.window_id) {
+            Ok(tree) => tree,
+            Err(error) => return Err(self.abort(error)),
+        };
         if !setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation) {
             let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -434,7 +603,7 @@ impl SetupUiHandle {
             );
             return Err(self.abort(error));
         }
-        if let Err(error) = close_tab(self.pid, self.window_id) {
+        if let Err(error) = close_tab(self.pid, self.window_id, &self.input) {
             let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not close the exact temporary setup tab: {error}"),
@@ -442,18 +611,21 @@ impl SetupUiHandle {
             return Err(self.abort(error));
         }
         self.opened_setup_page = false;
+        self.armed = false;
         Ok(Some(true))
     }
 
-    pub fn close(self) -> Option<bool> {
+    fn close(&mut self) -> Option<bool> {
         if !self.opened_setup_page {
             return None;
         }
-        let tree = crate::atspi::walk_tree(self.pid, self.window_id, None);
-        Some(
-            setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
-                && close_tab(self.pid, self.window_id).is_ok(),
-        )
+        let Ok(tree) = window_scoped_tree(self.pid, self.window_id) else {
+            return Some(false);
+        };
+        let closed = setup_page_proven(&tree.nodes, self.descriptor, self.trusted_setup_navigation)
+            && close_tab(self.pid, self.window_id, &self.input).is_ok();
+        self.opened_setup_page &= !closed;
+        Some(closed)
     }
 }
 
@@ -481,27 +653,66 @@ pub fn retain_pending(
     Ok(())
 }
 
-pub fn commit_pending(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
-    let handle = pending_setups()
-        .lock()
-        .unwrap()
-        .remove(&(pid, window_id))
-        .ok_or_else(|| {
-            BrowserRefusal::new(
-                BrowserRefusalCode::BrowserBindingStale,
-                "the exact pending browser setup cleanup handle is missing",
-            )
-        })?;
+pub fn commit_pending(pid: u32, window_id: u64, input: SetupInput) -> Result<bool, BrowserRefusal> {
+    let mut pending = pending_setups().lock().unwrap();
+    if pending
+        .get(&(pid, window_id))
+        .is_some_and(|handle| handle.input.owner != input.owner)
+    {
+        return Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "pending browser setup belongs to another admitted session",
+        ));
+    }
+    let mut handle = pending.remove(&(pid, window_id)).ok_or_else(|| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserBindingStale,
+            "the exact pending browser setup cleanup handle is missing",
+        )
+    })?;
+    drop(pending);
+    handle.input = input;
     Ok(handle.close_for_success()?.unwrap_or(false))
 }
 
-pub fn abort_pending(pid: u32, window_id: u64, error: BrowserRefusal) -> BrowserRefusal {
-    match pending_setups().lock().unwrap().remove(&(pid, window_id)) {
-        Some(handle) => handle.abort(error),
+pub fn abort_pending(
+    pid: u32,
+    window_id: u64,
+    error: BrowserRefusal,
+    input: SetupInput,
+) -> BrowserRefusal {
+    let mut pending = pending_setups().lock().unwrap();
+    if pending
+        .get(&(pid, window_id))
+        .is_some_and(|handle| handle.input.owner != input.owner)
+    {
+        return error;
+    }
+    let handle = pending.remove(&(pid, window_id));
+    drop(pending);
+    match handle {
+        Some(mut handle) => {
+            handle.input = input;
+            handle.abort(error)
+        }
         None => error.with_detail(serde_json::json!({
             "setup_cleanup": "the exact pending browser setup cleanup handle was missing"
         })),
     }
+}
+
+pub(crate) fn discard_pending(pid: u32, window_id: u64, owner: &str) {
+    let mut pending = pending_setups().lock().unwrap();
+    let handle = if pending
+        .get(&(pid, window_id))
+        .is_some_and(|handle| handle.input.owner == owner)
+    {
+        pending.remove(&(pid, window_id))
+    } else {
+        None
+    };
+    drop(pending);
+    drop(handle);
 }
 
 /// Navigate the exact window to its fixed setup page. Under niri this route
@@ -512,6 +723,8 @@ fn open_setup_page(
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
+    desired_enabled: bool,
+    input: &SetupInput,
     on_niri: bool,
     clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
@@ -530,7 +743,10 @@ fn open_setup_page(
         pid,
         window_id,
         descriptor,
+        input: input.clone(),
         trusted_setup_navigation: true,
+        armed: true,
+        enabling: desired_enabled,
         enable_attempted: false,
         trusted_checkbox_fallback_attempted: false,
         opened_setup_page: true,
@@ -539,7 +755,7 @@ fn open_setup_page(
         foregrounded_window: true,
         injected_global_input: true,
     };
-    if let Err(error) = trusted_setup_navigation(pid, window_id, descriptor, clipboard) {
+    if let Err(error) = trusted_setup_navigation(pid, window_id, descriptor, input, clipboard) {
         return Err(handle.abort(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -556,7 +772,14 @@ fn set_remote_debugging(
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
     desired_enabled: bool,
+    input: SetupInput,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
+    input.check().map_err(|error| {
+        BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            error.to_string(),
+        )
+    })?;
     let initial = window_scoped_tree(pid, window_id)?;
     let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor, false)?;
     let mut handle = if initial_checkbox.is_some() {
@@ -564,7 +787,10 @@ fn set_remote_debugging(
             pid,
             window_id,
             descriptor,
+            input: input.clone(),
             trusted_setup_navigation: false,
+            armed: true,
+            enabling: desired_enabled,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
             opened_setup_page: false,
@@ -578,6 +804,8 @@ fn set_remote_debugging(
             pid,
             window_id,
             descriptor,
+            desired_enabled,
+            &input,
             crate::wayland::is_wayland() && crate::wayland::niri::is_session(),
             &crate::clipboard::LinuxClipboard::new(),
         )?
@@ -585,6 +813,12 @@ fn set_remote_debugging(
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
+        if let Err(error) = input.check() {
+            return Err(handle.abort(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                error.to_string(),
+            )));
+        }
         let tree = match window_scoped_tree(pid, window_id) {
             Ok(tree) => tree,
             Err(error) => return Err(handle.abort(error)),
@@ -603,15 +837,14 @@ fn set_remote_debugging(
                     // A toggle that failed after it was sent may have
                     // switched remote debugging: read it back like a success,
                     // so a rollback knows what to restore.
-                    if let Err(error) = crate::atspi::action_sent(
-                        crate::atspi::perform_action_walked(pid, window_id, node),
-                    ) {
+                    handle.enable_attempted = true;
+                    if let Err(error) = perform_exact_action(pid, window_id, node, || input.check())
+                    {
                         return Err(handle.abort(BrowserRefusal::new(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             format!("the exact checkbox action failed: {error}"),
                         )));
                     }
-                    handle.enable_attempted = true;
                 }
                 Some(_)
                     if descriptor.product == BrowserProduct::MicrosoftEdge
@@ -620,6 +853,12 @@ fn set_remote_debugging(
                     handle.trusted_checkbox_fallback_attempted = true;
                     handle.foregrounded_window = true;
                     let trusted_navigation = handle.trusted_setup_navigation;
+                    if input.hyprland {
+                        return Err(handle.abort(BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "trusted Edge checkbox fallback is not qualified on Hyprland",
+                        )));
+                    }
                     let clicked = with_target_foreground(
                         pid,
                         window_id,
@@ -719,23 +958,122 @@ pub fn enable(
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
+    input: SetupInput,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
-    set_remote_debugging(pid, window_id, descriptor, true)
+    set_remote_debugging(pid, window_id, descriptor, true, input)
 }
 
 pub fn disable(
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
+    input: SetupInput,
 ) -> Result<bool, BrowserRefusal> {
-    let handle = set_remote_debugging(pid, window_id, descriptor, false)?;
-    Ok(handle.close().unwrap_or(false))
+    let handle = set_remote_debugging(pid, window_id, descriptor, false, input)?;
+    Ok(handle.close_for_success()?.unwrap_or(false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cua_driver_core::browser::{existing_profile_setup_descriptor, BrowserProduct};
+
+    fn test_input(owner: &str) -> SetupInput {
+        SetupInput {
+            owner: owner.to_owned(),
+            lane_owner: owner.to_owned(),
+            hyprland: true,
+            fingerprint: cua_driver_core::browser::ProcessFingerprint {
+                pid: 0,
+                start_time: Some(0),
+                executable: None,
+            },
+            cancellation: ActionCancellation::default(),
+        }
+    }
+
+    #[test]
+    fn semantic_setup_refuses_an_ending_lifecycle() {
+        use cua_driver_core::session::{self, SessionClientKind, SessionTransport};
+        let sid = "setup-semantic-end-private";
+        let transport = "setup-semantic-end-transport";
+        let guard = session::begin_session_dispatch(
+            sid,
+            None,
+            transport,
+            true,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        let input = test_input(sid);
+        assert!(input.check().is_ok());
+        assert!(session::end_session_for_owner(sid, transport));
+        assert!(input.check().is_err());
+        drop(guard);
+        assert!(session::is_session_ended(sid));
+    }
+
+    #[test]
+    fn matching_owner_retires_pending_setup_without_touching_a_foreign_handle() {
+        let pid = 0;
+        let window = 0x5156;
+        let owner = "pending-setup-private-owner";
+        let handle = SetupUiHandle {
+            pid,
+            window_id: window,
+            descriptor: descriptor(),
+            input: test_input(owner),
+            trusted_setup_navigation: false,
+            armed: false,
+            enabling: true,
+            enable_attempted: false,
+            trusted_checkbox_fallback_attempted: false,
+            opened_setup_page: false,
+            enabled_remote_debugging: false,
+            focused_setup_address_field: false,
+            foregrounded_window: false,
+            injected_global_input: false,
+        };
+        retain_pending(pid, window, handle).unwrap();
+        discard_pending(pid, window, "another-private-owner");
+        assert!(pending_setups()
+            .lock()
+            .unwrap()
+            .contains_key(&(pid, window)));
+        discard_pending(pid, window, owner);
+        assert!(!pending_setups()
+            .lock()
+            .unwrap()
+            .contains_key(&(pid, window)));
+    }
+
+    #[test]
+    fn setup_and_cleanup_require_a_trusted_window_scoped_tree() {
+        assert!(require_window_scope(1, 2, true, true).is_ok());
+        assert_eq!(
+            require_window_scope(1, 2, true, false).unwrap_err().code,
+            BrowserRefusalCode::BrowserBindingAmbiguous
+        );
+        assert_eq!(
+            require_window_scope(1, 2, false, true).unwrap_err().code,
+            BrowserRefusalCode::BrowserRouteUnavailable
+        );
+    }
+
+    #[test]
+    fn setup_requires_success_on_the_exact_foreground_route() {
+        use serde_json::json;
+        assert!(foreground_ack(json!({"ok": true, "route": "primary_foreground"})).is_ok());
+        for reply in [
+            json!({"ok": false, "code": "physical_input_busy", "route": "primary_foreground"}),
+            json!({"ok": true, "route": "synthetic_events"}),
+            json!({"ok": true}),
+            json!({"route": "primary_foreground"}),
+        ] {
+            assert!(foreground_ack(reply).is_err());
+        }
+    }
 
     fn descriptor() -> &'static BrowserSetupDescriptor {
         existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()
@@ -859,7 +1197,9 @@ mod tests {
     #[test]
     fn niri_refuses_setup_navigation_without_touching_the_clipboard() {
         let clipboard = WatchedClipboard::default();
-        let Err(refused) = open_setup_page(1, 2, descriptor(), true, &clipboard) else {
+        let input = test_input("niri-setup-private-owner");
+        let Err(refused) = open_setup_page(1, 2, descriptor(), true, &input, true, &clipboard)
+        else {
             panic!("setup navigation ran under niri");
         };
         assert_eq!(refused.code, BrowserRefusalCode::BrowserRouteUnavailable);

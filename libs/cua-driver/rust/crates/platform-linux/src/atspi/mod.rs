@@ -394,9 +394,20 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
 }
 
 pub fn perform_action_walked(pid: u32, xid: u64, node: &AtspiNode) -> Result<(String, bool, bool)> {
+    perform_action_walked_guarded(pid, xid, node, || Ok(()))
+}
+
+/// [`perform_action_walked`] with `before_dispatch` checked after the window
+/// proof and the object's own reads, immediately before the action is sent.
+pub fn perform_action_walked_guarded(
+    pid: u32,
+    xid: u64,
+    node: &AtspiNode,
+    before_dispatch: impl Fn() -> Result<()>,
+) -> Result<(String, bool, bool)> {
     let (identity, object_ref) = walked_object(node)?;
     require_window_element(pid, xid, WindowElement::Identity(identity))?;
-    native::perform_action_ref(object_ref)
+    native::perform_action_ref_guarded(object_ref, before_dispatch)
 }
 
 /// The proven identity and the D-Bus object of a walked node: what an action

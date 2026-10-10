@@ -1239,6 +1239,8 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 7 (registered before it runs):** v2s3b7 (background) and v2s3f7 (foreground), IR-01, IR-03, CDB-G04 and MB-10, 3 runs each, AX only, on `cab0edf4d` in `cdb-v2`. This is the re-check that decides the merge.
 
+**Round 7 outcome (v2s3b7 complete, v2s3f7 stopped early at 7 trials on the owner's "hurry up", 10 Oct 20:15Z).** Background: 11/12 passed; key status never lost and 0 user keystrokes swallowed in all 12 trials (v2s2: 4/6 trials lost key, 3–65 keystrokes). Background completion: IR-03 3/3, MB-10 2/2 of its passes, IR-01 0/3 and CDB-G04 0/3. Foreground: 7/7 passed (round 3: 12/12). **The key-focus target is met; the completion target is not met on IR-01 and CDB-G04,** where opening a popup menu still raises the target's window over the user window (it happened before the fix too, and Codex raises on CDB-G04 as well). The cause of that raise is not found yet; it is a separate follow-up and is reported, not hidden, in the full run. The driver PR merges on the key-focus result.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

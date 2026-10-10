@@ -461,6 +461,13 @@ pub struct AppPendingCreate {
     pub cancelling: bool,
     /// GPU acceleration was asked for.
     pub gpu: bool,
+    /// A create on one of your machines: that machine's relay id (the
+    /// `host:<machine>` of the create's `on`). The machine lists the Space
+    /// it is creating as a record of its own, which [`compose`] folds into
+    /// this row.
+    pub host: Option<String>,
+    /// That machine's name, for the row and for a failure that names it.
+    pub host_name: Option<String>,
 }
 
 /// One delete in flight (or done, until the registry drops the Space).
@@ -531,6 +538,11 @@ pub enum AppCreateAction {
         host_arch: Option<String>,
         /// GPU acceleration was asked for (the create's `gpu` option).
         gpu: bool,
+        /// The machine it runs on, when it is one of yours (the create's
+        /// `host:<machine>`): its relay id.
+        host: Option<String>,
+        /// That machine's name.
+        host_name: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -588,6 +600,8 @@ pub enum AppCreateAction {
         id: String,
         /// Why, one line.
         error: String,
+        /// The error enum's case name, when the shell has one.
+        error_variant: String,
     },
     /// Remove a failed row.
     Dismiss {
@@ -955,6 +969,8 @@ pub enum AppStreamPhase {
     Idle,
     /// Opening (no frame yet).
     Connecting,
+    /// Opening again by itself after the stream dropped (no frame yet).
+    Reconnecting,
     /// Frames arrive.
     Streaming,
     /// Paused by the Space (the stream view says why).
@@ -2942,6 +2958,8 @@ pub struct AppSandboxImage {
     pub arch: Vec<String>,
     /// How big it is per platform, when measured.
     pub sizes: Option<AppImageSizes>,
+    /// `false`: its guest cannot use GPU acceleration.
+    pub gpu: bool,
 }
 
 /// A titled group of images.
@@ -3049,8 +3067,9 @@ pub struct AppConnectedCloud {
 pub type AppHostLimit = core::wizard::HostLimit;
 #[uniffi::remote(Record)]
 pub struct AppHostLimit {
-    /// `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
-    /// Mac).
+    /// `spaces` (every Space it provides), `macos_vms` (macOS VMs on that
+    /// Mac), or [`HOST_SHARING_STOPPED`] (not a limit: its owner stopped
+    /// sharing it).
     pub resource: String,
     /// In use now.
     pub used: u32,
@@ -3074,11 +3093,13 @@ pub struct AppSpaceHost {
     pub name: String,
     /// `relay` or `direct` (its Tailscale or LAN address).
     pub via: String,
-    /// It answered just now.
+    /// It is online: it answered just now, or the relay sees it connected
+    /// (the Machines page says the same).
     pub online: bool,
     /// Its operating system (`macos`, `linux`, `windows`), when it answered.
     pub os: String,
-    /// Its limits, when it answered.
+    /// Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
+    /// it is online and refused because its owner stopped sharing it.
     pub limits: Vec<AppHostLimit>,
 }
 
@@ -3105,14 +3126,14 @@ pub struct AppPlacementOption {
     /// `host:<machine>`, or a connected cloud's word (`aws`).
     pub id: String,
     /// The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
-    /// "AWS · us-west-2".
+    /// "Mac mini (not sharing)", "AWS · us-west-2".
     pub label: String,
     /// Its group, in menu order (a separator between groups): `this-mac`,
     /// `hosts`, `clouds`.
     pub group: String,
     /// Chosen.
     pub selected: bool,
-    /// It can be chosen now (offline, at its limit: not).
+    /// It can be chosen now (offline, not sharing, at its limit: not).
     pub enabled: bool,
     /// One line: why not, or what it runs (the tooltip).
     pub detail: String,
@@ -4123,7 +4144,7 @@ pub struct KvStatus {
     /// A passphrase can always be chosen.
     pub passphrase_available: bool,
     /// Protector kinds that can unlock this vault now (`macos-keychain`,
-    /// `windows-credential`, `passphrase`, `recovery`).
+    /// `windows-credential`, `linux-secret-service`, `passphrase`, `recovery`).
     pub unlock_protectors: Vec<String>,
     /// The browse window is open until this time, Unix ms: item names are
     /// visible until then.
@@ -5395,6 +5416,11 @@ pub struct AppOnboardingState {
     /// Settings, Experiments: the Cua Volume page (and its Done line) only
     /// while Cua Volume is on. Off until the shell says otherwise.
     pub experiments: AppExperiments,
+    /// The run's start was counted (`onboarding_shown`, Welcome shown):
+    /// when Welcome showed on a machine whose usage notice was already
+    /// shown, else when Welcome was left. Once per run, however often
+    /// Welcome shows again (Back).
+    pub run_counted: bool,
 }
 
 /// An input.
@@ -5493,6 +5519,10 @@ pub enum AppOnboardingAction {
         /// The setting.
         telemetry: AppTelemetryInput,
     },
+    /// Welcome is on screen (each time it shows; after `telemetry-loaded`).
+    /// On a machine that already showed the usage notice, with usage data
+    /// on, the run's start counts now rather than when Welcome is left.
+    WelcomeShown,
     /// Welcome's "Share anonymous usage data" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
@@ -6136,6 +6166,123 @@ pub struct AppRefreshReport {
     pub daemon_error: Option<String>,
 }
 
+/// A key the daemon reported (`agent_keys.list`'s `keys`).
+pub type AppAgentKeyInput = core::agent_keys::AgentKeyInput;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeyInput {
+    /// `anthropic`, `openai` or `other`.
+    pub provider: String,
+    /// The variable a run gets it as.
+    pub env: String,
+    /// Its last four characters (empty for a short key).
+    pub last4: String,
+    /// When it was added (Unix ms).
+    pub added_ms: u64,
+}
+
+/// What the section shows.
+pub type AppAgentKeysInput = core::agent_keys::AgentKeysInput;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeysInput {
+    /// The keys saved, once read.
+    pub keys: Vec<AppAgentKeyInput>,
+    /// Why this machine can't keep keys (the daemon's words), when it can't.
+    pub unavailable: Option<String>,
+    /// The keys could not be read (no daemon, a refused Keychain).
+    pub error: Option<String>,
+}
+
+/// One row: a provider, or an Other key.
+pub type AppAgentKeyRow = core::agent_keys::AgentKeyRow;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeyRow {
+    /// The variable (the row's id).
+    pub env: String,
+    /// `anthropic`, `openai` or `other`.
+    pub provider: String,
+    /// "Anthropic", "OpenAI", or the variable.
+    pub title: String,
+    /// Who gets it.
+    pub detail: String,
+    /// A key is saved.
+    pub set: bool,
+    /// "Not set", "•••• 0000", or "Saved" for a short key.
+    pub status: String,
+    /// When it was added (the page writes "Added <date>").
+    pub added_ms: Option<u64>,
+    /// "Add key" or "Replace".
+    pub action_label: String,
+    /// "Remove", when a key is saved.
+    pub remove_label: Option<String>,
+}
+
+/// The section.
+pub type AppAgentKeysView = core::agent_keys::AgentKeysView;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeysView {
+    pub title: String,
+    /// Where the keys live and who gets them.
+    pub intro: String,
+    pub rows: Vec<AppAgentKeyRow>,
+    /// The button for an Other key.
+    pub add_other_label: String,
+    /// What an Other key is.
+    pub other_help: String,
+    /// Why keys can't be saved or read, in place of the buttons.
+    pub notice: Option<String>,
+    /// The buttons work.
+    pub can_edit: bool,
+    /// "Added" (before the date the page formats).
+    pub added_label: String,
+}
+
+/// What the add or replace sheet is for.
+pub type AppAgentKeyFormInput = core::agent_keys::AgentKeyFormInput;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeyFormInput {
+    /// `anthropic`, `openai` or `other`.
+    pub provider: String,
+    /// The row it opened from (replacing an Other key), when any.
+    pub env: Option<String>,
+    /// The variable typed for a new Other key.
+    pub name: String,
+    /// Something was typed in the key field (the page never sends the key).
+    pub has_value: bool,
+}
+
+/// The add or replace sheet.
+pub type AppAgentKeyFormView = core::agent_keys::AgentKeyFormView;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeyFormView {
+    pub title: String,
+    pub lede: String,
+    /// The variable field, for a new Other key.
+    pub name_label: Option<String>,
+    pub name_placeholder: Option<String>,
+    /// Why the typed variable can't be used.
+    pub name_error: Option<String>,
+    pub value_label: String,
+    pub value_placeholder: String,
+    /// Under the key field.
+    pub value_help: String,
+    pub save_label: String,
+    pub cancel_label: String,
+    pub can_save: bool,
+    /// What `agent_keys.set` gets besides the key.
+    pub provider: String,
+    pub env: Option<String>,
+}
+
+/// Asked before a key is removed.
+pub type AppAgentKeyConfirm = core::agent_keys::AgentKeyConfirm;
+#[uniffi::remote(Record)]
+pub struct AppAgentKeyConfirm {
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
+}
+
 /// What the operating system reports for the app as a login item
 /// (`SMAppService.Status` on macOS).
 pub type AppLoginItemStatus = core::login_item::LoginItemStatus;
@@ -6189,6 +6336,8 @@ pub struct AppExperiments {
     pub your_cloud: bool,
     /// Sharing a Space with other accounts.
     pub sharing: bool,
+    /// The shared web UI, previewed in its own window.
+    pub web_ui: bool,
 }
 
 /// Notch island or glass.
@@ -6290,6 +6439,10 @@ pub struct AppTelemetryInput {
     pub enabled: bool,
     /// The environment decides (`DO_NOT_TRACK`, `CUA_TELEMETRY`, CI): who.
     pub locked_by: Option<String>,
+    /// The first-run usage notice was already shown on this machine (by
+    /// `cua`, or an earlier run of the app): events may be sent before
+    /// Welcome is left.
+    pub notice_shown: bool,
 }
 
 /// What the Settings page shows.
@@ -8753,6 +8906,19 @@ pub enum AppTelemetrySignal {
         /// It worked.
         ok: bool,
     },
+    /// The app started (`cua_onboarding_step`, step `app_launched`).
+    Launched {
+        /// The first run was not finished yet at this launch, so the
+        /// app opens it (none: the shell does not know).
+        onboarding_eligible: Option<bool>,
+    },
+    /// A sign-in failed, timed out or was cancelled (`cua_onboarding_step`,
+    /// step `signed_in`, outcome `error`).
+    SignInFailed {
+        /// `timeout`, `cancelled`, `permission_denied`, `transport`,
+        /// `unauthenticated` or `other` (never the message).
+        error_kind: String,
+    },
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
@@ -8787,6 +8953,8 @@ pub enum AppTelemetrySignal {
         elapsed_ms: u64,
         /// GPU acceleration was turned on.
         gpu: bool,
+        /// The error enum's case name, when the shell sent one.
+        error_variant: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {

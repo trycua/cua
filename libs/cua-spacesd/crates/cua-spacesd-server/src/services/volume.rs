@@ -247,7 +247,78 @@ impl VolumeShared {
     /// hangs until the NFS client gives up). Never blocks start-up for long.
     pub async fn clear_stale_mount(&self) {
         let _ = tokio::time::timeout(Duration::from_secs(30), clear_stale_mounts()).await;
+        // Linux images ship an empty, writable /volume for the mount. In a
+        // guest that cannot mount (a container on runc has no /dev/fuse) it
+        // would silently take writes that sync nowhere: make it read-only,
+        // with a note saying why. A guest that can mount gets it back.
+        #[cfg(target_os = "linux")]
+        {
+            let dir = Path::new("/volume");
+            let table = mount_table().await;
+            if dir.is_dir() && !listed_in_mount_table(&table, dir, true) {
+                let r = match backend() {
+                    Err(why) => seal_unusable_dir(dir, &why).map(|done| (done, "sealed")),
+                    Ok(_) => unseal_dir(dir).map(|done| (done, "reopened")),
+                };
+                match r {
+                    Ok((true, what)) => tracing::info!(path = "/volume", "volume folder {what}"),
+                    Ok((false, _)) => {}
+                    Err(e) => {
+                        tracing::warn!(path = "/volume", error = %e, "volume folder left as is")
+                    }
+                }
+            }
+        }
     }
+}
+
+/// The note left in a volume folder that cannot be mounted.
+pub const UNAVAILABLE_NOTE: &str = "CUA-VOLUME-UNAVAILABLE.txt";
+
+/// Makes `dir` (an unmounted, empty volume folder) read-only with a note
+/// saying why the Cua Volume is not here. A folder holding anything but the
+/// note is left alone. Returns whether it changed anything.
+#[cfg(unix)]
+pub fn seal_unusable_dir(dir: &Path, why: &str) -> std::io::Result<bool> {
+    use std::os::unix::fs::PermissionsExt;
+    let others = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name() != UNAVAILABLE_NOTE);
+    if others {
+        return Ok(false);
+    }
+    let note = dir.join(UNAVAILABLE_NOTE);
+    let body = format!(
+        "Cua Volume is not mounted in this Space: {why}.\n\
+         Nothing can be saved here; this folder is read-only so nothing is lost\n\
+         by writing to it. Use the Cua Volume through the volume tools of the\n\
+         machine that runs this Space, or create the Space with gVisor or as a VM.\n"
+    );
+    let mode = std::fs::metadata(dir)?.permissions().mode() & 0o777;
+    if mode & 0o222 == 0 && std::fs::read_to_string(&note).ok().as_deref() == Some(&body) {
+        return Ok(false);
+    }
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
+    // An older note (another reason) is read-only: replace it.
+    let _ = std::fs::remove_file(&note);
+    std::fs::write(&note, body)?;
+    std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o444))?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555))?;
+    Ok(true)
+}
+
+/// Undoes [`seal_unusable_dir`] once the guest can mount. Returns whether
+/// it changed anything.
+#[cfg(unix)]
+pub fn unseal_dir(dir: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::PermissionsExt;
+    let note = dir.join(UNAVAILABLE_NOTE);
+    if !note.exists() {
+        return Ok(false);
+    }
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::remove_file(note)?;
+    Ok(true)
 }
 
 /// How long shutdown waits for the volume to unmount.
@@ -837,6 +908,33 @@ mod tests {
         assert!(listed_in_mount_table(linux, Path::new("/volume"), true));
         assert!(listed_in_mount_table(linux, Path::new("/mnt/my vol"), true));
         assert!(!listed_in_mount_table(linux, Path::new("/vol"), true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unmountable_volume_folder_is_read_only_with_a_note() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("volume");
+        std::fs::create_dir(&dir).unwrap();
+        let why = "this guest has no /dev/fuse (a container needs gVisor with SYS_ADMIN, or a VM)";
+        assert!(seal_unusable_dir(&dir, why).unwrap());
+        // Idempotent.
+        assert!(!seal_unusable_dir(&dir, why).unwrap());
+        let note = std::fs::read_to_string(dir.join(UNAVAILABLE_NOTE)).unwrap();
+        assert!(
+            note.contains("not mounted") && note.contains("/dev/fuse"),
+            "{note}"
+        );
+        assert!(!writable(&dir) || unsafe { libc::geteuid() } == 0);
+        // Back once the guest can mount.
+        assert!(unseal_dir(&dir).unwrap());
+        assert!(writable(&dir));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        assert!(!unseal_dir(&dir).unwrap());
+        // A folder with the user's files is left alone.
+        std::fs::write(dir.join("mine.txt"), "x").unwrap();
+        assert!(!seal_unusable_dir(&dir, why).unwrap());
+        assert!(writable(&dir));
     }
 
     #[test]

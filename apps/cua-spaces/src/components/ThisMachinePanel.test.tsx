@@ -239,7 +239,7 @@ describe("roster", () => {
         .getAllByRole("option")
         .filter((el) => !el.classList.contains("tile-new"))
         .map((el) => el.getAttribute("aria-label")?.split(",")[0]);
-      expect([...names].sort()).toEqual(["Office Pc", "This machine"]);
+      expect([...names].sort()).toEqual(["This machine", "office-pc"]);
     });
     // This machine's page opens in the main window, not inside the notch.
     await user.click(within(listbox).getByRole("option", { name: /This machine/ }));

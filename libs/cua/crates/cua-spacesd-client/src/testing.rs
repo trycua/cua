@@ -837,6 +837,9 @@ impl Svc {
 
 enum Script {
     Echo(String),
+    /// `printf %s WORD`: the word without its quotes and no newline;
+    /// `$HOME` is the mock guest user's home (`/home/cua`).
+    Printf(String),
     Fail(i32),
     Ticker(u32, u64),
     Cat,
@@ -871,6 +874,11 @@ fn parse_script(cfg: &pb::ProcessConfig) -> Script {
     let num = |i: usize, d: u64| words.get(i).and_then(|w| w.parse().ok()).unwrap_or(d);
     match prog.rsplit('/').next().unwrap_or_default() {
         "echo" => Script::Echo(words.join(" ")),
+        "printf" if words.len() == 2 && words[0] == "%s" => Script::Printf(
+            words[1]
+                .trim_matches(|c| c == '"' || c == '\'')
+                .replace("$HOME", "/home/cua"),
+        ),
         "fail" => Script::Fail(num(0, 1) as i32),
         "ticker" => Script::Ticker(num(0, 3) as u32, num(1, 10)),
         "cat" => Script::Cat,
@@ -1085,6 +1093,10 @@ impl ProcessService for Svc {
                 match script {
                     Script::Echo(s) => {
                         svc.emit(pid, out_kind, format!("{s}\n").into_bytes());
+                        (Some(0), String::new())
+                    }
+                    Script::Printf(s) => {
+                        svc.emit(pid, out_kind, s.into_bytes());
                         (Some(0), String::new())
                     }
                     Script::Fail(code) => {

@@ -52,7 +52,8 @@ pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, Pen
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_PROVIDES_SPACES, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
+    HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES, PermissionHint, SetupOptions,
+    SpacesDaemon, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
 pub use provided::{

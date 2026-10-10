@@ -637,7 +637,38 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
         Event::new(event::ONBOARDING_STEP)
             .s("step", s)
             .s("outcome", outcome.as_str())
+            .s("onboarding_eligible", "unknown")
+            .s("error_kind", "none")
     })
+}
+
+/// `cua_onboarding_step` `signed_in` with outcome `error`: a sign-in that
+/// failed, timed out or was cancelled, as its kind ([`schema::ERROR_KINDS`],
+/// else `other`).
+pub fn sign_in_failed(error_kind: &str) -> Event {
+    Event::new(event::ONBOARDING_STEP)
+        .s("step", "signed_in")
+        .s("outcome", Outcome::Error.as_str())
+        .s("onboarding_eligible", "unknown")
+        .s("error_kind", pick(schema::ERROR_KINDS, error_kind, "other"))
+}
+
+/// `cua_onboarding_step` `app_launched`: the app started, with whether its
+/// first run was still to finish (`yes`, `no`; `unknown` when the app
+/// cannot tell).
+pub fn app_launched(onboarding_eligible: Option<bool>) -> Event {
+    Event::new(event::ONBOARDING_STEP)
+        .s("step", "app_launched")
+        .s("outcome", Outcome::Ok.as_str())
+        .s(
+            "onboarding_eligible",
+            match onboarding_eligible {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "unknown",
+            },
+        )
+        .s("error_kind", "none")
 }
 
 /// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else
@@ -844,6 +875,8 @@ pub struct SpaceCreate<'a> {
     pub stalled: bool,
     /// GPU acceleration was turned on.
     pub gpu: bool,
+    /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
+    pub error_variant: &'a str,
 }
 
 /// `cua_space_create`.
@@ -860,11 +893,17 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
             p => p,
         },
     };
+    let error_kind = match outcome {
+        Outcome::Error if s.stalled && s.error_variant.is_empty() => "timeout",
+        Outcome::Error => error_kind(s.error_variant),
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
         .s("guest_os", guest_os(s.guest_os))
         .s("kind", sandbox_kind(s.kind))
         .s("outcome", outcome.as_str())
+        .s("error_kind", error_kind)
         .s("failed_phase", failed_phase)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))

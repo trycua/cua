@@ -101,7 +101,8 @@ def test_spaces_releases_macos_only_for_now() -> None:
     jobs = workflow("cd-cua-spaces.yml")["jobs"]
     # The Tauri Linux/Windows job is kept but off unless explicitly enabled.
     assert jobs["build-linux-windows"]["if"] == "vars.CUA_SPACES_LINUX_WINDOWS == 'true'"
-    assert "if" not in jobs["build-macos"]
+    # The SwiftUI app builds on every release; only an Electron dry run skips it.
+    assert jobs["build-macos"]["if"] == "github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run"
     # Publishing runs with the Tauri job skipped, never after it failed.
     gate = jobs["installer-manifest"]["if"]
     assert "!cancelled()" in gate
@@ -117,7 +118,71 @@ def test_spaces_releases_macos_only_for_now() -> None:
     assert "if [ -f assets/latest.json ]; then" in feeds
     assert "cua-install-latest assets/release-artifacts.json" in feeds
     appcast = step("cd-cua-spaces.yml", "installer-manifest", "Upload the Sparkle appcast")
-    assert appcast["if"] == "needs.build-macos.outputs.appcast == 'true'"
+    assert appcast["if"] == (
+        "needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true'"
+    )
+
+
+def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
+    wf = workflow("cd-cua-spaces.yml")
+    jobs = wf["jobs"]
+    dispatch = wf.get("on", wf.get(True))["workflow_dispatch"]["inputs"]
+    assert dispatch["electron_dry_run"]["default"] is False
+    plan = step("cd-cua-spaces.yml", "electron-plan", "Plan")["run"]
+    assert 'beta=false; [[ "$VERSION" == *-* ]] && beta=true' in plan
+    assert '[ "$DRY_RUN" != true ]' in plan and "refs/tags/cua-spaces-v*" in plan
+    for name in ("electron-native", "electron-mac", "electron-windows", "electron-linux"):
+        assert jobs[name]["if"] == "needs.electron-plan.outputs.build == 'true'", name
+    assert jobs["electron-publish"]["if"] == "needs.electron-plan.outputs.publish == 'true'"
+    # Each build runs the native and notch interfaces before electron-builder.
+    mac = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-mac"))
+    assert "pnpm native -- --target aarch64-apple-darwin" in mac
+    assert "pnpm native -- --target x86_64-apple-darwin" in mac
+    assert "pnpm notch" in mac
+    assert mac.index("pnpm notch") < mac.index("pnpm dist:mac")
+    # Signed with the Developer ID identity of a keychain the job imports
+    # (electron-builder's own CSC_LINK keychain fails on macos-26).
+    assert "security import" in mac and "set-key-partition-list" in mac
+    assert 'CSC_NAME="$SIGNING_NAME" CSC_KEYCHAIN="$SIGNING_KEYCHAIN"' in mac and 'APPLE_TEAM_ID="$TEAM_ID"' in mac
+    assert "CSC_LINK" not in mac
+    assert mac.index("security import") < mac.index("pnpm dist:mac") < mac.index("security delete-keychain")
+    # The disk images are signed, notarized and stapled after electron-builder,
+    # their feed entries made again, and then checked like the SwiftUI app's.
+    assert mac.index("pnpm dist:mac") < mac.index("scripts/notarize.sh") < mac.index("xcrun stapler staple")
+    assert mac.index("xcrun stapler staple") < mac.index("refresh-update-info.mjs") < mac.index('spctl -a -vv -t install "$dmg"')
+    assert "com.trycua.spaces.macos" in mac
+    windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows"))
+    assert "pnpm native -- --target x86_64-pc-windows-msvc" in windows
+    assert 'AZURE_SIGNING_ENDPOINT="$ENDPOINT"' in windows
+    assert jobs["electron-windows"]["environment"] == "cua-driver-release-signing"
+    for name in ("electron-mac", "electron-windows"):
+        sign = step("cd-cua-spaces.yml", name, "Signing configuration")["run"]
+        assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in sign, name
+    # The release waits for the Electron installers; the feed goes up after it is published.
+    gate = jobs["installer-manifest"]["if"]
+    assert "needs.electron-plan.outputs.publish != 'true' || needs.electron-publish.result == 'success'" in gate
+    names = [s.get("name") for s in steps("cd-cua-spaces.yml", "installer-manifest")]
+    assert names.index("Publish the release") < names.index("Upload the Electron feed to cua-spaces-latest")
+    publish = step("cd-cua-spaces.yml", "electron-publish", "Upload the installers and ready the feed")["run"]
+    assert "scripts/feed-urls.mjs" in publish and "--prerelease" in publish
+
+
+def test_spaces_sparkle_cutover_is_off_and_guarded() -> None:
+    wf = workflow("cd-cua-spaces.yml")
+    dispatch = wf.get("on", wf.get(True))["workflow_dispatch"]["inputs"]
+    assert dispatch["sparkle_electron"]["default"] is False
+    plan = step("cd-cua-spaces.yml", "electron-plan", "Plan")
+    assert plan["env"]["SPARKLE_VERSION"] == "${{ vars.CUA_SPACES_SPARKLE_ELECTRON_VERSION }}"
+    assert "^export const STABLE_FEED = true;" in plan["run"]
+    # Exactly one of the two jobs makes the release's Sparkle item.
+    swift = step("cd-cua-spaces.yml", "build-macos", "Sparkle appcast")
+    assert "needs.electron-plan.outputs.cutover != 'true'" in swift["if"]
+    electron = step("cd-cua-spaces.yml", "electron-mac", "Sparkle appcast (cutover")
+    assert electron["if"] == "needs.electron-plan.outputs.cutover == 'true'"
+    assert "make-appcast.sh --electron" in electron["run"]
+    # Today the switch is off in the code the cutover checks.
+    updater = (ROOT / "apps/cua-spaces-desktop/src/updater.ts").read_text()
+    assert "export const STABLE_FEED = false;" in updater
 
 
 def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> None:

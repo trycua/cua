@@ -1133,16 +1133,21 @@ impl Broker {
                     .into(),
             );
         }
-        if cfg!(not(any(target_os = "macos", target_os = "windows"))) {
-            return Some("this platform has no OS key store protector yet".into());
+        if cfg!(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        ))) {
+            return Some("this platform has no OS key store protector".into());
         }
         None
     }
 
     /// Why this daemon cannot create a new OS key store protector (`None`: it
     /// can). On macOS only the signed Cua daemon may create one (red-team
-    /// F2), so this is checked here, before any presence prompt, rather
-    /// than discovered after the user confirmed.
+    /// F2); on Linux a desktop with no Secret Service on the session bus has
+    /// none to use. Checked here, before any presence prompt, rather than
+    /// discovered after the user confirmed.
     fn os_enroll_block(&self) -> Option<String> {
         if let Some(why) = self.os_use_block() {
             return Some(why);
@@ -1158,7 +1163,11 @@ impl Broker {
                                 .into()
                         })
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(target_os = "linux")]
+                {
+                    crate::protector::secret_service_available().err()
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 {
                     None
                 }

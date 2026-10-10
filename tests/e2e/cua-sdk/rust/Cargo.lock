@@ -1120,6 +1120,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "core-foundation 0.10.1",
  "cua-home",
  "keyring",
  "rand 0.9.5",
@@ -1131,6 +1132,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
  "url",
 ]
 
@@ -1441,6 +1443,7 @@ dependencies = [
  "bytes",
  "chrono",
  "cua-agents",
+ "cua-auth",
  "cua-fleet",
  "cua-home",
  "cua-host",

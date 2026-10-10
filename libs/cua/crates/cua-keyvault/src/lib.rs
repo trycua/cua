@@ -20,7 +20,8 @@
 //! - [`caller`]: verified peer identities (audit token + code signature).
 //! - [`policy`]: grants, unattended rules, the kill switch.
 //! - [`broker`]: the service logic behind every IPC operation.
-//! - [`ipc`]: the socket protocol, server and client.
+//! - [`ipc`]: the socket protocol, server and client (a named pipe on
+//!   Windows, with the peer checks in `winpeer`).
 //! - [`embedded`]: the SDK side: `RequiresCuaApp` and the (compiled-out)
 //!   enterprise embedded seam.
 //!
@@ -52,6 +53,10 @@ pub mod rollback;
 pub mod store;
 /// Broker-side usage telemetry (counts and fixed vocabularies only).
 pub mod telemetry;
+#[cfg(windows)]
+pub mod winpeer;
+#[cfg(windows)]
+pub mod winpipe;
 
 pub use broker::{Backend, Broker, BrokerConfig, UserPresence};
 pub use caller::{CallerIdentity, Signing, TrustPolicy};
@@ -74,8 +79,10 @@ pub enum Error {
     /// The vault is locked.
     #[error("the Keyvault is locked")]
     Locked,
-    /// No vault exists.
-    #[error("no Keyvault at {0}; run `cua keyvault init`")]
+    /// No vault exists. The message says where or why (for example "no
+    /// Keyvault at <dir>" or "the Keyvault is not set up"); the display adds
+    /// the fix.
+    #[error("{0}; run `cua keyvault init`")]
     NoVault(String),
     /// The global kill switch is on.
     #[error("the Keyvault is disabled (global kill switch); enable it in Cua to teleport")]
@@ -164,6 +171,19 @@ pub fn default_socket() -> Option<std::path::PathBuf> {
     cua_home().map(|h| h.join("keyvault.sock"))
 }
 
+/// `$HOME`, or on Windows `%USERPROFILE%`.
+fn home_dir() -> Option<std::ffi::OsString> {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            if cfg!(windows) {
+                std::env::var_os("USERPROFILE").filter(|v| !v.is_empty())
+            } else {
+                None
+            }
+        })
+}
+
 fn cua_home() -> Option<std::path::PathBuf> {
     if let Some(h) = std::env::var_os("CUA_HOME").filter(|v| !v.is_empty()) {
         if !cua_home_within_real_home() {
@@ -177,9 +197,7 @@ fn cua_home() -> Option<std::path::PathBuf> {
         }
         return Some(h.into());
     }
-    std::env::var_os("HOME")
-        .filter(|v| !v.is_empty())
-        .map(|h| std::path::PathBuf::from(h).join(".cua"))
+    home_dir().map(|h| std::path::PathBuf::from(h).join(".cua"))
 }
 
 /// Whether `$CUA_HOME`, if set, resolves within the user's real home. A
@@ -190,7 +208,7 @@ pub fn cua_home_within_real_home() -> bool {
     let Some(cua) = std::env::var_os("CUA_HOME").filter(|v| !v.is_empty()) else {
         return true;
     };
-    let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) else {
+    let Some(home) = home_dir() else {
         return false;
     };
     let cua = std::path::PathBuf::from(&cua);

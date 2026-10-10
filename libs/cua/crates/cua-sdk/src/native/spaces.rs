@@ -1810,7 +1810,7 @@ pub struct AgentActionReport {
 fn tag_error(kind: &str, message: String) -> CuaError {
     match kind {
         "invalid_argument" => CuaError::InvalidArgument(message),
-        "not_found" => CuaError::NotFound(message),
+        "not_found" => CuaError::NotFound(super::not_found_message(message)),
         "ambiguous_sandbox" => CuaError::AmbiguousSandbox(message),
         "insufficient_disk" => CuaError::InsufficientDisk(message),
         "spacesd_not_available" => CuaError::SpacesdNotAvailable(message),
@@ -1853,6 +1853,21 @@ impl From<cua_spaces::Error> for CuaError {
 
 fn daemon_err(s: tonic::Status) -> CuaError {
     cua_daemon::client::status_error(s).into()
+}
+
+/// A Spaces tool the running daemon does not have: it is another app's
+/// build (kept because it is not older), so say whose and how to get this
+/// app's own instead of a bare "not found".
+async fn missing_tool(d: &DaemonClient, tool: &str, e: CuaError) -> CuaError {
+    let unknown =
+        matches!(&e, CuaError::NotFound(m) if m.ends_with(&format!("Spaces tool {tool}")));
+    if !unknown {
+        return e;
+    }
+    match d.info().await {
+        Ok(info) => CuaError::NotFound(cua_daemon::identity::missing_tool_error(tool, &info)),
+        Err(_) => e,
+    }
 }
 
 fn outcome_value(out: ToolOut) -> Result<Value> {
@@ -2034,9 +2049,17 @@ impl Host {
     async fn tool(&self, name: &str, arguments: Value) -> Result<ToolOut> {
         match self {
             Host::Embedded(spaces) => {
-                let o = cua_spaces::mcp::McpServer::new(spaces.clone())
-                    .call(name, arguments)
-                    .await;
+                let o =
+                    match cua_spaces::agents::keys::is_app_method(name) {
+                        true => cua_spaces::agents::keys::app_tool(name, arguments).unwrap_or_else(
+                            || cua_spaces::mcp::ToolOutcome::error_message("not_found", name),
+                        ),
+                        false => {
+                            cua_spaces::mcp::McpServer::new(spaces.clone())
+                                .call(name, arguments)
+                                .await
+                        }
+                    };
                 Ok(ToolOut {
                     content: o.content,
                     structured: o.structured,
@@ -2045,15 +2068,17 @@ impl Host {
                 })
             }
             Host::Daemon(d) => {
-                let r = d
+                let r = match d
                     .spaces()
                     .call_space_tool(dpb::CallSpaceToolRequest {
                         name: name.into(),
                         arguments_json: arguments.to_string(),
                     })
                     .await
-                    .map_err(daemon_err)?
-                    .into_inner();
+                {
+                    Ok(r) => r.into_inner(),
+                    Err(s) => return Err(missing_tool(d, name, daemon_err(s)).await),
+                };
                 let content: Vec<Value> = serde_json::from_str(&r.content_json)
                     .map_err(|e| CuaError::Internal(format!("content_json: {e}")))?;
                 let structured = (!r.structured_json.is_empty())
@@ -2768,7 +2793,11 @@ impl Spaces {
     ) -> Result<SpaceToolResult> {
         let host = self.host.clone();
         run(async move {
-            if cua_spaces::contract::tool(&tool).is_none() {
+            // The contract's tools, and the Spaces app's settings methods
+            // (`agent_keys.*`), which no MCP server serves.
+            if cua_spaces::contract::tool(&tool).is_none()
+                && !cua_spaces::agents::keys::is_app_method(&tool)
+            {
                 return Err(CuaError::NotFound(format!("Spaces tool {tool}")));
             }
             let args: Value = match arguments_json.as_deref().map(str::trim) {
@@ -2802,6 +2831,22 @@ impl Space {
     /// Rust hosts: the `cua_spaces::Space` handle.
     pub fn handle(&self) -> &cua_spaces::Space {
         &self.inner
+    }
+
+    /// Runs a Space-scoped contract tool (`upload`, `send_file`, ...; see
+    /// [`cua_spaces::mcp::SPACE_SCOPED_TOOLS`]) in this process against this
+    /// handle rather than in the daemon, so host paths are read with this
+    /// process's file permissions. Tool errors are returned, not raised.
+    pub async fn call_tool_here(
+        &self,
+        tool: &str,
+        arguments: Value,
+    ) -> cua_spaces::mcp::ToolOutcome {
+        let s = self.inner.clone();
+        let tool = tool.to_string();
+        run(async move { Ok(cua_spaces::mcp::call_on(&s, &tool, arguments).await) })
+            .await
+            .unwrap_or_else(|e| cua_spaces::mcp::ToolOutcome::error_message("env", e.to_string()))
     }
 }
 
@@ -4111,6 +4156,18 @@ fn parse_conflict(conflict: Option<&str>) -> Result<cua_spaces::files::Conflict>
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn an_embedded_insufficient_disk_becomes_insufficient_disk() {
+        let err = cua_spaces::Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::InsufficientDisk("need 52 GB".into()),
+        ));
+        assert_eq!(err.tag(), "insufficient_disk");
+        match CuaError::from(err) {
+            CuaError::InsufficientDisk(message) => assert!(message.contains("need 52 GB")),
+            other => panic!("expected InsufficientDisk, got {other:?}"),
+        }
+    }
 
     #[test]
     fn send_file_keeps_both_copies_unless_overwrite_is_explicit() {

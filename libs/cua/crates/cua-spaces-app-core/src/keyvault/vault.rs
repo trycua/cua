@@ -601,8 +601,19 @@ fn newest(items: &[&KvItem]) -> u64 {
     items.iter().map(|i| i.updated_ms).max().unwrap_or(0)
 }
 
-/// The list as drawn.
+/// The list as drawn, in a Mac's words.
 pub fn view(o: &KeyvaultOverview, state: &VaultState, now: i64) -> VaultView {
+    view_on(o, state, now, crate::model::SpaceOs::Macos)
+}
+
+/// [`view`] in the words of the system the Keyvault runs on (`os`): how it
+/// confirms showing the names.
+pub fn view_on(
+    o: &KeyvaultOverview,
+    state: &VaultState,
+    now: i64,
+    os: crate::model::SpaceOs,
+) -> VaultView {
     let items = shown(o, state);
     let searching = !state.query.trim().is_empty();
     let names_hidden = !o.items.is_empty() && !o.names_visible;
@@ -769,8 +780,12 @@ pub fn view(o: &KeyvaultOverview, state: &VaultState, now: i64) -> VaultView {
         apps,
         empty_text,
         names_hidden,
-        hidden_note: names_hidden
-            .then(|| "Names are hidden. Confirm with Touch ID to see what is saved.".into()),
+        hidden_note: names_hidden.then(|| {
+            format!(
+                "Names are hidden. Confirm with {} to see what is saved.",
+                super::credential::presence_word(os)
+            )
+        }),
         show_names_label: "Show Items".into(),
         search_prompt: SEARCH_PROMPT.into(),
         selection,
@@ -1404,6 +1419,16 @@ mod tests {
         assert!(v.names_hidden);
         assert_eq!(v.show_names_label, "Show Items");
         assert!(v.hidden_note.as_deref().unwrap().contains("Touch ID"));
+        // Off a Mac, the host's own confirmation.
+        let note = |os| view_on(&o, &st(), NOW, os).hidden_note.unwrap();
+        assert_eq!(
+            note(crate::model::SpaceOs::Windows),
+            "Names are hidden. Confirm with Windows Hello to see what is saved."
+        );
+        assert_eq!(
+            note(crate::model::SpaceOs::Linux),
+            "Names are hidden. Confirm with your password to see what is saved."
+        );
         assert_eq!(v.apps[0].count, 9, "counts survive");
         // Rows still render (type only), and nothing names a site.
         assert!(v.apps[0].sites.iter().all(|s| s.site == "Unnamed"));

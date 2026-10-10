@@ -158,7 +158,9 @@ let windows = launched["windows"] as? [[String: Any]] ?? []
 let windowId = windows.first?["window_id"] as? Int ?? 0
 log("launch_app(Finder): pid: \(pid), windows: \(windows.count)")
 
-let state = call("get_window_state", ["pid": pid, "window_id": windowId])
+// `tree_format: "elements"` asks for the structured element array; the
+// default read returns only the compact markdown tree.
+let state = call("get_window_state", ["pid": pid, "window_id": windowId, "tree_format": "elements"])
 let images = (state["content"] as? [[String: Any]] ?? [])
     .filter { $0["type"] as? String == "image" }
 let hasTree = (state["structuredContent"] as? [String: Any])?["elements"] != nil

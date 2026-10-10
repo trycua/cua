@@ -1,0 +1,47 @@
+{
+  "flow": "machines",
+  "frames": [
+    {
+      "case": "a Mac on the relay and its enrolled device, the app's probe timed out",
+      "rows": [
+        "This Mac [this-mac] online + dev_c3961dbae4080a90e6849a43",
+        "gamma-4 Mac Studio [96fedb7e1be65c3d31fa18587febde2c] online + dev_2278814aabab5c117d348c6b"
+      ],
+      "runOn": [
+        "96fedb7e1be65c3d31fa18587febde2c"
+      ]
+    },
+    {
+      "case": "the hostname its cua-spacesd reported names the device",
+      "rows": [
+        "This Mac [this-mac] online",
+        "Spare Mac mini [m-mini] online + dev_b"
+      ],
+      "runOn": [
+        "m-mini"
+      ]
+    },
+    {
+      "case": "two Macs that share a name, one device",
+      "rows": [
+        "This Mac [this-mac] online",
+        "studio Mac Studio [m1] online",
+        "studio Mac mini [m2] offline",
+        "studio.lan [dev_s] online (a device)"
+      ],
+      "runOn": [
+        "m1",
+        "m2"
+      ]
+    },
+    {
+      "case": "devices that are no machine of yours",
+      "rows": [
+        "This Mac [this-mac] online",
+        "Work laptop [dev_w] online (a device)",
+        "Old laptop [dev_o] offline (a device)"
+      ],
+      "runOn": []
+    }
+  ]
+}

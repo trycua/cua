@@ -5,32 +5,9 @@ import Darwin
 import Foundation
 import Network
 
-/// Asks macOS for Local Network access for this app (fire and forget).
-///
-/// Why: a Mac that provides Spaces boots macOS VMs (Lume, on vmnet
-/// 192.168.64.x) and its `cua daemon` (inside this app's bundle) must reach
-/// the guest. macOS blocks that ("No route to host") until Local Network
-/// access is allowed, and it asks only the first time the app reaches the
-/// local network, at most once per boot, on this Mac's own screen. The app
-/// is not even listed under System Settings > Privacy & Security > Local
-/// Network until it has been asked. Left alone, the prompt appears when the
-/// first Space is created, often from another Mac while nobody is at this
-/// one, and the create fails. So the app asks while the user is here: when
-/// "Set up for access" succeeds with Spaces provided, and when it launches
-/// on a Mac already set up to provide them.
-public protocol LocalNetworkPermissionRequesting: AnyObject, Sendable {
-    /// Triggers the prompt if macOS has not decided yet. Never blocks.
-    func request()
-}
-
-/// The live request: a short-lived UDP datagram to an address on this Mac's
-/// local network (the first active IPv4 interface's subnet, and vmnet's
-/// 192.168.64.1, where the VMs live). Each connection is cancelled after a
-/// few seconds whatever happens; nothing waits for it. Asks once per
-/// process (macOS asks at most once per boot anyway).
-public final class LiveLocalNetworkPermission: LocalNetworkPermissionRequesting, @unchecked Sendable {
-    private let lock = NSLock()
-    private var asked = false
+/// Asks once at launch, on every Mac: controllers reach other Macs' Spaces
+/// over the LAN, and providers reach their VMs over vmnet.
+public final class LiveLocalNetworkPermission: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.trycua.cua-spaces.local-network")
     /// How long each probe may live.
     let lifetime: TimeInterval
@@ -40,11 +17,6 @@ public final class LiveLocalNetworkPermission: LocalNetworkPermissionRequesting,
     }
 
     public func request() {
-        lock.lock()
-        let first = !asked
-        asked = true
-        lock.unlock()
-        guard first else { return }
         queue.async { [self] in
             for host in Self.targets() { probe(host) }
         }

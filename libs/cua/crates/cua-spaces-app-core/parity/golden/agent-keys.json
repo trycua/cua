@@ -1,0 +1,236 @@
+{
+  "flow": "agent-keys",
+  "frames": [
+    {
+      "section": {
+        "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
+        "added": "Added",
+        "canEdit": true,
+        "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
+        "notice": null,
+        "rows": [
+          "Anthropic | ANTHROPIC_API_KEY | anthropic | Not set | Add key | - | added - | For Claude Code and other agents that use Claude.",
+          "OpenAI | OPENAI_API_KEY | openai | Not set | Add key | - | added - | For Codex and other agents that use OpenAI models."
+        ],
+        "title": "Agent keys"
+      },
+      "step": "nothing saved"
+    },
+    {
+      "section": {
+        "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
+        "added": "Added",
+        "canEdit": true,
+        "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
+        "notice": null,
+        "rows": [
+          "Anthropic | ANTHROPIC_API_KEY | anthropic | •••• 0000 | Replace | Remove | added 1790000000000 | For Claude Code and other agents that use Claude.",
+          "OpenAI | OPENAI_API_KEY | openai | Not set | Add key | - | added - | For Codex and other agents that use OpenAI models."
+        ],
+        "title": "Agent keys"
+      },
+      "step": "an Anthropic key saved"
+    },
+    {
+      "section": {
+        "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
+        "added": "Added",
+        "canEdit": true,
+        "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
+        "notice": null,
+        "rows": [
+          "Anthropic | ANTHROPIC_API_KEY | anthropic | •••• 0000 | Replace | Remove | added 1790000000000 | For Claude Code and other agents that use Claude.",
+          "OpenAI | OPENAI_API_KEY | openai | Saved | Replace | Remove | added 1790000100000 | For Codex and other agents that use OpenAI models.",
+          "MISTRAL_API_KEY | MISTRAL_API_KEY | other | •••• 9z9z | Replace | Remove | added 1790000200000 | For agents that read MISTRAL_API_KEY."
+        ],
+        "title": "Agent keys"
+      },
+      "step": "both providers, an Other key and a short key"
+    },
+    {
+      "section": {
+        "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
+        "added": "Added",
+        "canEdit": false,
+        "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
+        "notice": "Keys can't be saved here: this build of cua keeps credentials in a file, and agent keys are only kept in the Keychain (a Cua-signed build of Cua Spaces does). Set the key for the Cua daemon instead.",
+        "rows": [
+          "Anthropic | ANTHROPIC_API_KEY | anthropic | Not set | Add key | - | added - | For Claude Code and other agents that use Claude.",
+          "OpenAI | OPENAI_API_KEY | openai | Not set | Add key | - | added - | For Codex and other agents that use OpenAI models."
+        ],
+        "title": "Agent keys"
+      },
+      "step": "this build can't keep keys"
+    },
+    {
+      "section": {
+        "addOther": "Add another key (For another provider, save its key under the variable its agent reads, like GEMINI_API_KEY.)",
+        "added": "Added",
+        "canEdit": false,
+        "intro": "Agents in your Spaces need a provider key to run. Keys stay on this Mac in the Keychain, and each one is only given to the agents that use it.",
+        "notice": "Couldn't read your agent keys: The Cua daemon isn't running.",
+        "rows": [
+          "Anthropic | ANTHROPIC_API_KEY | anthropic | Not set | Add key | - | added - | For Claude Code and other agents that use Claude.",
+          "OpenAI | OPENAI_API_KEY | openai | Not set | Add key | - | added - | For Codex and other agents that use OpenAI models."
+        ],
+        "title": "Agent keys"
+      },
+      "step": "the daemon can't be read"
+    },
+    {
+      "form": {
+        "buttons": "Save off | Cancel",
+        "lede": "Create a key at platform.openai.com, then paste it here.",
+        "name": "- / - / -",
+        "sets": "openai OPENAI_API_KEY",
+        "title": "Add an OpenAI key",
+        "value": "API key / sk-… / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add OpenAI, nothing typed"
+    },
+    {
+      "form": {
+        "buttons": "Save on | Cancel",
+        "lede": "Create a key at platform.openai.com, then paste it here.",
+        "name": "- / - / -",
+        "sets": "openai OPENAI_API_KEY",
+        "title": "Add an OpenAI key",
+        "value": "API key / sk-… / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add OpenAI, a key typed"
+    },
+    {
+      "form": {
+        "buttons": "Save on | Cancel",
+        "lede": "Create a key at console.anthropic.com, then paste it here.",
+        "name": "- / - / -",
+        "sets": "anthropic ANTHROPIC_API_KEY",
+        "title": "Replace the Anthropic key",
+        "value": "API key / sk-ant-… / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "replace Anthropic"
+    },
+    {
+      "form": {
+        "buttons": "Save off | Cancel",
+        "lede": "Enter the variable the agent reads for its key, then paste the key.",
+        "name": "Variable name / GEMINI_API_KEY / -",
+        "sets": "other -",
+        "title": "Add another key",
+        "value": "API key / Key / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add another key, nothing typed"
+    },
+    {
+      "form": {
+        "buttons": "Save off | Cancel",
+        "lede": "Enter the variable the agent reads for its key, then paste the key.",
+        "name": "Variable name / GEMINI_API_KEY / DYLD_INSERT_LIBRARIES changes how programs run, so it can't hold a key.",
+        "sets": "other -",
+        "title": "Add another key",
+        "value": "API key / Key / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add another key, a name a loader reads"
+    },
+    {
+      "form": {
+        "buttons": "Save off | Cancel",
+        "lede": "Enter the variable the agent reads for its key, then paste the key.",
+        "name": "Variable name / GEMINI_API_KEY / Use letters, digits and _, and don't start with a digit.",
+        "sets": "other -",
+        "title": "Add another key",
+        "value": "API key / Key / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add another key, not a variable name"
+    },
+    {
+      "form": {
+        "buttons": "Save on | Cancel",
+        "lede": "Enter the variable the agent reads for its key, then paste the key.",
+        "name": "Variable name / GEMINI_API_KEY / -",
+        "sets": "other GEMINI_API_KEY",
+        "title": "Add another key",
+        "value": "API key / Key / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add another key, a good name"
+    },
+    {
+      "form": {
+        "buttons": "Save on | Cancel",
+        "lede": "Enter the variable the agent reads for its key, then paste the key.",
+        "name": "Variable name / GEMINI_API_KEY / -",
+        "sets": "other MISTRAL_API_KEY",
+        "title": "Replace MISTRAL_API_KEY",
+        "value": "API key / Key / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "add another key, a name already saved"
+    },
+    {
+      "form": {
+        "buttons": "Save on | Cancel",
+        "lede": "Paste the new key. Agents that read this variable get it from their next run.",
+        "name": "- / - / -",
+        "sets": "other MISTRAL_API_KEY",
+        "title": "Replace MISTRAL_API_KEY",
+        "value": "API key / Key / It's saved in the Keychain on this Mac and won't be shown again."
+      },
+      "step": "replace an Other key"
+    },
+    {
+      "confirm": "Remove the Anthropic key? | Agents that need ANTHROPIC_API_KEY won't start until you add a key again. Runs already going keep working. | Remove | Cancel",
+      "step": "remove Anthropic"
+    },
+    {
+      "confirm": "Remove MISTRAL_API_KEY? | Agents that need MISTRAL_API_KEY won't start until you add a key again. Runs already going keep working. | Remove | Cancel",
+      "step": "remove an Other key"
+    },
+    {
+      "confirm": null,
+      "step": "remove a key that isn't saved"
+    },
+    {
+      "name": "GEMINI_API_KEY",
+      "problem": null
+    },
+    {
+      "name": "groq_key",
+      "problem": null
+    },
+    {
+      "name": "",
+      "problem": "Enter the variable name, like MISTRAL_API_KEY."
+    },
+    {
+      "name": "1KEY",
+      "problem": "Use letters, digits and _, and don't start with a digit."
+    },
+    {
+      "name": "MY KEY",
+      "problem": "Use letters, digits and _, and don't start with a digit."
+    },
+    {
+      "name": "PATH",
+      "problem": "PATH changes how programs run, so it can't hold a key."
+    },
+    {
+      "name": "home",
+      "problem": "home changes how programs run, so it can't hold a key."
+    },
+    {
+      "name": "LD_PRELOAD",
+      "problem": "LD_PRELOAD changes how programs run, so it can't hold a key."
+    },
+    {
+      "name": "CUA_HOME",
+      "problem": "CUA_HOME changes how programs run, so it can't hold a key."
+    },
+    {
+      "name": "NODE_OPTIONS",
+      "problem": "NODE_OPTIONS changes how programs run, so it can't hold a key."
+    },
+    {
+      "name": "BASH_FUNC_x",
+      "problem": "BASH_FUNC_x changes how programs run, so it can't hold a key."
+    }
+  ]
+}

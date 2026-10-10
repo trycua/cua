@@ -546,7 +546,7 @@ No parameters.
 
 ### Result
 
-JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`.
+JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`; plus the Spaces' own: `volumes` (mounted in a Space: `space`, `mount_path`, `backend`, `principal`) and `volume_errors` (each `space` and `error`: why a Space has no Cua Volume, for example no /dev/fuse in a container on runc).
 
 ### Errors
 

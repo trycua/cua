@@ -47,6 +47,19 @@ pub enum TelemetrySignal {
         /// It worked.
         ok: bool,
     },
+    /// The app started (`cua_onboarding_step`, step `app_launched`).
+    Launched {
+        /// The first run was not finished yet at this launch, so the
+        /// app opens it (none: the shell does not know).
+        onboarding_eligible: Option<bool>,
+    },
+    /// A sign-in failed, timed out or was cancelled (`cua_onboarding_step`,
+    /// step `signed_in`, outcome `error`).
+    SignInFailed {
+        /// `timeout`, `cancelled`, `permission_denied`, `transport`,
+        /// `unauthenticated` or `other` (never the message).
+        error_kind: String,
+    },
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
@@ -82,6 +95,9 @@ pub enum TelemetrySignal {
         /// GPU acceleration was turned on.
         #[serde(default)]
         gpu: bool,
+        /// The error enum's case name, when the shell sent one.
+        #[serde(default)]
+        error_variant: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -171,9 +187,13 @@ fn outcome(ok: bool) -> String {
 
 // ---- The app ---------------------------------------------------------------
 
-/// The app started (`app_launched`, every launch).
-pub fn launched() -> Vec<TelemetrySignal> {
-    vec![step("app_launched", true)]
+/// The app started (`app_launched`, every launch), with whether the first
+/// run is still to finish (so the funnel can tell a launch that should
+/// show Welcome from one that should not).
+pub fn launched(onboarding_eligible: Option<bool>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::Launched {
+        onboarding_eligible,
+    }]
 }
 
 /// A Spaces app feature (a fixed name; see the docs). Shells use this for
@@ -209,6 +229,59 @@ fn mount_method(m: Option<&crate::drive_settings::DriveMountInput>) -> String {
     m.map(|m| m.method.clone())
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| "unknown".into())
+}
+
+/// "Set up later": the first run left for now on its current page
+/// (`skipped`, choice `later`) and `onboarding_skipped`. Nothing while
+/// usage data is off; from Welcome, the run's start counts first.
+pub fn onboarding_skipped(s: &OnboardingState) -> Vec<TelemetrySignal> {
+    if !s.shares_usage() || s.step == OnboardingStep::Done {
+        return vec![];
+    }
+    let mut out = if s.run_counted {
+        vec![]
+    } else {
+        run_started(s)
+    };
+    out.push(page(page_name(s.step), "skipped", "later"));
+    out.push(step("onboarding_skipped", true));
+    out
+}
+
+/// A sign-in failure's kind from its message (`None`: cancelled). Only the
+/// fixed word leaves; the message (which can name an account) never does.
+pub fn sign_in_error_kind(message: Option<&str>) -> &'static str {
+    let Some(m) = message else { return "cancelled" };
+    let m = m.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| m.contains(w));
+    if has(&["timed out", "timeout", "expired"]) {
+        "timeout"
+    } else if has(&["cancel"]) {
+        "cancelled"
+    } else if has(&["denied", "rejected", "forbidden", "403"]) {
+        "permission_denied"
+    } else if has(&["unauthorized", "unauthenticated", "401", "invalid_grant"]) {
+        "unauthenticated"
+    } else if has(&[
+        "network",
+        "connect",
+        "offline",
+        "dns",
+        "unreachable",
+        "transport",
+        "tls",
+    ]) {
+        "transport"
+    } else {
+        "other"
+    }
+}
+
+/// A sign-in failed (`message`) or was cancelled (`None`).
+pub fn sign_in_failed(message: Option<&str>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::SignInFailed {
+        error_kind: sign_in_error_kind(message).into(),
+    }]
 }
 
 /// "Start using Cua Spaces" on Done (nothing while usage data is off).
@@ -263,31 +336,41 @@ fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static s
     }
 }
 
+/// The run's start: `onboarding_shown` and Welcome shown (and `signed_in`
+/// for an account the app already had).
+fn run_started(after: &OnboardingState) -> Vec<TelemetrySignal> {
+    let mut out = vec![
+        step("onboarding_shown", true),
+        page("welcome", "shown", "none"),
+    ];
+    if after.identity.as_deref().is_some_and(|i| !i.is_empty()) {
+        out.push(step("signed_in", true));
+    }
+    out
+}
+
 /// The events one first-run step means: the page left (completed, skipped
 /// or back, with its answer), the page shown, the Cua Volume choice when
 /// the Volume page is left, and `signed_in`.
 ///
-/// Nothing is derived on Welcome (its notice and usage-data switch come
-/// first): leaving it starts the run (`onboarding_shown`, Welcome shown and
-/// completed). Nothing at all while the switch is off.
+/// The run's start (`onboarding_shown`, Welcome shown) counts once per
+/// run: when Welcome shows (`welcome-shown`) on a machine that already
+/// showed the usage notice, else when Welcome is left (its notice and
+/// usage-data switch come first: nothing is sent before). Nothing at all
+/// while the switch is off.
 pub fn onboarding(before: &OnboardingState, action: &OnboardingAction) -> Vec<TelemetrySignal> {
     let after = crate::onboarding::reduce(before, action);
     if !after.shares_usage() {
         return vec![];
     }
-    if before.step == OnboardingStep::Welcome && after.step == OnboardingStep::Welcome {
-        return vec![];
-    }
     let mut out = vec![];
-    if before.step == OnboardingStep::Welcome {
-        out.push(step("onboarding_shown", true));
-        out.push(page("welcome", "shown", "none"));
-        // Signed in before the run started (an account the app already had).
-        if after.identity.as_deref().is_some_and(|i| !i.is_empty()) {
-            out.push(step("signed_in", true));
-        }
+    if !before.run_counted && after.run_counted {
+        out.extend(run_started(&after));
     }
+    // Before the run's start counts, an account the app already had counts
+    // with it (above).
     if let OnboardingAction::SignedIn { identity } = action
+        && before.run_counted
         && !identity.is_empty()
         && before.identity.as_deref() != Some(identity.as_str())
     {
@@ -341,7 +424,8 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
     }
 }
 
-fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) -> TelemetrySignal {
+#[rustfmt::skip]
+fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: &str, now_ms: i64) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
         guest_os: p.os.as_str().into(),
@@ -355,6 +439,7 @@ fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) ->
         stalled: outcome == "error" && stalled,
         elapsed_ms: (now_ms - p.started_at).max(0) as u64,
         gpu: p.gpu,
+        error_variant: error_variant.into(),
     }
 }
 
@@ -398,29 +483,31 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
-                create_event(p, "ok", false, now_ms),
+                create_event(p, "ok", false, "", now_ms),
                 step("first_space_ready", true),
             ],
             _ => vec![],
         },
-        CreateAction::Fail { id, .. } => match find(id) {
+        CreateAction::Fail {
+            id, error_variant, ..
+        } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), now_ms)]
+                vec![create_event(p, "error", stalled(p), error_variant, now_ms)]
             }
             _ => vec![],
         },
         CreateAction::CancelDone { id } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             _ => vec![],
         },
         CreateAction::Dismiss { id } => match find(id) {
             Some(p) if p.space_id.is_none() && stalled(p) => {
-                vec![create_event(p, "error", true, now_ms)]
+                vec![create_event(p, "error", true, "", now_ms)]
             }
             _ => vec![],
         },
@@ -601,6 +688,12 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
             TelemetrySignal::Step { step, ok } => {
                 Some(t.capture_step(step, if *ok { Outcome::Ok } else { Outcome::Error }))
             }
+            TelemetrySignal::Launched {
+                onboarding_eligible,
+            } => Some(t.capture(events::app_launched(*onboarding_eligible))),
+            TelemetrySignal::SignInFailed { error_kind } => {
+                Some(t.capture(events::sign_in_failed(error_kind)))
+            }
             TelemetrySignal::OnboardingPage {
                 page,
                 action,
@@ -618,6 +711,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 stalled,
                 elapsed_ms,
                 gpu,
+                error_variant,
             } => Some(t.capture(events::space_create(
                 &events::SpaceCreate {
                     on: location,
@@ -626,6 +720,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                     last_phase: failed_phase,
                     stalled: *stalled,
                     gpu: *gpu,
+                    error_variant,
                 },
                 Outcome::from_word(outcome),
                 Duration::from_millis(*elapsed_ms),
@@ -685,19 +780,39 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
 }
 
 /// A launch before the first-run notice was ever shown waits for it.
+/// (0: none waits; 1: unknown; 2: not eligible; 3: eligible.)
 #[cfg(feature = "telemetry")]
-static LAUNCH_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LAUNCH_PENDING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[cfg(feature = "telemetry")]
+fn pending_word(onboarding_eligible: Option<bool>) -> u8 {
+    match onboarding_eligible {
+        None => 1,
+        Some(false) => 2,
+        Some(true) => 3,
+    }
+}
 
 /// The app started: records `app_launched` now, or, on a machine that has
 /// not shown the first-run notice yet (nothing may be sent before it),
 /// when [`acknowledge_notice`] runs. Returns whether it was recorded now.
 #[cfg(feature = "telemetry")]
 pub fn start(t: &cua_telemetry::Telemetry) -> bool {
+    start_with(t, None)
+}
+
+/// [`start`], saying whether the first run is still to finish
+/// (`onboarding_eligible` on `app_launched`).
+#[cfg(feature = "telemetry")]
+pub fn start_with(t: &cua_telemetry::Telemetry, onboarding_eligible: Option<bool>) -> bool {
     if t.notice_shown() {
-        record(t, &launched());
+        record(t, &launched(onboarding_eligible));
         true
     } else {
-        LAUNCH_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+        LAUNCH_PENDING.store(
+            pending_word(onboarding_eligible),
+            std::sync::atomic::Ordering::SeqCst,
+        );
         false
     }
 }
@@ -707,9 +822,13 @@ pub fn start(t: &cua_telemetry::Telemetry) -> bool {
 #[cfg(feature = "telemetry")]
 pub fn acknowledge_notice(t: &cua_telemetry::Telemetry) {
     t.acknowledge_notice();
-    if LAUNCH_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        record(t, &launched());
-    }
+    let eligible = match LAUNCH_PENDING.swap(0, std::sync::atomic::Ordering::SeqCst) {
+        0 => return,
+        2 => Some(false),
+        3 => Some(true),
+        _ => None,
+    };
+    record(t, &launched(eligible));
 }
 
 /// The first run left Welcome with its usage-data switch at `on`: writes
@@ -746,6 +865,129 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn steps_of(v: &[TelemetrySignal]) -> Vec<String> {
+        v.iter()
+            .filter_map(|s| match s {
+                TelemetrySignal::Step { step, .. } => Some(step.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn loaded(enabled: bool, notice_shown: bool) -> OnboardingState {
+        reduce(
+            &initial(None, None),
+            &OnboardingAction::TelemetryLoaded {
+                telemetry: crate::settings::TelemetryInput {
+                    enabled,
+                    locked_by: None,
+                    notice_shown,
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn welcome_counts_when_shown_once_the_notice_was_shown() {
+        let s = loaded(true, true);
+        let shown = onboarding(&s, &OnboardingAction::WelcomeShown);
+        assert_eq!(steps_of(&shown), ["onboarding_shown"]);
+        assert_eq!(pages(&shown), ["welcome shown none"]);
+        let s = reduce(&s, &OnboardingAction::WelcomeShown);
+        // Shown again (a re-render, Back): not counted twice.
+        assert!(onboarding(&s, &OnboardingAction::WelcomeShown).is_empty());
+        let left = onboarding(&s, &OnboardingAction::Start);
+        assert!(steps_of(&left).is_empty());
+        assert_eq!(
+            pages(&left),
+            ["welcome completed none", "signin shown none"]
+        );
+    }
+
+    #[test]
+    fn a_fresh_machine_counts_welcome_only_when_it_is_left() {
+        // The notice is Welcome's own: nothing before the user can turn
+        // usage data off.
+        let s = loaded(true, false);
+        assert!(onboarding(&s, &OnboardingAction::WelcomeShown).is_empty());
+        let s = reduce(&s, &OnboardingAction::WelcomeShown);
+        assert!(!s.run_counted);
+        let left = onboarding(&s, &OnboardingAction::Start);
+        assert_eq!(steps_of(&left), ["onboarding_shown"]);
+        // Usage data off: nothing when shown, nothing when left.
+        let off = loaded(false, true);
+        assert!(onboarding(&off, &OnboardingAction::WelcomeShown).is_empty());
+        assert!(onboarding(&off, &OnboardingAction::Start).is_empty());
+        // Not read yet: never counted at display.
+        let unread = initial(None, None);
+        assert!(onboarding(&unread, &OnboardingAction::WelcomeShown).is_empty());
+    }
+
+    #[test]
+    fn back_to_welcome_does_not_count_the_run_twice() {
+        let s = reduce(&loaded(true, false), &OnboardingAction::Start);
+        let back = onboarding(&s, &OnboardingAction::Back);
+        assert_eq!(pages(&back), ["signin back none", "welcome shown none"]);
+        let s = reduce(&s, &OnboardingAction::Back);
+        assert!(onboarding(&s, &OnboardingAction::WelcomeShown).is_empty());
+        let again = onboarding(&s, &OnboardingAction::Start);
+        assert!(steps_of(&again).is_empty());
+        assert_eq!(
+            pages(&again),
+            ["welcome completed none", "signin shown none"]
+        );
+    }
+
+    #[test]
+    fn set_up_later_counts_where_it_was_left() {
+        let s = reduce(&loaded(true, false), &OnboardingAction::Start);
+        let v = onboarding_skipped(&s);
+        assert_eq!(pages(&v), ["signin skipped later"]);
+        assert_eq!(steps_of(&v), ["onboarding_skipped"]);
+        // From Welcome, the run's start comes first.
+        let w = onboarding_skipped(&loaded(true, false));
+        assert_eq!(steps_of(&w), ["onboarding_shown", "onboarding_skipped"]);
+        assert!(onboarding_skipped(&loaded(false, true)).is_empty());
+    }
+
+    #[test]
+    fn a_sign_in_failure_is_only_its_kind() {
+        assert_eq!(sign_in_error_kind(None), "cancelled");
+        assert_eq!(
+            sign_in_error_kind(Some("The sign-in timed out. Try again.")),
+            "timeout"
+        );
+        assert_eq!(
+            sign_in_error_kind(Some("access_denied by user")),
+            "permission_denied"
+        );
+        assert_eq!(
+            sign_in_error_kind(Some("could not connect to auth.cua.ai")),
+            "transport"
+        );
+        assert_eq!(
+            sign_in_error_kind(Some("maya@example.com is not allowed")),
+            "other"
+        );
+        let json = serde_json::to_string(&sign_in_failed(Some("maya@example.com x"))).unwrap();
+        assert!(!json.contains("maya"), "{json}");
+    }
+
+    #[test]
+    fn launched_says_whether_the_first_run_is_due() {
+        assert_eq!(
+            launched(Some(true)),
+            vec![TelemetrySignal::Launched {
+                onboarding_eligible: Some(true)
+            }]
+        );
+        let json = serde_json::to_value(launched(None)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!([{ "type": "launched", "onboardingEligible": null }])
+        );
     }
 
     #[test]
@@ -827,6 +1069,8 @@ mod tests {
                 kind: Some(SpaceKind::Container),
                 host_arch: None,
                 gpu: false,
+                host: None,
+                host_name: None,
             },
         );
         let p = &mut st.pending[0];
@@ -845,7 +1089,7 @@ mod tests {
         ] {
             let mut p = pending("pending:os", "booting", None);
             p.os = os;
-            let finished = create_event(&p, "ok", false, 2_000);
+            let finished = create_event(&p, "ok", false, "", 2_000);
             let finished = serde_json::to_value(finished).unwrap();
             let started = creates(
                 &CreatesState::default(),
@@ -859,6 +1103,8 @@ mod tests {
                     kind: Some(SpaceKind::Vm),
                     host_arch: None,
                     gpu: false,
+                    host: None,
+                    host_name: None,
                 },
                 1_000,
             );
@@ -899,6 +1145,7 @@ mod tests {
                 stalled: false,
                 elapsed_ms: 47_000,
                 gpu: false,
+                error_variant: String::new(),
             }
         );
         assert_eq!(ready[1], step("first_space_ready", true));
@@ -907,13 +1154,14 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:a".into(),
                 error: "boom at /Users/alice".into(),
+                error_variant: "InsufficientDisk".into(),
             },
             5_000,
         );
         assert!(matches!(
             &failed[0],
-            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, .. }
-                if failed_phase == "booting" && outcome == "error"
+            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
+                if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
@@ -932,7 +1180,27 @@ mod tests {
         );
         assert!(matches!(
             &gone[0],
-            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, .. } if failed_phase == "pulling"
+            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, error_variant, .. }
+                if failed_phase == "pulling" && error_variant.is_empty()
+        ));
+        let mut cancelling = pending("pending:d", "pulling", None);
+        cancelling.cancelling = true;
+        let st = CreatesState {
+            pending: vec![cancelling],
+            deleting: vec![],
+            powering: vec![],
+        };
+        let cancelled = creates(
+            &st,
+            &CreateAction::CancelDone {
+                id: "pending:d".into(),
+            },
+            9_000,
+        );
+        assert!(matches!(
+            &cancelled[0],
+            TelemetrySignal::SpaceCreate { outcome, error_variant, .. }
+                if outcome == "cancelled" && error_variant.is_empty()
         ));
         // A failed (not stalled) row dismissed was already counted.
         let st = CreatesState {
@@ -1039,7 +1307,12 @@ mod tests {
         assert_eq!(
             experiments_on(&Experiments::all_on()),
             vec![TelemetrySignal::ExperimentsOn {
-                experiments: vec!["cua_volume".into(), "your_cloud".into(), "sharing".into()]
+                experiments: vec![
+                    "cua_volume".into(),
+                    "your_cloud".into(),
+                    "sharing".into(),
+                    "web_ui".into()
+                ]
             }]
         );
         // Loading the switches on Welcome derives nothing.

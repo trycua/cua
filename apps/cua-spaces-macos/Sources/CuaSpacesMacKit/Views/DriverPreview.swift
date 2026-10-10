@@ -45,6 +45,7 @@ struct DriverPreview: View {
     /// Overrides the system's Reduce Motion (tests).
     var stillOverride: Bool?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.onboardingMotionStill) private var motionStill
     @Environment(\.appearsActive) private var appearsActive
     @State private var onScreen = false
     @State private var origin = Date()
@@ -54,7 +55,7 @@ struct DriverPreview: View {
         Group {
             if let fixedMs {
                 DriverPreviewCanvas(scene: scene, frame: appDriverPreviewFrame(tMs: fixedMs))
-            } else if stillOverride ?? reduceMotion {
+            } else if stillOverride ?? (reduceMotion || motionStill) {
                 DriverPreviewCanvas(scene: scene, frame: appDriverPreviewStill())
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !onScreen || !appearsActive)) { context in

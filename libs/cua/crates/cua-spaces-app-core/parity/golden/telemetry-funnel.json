@@ -5,9 +5,8 @@
       "at": "launch",
       "signals": [
         {
-          "ok": true,
-          "step": "app_launched",
-          "type": "step"
+          "onboardingEligible": true,
+          "type": "launched"
         }
       ]
     },
@@ -19,6 +18,12 @@
     },
     {
       "action": "telemetry-loaded",
+      "at": "onboarding",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "welcome-shown",
       "at": "onboarding",
       "page": "welcome",
       "signals": []
@@ -266,15 +271,15 @@
       "signals": []
     },
     {
-      "action": "signed-in",
+      "action": "telemetry-loaded",
       "at": "skipping",
       "page": "welcome",
       "signals": []
     },
     {
-      "action": "start",
+      "action": "welcome-shown",
       "at": "skipping",
-      "page": "signin",
+      "page": "welcome",
       "signals": [
         {
           "ok": true,
@@ -286,12 +291,70 @@
           "choice": "none",
           "page": "welcome",
           "type": "onboarding-page"
-        },
+        }
+      ]
+    },
+    {
+      "action": "signed-in",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": [
         {
           "ok": true,
           "step": "signed_in",
           "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "start",
+      "at": "skipping",
+      "page": "signin",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
         },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "signin",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "back",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": [
+        {
+          "action": "back",
+          "choice": "none",
+          "page": "signin",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "welcome-shown",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "skipping",
+      "page": "signin",
+      "signals": [
         {
           "action": "completed",
           "choice": "none",
@@ -569,6 +632,7 @@
       "signals": [
         {
           "elapsedMs": 47000,
+          "errorVariant": "",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
@@ -618,6 +682,7 @@
       "signals": [
         {
           "elapsedMs": 45000,
+          "errorVariant": "InsufficientDisk",
           "failedPhase": "booting",
           "gpu": false,
           "guestOs": "windows",
@@ -672,6 +737,7 @@
       "signals": [
         {
           "elapsedMs": 7201000,
+          "errorVariant": "",
           "failedPhase": "pulling",
           "gpu": false,
           "guestOs": "linux",
@@ -721,6 +787,7 @@
       "signals": [
         {
           "elapsedMs": 31000,
+          "errorVariant": "",
           "failedPhase": "pulling",
           "gpu": true,
           "guestOs": "macos",
@@ -770,6 +837,7 @@
       "signals": [
         {
           "elapsedMs": 40000,
+          "errorVariant": "",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
@@ -819,6 +887,7 @@
       "signals": [
         {
           "elapsedMs": 4000,
+          "errorVariant": "",
           "failedPhase": "preparing",
           "gpu": true,
           "guestOs": "linux",

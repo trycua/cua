@@ -36,10 +36,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -99,11 +99,11 @@
         "pending": true,
         "rows": [
           "os-linux New Space [Starting] 10 1%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux New Space, Linux, This Mac, Starting 10 Starting…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -163,11 +163,11 @@
         "pending": true,
         "rows": [
           "os-linux New Space [Starting] 10 1%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux New Space, Linux, This Mac, Starting 10 Starting…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -227,11 +227,11 @@
         "pending": true,
         "rows": [
           "os-linux New Space [Starting] 425 42%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -313,12 +313,12 @@
         "rows": [
           "os-macos Mac [Starting] 10 1%",
           "os-linux New Space [Starting] 425 42%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Starting 10 Starting…",
           "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -400,12 +400,12 @@
         "rows": [
           "os-macos Mac [Starting] 13 1%",
           "os-linux New Space [Starting] 425 42%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Starting 13 Creating…",
           "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -487,12 +487,12 @@
         "rows": [
           "os-macos Mac [Starting] 13 1%",
           "os-linux New Space [Starting] 805 80%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Starting 13 Creating…",
           "os-linux New Space, Linux, This Mac, Starting 805 Booting…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -574,12 +574,12 @@
         "rows": [
           "os-macos Mac [Failed] - no macOS image is configured",
           "os-linux New Space [Starting] 805 80%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 805 Booting…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -661,12 +661,12 @@
         "rows": [
           "os-macos Mac [Failed] - no macOS image is configured",
           "os-linux New Space [Starting] 985 98%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 985 Connecting…",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -748,12 +748,12 @@
         "rows": [
           "os-macos Mac [Failed] - no macOS image is configured",
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -813,11 +813,11 @@
         "pending": true,
         "rows": [
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -898,12 +898,12 @@
         "rows": [
           "os-linux Omarchy [Starting] 10 1%",
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux Omarchy, Linux, Cua Cloud, Starting 10 Starting…",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -984,12 +984,12 @@
         "rows": [
           "os-linux Omarchy [Failed] - The Cua daemon isn't running. Start Cua, or run `cua daemon start`.",
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux Omarchy, Linux, Cua Cloud, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -1049,11 +1049,11 @@
         "pending": true,
         "rows": [
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -1134,12 +1134,12 @@
         "rows": [
           "os-linux Cloud [Starting] 10 1%",
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux Cloud, Linux, Cua Cloud, Starting 10 Starting…",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -1220,12 +1220,12 @@
         "rows": [
           "os-linux Cloud [Failed] - You're out of Cua Cloud credit.",
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux Cloud, Linux, Cua Cloud, Failed - Failed",
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -1285,11 +1285,11 @@
         "pending": true,
         "rows": [
           "os-linux New Space [Starting] 1000 100%",
-          "os-linux Demo [Running] - -"
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
           "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     },
@@ -1349,12 +1349,12 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Fresh [Running] - -",
-          "os-linux Demo [Running] - -"
+          "os-linux fresh [Running] - -",
+          "os-linux demo [Running] - -"
         ],
         "tiles": [
-          "os-linux Fresh, Linux, This Mac, Running - -",
-          "os-linux Demo, Linux, This Mac, Running - -"
+          "os-linux fresh, Linux, This Mac, Running - -",
+          "os-linux demo, Linux, This Mac, Running - -"
         ]
       }
     }

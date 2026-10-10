@@ -30,6 +30,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// Your machines that provide Spaces (the SDK's `Spaces.hosts()`), for
     /// the New Space wizard's Run on menu; none when they cannot be read.
     func hosts() async -> [AppSpaceHost]
+    /// The hostname a reachable Space's cua-spacesd reported at the last
+    /// `rows()` probe (a relay machine's, to match its enrolled device).
+    func reportedHostname(id: String) -> String?
     /// Adds a machine that already runs cua-spacesd.
     func add(url: String, token: String?, name: String?) async throws
     /// Deletes a created Space, or forgets one added by address.
@@ -59,6 +62,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func localStorage() async -> LocalStorage?
     /// Cua Cloud can be used (signed in or client credentials).
     func cloudAvailable() async -> Bool
+    /// macOS VMs running on this Mac now (Lume's, Spaces or not: Apple's
+    /// license counts every one), when Lume says.
+    func runningMacosVms() async -> Int?
     /// This account's Cua Cloud rates (`Fleet.usagePricing()`), when known:
     /// the New Space estimate. `nil` shows none.
     func cloudPricing() async -> AppCloudPricing?
@@ -100,6 +106,7 @@ public extension SpacesBackend {
     func cloudPricing() async -> AppCloudPricing? { nil }
     func gpuChoices() async -> [AppGpuChoice]? { nil }
     func hosts() async -> [AppSpaceHost] { [] }
+    func reportedHostname(id: String) -> String? { nil }
     func localRuntimes() async -> (ready: [String], details: [String: String])? {
         await localBackends().map { (ready: $0, details: [:]) }
     }
@@ -107,6 +114,7 @@ public extension SpacesBackend {
     func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] { [] }
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput] { [] }
     func lumeSource() async -> String? { nil }
+    func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
     func linuxSource() async -> String? { nil }
     func setLinuxSource(_ value: String) async throws {}
@@ -201,9 +209,11 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         // relay lists none until it is reached): one that
                         // does not share its desktop reports the desktop's
                         // features unsupported.
-                        if let live = Self.supportedFeatures(capabilitiesJson: try? space.capabilitiesJson()) {
+                        let caps = try? space.capabilitiesJson()
+                        if let live = Self.supportedFeatures(capabilitiesJson: caps) {
                             row.features = live
                         }
+                        self.remember(hostname: Self.hostname(capabilitiesJson: caps), for: info.id)
                     case .failure(let error):
                         row.error = Self.words(error)
                     }
@@ -214,6 +224,28 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             for await r in group { out.append(r) }
             return out.sorted { $0.0 < $1.0 }.map(\.1)
         }
+    }
+
+    /// What each reachable Space's cua-spacesd last said its hostname is.
+    private let hostnameLock = NSLock()
+    private var hostnames: [String: String] = [:]
+
+    public func reportedHostname(id: String) -> String? {
+        hostnameLock.withLock { hostnames[id] }
+    }
+
+    private func remember(hostname: String?, for id: String) {
+        guard let hostname, !hostname.isEmpty else { return }
+        hostnameLock.withLock { hostnames[id] = hostname }
+    }
+
+    /// The guest hostname of a `GetCapabilities` answer (proto3 JSON).
+    static func hostname(capabilitiesJson json: String?) -> String? {
+        guard let data = json?.data(using: .utf8),
+              let caps = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = caps["hostname"] as? String else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// The supported feature names of a `GetCapabilities` answer (proto3
@@ -336,10 +368,31 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// How long a probe the New Space sheet waits for may take.
     static let probeSeconds: Double = 10
 
+    /// Bounded: the session read can wait on the credential vault.
     public func cloudAvailable() async -> Bool {
         let env = ProcessInfo.processInfo.environment
         if env["FLEETS_TOKEN"] != nil || env["CUA_CLIENT_ID"] != nil { return true }
-        return (try? cua.auth().status().loggedIn) ?? false
+        let status = await withTimeout(seconds: Self.probeSeconds) { [cua] in try cua.auth().status().loggedIn }
+        return (try? status.get()) ?? false
+    }
+
+    /// From `lume serve` (`$LUME_API`, else its default address), bounded.
+    /// Its list reads every VM's disk, so it can take seconds on a busy Mac.
+    public func runningMacosVms() async -> Int? {
+        let base = ProcessInfo.processInfo.environment["LUME_API"] ?? "http://127.0.0.1:7777"
+        guard let url = URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/lume/vms") else { return nil }
+        let request = URLRequest(url: url, timeoutInterval: Self.probeSeconds)
+        let answer = await withTimeout(seconds: Self.probeSeconds) { try await URLSession.shared.data(for: request).0 }
+        guard case .success(let data) = answer else { return nil }
+        return Self.runningMacosVms(lumeVms: data)
+    }
+
+    /// The running macOS VMs in `GET /lume/vms`.
+    static func runningMacosVms(lumeVms data: Data) -> Int? {
+        guard let vms = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return nil }
+        return vms.filter {
+            ($0["os"] as? String)?.lowercased() == "macos" && ($0["status"] as? String)?.lowercased() == "running"
+        }.count
     }
 
     public func cloudPricing() async -> AppCloudPricing? {
@@ -427,6 +480,7 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             }
             return e.localizedDescription
         }
+        if let e = error as? LocalizedError, let text = e.errorDescription { return text }
         return String(describing: error)
     }
 }
@@ -440,19 +494,84 @@ final class CreateListener: SpaceCreateListener {
 
 enum TimeoutError: Error { case timedOut }
 
+/// Calls `fire` once, `seconds` from now.
+typealias DeadlineScheduler = @Sendable (_ seconds: Double, _ fire: @escaping @Sendable () -> Void) -> Void
+
+/// A dispatch timer, not a sleeping task: the deadline holds even when
+/// every cooperative thread is blocked (a synchronous SDK call).
+let dispatchDeadline: DeadlineScheduler = { seconds, fire in
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: fire)
+}
+
 /// Runs `body`, giving up after `seconds`.
-func withTimeout<T: Sendable>(seconds: Double, _ body: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
-    await withTaskGroup(of: Result<T, Error>.self) { group in
-        group.addTask {
-            do { return .success(try await body()) } catch { return .failure(error) }
+///
+/// The bound holds even when `body` never returns: an SDK call (a UniFFI
+/// future) does not stop when its task is cancelled, and a task group
+/// waits for every child before it returns, so racing the two in a group
+/// waited as long as the call did (a Space list that never came back hung
+/// the list poll for good). `body` keeps running after the timeout, and its
+/// result is dropped.
+///
+/// It runs on the caller's actor (`isolation`), so a main-actor caller sets
+/// its deadline at once and is resumed straight on the main actor: neither
+/// needs one of the cooperative threads a blocked SDK call may be holding.
+/// `deadline` is the timer (tests fire it by hand).
+func withTimeout<T: Sendable>(seconds: Double, isolation: isolated (any Actor)? = #isolation,
+                              deadline: DeadlineScheduler = dispatchDeadline,
+                              _ body: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
+    let first = FirstResult<T>()
+    return await withCheckedContinuation(isolation: isolation) { (done: CheckedContinuation<Result<T, Error>, Never>) in
+        first.set(done)
+        let work = Task {
+            let r: Result<T, Error>
+            do { r = .success(try await body()) } catch { r = .failure(error) }
+            first.resume(r)
         }
-        group.addTask {
-            try? await Task.sleep(for: .seconds(seconds))
-            return .failure(TimeoutError.timedOut)
+        deadline(seconds) {
+            if first.resume(.failure(TimeoutError.timedOut)) { work.cancel() }
         }
-        let first = await group.next() ?? .failure(TimeoutError.timedOut)
-        group.cancelAll()
-        return first
+    }
+}
+
+/// Runs `op` on the main actor for at most `seconds`: true when it
+/// finished, false when it was still running (it keeps running).
+@MainActor
+@discardableResult
+func withDeadline(seconds: Double, _ op: @escaping @MainActor () async -> Void) async -> Bool {
+    let result = await withTimeout(seconds: seconds) { await op() }
+    if case .success = result { return true }
+    return false
+}
+
+/// Resumes a continuation once, with whichever result comes first.
+private final class FirstResult<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Result<T, Error>, Never>?
+    private var early: Result<T, Error>?
+    private var done = false
+
+    func set(_ c: CheckedContinuation<Result<T, Error>, Never>) {
+        let now: Result<T, Error>? = lock.withLock {
+            if let early { return early }
+            continuation = c
+            return nil
+        }
+        if let now { c.resume(returning: now) }
+    }
+
+    /// True when this result was the first.
+    @discardableResult
+    func resume(_ r: Result<T, Error>) -> Bool {
+        let c: CheckedContinuation<Result<T, Error>, Never>?? = lock.withLock {
+            guard !done else { return .none }
+            done = true
+            if let continuation { self.continuation = nil; return .some(continuation) }
+            early = r
+            return .some(nil)
+        }
+        guard case .some(let waiting) = c else { return false }
+        waiting?.resume(returning: r)
+        return true
     }
 }
 
@@ -753,6 +872,9 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// Signed in to Cua Cloud (off: the fixture account is local only).
     public var fixtureCloud = false
     public func cloudAvailable() async -> Bool { await MainActor.run { fixtureCloud } }
+    /// macOS VMs running on the fixture Mac outside its Spaces (none known).
+    public var fixtureMacosVms: Int?
+    public func runningMacosVms() async -> Int? { await MainActor.run { fixtureMacosVms } }
     /// The fixture account's Cua Cloud rates (none: no estimate).
     public var fixturePricing: AppCloudPricing?
     public func cloudPricing() async -> AppCloudPricing? { await MainActor.run { fixturePricing } }

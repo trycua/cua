@@ -32,6 +32,7 @@ export type TelemetrySignal =
       stalled: boolean;
       elapsedMs: number;
       gpu: boolean;
+      errorVariant: string;
     }
   | { type: "space-create-started"; location: string; guestOs: string; kind: string; gpu: boolean }
   | {

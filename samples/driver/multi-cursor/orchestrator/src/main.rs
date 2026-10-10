@@ -247,12 +247,15 @@ fn main() {
     thread::sleep(Duration::from_millis(800)); // let resized layouts settle
 
     // Discover UIA elements per corner (field + SUBMIT). GDI has none -> pixel.
+    // Reads pass tree_format "both": rows are found in the markdown and their
+    // element_token comes from `elements` (cua-driver 0.35 returns only the
+    // markdown by default).
     for c in corners.iter_mut() {
         let tree = run_call_out(
             &cua,
             "get_window_state",
             &format!(
-                r#"{{"pid":{},"window_id":{},"capture_mode":"ax","session":"{}"}}"#,
+                r#"{{"pid":{},"window_id":{},"capture_mode":"ax","tree_format":"both","session":"{}"}}"#,
                 c.pid, c.hwnd.0 as isize, c.session
             ),
         );
@@ -293,7 +296,7 @@ fn main() {
         let title = c.title.to_string();
         handles.push(thread::spawn(move || {
             let hwnd = HWND(hwnd_addr as *mut _);
-            let ax = format!(r#"{{"pid":{pid},"window_id":{hwnd_addr},"capture_mode":"ax","session":"{session}"}}"#);
+            let ax = format!(r#"{{"pid":{pid},"window_id":{hwnd_addr},"capture_mode":"ax","tree_format":"both","session":"{session}"}}"#);
             let mut seen_records: i64 = -1;
             for act in rx {
                 // Re-read the window before each action: element tokens are

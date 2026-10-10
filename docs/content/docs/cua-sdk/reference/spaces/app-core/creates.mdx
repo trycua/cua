@@ -35,14 +35,14 @@ Returned by [`app_creates_reduce`](#app_creates_reduce), [`app_creates_settle`](
 <Tab value="Swift">
 
 ```swift
-.start(id: String, name: String, os: AppSpaceOs, provider: AppSpaceProvider, now: Int64, image: String?, kind: AppSpaceKind?, hostArch: String?, gpu: Bool)
+.start(id: String, name: String, os: AppSpaceOs, provider: AppSpaceProvider, now: Int64, image: String?, kind: AppSpaceKind?, hostArch: String?, gpu: Bool, host: String?, hostName: String?)
 .progress(id: String, phase: String, fraction: Double?, now: Int64?, bytesDone: UInt64?, bytesTotal: UInt64?, bytesPerSecond: Double?)
 .cancelStart(id: String)
 .cancelDone(id: String)
 .cancelFail(id: String, error: String)
 .tick(now: Int64)
 .finish(id: String, spaceId: String)
-.fail(id: String, error: String)
+.fail(id: String, error: String, errorVariant: String)
 .dismiss(id: String)
 .deleteStart(id: String, now: Int64)
 .deleteFail(id: String)
@@ -56,14 +56,14 @@ Returned by [`app_creates_reduce`](#app_creates_reduce), [`app_creates_settle`](
 <Tab value="Rust">
 
 ```rust
-AppCreateAction::Start { id: String, name: String, os: AppSpaceOs, provider: AppSpaceProvider, now: i64, image: Option<String>, kind: Option<AppSpaceKind>, host_arch: Option<String>, gpu: bool }
+AppCreateAction::Start { id: String, name: String, os: AppSpaceOs, provider: AppSpaceProvider, now: i64, image: Option<String>, kind: Option<AppSpaceKind>, host_arch: Option<String>, gpu: bool, host: Option<String>, host_name: Option<String> }
 AppCreateAction::Progress { id: String, phase: String, fraction: Option<f64>, now: Option<i64>, bytes_done: Option<u64>, bytes_total: Option<u64>, bytes_per_second: Option<f64> }
 AppCreateAction::CancelStart { id: String }
 AppCreateAction::CancelDone { id: String }
 AppCreateAction::CancelFail { id: String, error: String }
 AppCreateAction::Tick { now: i64 }
 AppCreateAction::Finish { id: String, space_id: String }
-AppCreateAction::Fail { id: String, error: String }
+AppCreateAction::Fail { id: String, error: String, error_variant: String }
 AppCreateAction::Dismiss { id: String }
 AppCreateAction::DeleteStart { id: String, now: i64 }
 AppCreateAction::DeleteFail { id: String }
@@ -78,14 +78,14 @@ AppCreateAction::PowerFail { id: String, error: String }
 
 | Variant | Description |
 | --- | --- |
-| `Start` | A create started: its row shows now. Fields: `id: String`, `name: String`, `os: AppSpaceOs`, `provider: AppSpaceProvider`, `now: i64`, `image: Option<String>`, `kind: Option<AppSpaceKind>`, `host_arch: Option<String>`, `gpu: bool` |
+| `Start` | A create started: its row shows now. Fields: `id: String`, `name: String`, `os: AppSpaceOs`, `provider: AppSpaceProvider`, `now: i64`, `image: Option<String>`, `kind: Option<AppSpaceKind>`, `host_arch: Option<String>`, `gpu: bool`, `host: Option<String>`, `host_name: Option<String>` |
 | `Progress` | The SDK reported progress. Fields: `id: String`, `phase: String`, `fraction: Option<f64>`, `now: Option<i64>`, `bytes_done: Option<u64>`, `bytes_total: Option<u64>`, `bytes_per_second: Option<f64>` |
 | `CancelStart` | Cancel was pressed: the shell asks the SDK to cancel the create (`cancel_create` with the pending id, passed as the create's `create_id`); the row shows Cancelling until the create ends. Fields: `id: String` |
 | `CancelDone` | The cancel finished (or the create ended cancelled): the row goes. Fields: `id: String` |
 | `CancelFail` | The cancel itself failed: the row shows why. Fields: `id: String`, `error: String` |
 | `Tick` | Time passed (a shell's timer, a few times a second while a create is pending): progress within a phase that reports no fraction advances with the time the phase usually takes. Fields: `now: i64` |
 | `Finish` | The create returned the Space. Fields: `id: String`, `space_id: String` |
-| `Fail` | The create failed. Fields: `id: String`, `error: String` |
+| `Fail` | The create failed. Fields: `id: String`, `error: String`, `error_variant: String` |
 | `Dismiss` | Remove a failed row. Fields: `id: String` |
 | `DeleteStart` | The user confirmed Delete: the row shows Deleting now. A second start for a Space already deleting does nothing. Fields: `id: String`, `now: i64` |
 | `DeleteFail` | The delete failed: the row is back as the registry lists it. Fields: `id: String` |
@@ -120,6 +120,8 @@ AppCreateAction::PowerFail { id: String, error: String }
 | `bytes_per_second` / `bytesPerSecond` | `Option<f64>` |  | The download's smoothed rate, bytes per second. |
 | `cancelling` | `bool` |  | Cancel was pressed: the SDK is stopping the create and removing what it made; the row goes when that ends. |
 | `gpu` | `bool` |  | GPU acceleration was asked for. |
+| `host` | `Option<String>` |  | A create on one of your machines: that machine's relay id (the `host:<machine>` of the create's `on`). The machine lists the Space it is creating as a record of its own, which `compose` folds into this row. |
+| `host_name` / `hostName` | `Option<String>` |  | That machine's name, for the row and for a failure that names it. |
 
 ## `AppPendingDelete` record
 

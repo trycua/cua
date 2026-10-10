@@ -37,6 +37,7 @@ The catalog behind the New Space image field: each `AppSandboxImage` with its gr
 | `distro` | [`Option<AppImageDistro>`](#appimagedistro-record) |  | The guest's distribution. |
 | `arch` | `Vec<String>` |  | Platforms it is built for (`amd64`, `arm64`); empty when unknown. |
 | `sizes` | [`Option<AppImageSizes>`](#appimagesizes-record) |  | How big it is per platform, when measured. |
+| `gpu` | `bool` |  | `false`: its guest cannot use GPU acceleration. |
 
 ## `AppImageGroup` record
 

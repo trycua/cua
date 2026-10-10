@@ -168,6 +168,9 @@ impl Error {
             Error::Sandbox(cua_sandbox_core::Error::AmbiguousSandbox { .. }) => "ambiguous_sandbox",
             Error::Sandbox(cua_sandbox_core::Error::NotFound(_)) => "not_found",
             Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(_)) => "invalid_placement",
+            Error::Sandbox(cua_sandbox_core::Error::Runtime(
+                cua_sandbox_core::RuntimeError::InsufficientDisk(_),
+            )) => "insufficient_disk",
             Error::Sandbox(_) => "sandbox",
             Error::Io(_) => "io",
             Error::Mcp(_) => "mcp",

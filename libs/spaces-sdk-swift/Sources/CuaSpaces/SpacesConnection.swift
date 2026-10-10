@@ -30,6 +30,18 @@ public actor SpacesConnection {
     /// report a `reason` it was not given (`FRICTION.md` §22).
     private var lastSnapshots: [RunID: RunSnapshot] = [:]
     private var endpointCache: [SpaceID: StreamEndpoint] = [:]
+    /// Which `cua daemon` the cached handles and endpoints came from (its pid
+    /// and loopback URL), when this connection runs through one.
+    ///
+    /// Through a daemon, a `CuaSDK.Space` handle carries the env passthrough
+    /// the daemon minted for it: `http://127.0.0.1:<port>/v1/spaces/…/env`
+    /// with that daemon's bearer token. A daemon started again (the app's
+    /// supervisor does within seconds) listens on a new random port with a
+    /// new token, so every handle cached before it fails for good: each
+    /// stream open, Try again and reopened viewer reused it, and only a new
+    /// process recovered. The caches are kept per daemon instead.
+    private let daemonIdentity: (@Sendable () async -> String?)?
+    private var cachedFor: String?
 
     /// The Spaces contract's tool names (`libs/cua/spaces-contract`), from the
     /// SDK linked into this process. 79 tools.
@@ -38,9 +50,15 @@ public actor SpacesConnection {
     }
 
     /// A connection over any transport (tests pass an in-process fake).
-    public init(transport: SpacesTransport) {
+    ///
+    /// `daemonIdentity` names the daemon behind `transport` (`nil` when
+    /// there is none, or when it cannot be reached); handles and stream
+    /// endpoints cached under another name are dropped before use.
+    public init(transport: SpacesTransport,
+                daemonIdentity: (@Sendable () async -> String?)? = nil) {
         self.transport = transport
         self.native = (transport as? CuaSpacesTransport)?.spaces
+        self.daemonIdentity = daemonIdentity
     }
 
     /// A connection over the cua SDK: `Cua.embedded(...)` runs the Spaces
@@ -48,7 +66,29 @@ public actor SpacesConnection {
     /// `cua daemon`, whose registry, hotspots and host reads are shared by
     /// every process on the machine.
     public init(cua: Cua) {
-        self.init(transport: CuaSpacesTransport(cua: cua))
+        var identity: (@Sendable () async -> String?)?
+        if cua.mode() == .daemon {
+            identity = { await SpacesConnection.identity(of: cua) }
+        }
+        self.init(transport: CuaSpacesTransport(cua: cua), daemonIdentity: identity)
+    }
+
+    /// The running daemon's pid and loopback URL, both new when it starts
+    /// again; `nil` when it does not answer.
+    static func identity(of cua: Cua) async -> String? {
+        guard let info = try? await cua.info() else { return nil }
+        return "\(info.daemonPid.map(String.init) ?? "?") \(info.loopbackUrl ?? "")"
+    }
+
+    /// Drops every cached handle and stream endpoint when the daemon behind
+    /// this connection is not the one they came from (or does not answer).
+    private func dropCachesFromAnotherDaemon() async {
+        guard let daemonIdentity else { return }
+        let now = await daemonIdentity()
+        guard now == nil || now != cachedFor else { return }
+        handles.removeAll()
+        endpointCache.removeAll()
+        cachedFor = now
     }
 
     /// The Spaces runtime in this process (registry `~/.cua` unless
@@ -95,6 +135,7 @@ public actor SpacesConnection {
     /// `nil` when this connection is not backed by the cua SDK (a test fake).
     public func nativeSpace(_ id: SpaceID) async throws -> CuaSDK.Space? {
         guard let native else { return nil }
+        await dropCachesFromAnotherDaemon()
         if let cached = handles[id] { return cached }
         let handle: CuaSDK.Space
         do {
@@ -246,7 +287,10 @@ public actor SpacesConnection {
 
     func lastSnapshot(_ id: RunID) -> RunSnapshot? { lastSnapshots[id] }
 
-    func cachedEndpoint(_ id: SpaceID) -> StreamEndpoint? { endpointCache[id] }
+    func cachedEndpoint(_ id: SpaceID) async -> StreamEndpoint? {
+        await dropCachesFromAnotherDaemon()
+        return endpointCache[id]
+    }
 
     func cacheEndpoint(_ endpoint: StreamEndpoint, for id: SpaceID) {
         endpointCache[id] = endpoint

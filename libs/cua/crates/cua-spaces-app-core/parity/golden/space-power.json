@@ -103,16 +103,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Running] - - <power Suspend>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Running] - - <power Suspend>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Running - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Running - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [],
@@ -220,16 +220,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspending…] - - <power Suspending… busy>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Suspending…] - - <power Suspending… busy>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspending… - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Suspending… - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -339,16 +339,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspending…] - - <power Suspending… busy>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Suspending…] - - <power Suspending… busy>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspending… - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Suspending… - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -458,16 +458,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspending…] - - <power Suspending… busy>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Suspending…] - - <power Suspending… busy>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspending… - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Suspending… - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -577,16 +577,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspending…] - - <power Suspending… busy>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Suspending…] - - <power Suspending… busy>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspending… - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Suspending… - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -614,13 +614,13 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -696,16 +696,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - - <power Resume on>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - - <power Resume on>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [],
@@ -813,16 +813,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Resuming…] - - <power Resuming… on busy>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Resuming…] - - <power Resuming… on busy>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Resuming… - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Resuming… - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -850,14 +850,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -933,16 +933,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Running] - - <power Turn off>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Running] - - <power Turn off>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Running - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Running - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -970,14 +970,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1053,16 +1053,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Turning off…] - - <power Turning off… busy>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Turning off…] - - <power Turning off… busy>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Turning off… - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Turning off… - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1091,14 +1091,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1174,16 +1174,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Turning off…] - - <power Turning off… busy>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Turning off…] - - <power Turning off… busy>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Turning off… - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Turning off… - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1212,14 +1212,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1235,13 +1235,13 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "local:mac",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1295,16 +1295,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Off] - - <power Turn on on>",
-          "os-linux Studio [Running] - - <power Turn off>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Stopped] - - <power Turn on on>",
+          "os-linux studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Off - -",
-          "os-linux Studio, Linux, Mac mini, Running - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -",
+          "os-linux studio, Linux, Mac mini, Running - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1332,14 +1332,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1355,13 +1355,13 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "local:mac",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1415,16 +1415,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Off] - - <power Turn on on>",
-          "os-linux Studio [Turning off…] - - <power Turning off… busy>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Stopped] - - <power Turn on on>",
+          "os-linux studio [Turning off…] - - <power Turning off… busy>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Off - -",
-          "os-linux Studio, Linux, Mac mini, Turning off… - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -",
+          "os-linux studio, Linux, Mac mini, Turning off… - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1453,14 +1453,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1476,13 +1476,13 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "local:mac",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1536,16 +1536,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Off] - - <power Turn on on>",
-          "os-linux Studio [Turning off…] - - <power Turning off… busy>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Stopped] - - <power Turn on on>",
+          "os-linux studio [Turning off…] - - <power Turning off… busy>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Off - -",
-          "os-linux Studio, Linux, Mac mini, Turning off… - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -",
+          "os-linux studio, Linux, Mac mini, Turning off… - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1574,14 +1574,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1597,13 +1597,13 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "local:mac",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1619,12 +1619,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1657,16 +1657,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Off] - - <power Turn on on>",
-          "os-linux Studio [Off] - - <power Turn on on>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Stopped] - - <power Turn on on>",
+          "os-linux studio [Stopped] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Off - -",
-          "os-linux Studio, Linux, Mac mini, Off - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Stopped - -",
+          "os-linux studio, Linux, Mac mini, Stopped - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1694,14 +1694,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1739,12 +1739,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1777,16 +1777,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Turning on…] - - <power Turning on… on busy>",
-          "os-linux Studio [Off] - - <power Turn on on>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Turning on…] - - <power Turning on… on busy>",
+          "os-linux studio [Stopped] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Turning on… - -",
-          "os-linux Studio, Linux, Mac mini, Off - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Turning on… - -",
+          "os-linux studio, Linux, Mac mini, Stopped - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1815,14 +1815,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1859,12 +1859,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1897,16 +1897,16 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos Mac [Deleting…] - -",
-          "os-linux Studio [Off] - - <power Turn on on>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-macos mac [Deleting…] - -",
+          "os-linux studio [Stopped] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-macos Mac, macOS, This Mac, Deleting… - Deleting…",
-          "os-linux Studio, Linux, Mac mini, Off - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-macos mac, macOS, This Mac, Deleting… - Deleting…",
+          "os-linux studio, Linux, Mac mini, Stopped - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1935,14 +1935,14 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Suspended",
+              "Status: Stopped ?Suspended in memory: it picks up where it left off when you start it.",
               "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
               "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
-            "previewText": "Suspended",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1958,12 +1958,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Off",
+              "Status: Stopped ?Shut down: its disk is kept, anything unsaved was lost.",
               "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
-            "previewText": "Off",
+            "previewText": "Stopped",
             "progress": null,
             "progressText": null
           },
@@ -1995,14 +1995,14 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Pool C [Running] - -",
-          "os-linux Box [Suspended] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-linux Studio [Off] - - <power Turn on on>"
+          "os-linux pool-c [Running] - -",
+          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
+          "os-linux studio [Stopped] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, This Mac, Suspended - -",
-          "os-linux Studio, Linux, Mac mini, Off - -",
-          "os-linux Pool C, Linux, Cua Cloud, Running - -"
+          "os-linux box, Linux, This Mac, Stopped - -",
+          "os-linux studio, Linux, Mac mini, Stopped - -",
+          "os-linux pool-c, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [

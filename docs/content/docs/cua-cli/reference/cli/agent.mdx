@@ -22,6 +22,10 @@ description: "Run coding agents (Claude Code, Codex, Gemini CLI, ...) inside a s
 | [`cua agent rm`](#cua-agent-rm) | Stop a run and delete its record (secrets included). |
 | [`cua agent ensure`](#cua-agent-ensure) | Install harnesses or apps now (`claude-code`, `blender`, ...). |
 | [`cua agent harnesses`](#cua-agent-harnesses) | The harnesses: readiness, installs, key variables, limits. |
+| [`cua agent keys`](#cua-agent-keys) | The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Agents). |
+| [`cua agent keys ls`](#cua-agent-keys-ls) | List the saved keys (never their values). |
+| [`cua agent keys set`](#cua-agent-keys-set) | Add or replace a key, read from stdin. |
+| [`cua agent keys rm`](#cua-agent-keys-rm) | Remove the key a run gets as ENV. |
 | [`cua agent create`](#cua-agent-create) | Create a persistent agent: a named harness whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space. |
 | [`cua agent persistent`](#cua-agent-persistent) | List persistent agents. |
 | [`cua agent tell`](#cua-agent-tell) | Give a persistent agent a turn (starts a run with its home restored, or follows up on its idle run). |
@@ -300,6 +304,78 @@ cua agent harnesses [OPTIONS]
 ```bash test="cli-shape" id="ref-cua-agent-harnesses"
 cua agent harnesses
 cua --json agent harnesses
+```
+
+## `cua agent keys`
+
+The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Agents). Values are read from stdin and never printed.
+
+```text output
+cua agent keys [OPTIONS] [COMMAND]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys"
+cua agent keys
+cua agent keys set anthropic
+cua agent keys rm OPENAI_API_KEY
+```
+
+### `cua agent keys ls`
+
+List the saved keys (never their values).
+
+```text output
+cua agent keys ls [OPTIONS]
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys-ls"
+cua agent keys ls
+cua --json agent keys ls
+```
+
+### `cua agent keys set`
+
+Add or replace a key, read from stdin. PROVIDER: anthropic, openai or other (with --env). Pipe the key in (`pbpaste | cua agent keys set anthropic`); a terminal is refused so the key isn't echoed.
+
+```text output
+cua agent keys set [OPTIONS] <PROVIDER>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<PROVIDER>` | string | required |  |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-agent-keys-set--env"></span>`--env` | string |  | The variable an Other key is given to runs as. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys-set"
+cua agent keys set anthropic
+cua agent keys set other --env GEMINI_API_KEY
+```
+
+### `cua agent keys rm`
+
+Remove the key a run gets as ENV.
+
+```text output
+cua agent keys rm [OPTIONS] <ENV>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<ENV>` | string | required |  |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-agent-keys-rm"
+cua agent keys rm ANTHROPIC_API_KEY
 ```
 
 ## `cua agent create`

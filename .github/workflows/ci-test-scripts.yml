@@ -36,6 +36,7 @@ on:
       - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
       - "apps/cua-spaces-macos/VERSION"
       - "apps/cua-spaces-macos/Support/Info.plist"
+      - "apps/cua-spaces-desktop/package.json"
       - ".github/workflows/ci-test-scripts.yml"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"

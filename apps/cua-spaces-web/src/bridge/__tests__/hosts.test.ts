@@ -754,6 +754,31 @@ describe("webkit adapter", () => {
     }
   });
 
+  it("waits as long as a teleport run takes, past the call timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const report = { appId: "vscode", installed: ["code"], sent: [], imported: [], skipped: [], launched: true, warnings: [] };
+      let answer!: (a: Answer) => void;
+      const { win } = webkitHost((req) => (req.method === "teleport.run" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
+      const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("teleport.run", {
+        spaceId: "local:dev",
+        plan: { json: "{}" } as never,
+        consent: {} as never,
+        runId: "run-1",
+      });
+      const settled = call.then(
+        (r) => ({ ok: true as const, r }),
+        (e: unknown) => ({ ok: false as const, e }),
+      );
+      // An install that downloads the app: minutes, not the call timeout.
+      await vi.advanceTimersByTimeAsync(120_000);
+      answer(ok(report));
+      expect(await settled).toEqual({ ok: true, r: report });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads the host's own settings rows and picks their options with settings.choose", async () => {
     const choice = (id: string, active: string) => ({ id, kind: "choice", label: "", enabled: true, options: ["auto", "builtin", "system"].map((o) => ({ id: o, label: o, active: o === active })) });
     const toggle = (id: string, on: boolean) => ({ id, kind: "toggle", label: "", enabled: true, options: [{ id: "on", label: "On", active: on }, { id: "off", label: "Off", active: !on }] });

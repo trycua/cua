@@ -210,7 +210,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "teleport.thumbnail": call("teleport.thumbnail"),
     "teleport.plan": async ({ spaceId, entry, move, files, sensitiveGroups }) =>
       planFromWk(await request<Json>("teleport.plan", { spaceId, entry: { id: entry?.id }, move, files, sensitiveGroups })),
-    "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }),
+    // As long as the run takes (an install downloads the app); it reports
+    // progress as it goes (teleport.progress) and answers when it is done.
+    "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }, null),
     "teleport.sites": async ({ providerId }) => snake(await request("teleport.sites", { providerId })) as KvInventory,
     "teleport.remembered": async ({ providerId, spaceId }) => (await request<string[] | null>("teleport.remembered", { providerId, spaceId })) ?? null,
     "teleport.streamWindow": none("teleport.streamWindow"),

@@ -107,6 +107,7 @@ class TaskResult:
     output_dir: Optional[str] = None
     error: Optional[str] = None
     oracle_result: Optional[dict] = None
+    verified_action_count: Optional[int] = None
 
 
 # =============================================================================
@@ -423,6 +424,7 @@ class TaskRunner:
             # In oracle-solver mode, actions may legitimately bypass an agent;
             # never fabricate agent evidence for that path.
             evidence_error = None
+            verified_action_count = None
             if not oracle and (agent or agent_import_path):
                 evidence_dir = Path(output_dir) / f"task_{task_index}_agent_logs" if output_dir else None
                 evidence_file = evidence_dir / "executed-actions.jsonl" if evidence_dir else None
@@ -447,6 +449,8 @@ class TaskRunner:
                                     raise ValueError("Invalid action evidence record")
                         if sequence == 0:
                             evidence_error = "Empty agent action evidence"
+                        else:
+                            verified_action_count = sequence
                     except (OSError, ValueError, TypeError, AttributeError):
                         evidence_error = "Invalid agent action evidence"
 
@@ -461,6 +465,7 @@ class TaskRunner:
                     else None
                 ),
                 oracle_result=oracle_result,
+                verified_action_count=verified_action_count,
             )
             return completed_result
 

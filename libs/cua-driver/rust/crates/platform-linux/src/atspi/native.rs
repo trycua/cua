@@ -3616,6 +3616,15 @@ async fn live_accessible<'a>(
 /// `Ok((action_name, suspected_noop))`. Errors when the object no longer
 /// exists so the caller can fall back to resolving the index afresh.
 pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
+    perform_action_ref_guarded(object_ref, || Ok(()))
+}
+
+/// Exact-object action with an invocation guard checked immediately before
+/// dispatch, after the potentially slow accessibility identity/proxy reads.
+pub(crate) fn perform_action_ref_guarded(
+    object_ref: &ObjectRef,
+    before_dispatch: impl Fn() -> Result<()>,
+) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3638,6 +3647,7 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
             // folded into `rejected`/`suspected_noop` (which would claim the
             // toolkit declined it) nor silently reported as a plain success.
             let mut unacknowledged = false;
+            before_dispatch()?;
             let rejected = match call(ap.do_action(chosen as i32)).await {
                 Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),

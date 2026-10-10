@@ -206,7 +206,8 @@ fn exact_button_center(
 
 fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
     with_target_foreground(pid, window_id, || {
-        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let tree = crate::browser_setup_ui::window_scoped_tree(pid, window_id)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
         let index = exact_allow_button(&tree.nodes, &tree.bounds)
             .map_err(|error| anyhow::anyhow!(error.message))?
             .ok_or_else(|| {
@@ -227,7 +228,7 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
     let mut dismissed = false;
     loop {
         prove_window_owner(pid, window_id)?;
-        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let tree = crate::browser_setup_ui::window_scoped_tree(pid, window_id)?;
         let prompt_present = remote_debugging_prompt_present(&tree.nodes);
         if !prompt_present {
             return Ok(dismissed);
@@ -238,7 +239,21 @@ pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
                 "the exact remote-debugging consent prompt exposed no semantic cancel action",
             )
         })?;
-        crate::atspi::perform_action(pid, index).map_err(|error| {
+        let node = tree
+            .nodes
+            .iter()
+            .find(|node| node.element_index == Some(index))
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "exact consent object became stale",
+                )
+            })?;
+        prove_window_owner(pid, window_id)?;
+        crate::browser_setup_ui::perform_exact_action(node, || {
+            prove_window_owner(pid, window_id).map_err(|error| anyhow::anyhow!(error.message))
+        })
+        .map_err(|error| {
             refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("the exact browser consent cancel action failed: {error}"),
@@ -312,22 +327,39 @@ pub async fn handle(
         check_deadline(deadline)?;
         prove_window_owner(pid, request.window_id)?;
         let window_id = request.window_id;
-        let tree =
-            tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid, window_id, None))
-                .await
-                .map_err(|error| {
-                    refusal(
-                        BrowserRefusalCode::BrowserRouteUnavailable,
-                        format!("could not inspect the browser consent UI: {error}"),
-                    )
-                })?;
+        let tree = tokio::task::spawn_blocking(move || {
+            crate::browser_setup_ui::window_scoped_tree(pid, window_id)
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect the browser consent UI: {error}"),
+            )
+        })??;
         check_deadline(deadline)?;
         let prompt_present = remote_debugging_prompt_present(&tree.nodes);
         saw_prompt |= prompt_present;
         match exact_allow_button(&tree.nodes, &tree.bounds)? {
             Some(index) if accessibility_action_at.is_none() => {
+                let node = tree
+                    .nodes
+                    .iter()
+                    .find(|node| node.element_index == Some(index))
+                    .cloned()
+                    .ok_or_else(|| {
+                        refusal(
+                            BrowserRefusalCode::BrowserWrongTargetRefused,
+                            "exact consent object became stale",
+                        )
+                    })?;
                 consent_action(&request.action, deadline, move || {
-                    crate::atspi::perform_action(pid, index)
+                    prove_window_owner(pid, window_id)
+                        .map_err(|error| anyhow::anyhow!(error.message))?;
+                    crate::browser_setup_ui::perform_exact_action(&node, || {
+                        prove_window_owner(pid, window_id)
+                            .map_err(|error| anyhow::anyhow!(error.message))
+                    })
                 })
                 .await?;
                 accessibility_action_at = Some(Instant::now());

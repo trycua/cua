@@ -1020,6 +1020,9 @@ impl BrowserEngine {
             pid,
             window_id,
             browser: classification.product_kind,
+            fingerprint: fingerprint.clone(),
+            session: request.session.clone(),
+            transport_session: request.transport_session.clone(),
         };
         let mut setup_pending = false;
         let mut setup_guard = None;

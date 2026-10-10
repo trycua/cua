@@ -236,6 +236,11 @@ pub struct ExistingProfileSetupRequest {
     pub window_id: u64,
     /// Product identity attested immediately before approval-bound setup.
     pub browser: BrowserProduct,
+    /// Registry-admitted private lifecycle identity, never a public JSON field.
+    pub session: String,
+    pub transport_session: Option<String>,
+    /// Exact process instance attested before approval-bound setup.
+    pub fingerprint: ProcessFingerprint,
 }
 
 /// Declared user-visible effects of one bounded existing-profile setup.

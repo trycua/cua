@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/v0.2.0/capability.schema.json",
+  "title": "Cua-Bench capability vocabulary",
+  "description": "Canonical capability identifiers shared by task and driver manifests.",
+  "type": "string",
+  "enum": [
+    "observe.screen",
+    "observe.accessibility",
+    "observe.window-metadata",
+    "act.pointer",
+    "act.keyboard",
+    "act.accessibility",
+    "target.window",
+    "target.process",
+    "operate.background",
+    "preserve.physical-pointer",
+    "recover.surface-change"
+  ]
+}

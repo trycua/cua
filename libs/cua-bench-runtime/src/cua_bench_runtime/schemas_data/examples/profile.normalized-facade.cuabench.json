@@ -1,0 +1,22 @@
+{
+  "schema_version": "0.1.0",
+  "id": "normalized-facade",
+  "version": "1.0.0",
+  "description": "Full harness with the candidate behind the common facade and neutral guidance.",
+  "harness": {
+    "kind": "full",
+    "inventory": {
+      "path": "freeze-inputs/harness-full.json",
+      "sha256": "82f7210b8078069a55c3a6aec178931c8fcbc3785e981ad59c26d690b894f9ef"
+    }
+  },
+  "driver_presentation": "normalized-facade",
+  "guidance": {
+    "mode": "neutral",
+    "artifact": {
+      "path": "freeze-inputs/neutral-instructions.txt",
+      "sha256": "ff67877777532043e46f3c08aa57531603d8f65bd26ab38e5be358c244251e66"
+    }
+  },
+  "decision_bearing": true
+}

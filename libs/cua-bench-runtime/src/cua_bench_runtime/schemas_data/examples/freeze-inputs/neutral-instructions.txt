@@ -1,0 +1,1 @@
+Observe the target, act only within its declared scope, and verify completion.

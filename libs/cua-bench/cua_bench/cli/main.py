@@ -182,6 +182,11 @@ def main():
         "dataset_path", help="Path to dataset directory, or dataset name from registry"
     )
     run_dataset_parser.add_argument(
+        "--dataset-manifest",
+        dest="dataset_manifest",
+        help="Pin dataset files to a JSON manifest; reject changes before launching sessions",
+    )
+    run_dataset_parser.add_argument(
         "--max-parallel",
         dest="max_parallel",
         type=int,

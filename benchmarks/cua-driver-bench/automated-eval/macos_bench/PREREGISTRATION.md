@@ -1245,6 +1245,15 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.
 
+**Registration (10 Oct 2026, 21:20Z, before the first trial).** PR #4943 merged as `e32127764` on main; built once in `cdb-v2` (AX binary `d1de8c3c4dec`, A binary `03e8ec402ad2`, skill tree `820559825d57`), pins updated.
+
+| Id | Condition | Tasks | Arms | Runs | Seat, stop rule |
+|---|---|---|---|---|---|
+| v2full-ba | background | the ten A14.6 tasks in schedule order | AX (`cc-cua-driver-script`), B (`cc-codex-cu`, 26.930), `cc-claude-cu-helper` | 3 + 2 per task and arm (section 6 phases), 5 per task per condition | cswap seat 4 first; the seat watchdog switches seats at 0.94 (5h or 7d) or on rejection; access tokens only |
+| v2full-fo | foreground | the same | the same | the same | the same |
+
+The background run goes first, then the foreground run, in the same VM. Everything else is as in A14 and A15: Sonnet 5.5, 360 s and 45 turns, the live GUI-only guard, pointer parking, the same reset and evaluators. Analysis with `tools/analyze_v2.py` over both runs, reported per category and per condition, never pooled. The report is written to `research/cua-driver-bench/` as a dated file. The popup-raise gap of A16.2 round 7 (Linear CUA-1309) is stated in the report.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

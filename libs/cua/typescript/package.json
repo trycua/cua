@@ -1,6 +1,6 @@
 {
   "name": "@trycua/cua",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "The cua SDK for Node and the browser: sandboxes, cua-spacesd, media streaming, Spaces and the cua daemon, on a Rust core",
   "type": "module",
   "license": "MIT",

@@ -1797,7 +1797,13 @@ async def _cmd_run_dataset_async(args) -> int:
                         "sha256": digest.hexdigest(),
                     })
             row["artifacts"] = artifacts
-            row["evidence_status"] = "artifacts_indexed" if artifacts else "no_artifacts"
+            action_files = [item for item in artifacts if item["path"].endswith("/executed-actions.jsonl")]
+            row["action_evidence_files"] = [item["path"] for item in action_files]
+            row["evidence_status"] = (
+                "action_records_present" if action_files
+                else "artifacts_only" if artifacts
+                else "no_artifacts"
+            )
 
         identity_path = output_dir / "dataset-identity.json"
         if identity_path.is_file():

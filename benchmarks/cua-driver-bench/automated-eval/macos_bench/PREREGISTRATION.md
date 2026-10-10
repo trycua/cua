@@ -1223,6 +1223,10 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 3 (registered 10 Oct 2026 before it runs):** v2s3b3 (background) and v2s3f3 (foreground), the same tasks, arm and runs, on `df3791d0a` in `cdb-v2`.
 
+**Round 3 outcome (v2s3b3 and v2s3f3, 19:11–19:45Z, seat 5, 0 infrastructure exclusions).** Foreground: 12/12 passed. Background: 11/12 passed; the user window never lost key status and no keystroke was swallowed in any trial; no focus steal. Background completion 5/12: IR-03 3/3, MB-10 2/3 (one task failure), IR-01 0/3 and CDB-G04 0/3, because each of those trials counted one window raised over the user window (BenchLab, Rillwatch Cases) when a popup menu opened. Target not yet met.
+
+**Round 4 (diagnostic, registered before it runs):** v2s3b4, background, IR-01 and CDB-G04, 2 runs each, AX only, same build, with a WindowServer log stream of key-focus events running beside it to time the raise against the theft and its release. Validation only.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

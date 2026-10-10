@@ -287,18 +287,27 @@ try {
   )
 
   const typescriptOutput = join(temporaryRoot, "typescript")
-  const ubrn = join(
+  const ubrnManifest = join(
     typescriptRoot,
     "node_modules",
-    ".bin",
-    process.platform === "win32" ? "ubrn.cmd" : "ubrn",
+    "uniffi-bindgen-react-native",
+    "crates",
+    "ubrn_cli",
+    "Cargo.toml",
   )
-  if (!existsSync(ubrn)) {
+  if (!existsSync(ubrnManifest)) {
     throw new Error("missing pinned UBRN generator; run npm ci in libs/cua-driver/typescript")
   }
+  // The npm launcher requires a shell on Windows and joins arguments without
+  // quoting. Invoke its Cargo entrypoint directly to preserve paths with spaces.
   run(
-    ubrn,
+    "cargo",
     [
+      "run",
+      "--quiet",
+      "--manifest-path",
+      ubrnManifest,
+      "--",
       "generate",
       "napi",
       "bindings",

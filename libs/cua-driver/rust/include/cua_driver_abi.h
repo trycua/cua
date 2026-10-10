@@ -124,8 +124,9 @@ CUA_DRIVER_API void cua_driver_buffer_free_v1(CuaDriverBuffer *buffer);
 
 /**
  * Create an in-process driver. `options_json` is empty or a UTF-8 JSON object.
- * It accepts `claude_code_compatibility` and an optional immutable
- * `authorization` ceiling. Unknown fields fail closed.
+ * It accepts `claude_code_compatibility`, the default-false host option
+ * `agent_cursor_enabled`, and an optional immutable `authorization` ceiling.
+ * Unknown fields fail closed. Cursor display grants no input authority.
  */
 CUA_DRIVER_API
 CuaDriverStatus cua_driver_create_v1(const uint8_t *options_json,

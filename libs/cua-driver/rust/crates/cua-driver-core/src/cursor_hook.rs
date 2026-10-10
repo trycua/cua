@@ -68,14 +68,15 @@ pub fn declare_cursor_hook_emitter() {
 ///
 /// Registering a hook always succeeds, so `cursor_hook_enabled()` cannot tell
 /// an embedder whether events will ever arrive. The macOS and Linux (X11 and
-/// Wayland) adapters emit; the Windows adapter has no cursor write path
-/// wired to this hook, so there a registered hook stays silent forever.
+/// Wayland) adapters emit from input paths. Windows emits applied positions
+/// and press transitions after its process-wide overlay window initializes.
+/// Windows overlay startup is asynchronous; support remains false until ready.
 ///
 /// Per the cross-platform contract, a host must publish that limitation
 /// explicitly — "cursor tracking unavailable on this platform" — rather than
 /// showing a viewer a pointer that never moves and letting it look like a
-/// hung stream. Check this at startup, not by waiting for a first event that
-/// is not coming.
+/// hung stream. Check this after platform initialization, rather than waiting
+/// for a first event.
 pub fn cursor_hook_supported() -> bool {
     EMITTER_DECLARED.load(Ordering::Acquire)
 }

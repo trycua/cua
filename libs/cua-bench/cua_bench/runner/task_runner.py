@@ -425,8 +425,12 @@ class TaskRunner:
                 except Exception:
                     pass
 
-            # 7. Cleanup
-            await self._cleanup_task(task_id)
+            # 7. Cleanup and verify actual Docker resource absence.
+            try:
+                await self._cleanup_task(task_id)
+            finally:
+                if output_dir:
+                    await self._write_cleanup_receipt(task_id, output_dir)
 
     async def run_task_interactively(
         self,
@@ -984,6 +988,45 @@ class TaskRunner:
             detach=True,  # Detach so we can use docker wait
             remove_on_exit=False,  # Don't auto-remove, we need logs
         )
+
+    async def _resource_absent(self, kind: str, name: str) -> bool:
+        """Ask Docker whether a task resource still exists after cleanup."""
+        process = await asyncio.create_subprocess_exec(
+            "docker", kind, "inspect", name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await process.communicate()
+        return process.returncode == 1
+
+    async def _write_cleanup_receipt(self, task_id: str, output_dir: str) -> None:
+        """Persist resource inspection results even when cleanup failed."""
+        path = Path(output_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        resources = {
+            "agent_container": ("container", f"cua-agent-{task_id}"),
+            "env_container": ("container", f"cua-env-{task_id}"),
+            "network": ("network", f"cua-task-{task_id}"),
+        }
+        observations = {}
+        for label, (kind, name) in resources.items():
+            try:
+                absent = await self._resource_absent(kind, name)
+                observations[label] = {"name": name, "absent": absent}
+            except Exception as exc:
+                observations[label] = {
+                    "name": name, "absent": False, "error": type(exc).__name__
+                }
+        # Simulated tasks do not create a separate environment container.
+        receipt = {
+            "schema_version": "cua-bench-cleanup/v1",
+            "task_id": task_id,
+            "resources": observations,
+            "verified": all(item["absent"] for item in observations.values()),
+        }
+        temporary = path / "cleanup-result.json.tmp"
+        temporary.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(path / "cleanup-result.json")
 
     async def _cleanup_task(self, task_id: str) -> None:
         """Clean up task resources (containers, network, overlay, optionally images).

@@ -642,3 +642,53 @@ class TestFailedTaskStepEvidence:
         result = await runners.run_single_task(tmp_path, oracle=True)
         assert result.steps == 0
         assert "reset failed" in result.error
+
+
+class TestActionTraceDigest:
+    @pytest.mark.asyncio
+    async def test_trace_digest_is_stable_and_redacts_payloads(self, tmp_path, monkeypatch):
+        import hashlib
+        import json
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class Env:
+            evaluate_task_fn = object()
+            solve_task_fn = None
+            async def reset(self, task_id=0):
+                return b"private screenshot", SimpleNamespace()
+            async def step(self, action):
+                return b"private screenshot after action"
+            async def evaluate(self):
+                return 1.0
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(runners, "make", lambda path, split="train": Env())
+        one = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        two = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        expected = hashlib.sha256(json.dumps(
+            [{"step": 1, "action_type": "DoneAction"}],
+            sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        assert one.action_trace_digest == two.action_trace_digest == expected
+        assert one.success is True
+
+    @pytest.mark.asyncio
+    async def test_failed_step_cannot_be_recorded_as_completed_action(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class Env:
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+            async def step(self, action):
+                raise RuntimeError("injected step failure")
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(runners, "make", lambda path, split="train": Env())
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert result.action_trace_digest is None
+        assert result.steps == 0
+        assert result.success is False

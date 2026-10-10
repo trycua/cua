@@ -300,7 +300,7 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     slug: 'batch',
     title: 'Batch tool',
     summary: 'Run several action tools in one call',
-    tools: ['run_actions'],
+    tools: ['run_steps'],
   },
   {
     slug: 'page',

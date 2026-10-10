@@ -133,7 +133,7 @@ impl PolicyEngine {
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
-        other => other,
+        other => crate::tool::renamed_tool(other).unwrap_or(other),
     }
 }
 

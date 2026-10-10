@@ -39,7 +39,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 
 1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`. Widen only if the target is missing.
 2. Act by `element_token`: row `[N]` of a read is `<snapshot_id>:N` (for example `"s0000002a:11"`, not `"11"`). Use pixels only for surfaces missing from the tree.
-3. Act through `run_actions` with `observe:true`, even for a single step. It runs the steps, stops at the first failure, and returns only what changed since your last read, so you do not need a separate read after acting; see [Workflow](WORKFLOW.md#batch-known-actions).
+3. Act through `run_steps` with `observe:true`, even for a single step. It runs the steps, stops at the first failure, and returns only what changed since your last read, so you do not need a separate read after acting; see [Workflow](WORKFLOW.md#batch-known-actions).
 4. To re-read a window, pass `since:"latest"`: you get the changed rows, not the whole tree. To just look, use `include_accessibility_tree:false` where advertised (it keeps the current tokens valid). Do not use `max_elements:1` or a junk `query` to get a picture.
 5. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
 
@@ -52,7 +52,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | View a local file in the GUI              | `launch_app({bundle_id, urls:["file:///…"]})` opens it in that app                                    | Current platform guide below                          |
 | Observe one window                        | `get_window_state({pid, window_id, query})`                                                           | [Workflow](WORKFLOW.md)                               |
 | Act on a control                          | `click` / `type_text` with a fresh `element_token` and exact window target                            | [Workflow](WORKFLOW.md)                               |
-| Act and see what changed in one call      | `run_actions({steps:[{tool,args},...], observe:true})`; stops at the first failure                    | [Workflow](WORKFLOW.md#batch-known-actions)           |
+| Act and see what changed in one call      | `run_steps({steps:[{tool,args},...], observe:true})`; stops at the first failure                      | [Workflow](WORKFLOW.md#batch-known-actions)           |
 | Use pixels when semantics cannot reach it | Fresh target screenshot, then `x,y` on the same target                                                | [Workflow](WORKFLOW.md)                               |
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
 | Operate the authorized desktop            | `get_desktop_state` → input with `target:{kind:"desktop",display_id:"primary"}` → `get_desktop_state` | [Workflow](WORKFLOW.md), [Linux](LINUX.md) on Wayland |

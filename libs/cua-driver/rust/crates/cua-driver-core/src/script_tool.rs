@@ -128,7 +128,7 @@ impl Tool for RunScriptTool {
             description: "EXPERIMENTAL. Run a JavaScript program that drives apps through Cua \
                 Driver, in ONE call: loops, conditions, reads and checks between actions, and \
                 only the result comes back. Use it for a multi-step flow you can write down; \
-                use run_actions for a fixed list of steps.\n\n\
+                use run_steps for a fixed list of steps.\n\n\
                 The script is the body of an async function: use `await`, and `return` a JSON \
                 value. It runs in a sandbox with no filesystem, network, process, timers or \
                 environment; the only API is `cua`:\n\

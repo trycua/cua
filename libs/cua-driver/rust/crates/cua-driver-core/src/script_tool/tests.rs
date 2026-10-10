@@ -256,6 +256,10 @@ async fn only_driver_tools_on_the_allowlist_are_reachable() {
             "not available to scripts",
         ),
         (
+            "await cua.call('run_steps', {steps: []})",
+            "not available to scripts",
+        ),
+        (
             "await cua.call('run_actions', {steps: []})",
             "not available to scripts",
         ),
@@ -456,7 +460,7 @@ fn an_unflagged_registry_does_not_offer_the_tool() {
         assert!(registry.get_def(super::RUN_SCRIPT_TOOL).is_none());
     }
     assert!(registry
-        .get_def(crate::batch_tools::RUN_ACTIONS_TOOL)
+        .get_def(crate::batch_tools::RUN_STEPS_TOOL)
         .is_some());
 }
 

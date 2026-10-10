@@ -1191,6 +1191,34 @@ The background condition is checked by a smoke run before any scored run. It is 
 * `tools/analyze_v2.py`: one block per arm and condition, and the background-condition table.
 * Tests: `tests/test_bench_v2.py` and `swift/tests/test_summarize_sentinel.py`.
 
+## Amendment 16 (10 Oct 2026, before any scored Bench v2 run): the Cua Driver key-focus fix, smoke v2s3, and the full Bench v2 run
+
+Written and committed before smoke v2s3 and before any scored Bench v2 trial. The owner approved the driver fix and the full v2 run on 10 Oct 2026. No definition of A14 or A15 changes.
+
+### A16.1 Why
+
+Smoke v2s2 (A15.5) found that Cua Driver kept BenchLab and the CDB apps behind the user window but took key status from it in IR-01, IR-03, CDB-G04 and MB-10. A scripted probe in `cdb-v2` (BenchSentinel in the background condition, the same driver calls the agents made, no model) found two causes in the driver, not in the harness:
+
+* a background pixel click posted a defocus record to the front process before it focused the target, and the user window never became key again;
+* a popup button, a Chromium `<select>` or a context menu opened in a background app steals key focus through AppKit's menu tracking until the menu closes.
+
+The fix is trycua/cua PR #4943 (Linear CUA-1298). It changes the driver only. The task list, briefs, fixtures, evaluators and metrics are unchanged.
+
+### A16.2 Smoke v2s3 (validation only, never analysed)
+
+Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows are smoke rows.
+
+| Id | Condition | Tasks | Arms | Main commit (driver) | Written (UTC) |
+|---|---|---|---|---|---|
+| v2s3b | background | IR-01, IR-03, CDB-G04, MB-10; 3 runs each (`--smoke --bench-v2 --condition background --phase1-runs 3 --phase2-runs 0`) | AX (`cc-cua-driver-script`) | `066532c91253` (PR #4943 head on main `cfc95fd70`); VM `cdb-v2` | 2026-10-10T18:40Z |
+| v2s3f | foreground | the same | AX | the same | 2026-10-10T18:40Z |
+
+**What it checks.** On these four tasks, Cua Driver's background completion should be at least its foreground success, with no swallowed user keystroke (`user_blocked` = 0 and the text intact in every background trial). If it is not, the driver is fixed again and the check repeated, each round logged below before it runs. The driver PR merges only after this check.
+
+### A16.3 The full Bench v2 run
+
+Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

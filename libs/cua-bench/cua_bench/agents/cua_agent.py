@@ -126,7 +126,7 @@ class CuaAgent(BaseAgent):
                         "error_type": error,
                     }
                     with evidence_path.open("a", encoding="utf-8") as stream:
-                        stream.write(json.dumps(event, sort_keys=True) + "\\n")
+                        stream.write(json.dumps(event, sort_keys=True) + "\n")
 
         # Screenshot function (required)
         async def screenshot():

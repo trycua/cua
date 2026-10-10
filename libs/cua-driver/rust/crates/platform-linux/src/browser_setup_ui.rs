@@ -60,9 +60,66 @@ struct PriorFocus {
     window: Option<u64>,
     workspace: Option<i64>,
     cursor: (f64, f64),
-    /// Proof that the person gave no physical input during the transaction.
-    /// `None` (unsupported, no quiet barrier, watcher failure) never restores.
-    input: Option<crate::wayland::input_quiet::InputQuiet>,
+    /// Proof that the person gave no input during the transaction. `None`
+    /// (unsupported, no quiet barrier, watcher failure) never restores.
+    input: Option<PersonProof>,
+}
+
+/// How a transaction proves the person left keyboard and pointer alone.
+enum PersonProof {
+    /// The Cua plugin's count of deliberate external input at capture. It
+    /// ignores compositor warps and input-method modifier updates, which
+    /// fire when focus moves to a text field without anyone typing.
+    ExternalInput(u64),
+    /// Fallback for an older plugin: ext-idle-notify, which also counts
+    /// input-method modifier updates and so can skip a valid hand-back.
+    Idle(crate::wayland::input_quiet::InputQuiet),
+}
+
+impl PersonProof {
+    fn begin() -> Option<Self> {
+        if let Ok(Some(count)) = crate::wayland::hyprland::plugin_external_input_count() {
+            return Some(Self::ExternalInput(count));
+        }
+        crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(400))
+            .map(Self::Idle)
+            .map_err(
+                |error| tracing::warn!(%error, "focus hand-back disabled: no physical-input watch"),
+            )
+            .ok()
+    }
+
+    fn quiet(&mut self, budget: Duration) -> bool {
+        match self {
+            Self::ExternalInput(captured) => person_quiet_by_count(
+                *captured,
+                crate::wayland::hyprland::plugin_external_input_count()
+                    .ok()
+                    .flatten(),
+            ),
+            Self::Idle(watch) => watch.quiet_since_begin(budget),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::ExternalInput(_) => "plugin_external_input",
+            Self::Idle(_) => "idle_notify",
+        }
+    }
+
+    fn first_input_after_ms(&self) -> Option<u128> {
+        match self {
+            Self::ExternalInput(_) => None,
+            Self::Idle(watch) => watch.first_input_after_ms(),
+        }
+    }
+}
+
+/// Quiet only when the plugin's count is readable and unchanged since
+/// capture; an unreadable count is never proof.
+fn person_quiet_by_count(captured: u64, now: Option<u64>) -> bool {
+    now == Some(captured)
 }
 
 /// Restore only when focus provably still sits on the setup target and the
@@ -125,21 +182,15 @@ impl FocusRestore {
     fn capture(&self, pid: u32, target: u64) -> anyhow::Result<()> {
         let mut prior = self.0.lock().unwrap();
         if prior.is_none() {
-            // Watch first: the barrier must precede the state it protects, or
-            // a switch the person made while the watch started would be undone.
-            let mut input = crate::wayland::input_quiet::InputQuiet::begin(Duration::from_millis(
-                400,
-            ))
-            .map_err(
-                |error| tracing::warn!(%error, "focus hand-back disabled: no physical-input watch"),
-            )
-            .ok();
+            // Prove first: the proof must precede the state it protects, or
+            // a switch the person made meanwhile would be undone.
+            let mut input = PersonProof::begin();
             let window = crate::wayland::hyprland::active_window_address()?;
             let workspace = crate::wayland::hyprland::single_output_workspace()?;
             let cursor = crate::wayland::hyprland::cursor_position()?;
             if input
                 .as_mut()
-                .is_some_and(|watch| !watch.quiet_since_begin(Duration::from_millis(200)))
+                .is_some_and(|proof| !proof.quiet(Duration::from_millis(200)))
             {
                 tracing::warn!("focus hand-back disabled: the person acted during capture");
                 input = None;
@@ -176,15 +227,16 @@ impl FocusRestore {
         // Location is only corroboration: without proof that the person did
         // not touch keyboard or pointer since capture, their focus is theirs.
         let had_watch = prior.input.is_some();
+        let proof = prior.input.as_ref().map_or("none", PersonProof::kind);
         if !prior
             .input
             .as_mut()
-            .is_some_and(|watch| watch.quiet_since_begin(Duration::from_millis(500)))
+            .is_some_and(|proof| proof.quiet(Duration::from_millis(500)))
         {
             let first_input_after_ms = prior
                 .input
                 .as_ref()
-                .and_then(|watch| watch.first_input_after_ms());
+                .and_then(PersonProof::first_input_after_ms);
             // Visible at the daemon's default level only when the browser
             // kept focus the person had held: the case worth explaining.
             let browser_took_focus = prior.window != Some(prior.target)
@@ -193,6 +245,7 @@ impl FocusRestore {
             if browser_took_focus {
                 tracing::warn!(
                     had_watch,
+                    proof,
                     first_input_after_ms,
                     "focus hand-back skipped after the browser took focus: the person used the \
                      desktop or input quiet is unproven"
@@ -200,6 +253,7 @@ impl FocusRestore {
             } else {
                 tracing::info!(
                     had_watch,
+                    proof,
                     first_input_after_ms,
                     "focus hand-back skipped: the person used the desktop or input quiet is unproven"
                 );
@@ -317,7 +371,7 @@ trait HandBackOps {
 }
 
 struct HyprlandHandBack<'a> {
-    input: &'a mut crate::wayland::input_quiet::InputQuiet,
+    input: &'a mut PersonProof,
 }
 
 impl HandBackOps for HyprlandHandBack<'_> {
@@ -345,7 +399,7 @@ impl HandBackOps for HyprlandHandBack<'_> {
         std::thread::sleep(Duration::from_millis(50));
     }
     fn person_quiet(&mut self) -> bool {
-        self.input.quiet_since_begin(Duration::from_millis(200))
+        self.input.quiet(Duration::from_millis(200))
     }
 }
 
@@ -1893,6 +1947,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(browser.sent, ["ctrl+w"]);
+    }
+
+    #[test]
+    fn the_plugin_input_count_proves_quiet_only_when_unchanged_and_readable() {
+        assert!(person_quiet_by_count(42, Some(42)));
+        // A key, button, wheel, touch or tablet event since capture.
+        assert!(!person_quiet_by_count(42, Some(43)));
+        // A plugin restart (count reset) is not proof either.
+        assert!(!person_quiet_by_count(42, Some(0)));
+        // Unreadable now: never proof.
+        assert!(!person_quiet_by_count(42, None));
     }
 
     #[test]

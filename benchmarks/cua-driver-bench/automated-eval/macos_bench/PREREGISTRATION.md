@@ -1219,6 +1219,10 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 2 (registered 10 Oct 2026 before it runs):** v2s3b2 (background) and v2s3f2 (foreground), the same tasks, arm and runs as above, on `c92ca8aa4` in `cdb-v2`, seat 5 or the next seat with headroom.
 
+**Round 2 outcome (v2s3b2, 18:53–19:01Z):** void. The daemon crashed on the first guarded action (a wrong call signature for `SLPSGetKeyFocusProcess`), so 11 of 12 trials were infrastructure failures; v2s3f2 was cancelled before its first trial. Fixed in PR #4943 head `df3791d0a`.
+
+**Round 3 (registered 10 Oct 2026 before it runs):** v2s3b3 (background) and v2s3f3 (foreground), the same tasks, arm and runs, on `df3791d0a` in `cdb-v2`.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

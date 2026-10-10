@@ -406,6 +406,7 @@ async def run_benchmark(
                     "reward": result.reward,
                     "steps": result.steps,
                     "error": result.error,
+                    "action_trace_digest": result.action_trace_digest,
                 }
             )
             rewards.append(result.reward)

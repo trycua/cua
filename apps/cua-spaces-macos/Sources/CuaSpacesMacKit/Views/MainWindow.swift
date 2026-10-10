@@ -395,9 +395,11 @@ struct KeyvaultHeader: View {
 
 struct EmptySpaces: View {
     let model: AppModel
+    @State private var stacked = false
 
     var body: some View {
         let chrome = model.chrome
+        let tiles = stacked ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
         ContentUnavailableView {
             Label(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded",
                   systemImage: "desktopcomputer")
@@ -406,7 +408,7 @@ struct EmptySpaces: View {
         } actions: {
             VStack(spacing: 18) {
                 if model.rosterError == nil {
-                    HStack(spacing: 12) {
+                    tiles {
                         tile("os-linux", chrome.emptyAction, chrome.emptyLinuxDetail, .linux)
                         tile("os-macos", chrome.emptyMacosAction, chrome.emptyMacosDetail, .macos)
                     }
@@ -416,6 +418,9 @@ struct EmptySpaces: View {
             }
             .padding(.top, 10)
         }
+        // Neither the actions slot nor this view reports the pane width, so measure a pane-filling frame.
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: Bool.self) { $0.size.width < 640 } action: { stacked = $0 }
     }
 
     private func tile(_ icon: String, _ name: String, _ detail: String, _ os: AppSpaceOs) -> some View {

@@ -419,13 +419,44 @@ class TaskRunner:
                 and oracle_result is not None
                 and oracle_result["success"] is True
             )
+            # Validate records emitted at the live desktop action boundary.
+            # In oracle-solver mode, actions may legitimately bypass an agent;
+            # never fabricate agent evidence for that path.
+            evidence_error = None
+            if not oracle and (agent or agent_import_path):
+                evidence_dir = Path(output_dir) / f"task_{task_index}_agent_logs" if output_dir else None
+                evidence_file = evidence_dir / "executed-actions.jsonl" if evidence_dir else None
+                if evidence_file is None or not evidence_file.is_file():
+                    evidence_error = "Missing agent action evidence"
+                else:
+                    try:
+                        sequence = 0
+                        with evidence_file.open(encoding="utf-8") as records:
+                            for raw in records:
+                                record = json.loads(raw)
+                                sequence += 1
+                                if (
+                                    record.get("schema_version") != "cua-bench-executed-action/v1"
+                                    or record.get("execution_id") != task_id
+                                    or record.get("sequence") != sequence
+                                    or record.get("execution_status") not in ("returned", "failed")
+                                    or not isinstance(record.get("action"), dict)
+                                    or not isinstance(record.get("before"), dict)
+                                    or not isinstance(record.get("after"), dict)
+                                ):
+                                    raise ValueError("Invalid action evidence record")
+                        if sequence == 0:
+                            evidence_error = "Empty agent action evidence"
+                    except (OSError, ValueError, TypeError, AttributeError):
+                        evidence_error = "Invalid agent action evidence"
+
             completed_result = TaskResult(
-                success=exit_code == 0 and oracle_passed,
+                success=exit_code == 0 and oracle_passed and evidence_error is None,
                 exit_code=exit_code,
                 agent_logs=agent_logs,
                 env_logs=env_logs,
                 output_dir=output_dir,
-                error=oracle_error or (
+                error=evidence_error or oracle_error or (
                     "Oracle rejected task" if oracle_result and not oracle_passed
                     else None
                 ),

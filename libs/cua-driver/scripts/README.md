@@ -13,6 +13,13 @@ Install, uninstall, local-build, and VM sync helpers for cua-driver.
 | `sync-vm-worktree.sh` | Sync this checkout to verification VMs and pull artifacts back |
 | `post-install-hints.txt` | User-facing hints printed by install scripts |
 
+The local product never reuses release names. Post-install hints print the
+installed `cua-driver-local` command, and `cua-driver-local skills install`
+links the agent skill as `cua-driver-local` (frontmatter `name:` and CLI
+invocations rewritten) so it coexists with the released `cua-driver` skill.
+`uninstall-local` removes those links, plus any older local link under the
+shared `cua-driver` name that points into the local home.
+
 ## Stable macOS local signing
 
 macOS Accessibility and Screen Recording grants are tied to an app's

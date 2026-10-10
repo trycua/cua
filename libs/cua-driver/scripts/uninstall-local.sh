@@ -129,21 +129,27 @@ elif [[ -e "$CLI_LINK" ]]; then
     log "$CLI_LINK is not a symlink; leaving it"
 fi
 
-# Skill links use the shared pack name, so target ownership is mandatory.
-for skill_link in \
-    "$HOME/.claude/skills/cua-driver" \
-    "$HOME/.agents/skills/cua-driver" \
-    "$HOME/.openclaw/skills/cua-driver" \
-    "$HOME/.config/opencode/skills/cua-driver" \
-    "$HOME/.gemini/skills/cua-driver" \
-    "$HOME/.hermes/skills/cua-driver"; do
-    if [[ -L "$skill_link" ]]; then
-        target="$(resolve_link "$skill_link")"
-        if is_local_target "$target"; then
-            rm -f "$skill_link"
-            log "removed local skill link $skill_link"
+# The local skill pack links as `cua-driver-local`. Older local installs
+# linked it under the shared `cua-driver` name, so target ownership is
+# mandatory before removing either name.
+for skill_parent in \
+    "$HOME/.claude/skills" \
+    "$HOME/.agents/skills" \
+    "$HOME/.prime/agent/skills" \
+    "$HOME/.openclaw/skills" \
+    "$HOME/.config/opencode/skills" \
+    "$HOME/.gemini/skills" \
+    "$HOME/.hermes/skills"; do
+    for skill_name in cua-driver-local cua-driver; do
+        skill_link="$skill_parent/$skill_name"
+        if [[ -L "$skill_link" ]]; then
+            target="$(resolve_link "$skill_link")"
+            if is_local_target "$target"; then
+                rm -f "$skill_link"
+                log "removed local skill link $skill_link"
+            fi
         fi
-    fi
+    done
 done
 
 # Scrub Claude registrations only when their command/args point at local paths.

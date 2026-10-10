@@ -1215,6 +1215,10 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **What it checks.** On these four tasks, Cua Driver's background completion should be at least its foreground success, with no swallowed user keystroke (`user_blocked` = 0 and the text intact in every background trial). If it is not, the driver is fixed again and the check repeated, each round logged below before it runs. The driver PR merges only after this check.
 
+**Round 1 (v2s3b, recorded 10 Oct 2026, 18:22–18:37Z).** 12 trials, 0 infrastructure exclusions, seat 5. The user window never lost key status and no keystroke was swallowed (0 of 12; v2s2 had 4 of 6). Background completion was 4/12 and success 10/12: IR-01 and CDB-G04 still counted one window raised over the user window in every trial (BenchLab, Rillwatch Cases), and MB-10 failed twice on the task itself. A probe found the raise follows a menu theft the guard did not release. The driver now taps only when the front app holds key focus, and checks that its tap sees its own calibration notice (PR #4943 head `c92ca8aa4`). v2s3f was not run on round 1's build.
+
+**Round 2 (registered 10 Oct 2026 before it runs):** v2s3b2 (background) and v2s3f2 (foreground), the same tasks, arm and runs as above, on `c92ca8aa4` in `cdb-v2`, seat 5 or the next seat with headroom.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

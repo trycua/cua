@@ -833,6 +833,8 @@ pub struct DeviceStore {
     audit_key: [u8; 32],
     /// Locked after `state` when both are needed.
     audit: Mutex<AuditLog>,
+    /// Whether the last write (devices file or audit log) succeeded.
+    writes_ok: std::sync::atomic::AtomicBool,
 }
 
 fn random_audit_key() -> [u8; 32] {
@@ -948,6 +950,7 @@ impl DeviceStore {
             throttle: Mutex::default(),
             audit_key,
             audit: Mutex::new(audit),
+            writes_ok: true.into(),
         }
     }
 
@@ -1042,7 +1045,22 @@ impl DeviceStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| DeviceError::Storage(e.to_string()))?;
         }
-        write_private(path, &raw).map_err(|e| DeviceError::Storage(e.to_string()))
+        let written = write_private(path, &raw);
+        self.record_write(written.is_ok());
+        written.map_err(|e| DeviceError::Storage(e.to_string()))
+    }
+
+    fn record_write(&self, ok: bool) {
+        self.writes_ok
+            .store(ok, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the last write of the devices file or the audit log
+    /// succeeded (true until one fails, and for an in-memory store). Audit
+    /// events are written all the time, so this tracks the state volume
+    /// within moments of it filling up or going read-only.
+    pub fn writes_ok(&self) -> bool {
+        self.writes_ok.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Applies `change` to a copy of the state and persists it before
@@ -1074,7 +1092,9 @@ impl DeviceStore {
     /// Records `event` in `account`'s audit log (best effort).
     pub fn audit(&self, account: &str, event: AuditEvent) {
         let mut audit = self.audit.lock().expect("audit");
-        if let Err(e) = audit.append(account, event, &self.audit_key) {
+        let appended = audit.append(account, event, &self.audit_key);
+        self.record_write(appended.is_ok());
+        if let Err(e) = appended {
             tracing::warn!(error = %e, "audit event not persisted");
         }
     }
@@ -2279,6 +2299,35 @@ pub(crate) mod tests {
         assert_eq!(log.last().unwrap().seq, (AUDIT_LIMIT + 150) as u64);
         assert!(reopened.verify_audit_chain("acct").is_ok());
         assert_eq!(reopened.audit_log("other", 10).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_reported_until_one_succeeds() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let store = DeviceStore::open(state.join("devices.json"), enforcing()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        assert!(store.writes_ok());
+        // The volume goes read-only (or full): the next write fails.
+        store.audit.lock().unwrap().file = None;
+        std::fs::remove_file(AuditLog::path_for(&state.join("devices.json"))).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        store.audit("acct", AuditEvent::new("machine_access"));
+        let blocked = !store.writes_ok();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Root ignores directory permissions; nothing to check then.
+        if blocked {
+            assert_eq!(
+                store.audit_log("acct", 10).len(),
+                1,
+                "a failed event is not recorded"
+            );
+            store.audit("acct", AuditEvent::new("machine_access"));
+            assert!(store.writes_ok());
+        }
     }
 
     #[test]

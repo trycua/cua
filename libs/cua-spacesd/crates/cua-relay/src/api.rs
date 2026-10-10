@@ -331,6 +331,9 @@ async fn info(State(relay): State<Relay>, headers: HeaderMap) -> Response {
         "issuer": relay.config.oidc.as_ref().map(|o| o.config().issuer.clone()),
         "account_auth": relay.config.oidc.is_some(),
         "static_tokens": !relay.config.tokens.is_empty(),
+        // False once a write of the relay's state files fails, until one
+        // succeeds again (a full or read-only state volume).
+        "state_writable": relay.devices.writes_ok() && relay.directory.writes_ok(),
     }))
     .into_response()
 }

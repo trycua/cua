@@ -18,6 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use atspi::connection::AccessibilityConnection;
 use atspi::proxy::accessible::AccessibleProxy;
+use atspi::proxy::application::ApplicationProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
 
@@ -3716,6 +3717,14 @@ pub fn element_bounds_ref(
                 Some(Err(e)) => return Err(anyhow!("getExtents failed: {e}")),
                 None => return Err(anyhow!("getExtents did not answer in time")),
             };
+            if !crate::wayland::is_wayland()
+                && coord == CoordType::Screen
+                && !screen_extents_trusted(extents, display)
+            {
+                return Err(anyhow!(
+                    "cached element reports untrusted screen extents; re-walk"
+                ));
+            }
             project_screen_extents(extents, offset.unwrap_or((0, 0)), None)
                 .ok_or_else(|| anyhow!("cached element reports no on-screen extents"))
         },
@@ -5678,10 +5687,20 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited_bounded(conn, pid, xid, None, None)
+            let collected = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
-                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?
-                .visited;
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let visited = collected.visited;
+            if !crate::wayland::is_wayland() {
+                let bounds = element_bounds_for_visited(&visited, pid, xid, collected.scoped_frame)
+                    .await
+                    .0
+                    .into_iter()
+                    .find(|(index, ..)| *index == idx)
+                    .map(|(_, x, y, w, h)| (x, y, w, h));
+                return walk_bounds_usable(bounds, display)
+                    .ok_or_else(|| anyhow!("element {idx} reports no usable on-screen extents"));
+            }
             let web_document_origin = web_document_origin_for_visited(&visited, pid, xid, None)
                 .await
                 .unwrap_or((0, 0));
@@ -5928,7 +5947,8 @@ fn parse_gtk_frame_extents(vals: &[u32]) -> Option<(i32, i32)> {
 /// toolkits (Qt, etc.) have no such property *and* report correct Screen
 /// extents, so we return `None` for them — callers keep the unchanged Screen
 /// path and the WINDOW reconstruction can never regress a toolkit that was
-/// already correct. Also returns `None` on native Wayland (clients may not
+/// already correct. The caller separately recognizes GTK4 without CSD through
+/// its AT-SPI toolkit identity. Also returns `None` on native Wayland (clients may not
 /// query screen origins, by design) or when no X11 window resolves.
 fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i32, i32)> {
     if crate::wayland::is_wayland() {
@@ -5969,8 +5989,8 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
     } else {
         crate::x11::list_windows(Some(pid)).first().map(|w| w.xid)?
     };
-    // `?` here is the GTK gate: no _GTK_FRAME_EXTENTS → non-GTK toolkit → keep
-    // the legacy Screen path (which those toolkits report correctly).
+    // No CSD property: let the caller identify GTK4 before reconstructing
+    // coordinates; other toolkits keep their Screen path.
     let (fl, ft) = gtk_frame_extents(win_xid)?;
     let (ox, oy) = x11_window_origin(win_xid)?;
     Some((ox + fl, oy + ft))
@@ -6147,7 +6167,12 @@ async fn web_document_origin_for_visited(
     combined
 }
 
+fn is_renderer_local_origin((x, y): (i32, i32)) -> bool {
+    (-2..=2).contains(&x) && (-2..=2).contains(&y)
+}
+
 fn screen_extent_rebase(
+    toolkit_name: Option<&str>,
     x11_origin: (i32, i32),
     accessible_frame_origin: (i32, i32),
 ) -> Option<(i32, i32)> {
@@ -6155,7 +6180,12 @@ fn screen_extent_rebase(
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
-    if accessible_frame_origin.0.abs() <= 2 && accessible_frame_origin.1.abs() <= 2 {
+    // GTK can legitimately put a decorated frame at the screen origin. Its
+    // Screen coordinates are already absolute, so geometry alone cannot
+    // distinguish it from Chromium's renderer-local provider.
+    if toolkit_name.is_some_and(|name| name.trim().eq_ignore_ascii_case("chromium"))
+        && is_renderer_local_origin(accessible_frame_origin)
+    {
         Some((
             x11_origin.0 - accessible_frame_origin.0,
             x11_origin.1 - accessible_frame_origin.1,
@@ -6163,6 +6193,38 @@ fn screen_extent_rebase(
     } else {
         None
     }
+}
+
+struct ApplicationToolkit {
+    name: String,
+    version: Option<String>,
+}
+
+async fn application_toolkit(acc: &AccessibleProxy<'_>) -> Option<ApplicationToolkit> {
+    let reference = call(acc.get_application()).await?.ok()?;
+    let builder = ApplicationProxy::builder(acc.inner().connection())
+        .cache_properties(atspi::zbus::proxy::CacheProperties::No)
+        .destination(reference.name_as_str()?.to_owned())
+        .ok()?
+        .path(reference.path_as_str().to_owned())
+        .ok()?;
+    let application = call(builder.build()).await?.ok()?;
+    let name = call(application.toolkit_name()).await?.ok()?;
+    // Only GTK4 needs a version-specific Window-coordinate reconstruction.
+    let version = if name.trim().eq_ignore_ascii_case("gtk") {
+        call(application.version()).await?.ok()
+    } else {
+        None
+    };
+    Some(ApplicationToolkit { name, version })
+}
+
+fn gtk4_needs_window_extents(toolkit_name: Option<&str>, version: Option<&str>) -> bool {
+    toolkit_name.is_some_and(|name| name.trim().eq_ignore_ascii_case("gtk"))
+        && version
+            .and_then(|value| value.split('.').next())
+            .and_then(|major| major.parse::<u32>().ok())
+            == Some(4)
 }
 
 fn rebase_renderer_window_offset(
@@ -6214,6 +6276,21 @@ fn scoped_component_nodes<'a, T>(
     })
 }
 
+fn coordinate_toplevel_matches(
+    scope: Option<usize>,
+    frame_ordinal: usize,
+    depth: usize,
+    role: &str,
+) -> bool {
+    match scope {
+        Some(scope) => depth == 0 && frame_ordinal == scope,
+        None => matches!(
+            role.to_ascii_lowercase().as_str(),
+            "frame" | "window" | "dialog" | "alert" | "file chooser"
+        ),
+    }
+}
+
 /// Screen-coordinate bounds for the exact visited sequence rendered into the
 /// current snapshot. Nodes without a usable Component interface, or whose
 /// extents query fails/times out, are omitted rather than borrowing another
@@ -6240,20 +6317,18 @@ async fn element_bounds_for_visited(
     // distinct per-widget WINDOW coords instead. On Wayland / when no X11
     // window resolves, `offset` is None and we keep the legacy Screen path
     // so non-X11 behaviour is unchanged.
+    // Walk depth zero is an application toplevel; toolkit role names are not
+    // required to identify the already-scoped window.
     let window_title = visited.iter().find_map(|node| {
-        (scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
-            && matches!(
-                node.role.to_ascii_lowercase().as_str(),
-                "frame" | "window" | "dialog" | "alert" | "file chooser"
-            ))
-        .then_some(node.name.as_str())
+        (coordinate_toplevel_matches(scoped_frame, node.frame_ordinal, node.depth, &node.role))
+            .then_some(node.name.as_str())
     });
     // Wayland's `window_to_screen_offset` path never touches X11 (it reads
     // compositor IPC / AT-SPI state instead), so only the X11 branch risks an
     // un-timed blocking round-trip; still route both through `bounded_blocking`
     // so this single call site can't stall the walk past its budget (#42).
     let window_title_owned = window_title.map(str::to_owned);
-    let offset =
+    let mut offset =
         bounded_blocking(move || window_to_screen_offset(pid, xid, window_title_owned.as_deref()))
             .await
             .flatten();
@@ -6263,11 +6338,6 @@ async fn element_bounds_for_visited(
     {
         return (Vec::new(), true);
     }
-    let coord = if offset.is_some() {
-        CoordType::Window
-    } else {
-        CoordType::Screen
-    };
     let display = if crate::wayland::is_wayland() {
         None
     } else {
@@ -6275,22 +6345,18 @@ async fn element_bounds_for_visited(
     };
     // Chromium on X11 labels its component extents as Screen while
     // returning coordinates relative to the renderer frame. Rebase
-    // those values by comparing the top-level accessible frame with
-    // the actual X11 window origin. Correct screen-coordinate providers
-    // produce a zero delta; Chromium's local (0,0) frame produces the
-    // required window-origin delta. GTK's explicit Window-coordinate
-    // path above remains authoritative when available.
+    // those values only for the Chromium toolkit: a native decorated window
+    // at the screen origin has the same apparent geometry but already-correct
+    // Screen coordinates. GTK's explicit Window-coordinate path above remains
+    // authoritative when available.
+
     let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
         let x11_origin = bounded_blocking(move || x11_window_origin(xid))
             .await
             .flatten();
         let frame = visited.iter().find(|node| {
-            scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
+            coordinate_toplevel_matches(scoped_frame, node.frame_ordinal, node.depth, &node.role)
                 && node.has_component
-                && matches!(
-                    node.role.to_ascii_lowercase().as_str(),
-                    "frame" | "window" | "dialog" | "alert" | "file chooser"
-                )
         });
         if let (Some(origin), Some(frame)) = (x11_origin, frame) {
             let accessible_origin = match call(frame.acc.proxies()).await {
@@ -6305,12 +6371,37 @@ async fn element_bounds_for_visited(
                 },
                 _ => None,
             };
-            accessible_origin.and_then(|frame_origin| screen_extent_rebase(origin, frame_origin))
+            if let Some(frame_origin) =
+                accessible_origin.filter(|origin| is_renderer_local_origin(*origin))
+            {
+                let toolkit = application_toolkit(&frame.acc).await;
+                let name = toolkit.as_ref().map(|toolkit| toolkit.name.as_str());
+                let version = toolkit
+                    .as_ref()
+                    .and_then(|toolkit| toolkit.version.as_deref());
+
+                if gtk4_needs_window_extents(name, version) {
+                    // GTK4 without client-side decorations has no
+                    // _GTK_FRAME_EXTENTS, but still collapses Screen extents.
+                    // Reconstruct each widget from its distinct Window bounds.
+                    offset = Some(origin);
+                    None
+                } else {
+                    screen_extent_rebase(name, origin, frame_origin)
+                }
+            } else {
+                None
+            }
         } else {
             None
         }
     } else {
         None
+    };
+    let coord = if offset.is_some() {
+        CoordType::Window
+    } else {
+        CoordType::Screen
     };
     // Renderer bridges can expose Window coordinates relative to an internal
     // frame whose origin is not (0,0) (Chromium commonly reports a negative
@@ -6319,12 +6410,8 @@ async fn element_bounds_for_visited(
     // no-op there.
     let window_frame_origin = if offset.is_some() {
         let frame = visited.iter().find(|node| {
-            scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
+            coordinate_toplevel_matches(scoped_frame, node.frame_ordinal, node.depth, &node.role)
                 && node.has_component
-                && matches!(
-                    node.role.to_ascii_lowercase().as_str(),
-                    "frame" | "window" | "dialog" | "alert" | "file chooser"
-                )
         });
         if let Some(frame) = frame {
             match call(frame.acc.proxies()).await {
@@ -7038,9 +7125,68 @@ mod coord_tests {
 
     #[test]
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
-        assert_eq!(screen_extent_rebase((604, 80), (0, 0)), Some((604, 80)));
-        assert_eq!(screen_extent_rebase((604, 100), (604, 80)), None);
-        assert_eq!(screen_extent_rebase((604, 80), (604, 80)), None);
+        assert_eq!(
+            screen_extent_rebase(Some("Chromium"), (604, 80), (0, 0)),
+            Some((604, 80))
+        );
+        assert_eq!(
+            screen_extent_rebase(Some("chromium"), (5, 29), (0, 0)),
+            Some((5, 29))
+        );
+        assert_eq!(
+            screen_extent_rebase(Some("Chromium"), (604, 100), (604, 80)),
+            None
+        );
+    }
+
+    #[test]
+    fn native_and_unknown_toolkits_keep_screen_coordinates_at_the_origin() {
+        for toolkit in [Some("GTK"), Some("GAIL"), Some("Qt"), Some("VCL"), None] {
+            assert_eq!(screen_extent_rebase(toolkit, (5, 29), (0, 0)), None);
+            assert_eq!(screen_extent_rebase(toolkit, (604, 100), (604, 80)), None);
+        }
+    }
+
+    #[test]
+    fn coordinate_toplevel_selection_uses_scoped_root_identity() {
+        assert!(super::coordinate_toplevel_matches(
+            Some(1),
+            1,
+            0,
+            "application"
+        ));
+        assert!(!super::coordinate_toplevel_matches(Some(1), 1, 2, "frame"));
+        assert!(!super::coordinate_toplevel_matches(Some(1), 0, 0, "frame"));
+        let siblings_and_nested = [(0, 0), (1, 2), (2, 0)];
+        assert!(siblings_and_nested.iter().all(|(ordinal, depth)| {
+            !super::coordinate_toplevel_matches(Some(1), *ordinal, *depth, "frame")
+        }));
+        assert!(super::coordinate_toplevel_matches(None, 0, 0, "frame"));
+        assert!(!super::coordinate_toplevel_matches(
+            None,
+            0,
+            0,
+            "application"
+        ));
+    }
+
+    #[test]
+    fn only_verified_gtk4_reconstructs_missing_csd_window_extents() {
+        assert!(super::gtk4_needs_window_extents(
+            Some("GTK"),
+            Some("4.14.5")
+        ));
+        assert!(!super::gtk4_needs_window_extents(
+            Some("GTK"),
+            Some("3.24.41")
+        ));
+        assert!(!super::gtk4_needs_window_extents(
+            Some("Qt"),
+            Some("4.14.5")
+        ));
+        for version in [None, Some(""), Some("unknown"), Some("4x.0")] {
+            assert!(!super::gtk4_needs_window_extents(Some("GTK"), version));
+        }
     }
 
     #[test]

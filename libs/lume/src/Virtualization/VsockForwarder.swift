@@ -18,10 +18,15 @@ final class VsockForwarder: @unchecked Sendable {
         }
     }
 
+    static let maxConnections = 64
+
     private let handle: BaseVirtualizationService.VirtualMachineHandle
     private let rule: Rule
     private var listenerFD: Int32 = -1
     private let queue = DispatchQueue(label: "lume.vsock.forwarder")
+    private let lock = NSLock()
+    private var active = 0
+    private var stopped = false
 
     init(handle: BaseVirtualizationService.VirtualMachineHandle, rule: Rule) {
         self.handle = handle
@@ -57,16 +62,65 @@ final class VsockForwarder: @unchecked Sendable {
     }
 
     func stop() {
+        lock.lock()
+        stopped = true
+        lock.unlock()
         if listenerFD >= 0 { close(listenerFD); listenerFD = -1 }
     }
 
+    private var isStopped: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopped
+    }
+
+    private func reserveSlot() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active < Self.maxConnections else { return false }
+        active += 1
+        return true
+    }
+
+    private func releaseSlot() {
+        lock.lock()
+        active -= 1
+        lock.unlock()
+    }
+
     private func acceptLoop(_ listenFD: Int32) {
-        while true {
-            let client = accept(listenFD, nil, nil)
-            if client < 0 {
-                if errno == EINTR { continue }
-                return
+        while !isStopped {
+            var peer = sockaddr_in()
+            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let client = withUnsafeMutablePointer(to: &peer) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(listenFD, $0, &len) }
             }
+            if client < 0 {
+                let e = errno
+                switch e {
+                case EINTR, ECONNABORTED:
+                    continue
+                case EBADF, EINVAL, ENOTSOCK:
+                    return
+                default:
+                    Logger.error(
+                        "vsock forwarder accept failed",
+                        metadata: ["error": String(cString: strerror(e))])
+                    usleep(100_000)
+                    continue
+                }
+            }
+
+            let address = Self.describe(peer)
+            guard reserveSlot() else {
+                Logger.info(
+                    "vsock forwarder refused a connection over its limit",
+                    metadata: ["client": address, "limit": "\(Self.maxConnections)"])
+                close(client)
+                continue
+            }
+            Self.configure(client)
+            Logger.debug("vsock forwarder accepted a connection", metadata: ["client": address])
             connectGuest(clientFD: client)
         }
     }
@@ -74,16 +128,18 @@ final class VsockForwarder: @unchecked Sendable {
     private func connectGuest(clientFD: Int32) {
         let handle = self.handle
         let guestPort = rule.guestPort
+        let release: () -> Void = { [weak self] in self?.releaseSlot() }
         handle.queue.async {
             guard let device = handle.machine.socketDevices.first as? VZVirtioSocketDevice else {
                 Logger.error("vsock forwarder: VM has no VZVirtioSocketDevice")
                 close(clientFD)
+                release()
                 return
             }
             device.connect(toPort: guestPort) { result in
                 switch result {
                 case .success(let connection):
-                    Self.splice(clientFD, connection)
+                    Self.splice(clientFD, connection, onDone: release)
                 case .failure(let error):
                     Logger.error(
                         "vsock connect failed",
@@ -92,18 +148,42 @@ final class VsockForwarder: @unchecked Sendable {
                             "error": error.localizedDescription,
                         ])
                     close(clientFD)
+                    release()
                 }
             }
         }
     }
 
-    private static func splice(_ clientFD: Int32, _ connection: VZVirtioSocketConnection) {
+    private static func setOption(_ fd: Int32, _ level: Int32, _ name: Int32, _ value: Int32) {
+        var v = value
+        setsockopt(fd, level, name, &v, socklen_t(MemoryLayout<Int32>.size))
+    }
+
+    private static func configure(_ fd: Int32) {
+        setOption(fd, SOL_SOCKET, SO_NOSIGPIPE, 1)
+        setOption(fd, SOL_SOCKET, SO_KEEPALIVE, 1)
+        setOption(fd, IPPROTO_TCP, TCP_KEEPALIVE, 60)
+        setOption(fd, IPPROTO_TCP, TCP_KEEPINTVL, 15)
+        setOption(fd, IPPROTO_TCP, TCP_KEEPCNT, 4)
+    }
+
+    private static func describe(_ peer: sockaddr_in) -> String {
+        var addr = peer.sin_addr
+        var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        guard inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil else { return "unknown" }
+        return "\(String(cString: buf)):\(UInt16(bigEndian: peer.sin_port))"
+    }
+
+    private static func splice(
+        _ clientFD: Int32, _ connection: VZVirtioSocketConnection, onDone: @escaping () -> Void
+    ) {
         let guestFD = connection.fileDescriptor
+        setOption(guestFD, SOL_SOCKET, SO_NOSIGPIPE, 1)
         let done = DispatchGroup()
 
-        let pump: (Int32, Int32) -> Void = { from, to in
+        let pump: (Int32, Int32, Int32, Int32) -> Void = { from, to, endFD, how in
             done.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
+            Thread {
                 defer { done.leave() }
                 var buf = [UInt8](repeating: 0, count: 64 * 1024)
                 while true {
@@ -119,15 +199,16 @@ final class VsockForwarder: @unchecked Sendable {
                     }
                     if off < n { break }
                 }
-                shutdown(to, SHUT_WR)
-            }
+                shutdown(endFD, how)
+            }.start()
         }
-        pump(clientFD, guestFD)
-        pump(guestFD, clientFD)
+        pump(clientFD, guestFD, guestFD, SHUT_WR)
+        pump(guestFD, clientFD, clientFD, SHUT_RDWR)
 
         done.notify(queue: DispatchQueue.global()) {
             close(clientFD)
             connection.close()
+            onDone()
         }
     }
 }

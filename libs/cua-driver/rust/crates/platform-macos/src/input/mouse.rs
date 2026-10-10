@@ -1326,19 +1326,20 @@ pub enum DragButton {
 /// left- and right-click primitives use. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, None, modifiers)
+    middle_click_at_xy_inner(pid, x, y, None, None, modifiers)
 }
 
-/// Like `middle_click_at_xy` but stamps the window-local `(wx, wy)` point.
+/// Like `middle_click_at_xy` but stamps the window-local point and window ID.
 pub fn middle_click_at_xy_with_window_local(
     pid: i32,
     x: f64,
     y: f64,
     wx: f64,
     wy: f64,
+    wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
+    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
 }
 
 fn middle_click_at_xy_inner(
@@ -1346,12 +1347,19 @@ fn middle_click_at_xy_inner(
     x: f64,
     y: f64,
     window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
     let flags = parse_modifier_flags(modifiers);
+    let click_group_id = wid.map(|_| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as i64
+    });
 
     let down = CGEvent::new_mouse_event(
         source.clone(),
@@ -1363,7 +1371,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
+    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 2, 3);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     let up = CGEvent::new_mouse_event(
@@ -1376,7 +1384,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
+    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 2, 3);
 
     Ok(())
 }
@@ -1802,6 +1810,8 @@ mod post_sink {
         posted: Vec<Posted>,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
+        /// Window number, under-pointer windows, and shared gesture ID.
+        window_routing: Vec<[i64; 4]>,
     }
 
     thread_local! {
@@ -1819,6 +1829,7 @@ mod post_sink {
                     skylight_available,
                     posted: Vec::new(),
                     modifiers: Vec::new(),
+                    window_routing: Vec::new(),
                 });
             });
             Self
@@ -1845,6 +1856,10 @@ mod post_sink {
                     .map(|state| state.posted.clone())
                     .unwrap_or_default()
             })
+        }
+
+        pub(super) fn window_routing(&self) -> Vec<[i64; 4]> {
+            STATE.with(|state| state.borrow().as_ref().unwrap().window_routing.clone())
         }
     }
 
@@ -1878,6 +1893,9 @@ mod post_sink {
             state
                 .modifiers
                 .push(event.get_flags().bits() & MODIFIER_MASK);
+            state
+                .window_routing
+                .push([51, 91, 92, 58].map(|field| event.get_integer_value_field(field)));
             true
         })
     }
@@ -1887,6 +1905,33 @@ mod post_sink {
 mod tests {
     use super::post_sink::{Capture, Posted};
     use super::*;
+
+    #[test]
+    fn background_middle_click_preserves_exact_window_routing() {
+        let capture = Capture::start(true);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        let routing = capture.window_routing();
+        assert_eq!(routing.len(), 2);
+        for fields in &routing {
+            assert_eq!(&fields[..3], &[7, 7, 7]);
+            assert_ne!(fields[3], 0, "window stamps require a click-group ID");
+        }
+        assert_eq!(routing[0][3], routing[1][3]);
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("OtherMouseDown", PostRoute::SkyLightAndPublic, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLightAndPublic, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn window_less_middle_click_keeps_window_routing_unset() {
+        let capture = Capture::start(true);
+        middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
+        assert_eq!(capture.window_routing(), [[0; 4], [0; 4]]);
+    }
 
     #[test]
     fn capture_bound_background_route_preserves_nonzero_origin_hit() {

@@ -930,6 +930,8 @@ final class SingleClickReceiver: NSView {
 
     override func mouseDown(with event: NSEvent) { record("down", event) }
     override func mouseUp(with event: NSEvent) { record("up", event) }
+    override func otherMouseDown(with event: NSEvent) { record("middle_down", event) }
+    override func otherMouseUp(with event: NSEvent) { record("middle_up", event) }
 }
 
 @main

@@ -618,6 +618,101 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
 
 #[test]
 #[ignore]
+fn harness_appkit_middle_click_px_background_reaches_exact_window() {
+    let case = native_background_case(
+        "appkit",
+        "middle_click",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-middle-click")
+            .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create middle-click journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::launch_with_oracles(None, Some(&journal));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find middle-click receiver window");
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(initial.len(), 1, "receiver must be idle: {initial:?}");
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[0]["window_id"].as_u64(), Some(wid));
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                let response = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width / 2.0, "y": height / 2.0,
+                        "button": "middle", "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !response.is_error(),
+                    "middle-click request: {}",
+                    response.text()
+                );
+                assert_eq!(response.action_delivery_mode(), Some("background"));
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let events = loop {
+                    let events = read_events();
+                    if events.iter().any(|event| event["kind"] == "middle_up") {
+                        break events;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "middle-click did not arrive: {events:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                };
+                assert!(events.iter().any(|event| event["kind"] == "middle_down"));
+                let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
+                let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
+                for event in &events[1..] {
+                    assert!(matches!(
+                        event["kind"].as_str(),
+                        Some("middle_down" | "middle_up")
+                    ));
+                    assert_eq!(event["window_id"].as_u64(), Some(wid));
+                    assert!((event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0);
+                    assert!((event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0);
+                }
+            },
+        )
+        .expect("middle-click must preserve background desktop state");
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_smoke() {
     run_case(
         native_readonly_case(

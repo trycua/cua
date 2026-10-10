@@ -287,6 +287,14 @@ class TaskRunner:
             "is_simulated": is_simulated,
         }
 
+        # Do not let artifacts from an earlier run masquerade as this execution.
+        # Leave unrelated user files alone; only clear known generated receipts.
+        if output_dir:
+            task_output = Path(output_dir)
+            task_output.mkdir(parents=True, exist_ok=True)
+            for receipt_name in ("oracle-result.json", "cleanup-result.json"):
+                (task_output / receipt_name).unlink(missing_ok=True)
+
         # Track log streaming process for cleanup
         log_stream_process = None
         completed_result: Optional[TaskResult] = None

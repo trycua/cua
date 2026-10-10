@@ -1254,6 +1254,8 @@ Registered by its own dated line here, before its first trial, once PR #4943 is 
 
 The background run goes first, then the foreground run, in the same VM. Everything else is as in A14 and A15: Sonnet 5.5, 360 s and 45 turns, the live GUI-only guard, pointer parking, the same reset and evaluators. Analysis with `tools/analyze_v2.py` over both runs, reported per category and per condition, never pooled. The report is written to `research/cua-driver-bench/` as a dated file. The popup-raise gap of A16.2 round 7 (Linear CUA-1309) is stated in the report.
 
+**A16.3 outcome (10 Oct 2026, 22:27Z).** The owner redirected the work before the run finished: first a driver concept that keeps background-targeted windows from ever becoming frontmost or key (CUA-1309), then a rerun. v2full-ba was stopped with the STOP file after 35 trials (phase 1 of CDB-G02, G03 and G04 complete, 3 of 20 blocks); v2full-fo never started. Those rows are labelled **pre-CUA-1309, superseded**, are kept and are not analysed as a result. The rerun gets its own amendment.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 pub mod compatibility;
+mod config_value;
 pub mod cursor;
 mod cursor_tools;
 mod desktop;
@@ -24,6 +25,8 @@ mod session;
 mod verification;
 mod visual;
 mod windows;
+pub use config_value::coerce_set_config_value;
+pub use inputs::json_schema_validation_form;
 pub use windows::*;
 
 pub(crate) fn schema_settings() -> SchemaSettings {
@@ -396,7 +399,7 @@ mod tests {
             <NumericFormatFixture as ToolOutput>::output_schema(),
         ];
 
-        for schema in schemas {
+        for (index, schema) in schemas.into_iter().enumerate() {
             for property in ["count", "frame", "ratio"] {
                 assert!(schema["properties"][property].get("format").is_none());
             }
@@ -406,10 +409,14 @@ mod tests {
                 serde_json::json!({"type": "string"})
             );
             assert_eq!(schema["required"], serde_json::json!(["format"]));
-            assert_eq!(
-                schema["properties"]["annotation"]["const"],
-                serde_json::json!({"format": "uint32"})
-            );
+            // Input schemas rewrite `const` into a one-value `enum` for
+            // Vertex/Gemini (#4798); the literal payload must survive intact.
+            let literal = if index == 0 {
+                &schema["properties"]["annotation"]["enum"][0]
+            } else {
+                &schema["properties"]["annotation"]["const"]
+            };
+            assert_eq!(literal, &serde_json::json!({"format": "uint32"}));
             assert_eq!(
                 schema["properties"]["annotation"]["default"],
                 serde_json::json!({"format": "uint64"})
@@ -774,5 +781,344 @@ mod tests {
                 contract.name
             );
         }
+    }
+
+    /// Fields of the Vertex AI `Schema` object, the OpenAPI 3.0 subset used
+    /// for function declaration parameters:
+    /// https://cloud.google.com/vertex-ai/docs/reference/rest/v1/Schema
+    /// (`ref`/`defs` are written `$ref`/`$defs` in JSON Schema form, as the
+    /// function-calling guide shows). Any other keyword, such as `oneOf`,
+    /// `allOf`, `not`, `const` or `uniqueItems`, is not part of the object.
+    const VERTEX_SCHEMA_FIELDS: &[&str] = &[
+        "type",
+        "format",
+        "title",
+        "description",
+        "nullable",
+        "default",
+        "items",
+        "minItems",
+        "maxItems",
+        "enum",
+        "properties",
+        "propertyOrdering",
+        "required",
+        "minProperties",
+        "maxProperties",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "example",
+        "anyOf",
+        "additionalProperties",
+        "$ref",
+        "$defs",
+    ];
+
+    /// `Schema.type` values (`TYPE_UNSPECIFIED` excluded), in JSON Schema case.
+    const VERTEX_SCHEMA_TYPES: &[&str] = &[
+        "string", "number", "integer", "boolean", "array", "object", "null",
+    ];
+
+    /// Collect every node of a published input schema that falls outside the
+    /// Vertex AI / Gemini function-declaration `Schema` object (#4798,
+    /// following #4220). Walks schema positions only, so property names and
+    /// `default`/`example`/`enum` payloads are never mistaken for keywords.
+    fn vertex_input_schema_violations(schema: &Value, path: &str, out: &mut Vec<String>) {
+        let Some(node) = schema.as_object() else {
+            out.push(format!("{path}: schema must be an object, got {schema}"));
+            return;
+        };
+        for key in node.keys() {
+            if !VERTEX_SCHEMA_FIELDS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{path}: `{key}` is not a field of the Vertex AI Schema object"
+                ));
+            }
+        }
+        match node.get("type") {
+            Some(Value::String(name)) if VERTEX_SCHEMA_TYPES.contains(&name.as_str()) => {}
+            Some(other) => out.push(format!(
+                "{path}: type must be one of {VERTEX_SCHEMA_TYPES:?} as a single string, got {other}"
+            )),
+            // Vertex answers "schema didn't specify the schema type field"
+            // for an untyped node, including an anyOf without a type (#4798).
+            None if !node.contains_key("$ref") => {
+                out.push(format!("{path}: schema node has no type"))
+            }
+            None => {}
+        }
+        if let Some(values) = node.get("enum") {
+            match values.as_array() {
+                Some(values) if values.iter().all(Value::is_string) => {}
+                _ => out.push(format!(
+                    "{path}: enum must be a list of strings, got {values}"
+                )),
+            }
+        }
+        for keyword in ["properties", "$defs"] {
+            if let Some(children) = node.get(keyword).and_then(Value::as_object) {
+                for (name, child) in children {
+                    vertex_input_schema_violations(child, &format!("{path}.{keyword}.{name}"), out);
+                }
+            }
+        }
+        if let Some(items) = node.get("items") {
+            vertex_input_schema_violations(items, &format!("{path}.items"), out);
+        }
+        if let Some(additional) = node.get("additionalProperties") {
+            if !additional.is_boolean() {
+                vertex_input_schema_violations(
+                    additional,
+                    &format!("{path}.additionalProperties"),
+                    out,
+                );
+            }
+        }
+        if let Some(variants) = node.get("anyOf").and_then(Value::as_array) {
+            for (index, variant) in variants.iter().enumerate() {
+                vertex_input_schema_violations(variant, &format!("{path}.anyOf[{index}]"), out);
+            }
+        }
+    }
+
+    #[test]
+    fn vertex_lint_follows_the_documented_schema_fields() {
+        let lint = |schema: Value| {
+            let mut out = Vec::new();
+            vertex_input_schema_violations(&schema, "$", &mut out);
+            out
+        };
+        // Documented fields pass, including a typed anyOf, nullable, bounds,
+        // additionalProperties and a property literally named `const`.
+        let accepted = lint(serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value"],
+            "properties": {
+                "value": {
+                    "type": "string",
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "string", "enum": ["x"]}]
+                },
+                "limit": {"type": "integer", "nullable": true, "minimum": 0, "maximum": 9},
+                "tags": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"type": "string"}},
+                "const": {"type": "string", "default": {"oneOf": "payload, not a keyword"}}
+            }
+        }));
+        assert!(accepted.is_empty(), "{accepted:#?}");
+
+        // Keywords outside the Schema object, untyped nodes, type arrays and
+        // non-string enums are flagged.
+        let rejected = lint(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "a": {"oneOf": [{"type": "string"}]},
+                "b": {"type": "string", "const": "x"},
+                "c": {"type": ["number", "null"]},
+                "d": {"type": "array", "uniqueItems": true, "items": {"enum": ["x"]}},
+                "e": {"type": "boolean", "enum": [true]},
+                "f": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+            }
+        }));
+        for expected in [
+            "$.properties.a: `oneOf` is not a field",
+            "$.properties.a: schema node has no type",
+            "$.properties.b: `const` is not a field",
+            "$.properties.c: type must be one of",
+            "$.properties.d: `uniqueItems` is not a field",
+            "$.properties.d.items: schema node has no type",
+            "$.properties.e: enum must be a list of strings",
+            "$.properties.f: schema node has no type",
+        ] {
+            assert!(
+                rejected
+                    .iter()
+                    .any(|violation| violation.starts_with(expected)),
+                "missing `{expected}` in {rejected:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn published_input_schemas_are_vertex_gemini_compatible() {
+        let mut violations = Vec::new();
+        for contract in manifest().tools {
+            vertex_input_schema_violations(
+                &contract.input_schema,
+                &format!("{}.input_schema", contract.name),
+                &mut violations,
+            );
+        }
+        assert!(
+            violations.is_empty(),
+            "input schema nodes outside the Vertex AI Schema object (#4798):\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn action_target_advertises_a_flat_object_for_vertex_clients() {
+        let target = action_target_schema();
+        assert_eq!(target["type"], "object", "{target}");
+        assert!(target.get("anyOf").is_none(), "{target}");
+        assert!(target.get("oneOf").is_none(), "{target}");
+        assert_eq!(
+            target["properties"]["kind"]["enum"],
+            serde_json::json!(["window", "desktop"])
+        );
+        assert_eq!(target["properties"]["kind"]["type"], "string");
+        for tool in [
+            "drag",
+            "hotkey",
+            "move_cursor",
+            "press_key",
+            "scroll",
+            "type_text",
+            "click",
+        ] {
+            let contract = tool_contract(tool).unwrap_or_else(|| panic!("{tool} contract"));
+            let schema = &contract.input_schema["properties"]["target"];
+            assert_eq!(schema["type"], "object", "{tool}: {schema}");
+            assert!(schema.get("anyOf").is_none(), "{tool}: {schema}");
+            assert!(schema.get("oneOf").is_none(), "{tool}: {schema}");
+            assert!(
+                schema.pointer("/properties/kind/const").is_none(),
+                "{tool} kind must not use const: {schema}"
+            );
+        }
+    }
+
+    /// `set_config.value` is advertised as a string so Vertex/Gemini accept
+    /// it, so the driver must parse string values for typed keys (#4798).
+    #[test]
+    fn set_config_value_strings_are_coerced_to_the_key_type() {
+        use serde_json::json;
+        for (key, value, expected) in [
+            ("max_image_dimension", json!("800"), json!(800)),
+            ("max_image_dimension", json!(" 0 "), json!(0)),
+            ("experimental_pip", json!("true"), json!(true)),
+            ("experimental_pip", json!("false"), json!(false)),
+            ("cursor.motion.effects.glow", json!("true"), json!(true)),
+            ("cursor.motion.effects.trail", json!("false"), json!(false)),
+        ] {
+            assert_eq!(
+                coerce_set_config_value(key, &value),
+                expected,
+                "{key} = {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_config_value_coercion_leaves_other_values_alone() {
+        use serde_json::json;
+        for (key, value) in [
+            // Already typed: unchanged.
+            ("max_image_dimension", json!(800)),
+            ("experimental_pip", json!(true)),
+            // Unparseable: unchanged, so the key's own type error still fires.
+            ("max_image_dimension", json!("800px")),
+            ("max_image_dimension", json!("-1")),
+            ("experimental_pip", json!("yes")),
+            // String-valued and reset values are not reinterpreted.
+            ("capture_mode", json!("vision")),
+            ("experimental_pip_geometry", json!("640x480")),
+            ("cursor.motion.style", json!("signature_arc")),
+            ("cursor.motion.effects.glow", json!("default")),
+            ("cursor.motion", Value::Null),
+            ("unknown_key", json!("800")),
+        ] {
+            assert_eq!(
+                coerce_set_config_value(key, &value),
+                value,
+                "{key} = {value}"
+            );
+        }
+    }
+
+    /// Fields that used to advertise `T | null` keep explicit `null` through
+    /// the OpenAPI `nullable` flag Vertex/Gemini document, instead of a type
+    /// array (#4798). `effects.glow: null` restores the style's default.
+    #[test]
+    fn nullable_inputs_advertise_openapi_nullable() {
+        for (tool, pointer, ty) in [
+            (
+                "set_agent_cursor_motion",
+                "/properties/effects/properties/glow",
+                "boolean",
+            ),
+            ("set_agent_cursor_motion", "/properties/effects", "object"),
+            ("set_agent_cursor_motion", "/properties/arc_flow", "number"),
+            (
+                "start_session",
+                "/properties/cursor_motion/properties/effects/properties/trail",
+                "boolean",
+            ),
+            ("start_session", "/properties/cursor_theme", "object"),
+            ("list_sessions", "/properties/limit", "integer"),
+            ("verify_state", "/properties/include_screenshot", "boolean"),
+            (
+                "parse_visual_regions",
+                "/properties/options/properties/kinds",
+                "array",
+            ),
+            ("drag", "/properties/target", "object"),
+        ] {
+            let contract = tool_contract(tool).unwrap_or_else(|| panic!("{tool} contract"));
+            let field = contract
+                .input_schema
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("{tool}{pointer} missing"));
+            assert_eq!(field["type"], ty, "{tool}{pointer}: {field}");
+            assert_eq!(field["nullable"], true, "{tool}{pointer}: {field}");
+        }
+    }
+
+    /// run_actions checks each step against the advertised schema with a JSON
+    /// Schema engine, which ignores OpenAPI `nullable`. The validation form
+    /// must turn the flag back into a `null` type so explicit null still
+    /// passes the step check (#4798).
+    #[test]
+    fn run_actions_validation_form_accepts_explicit_null() {
+        use serde_json::json;
+
+        let validator_for = |tool: &str| {
+            let schema = tool_contract(tool)
+                .unwrap_or_else(|| panic!("{tool} contract"))
+                .input_schema;
+            jsonschema::validator_for(&json_schema_validation_form(&schema))
+                .unwrap_or_else(|error| panic!("{tool}: {error}"))
+        };
+
+        let motion = validator_for("set_agent_cursor_motion");
+        for args in [
+            json!({"session": "s", "effects": {"glow": null}}),
+            json!({"session": "s", "effects": {"glow": true}}),
+            json!({"session": "s", "effects": null}),
+            json!({"session": "s", "arc_flow": null}),
+        ] {
+            assert!(motion.is_valid(&args), "{args}");
+        }
+        for args in [
+            json!({"session": "s", "effects": {"glow": "on"}}),
+            json!({"session": "s", "arc_flow": "1"}),
+        ] {
+            assert!(!motion.is_valid(&args), "{args}");
+        }
+
+        let parse = validator_for("parse_visual_regions");
+        assert!(parse.is_valid(&json!({"capture_id": "c", "options": {"kinds": null}})));
+        assert!(parse.is_valid(&json!({"capture_id": "c", "options": {"kinds": ["text"]}})));
+        assert!(!parse.is_valid(&json!({"capture_id": "c", "options": {"kinds": ["logo"]}})));
+
+        // A nullable enum admits null alongside its listed values.
+        let fixture = json!({"type": "string", "enum": ["a"], "nullable": true});
+        let enum_validator = jsonschema::validator_for(&json_schema_validation_form(&fixture))
+            .expect("fixture compiles");
+        assert!(enum_validator.is_valid(&json!("a")));
+        assert!(enum_validator.is_valid(&Value::Null));
+        assert!(!enum_validator.is_valid(&json!("b")));
     }
 }

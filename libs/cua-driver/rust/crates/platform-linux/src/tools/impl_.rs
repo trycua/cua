@@ -13302,7 +13302,7 @@ impl Tool for SetConfigTool {
                 save the default cursor motion for sessions started afterwards.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
-                "value":{"description":"New value for `key`. JSON type depends on the key."},
+                "value":{"type":"string","description":"New value for `key` in the {key, value} shape, sent as a string. The driver parses it to the key's type: \"800\" for max_image_dimension, \"true\"/\"false\" for experimental_pip and cursor.motion.effects.*. capture_mode, experimental_pip_geometry and cursor.motion.style/timing take the string as is; `default` resets a cursor.motion key. Raw JSON numbers and booleans are also accepted."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
@@ -13338,9 +13338,11 @@ impl Tool for SetConfigTool {
         // Linux previously read only the legacy per-field keys below, so a
         // `{"key":"max_image_dimension","value":800}` write was silently
         // dropped (issue #1923). Dispatch on `key` to the same fields.
-        if let (Some(key), Some(val)) =
+        if let (Some(key), Some(raw)) =
             (args.get("key").and_then(|v| v.as_str()), args.get("value"))
         {
+            // Keep key-aware parsing on the wire while retaining old JSON scalars.
+            let val = &cua_driver_contract::coerce_set_config_value(key, raw);
             match key {
                 "capture_mode" => match val.as_str() {
                     Some(s) => {

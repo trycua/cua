@@ -162,7 +162,7 @@ impl Tool for RunStepsTool {
                 order, stop at the first failure, and (with `observe`) get what changed in the \
                 same response. Use it whenever you know the next action(s) and would otherwise \
                 re-read the window after them: fill three fields, click, and see the result in \
-                one call instead of five. Even a single step plus `observe:true` replaces an \
+                one call instead of five. Even a single step plus `observe:{}` replaces an \
                 action call followed by a get_window_state call. \
                 Each step is `{tool, args}` where `tool` is one of click, double_click, \
                 right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor \
@@ -217,7 +217,7 @@ impl Tool for RunStepsTool {
                 {\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},\
                 {\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":{\"role\":\"button\",\"name\":\"Confirm\"}},\
                 {\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}\
-                ],\"observe\":true}"
+                ],\"observe\":{}}"
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -229,30 +229,16 @@ impl Tool for RunStepsTool {
                         "maxItems": MAX_STEPS,
                         "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
-                            "anyOf": [
-                                {
-                                    "type": "object",
-                                    "required": ["tool"],
-                                    "properties": {
-                                        "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
-                                        "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
-                                        "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
-                                        "expect": { "type": ["object", "array"], "description": "Check (or up to 4) that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
-                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
-                                    },
-                                    "additionalProperties": false
-                                },
-                                {
-                                    "type": "object",
-                                    "description": "Shorthand {<tool>: args} with optional wait_for / expect / timeout_ms, or a step that is only a wait_for or expect check.",
-                                    "properties": {
-                                        "wait_for": { "type": "object" },
-                                        "expect": { "type": ["object", "array"] },
-                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000 }
-                                    },
-                                    "additionalProperties": true
-                                }
-                            ]
+                            "type": "object",
+                            "description": "One action as {tool, args} or {<tool>: args}, with optional wait_for, expect and timeout_ms. The runtime also accepts a single expect object.",
+                            "properties": {
+                                "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
+                                "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
+                                "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
+                                "expect": { "type": "array", "items": { "type": "object" }, "minItems": 1, "maxItems": MAX_EXPECTS, "description": "One to four checks after the action. The runtime also accepts a single check object for compatibility." },
+                                "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
+                            },
+                            "additionalProperties": true
                         }
                     },
                     "delay_ms": {
@@ -287,8 +273,8 @@ impl Tool for RunStepsTool {
                         "description": "When a step is refused because its target ignores background input (Electron, LibreOffice and other toolkits), retry it once with delivery_mode:\"foreground\": the window is activated and the pointer may move. Default false."
                     },
                     "observe": {
-                        "type": ["object", "boolean"],
-                        "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
+                        "type": "object",
+                        "description": "Optional end-of-batch observation: {} or arguments for ONE get_window_state call (legacy true remains accepted by the runtime). `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
                     }
                 },
                 "additionalProperties": false

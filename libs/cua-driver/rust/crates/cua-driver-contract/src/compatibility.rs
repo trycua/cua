@@ -28,6 +28,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "required",
     "properties",
     "additionalProperties",
+    "nullable",
 ];
 
 const ANNOTATION_KEYWORDS: &[&str] = &["description", "default", "title", "examples"];
@@ -76,6 +77,7 @@ fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut V
     check_keywords(path, "live", live_object.keys(), violations);
 
     compare_type(path, portable, live, violations);
+    compare_nullable(path, portable, live, violations);
     compare_allowed_values(path, portable, live, violations);
     compare_pattern(path, portable, live, violations);
     compare_lower_bound(path, "minimum", portable, live, violations);
@@ -114,6 +116,25 @@ fn check_keywords<'a>(
         {
             violations.push(format!("{path}: unsupported {side} schema keyword `{key}`"));
         }
+    }
+}
+
+/// OpenAPI `nullable: true` on the portable side admits `null`; the live
+/// schema must admit it too (its own `nullable`, a `null` type entry, or no
+/// type constraint at all).
+fn compare_nullable(path: &str, portable: &Value, live: &Value, violations: &mut Vec<String>) {
+    if portable.get("nullable") != Some(&Value::Bool(true)) {
+        return;
+    }
+    let live_accepts_null = live.get("nullable") == Some(&Value::Bool(true))
+        || match live.get("type") {
+            None => true,
+            Some(Value::String(name)) => name == "null",
+            Some(Value::Array(names)) => names.iter().any(|name| name == "null"),
+            Some(_) => false,
+        };
+    if !live_accepts_null {
+        violations.push(format!("{path}: portable allows null but live rejects it"));
     }
 }
 
@@ -482,5 +503,28 @@ mod tests {
         assert!(violations
             .iter()
             .any(|value| value.contains("portable permits additional properties")));
+    }
+
+    /// Published input schemas mark optional `T | null` fields with the
+    /// OpenAPI `nullable` flag (#4798); the live schema must accept `null` too.
+    #[test]
+    fn portable_nullable_requires_live_to_accept_null() {
+        let portable = json!({"type": "boolean", "nullable": true});
+        for live in [
+            json!({"type": ["boolean", "null"]}),
+            json!({"type": "boolean", "nullable": true, "description": "live"}),
+            json!({}),
+        ] {
+            let violations = schema_subset_violations(&portable, &live);
+            assert!(violations.is_empty(), "{live}: {violations:?}");
+        }
+
+        let violations = schema_subset_violations(&portable, &json!({"type": "boolean"}));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("allows null")),
+            "{violations:?}"
+        );
     }
 }

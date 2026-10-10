@@ -35,6 +35,24 @@ use crate::input::skylight;
 const TAIL: Duration = Duration::from_secs(3);
 /// Ids tried after the expected one when another app stole in between.
 const ID_SLACK: i32 = 3;
+/// Longest wait for the thief's menu window before releasing the theft.
+const MENU_WAIT: Duration = Duration::from_millis(150);
+/// CGWindowLevel of popup menus (`kCGPopUpMenuWindowLevel`).
+const POPUP_MENU_LAYER: i32 = 101;
+
+/// Wait until `pid` shows a menu-level window, or `budget` runs out.
+fn wait_for_menu_window(pid: i32, budget: Duration) {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if crate::windows::visible_windows()
+            .iter()
+            .any(|w| w.pid == pid && w.layer >= POPUP_MENU_LAYER && w.is_on_screen)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(3));
+    }
+}
 
 /// CGEvent type of the WindowServer focus notices an app receives.
 const FOCUS_NOTICE_TYPE: u32 = 21;
@@ -304,15 +322,26 @@ extern "C" fn tap_callback(
             std::ptr::null_mut()
         }
         NoticeAction::ReleaseAndDrop => {
-            if release_target_theft() {
-                RELEASED.fetch_add(1, Ordering::Relaxed);
-                tracing::debug!(thief, "released a background key-focus theft");
+            // Swallow the notice now, so the user's window never resigns key,
+            // but release the theft only once the menu window is on screen.
+            // Released earlier, AppKit orders the menu's window group to the
+            // front, which raises the target's window over the user's.
+            let thief_pid = thief as i32;
+            let spawned = std::thread::Builder::new()
+                .name("cua-key-focus-release".into())
+                .spawn(move || {
+                    wait_for_menu_window(thief_pid, MENU_WAIT);
+                    if release_target_theft() {
+                        RELEASED.fetch_add(1, Ordering::Relaxed);
+                        tracing::debug!(thief_pid, "released a background key-focus theft");
+                    } else {
+                        MISSED.fetch_add(1, Ordering::Relaxed);
+                        tracing::warn!(thief_pid, "could not release a background key-focus theft");
+                    }
+                });
+            if spawned.is_ok() {
                 std::ptr::null_mut()
             } else {
-                // Without a release the keyboard really is routed to the
-                // target; let the user's app learn that it lost key focus.
-                MISSED.fetch_add(1, Ordering::Relaxed);
-                tracing::warn!(thief, "could not release a background key-focus theft");
                 event
             }
         }

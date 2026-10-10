@@ -313,10 +313,17 @@ async def main():
                     logging_dir.mkdir(exist_ok=True, parents=True)
 
                     print(f"Running agent: {agent.name()}")
+                    # Every agent now crosses the same execution evidence boundary.
+                    # This observes actual desktop calls, not the agent's text output.
+                    from cua_bench.batch.action_evidence import EvidenceSession
+
+                    evidence_session = EvidenceSession(
+                        session, logging_dir, os.environ.get("CUA_EXECUTION_ID")
+                    )
                     try:
                         agent_result = await agent.perform_task(
                             task_description=task_cfg.description,
-                            session=session,
+                            session=evidence_session,
                             logging_dir=logging_dir,
                             tracer=env.tracing,
                         )

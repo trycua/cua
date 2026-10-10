@@ -1235,6 +1235,10 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 6 (diagnostic, registered before it runs):** v2s3b6, background, IR-01, 1 run, AX only, same build, with the on-screen window order (owner, layer, bounds) logged every 0.3 s beside it. Validation only.
 
+**Round 6 outcome (v2s3b6):** 1 trial, passed, the same raise. The window-order log shows BenchLab's main window moving above the user window at the moment its menu window (layer 101) appears. The WindowServer log of round 4 shows why: the guard released the theft before BenchLab ordered the menu in, and the menu was then ordered relative to nothing (to the front, with its window group). Under Codex the menu is ordered while BenchLab still holds key focus and the theft is released 2 ms later. The guard now swallows the notice at once and releases the theft once the menu window is on screen (PR #4943 head `cab0edf4d`).
+
+**Round 7 (registered before it runs):** v2s3b7 (background) and v2s3f7 (foreground), IR-01, IR-03, CDB-G04 and MB-10, 3 runs each, AX only, on `cab0edf4d` in `cdb-v2`. This is the re-check that decides the merge.
+
 ### A16.3 The full Bench v2 run
 
 Registered by its own dated line here, before its first trial, once PR #4943 is merged and the merged main is built in the VM.

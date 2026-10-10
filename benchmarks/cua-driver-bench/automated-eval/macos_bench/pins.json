@@ -28,14 +28,14 @@
     }
   },
   "cua_main": {
-    "note": "Amendment 6, 12, 14 and 16 runs: main at the commit of the latest registered run (A16.2 smoke v2s3 round 3: df3791d0a; round 2: c92ca8aa4; round 1: 066532c91, PR #4943 head on main cfc95fd70; before it A14.8/A15.5 smokes v2s1/v2s2: 815dfd96a). Earlier: Amendment 6 and 12 mini-runs: main at the commit of the latest mini-run (A6.5 and A12.5 list every one); built in the VM with tools/vm_main_build. Earlier builds: v038 5a364bbe6 (Amendment 8), v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
-    "git_sha": "df3791d0a964433589e12318c5f3b8f05956d454",
+    "note": "Amendment 6, 12, 14 and 16 runs: main at the commit of the latest registered run (A16.2 smoke v2s3 round 7: cab0edf4d; rounds 3-6: df3791d0a; round 2: c92ca8aa4; round 1: 066532c91, PR #4943 head on main cfc95fd70; before it A14.8/A15.5 smokes v2s1/v2s2: 815dfd96a). Earlier: Amendment 6 and 12 mini-runs: main at the commit of the latest mini-run (A6.5 and A12.5 list every one); built in the VM with tools/vm_main_build. Earlier builds: v038 5a364bbe6 (Amendment 8), v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
+    "git_sha": "cab0edf4d779c678717490b60cd57650e7316684",
     "version": "0.34.0",
     "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "a2a0d69bfa83b5bad844bd4b10d19807b381f0e61d44a42fe948990d66f54797",
+    "binary_sha256": "17d7272b893dd9a00f1602726fae7758a49969601738f2e54fcccf9df23b3ce6",
     "skills_tree_sha256": "820559825d57078eb4697d9c5f7b8cdf8c29a45e32826424404e502d72d0b752",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
-    "script_binary_sha256": "68f57f2b1e065c571a2ac82ecd45ba813abdafc1818c9de6046b5790c3457a80"
+    "script_binary_sha256": "29e78556a35e68c6f05ceb5ae0c783880f1f68d36234c840e334db10223c12be"
   },
   "arc_driver": {
     "note": "Amendment 9 (CUA-1241): arc-cua 0.1.1, the PyPI wheel, checked identical to tag v0.1.1. Installed in the VM with tools/arc_driver/install_arc_driver.sh. site_packages_tree_sha256, launcher_sha256 and python_version are filled from that install before the first arc trial (A9.2).",

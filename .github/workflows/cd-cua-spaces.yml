@@ -963,14 +963,51 @@ jobs:
         run: |
           pnpm native -- --target aarch64-apple-darwin --skip-build --check-bindings
           pnpm test
+      # The Developer ID Application identity in a throwaway keychain, as
+      # build-macos imports it. electron-builder's own keychain from CSC_LINK
+      # fails on the macos-26 runners (`security set-key-partition-list`:
+      # "SecKeychainUnlock: The user name or passphrase you entered is not
+      # correct"), so it signs with this keychain's identity (CSC_NAME,
+      # CSC_KEYCHAIN) instead.
+      - name: Import the Developer ID Application certificate
+        id: keychain
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          kc="$RUNNER_TEMP/electron-signing.keychain-db"
+          kc_password="$(uuidgen)"
+          security create-keychain -p "$kc_password" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_password" "$kc"
+          printf '%s' "$APPLICATION_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/electron-application.p12"
+          security import "$RUNNER_TEMP/electron-application.p12" -k "$kc" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/electron-application.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$kc_password" "$kc" >/dev/null
+          existing=()
+          while IFS= read -r keychain; do existing+=("$keychain"); done \
+            < <(security list-keychains -d user | tr -d '"' | sed 's/^ *//')
+          security list-keychains -d user -s "$kc" "${existing[@]}"
+          # electron-builder takes the name without the certificate type.
+          name="$(security find-identity -v -p codesigning "$kc" \
+            | sed -n 's/.*"Developer ID Application: \(.*\)"$/\1/p' | head -n 1)"
+          test -n "$name"
+          {
+            echo "keychain=$kc"
+            echo "name=$name"
+          } >> "$GITHUB_OUTPUT"
       - name: Build, sign and notarize (electron-builder)
         working-directory: apps/cua-spaces-desktop
         env:
           SIGNED: ${{ steps.signing.outputs.apple }}
           CUA_SPACES_VERSION: ${{ needs.electron-plan.outputs.version }}
           CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
-          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
+          SIGNING_NAME: ${{ steps.keychain.outputs.name }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
@@ -978,13 +1015,35 @@ jobs:
           set -euo pipefail
           if [ "$SIGNED" = true ]; then
             # electron-builder's names for the same identities.
-            export CSC_LINK="$APPLICATION_CERT_BASE64" CSC_KEY_PASSWORD="$CERT_PASSWORD"
+            export CSC_NAME="$SIGNING_NAME" CSC_KEYCHAIN="$SIGNING_KEYCHAIN"
             export APPLE_APP_SPECIFIC_PASSWORD="$APP_SPECIFIC_PASSWORD" APPLE_TEAM_ID="$TEAM_ID"
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             unset APPLE_ID
           fi
           pnpm dist:mac
+      # electron-builder signs and notarizes the apps, not the disk images:
+      # each is signed (with a timestamp), notarized and stapled here like the
+      # SwiftUI app's, then its blockmap and its entry in the update feed
+      # files are made again for the stapled bytes.
+      - name: Sign, notarize and staple the disk images
+        if: steps.signing.outputs.apple == 'true'
+        working-directory: apps/cua-spaces-desktop
+        env:
+          SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
+          SIGNING_NAME: ${{ steps.keychain.outputs.name }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for dmg in dist/*.dmg; do
+            codesign --force --timestamp --keychain "$SIGNING_KEYCHAIN" \
+              --sign "Developer ID Application: $SIGNING_NAME" "$dmg"
+            ../cua-spaces-macos/scripts/notarize.sh "$dmg"
+            xcrun stapler staple "$dmg"
+          done
+          node scripts/refresh-update-info.mjs dist/*.dmg
       - name: Verify the apps and collect the assets
         working-directory: apps/cua-spaces-desktop
         env:
@@ -1000,6 +1059,13 @@ jobs:
               spctl -a -vv "$app"
             fi
           done
+          if [ "$SIGNED" = true ]; then
+            for dmg in dist/*.dmg; do
+              codesign --verify --strict "$dmg"
+              xcrun stapler validate "$dmg"
+              spctl -a -vv -t install "$dmg"
+            done
+          fi
           pnpm check:fuses
           mkdir -p electron-assets
           cp dist/*.dmg dist/*.zip dist/*.blockmap electron-assets/
@@ -1056,6 +1122,12 @@ jobs:
           path: appcast/cua-spaces-appcast.xml
           if-no-files-found: error
           retention-days: 7
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          kc="$RUNNER_TEMP/electron-signing.keychain-db"
+          [ -f "$kc" ] && security delete-keychain "$kc" || true
+          rm -f "$RUNNER_TEMP/electron-application.p12"
 
   electron-windows:
     name: Electron windows (x64, arm64)

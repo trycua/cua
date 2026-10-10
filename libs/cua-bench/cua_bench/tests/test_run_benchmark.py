@@ -485,3 +485,64 @@ class TestEvaluatorRewardFailClosed:
         assert "No agent_fn" in result.error
         assert calls["evaluated"] is False
         assert calls["closed"] is True
+
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_revokes_success_and_keeps_steps(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class FailedCleanup:
+            evaluate_task_fn = object()
+            solve_task_fn = None
+
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+
+            async def step(self, action):
+                return b"screen"
+
+            async def evaluate(self):
+                return 1.0
+
+            async def close(self):
+                raise RuntimeError("injected close failure")
+
+        monkeypatch.setattr(runners, "make", lambda *a, **k: FailedCleanup())
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert result.success is False
+        assert result.reward == 0.0
+        assert result.steps == 1
+        assert "Environment cleanup failed" in result.error
+
+    @pytest.mark.asyncio
+    async def test_mid_execution_failure_retains_completed_step_count(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class FailedStep:
+            solve_task_fn = None
+
+            def __init__(self):
+                self.calls = 0
+                self.closed = False
+
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+
+            async def step(self, action):
+                self.calls += 1
+                if self.calls == 3:
+                    raise RuntimeError("injected third step failure")
+                return b"screen"
+
+            async def close(self):
+                self.closed = True
+
+        env = FailedStep()
+        monkeypatch.setattr(runners, "make", lambda *a, **k: env)
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: object(), max_steps=4)
+        assert result.success is False
+        assert result.steps == 2
+        assert "third step failure" in result.error
+        assert env.closed is True

@@ -1219,7 +1219,7 @@ Same rules as A14.8 and A15.5: the same seat, token and VM rules, and the rows a
 
 **Round 2 (registered 10 Oct 2026 before it runs):** v2s3b2 (background) and v2s3f2 (foreground), the same tasks, arm and runs as above, on `c92ca8aa4` in `cdb-v2`, seat 5 or the next seat with headroom.
 
-**Round 2 outcome (v2s3b2, 18:53–19:01Z):** void. The daemon crashed on the first guarded action (a wrong call signature for `SLPSGetKeyFocusProcess`), so 11 of 12 trials were infrastructure failures; v2s3f2 was cancelled before its first trial. Fixed in PR #4943 head `df3791d0a`.
+**Round 2 outcome (v2s3b2, 18:53–19:01Z):** void. The daemon crashed on the first guarded action (a wrong call signature for `SLPSGetKeyFocusProcess`), so 11 of 12 trials were infrastructure failures. v2s3f2 started on the same build and overlapped with a manual probe in the same VM (a Terminal window in front, so GUI-only violations); it was stopped with the STOP file and is void too. Fixed in PR #4943 head `df3791d0a`.
 
 **Round 3 (registered 10 Oct 2026 before it runs):** v2s3b3 (background) and v2s3f3 (foreground), the same tasks, arm and runs, on `df3791d0a` in `cdb-v2`.
 

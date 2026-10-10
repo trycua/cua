@@ -692,3 +692,32 @@ class TestActionTraceDigest:
         assert result.action_trace_digest is None
         assert result.steps == 0
         assert result.success is False
+
+
+class TestActionTraceAggregateAttestation:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("digest", ["broken", "g" * 64, "A" * 64, 123, "0" * 64])
+    async def test_aggregator_rejects_bad_or_impossible_worker_digest(self, tmp_path, monkeypatch, digest):
+        import cua_bench.runners as runners
+        from types import SimpleNamespace
+
+        task = tmp_path / "case"
+        task.mkdir()
+        (task / "main.py").write_text("# discovery stub")
+
+        monkeypatch.setattr(runners, "make", lambda *args, **kwargs: SimpleNamespace(
+            tasks_config_fn=lambda: [object()]
+        ))
+
+        async def forged(path, task_index=0, **kwargs):
+            return TaskResult(
+                task_path=str(path), variant_id=task_index,
+                success=True, reward=1.0, steps=0 if digest == "0" * 64 else 1,
+                action_trace_digest=digest,
+            )
+
+        monkeypatch.setattr(runners, "run_single_task", forged)
+        report = await runners.run_benchmark(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert report.success_count == 0
+        assert report.avg_reward == 0.0
+        assert "Invalid or misattributed" in report.task_results[0]["error"]

@@ -1409,6 +1409,8 @@ async def _cmd_run_dataset_async(args) -> int:
             print(f"{RED}Error: Dataset not found: {args.dataset_path}{RESET}")
             return 1
 
+    verified_manifest_digest = None
+
     # Validate the pinned dataset before provider detection, task imports,
     # session creation or asynchronous subprocess launch.
     manifest_path = getattr(args, "dataset_manifest", None)
@@ -1418,6 +1420,10 @@ async def _cmd_run_dataset_async(args) -> int:
         try:
             manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
             task_count = verify_dataset(dataset_path, manifest)
+            import hashlib
+            verified_manifest_digest = hashlib.sha256(
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
         except (OSError, ValueError, TypeError) as exc:
             print(f"{RED}Error: Dataset manifest verification failed: {exc}{RESET}")
             return 1
@@ -1722,6 +1728,46 @@ async def _cmd_run_dataset_async(args) -> int:
 
         # Run all tasks (semaphore controls parallelism)
         results = await asyncio.gather(*coroutines, return_exceptions=True)
+
+        # Persist the actual two-container TaskRunner outcomes, not synthetic
+        # single-process runner values or parsed log-based success claims.
+        import json
+        import os
+
+        task_outcomes = []
+        for (task_path, variant_id), outcome in zip(task_variants, results):
+            passed = (
+                not isinstance(outcome, BaseException)
+                and outcome is not None
+                and getattr(outcome, "success", False) is True
+            )
+            task_outcomes.append({
+                "task": task_path.name,
+                "variant_id": variant_id,
+                "success": passed,
+                "failure_type": (
+                    type(outcome).__name__ if isinstance(outcome, BaseException)
+                    else "MissingResult" if outcome is None
+                    else None if passed
+                    else "TaskFailed"
+                ),
+            })
+
+        receipt = {
+            "schema_version": "cua-bench-run-result/v1",
+            "run_id": run_id,
+            "dataset_name": dataset_path.name,
+            "dataset_manifest_sha256": verified_manifest_digest,
+            "total_tasks": len(task_outcomes),
+            "success_count": sum(item["success"] for item in task_outcomes),
+            "failed_count": sum(not item["success"] for item in task_outcomes),
+            "tasks": task_outcomes,
+        }
+        receipt_path = output_dir / "run-result.json"
+        pending = output_dir / "run-result.json.tmp"
+        pending.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(pending, receipt_path)
+        log_print(f"Machine-readable run result: {receipt_path}")
 
         # Summarize results
         success_count = sum(1 for r in results if r and hasattr(r, "success") and r.success)

@@ -587,7 +587,7 @@ impl AgentRunHandle {
     /// `FRICTION.md` §8 records that cleanup otherwise forces every caller to
     /// hard-code this path.
     pub fn directory(&self) -> String {
-        format!("~/.spaces-agents/{}", self.id)
+        format!("~/.cua/agents/{}", self.id)
     }
 }
 

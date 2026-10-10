@@ -1423,7 +1423,7 @@ mod tests {
             })
             .unwrap();
         assert!(!handle.approvals_are_enforced);
-        assert_eq!(handle.directory(), "~/.spaces-agents/run-1");
+        assert_eq!(handle.directory(), "~/.cua/agents/run-1");
 
         let sent = transport
             .calls()

@@ -152,15 +152,17 @@ impl RelayKey {
 /// symlink) that is renamed over `path`, so `path` holds either the old or
 /// the new content, never a mix.
 pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_private_with(path, |w| w.write_all(bytes))
+}
+
+/// [`write_private`], streaming: `fill` writes the content through a
+/// buffer, so a large file is never held in memory whole.
+pub fn write_private_with(
+    path: &std::path::Path,
+    fill: impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     use std::io::Write as _;
-    let dir = match path.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d,
-        _ => std::path::Path::new("."),
-    };
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "file".into());
+    let (dir, name) = temp_parts(path);
     let mut last = None;
     for _ in 0..16 {
         let tmp = dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
@@ -171,7 +173,7 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()
             use std::os::unix::fs::OpenOptionsExt as _;
             options.mode(0o600);
         }
-        let mut file = match options.open(&tmp) {
+        let file = match options.open(&tmp) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 last = Some(e);
@@ -179,8 +181,11 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()
             }
             Err(e) => return Err(e),
         };
-        let written = file.write_all(bytes).and_then(|()| file.sync_all());
-        drop(file);
+        let mut out = std::io::BufWriter::new(file);
+        let written = fill(&mut out)
+            .and_then(|()| out.flush())
+            .and_then(|()| out.get_ref().sync_all());
+        drop(out);
         if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, path)) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e);
@@ -188,6 +193,58 @@ pub fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()
         return Ok(());
     }
     Err(last.unwrap_or_else(|| std::io::Error::other("no free temp name")))
+}
+
+fn temp_parts(path: &std::path::Path) -> (&std::path::Path, String) {
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => std::path::Path::new("."),
+    };
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    (dir, name)
+}
+
+/// Deletes the temp files [`write_private`] leaves next to `path` when the
+/// process dies mid-write (an OOM kill): `.<name>.<uuid>.tmp`, which also
+/// covers sibling files named `<name>.<suffix>`. Each can be as large as
+/// the file itself, so a few of them fill a small volume. Call it at
+/// startup, before this process writes `path` (one writer per state file).
+/// Returns how many files and bytes it removed.
+pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64)> {
+    let (dir, name) = temp_parts(path);
+    let prefix = format!(".{name}.");
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(e) => return Err(e),
+    };
+    let (mut files, mut bytes) = (0, 0);
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        if !file_name.starts_with(&prefix) || !file_name.ends_with(".tmp") {
+            continue;
+        }
+        let meta = entry.metadata()?;
+        if !meta.is_file() {
+            continue;
+        }
+        std::fs::remove_file(entry.path())?;
+        files += 1;
+        bytes += meta.len();
+    }
+    if files > 0 {
+        tracing::warn!(
+            path = %path.display(),
+            files,
+            bytes,
+            "removed temp files left by an interrupted write"
+        );
+    }
+    Ok((files, bytes))
 }
 
 /// The Ed25519 public keys (`x`, base64url) in a JWKS document.
@@ -312,6 +369,46 @@ impl TrustedKeys {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn stale_temps_of_the_file_and_its_siblings_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        std::fs::write(&path, "live").unwrap();
+        for stale in [
+            ".devices.json.0123abcd.tmp",
+            ".devices.json.audit.jsonl.4567ef.tmp",
+        ] {
+            std::fs::write(dir.path().join(stale), "partial").unwrap();
+        }
+        for kept in [
+            ".machines.json.89ab.tmp",
+            "devices.json.audit-key",
+            ".devices.json",
+        ] {
+            std::fs::write(dir.path().join(kept), "keep").unwrap();
+        }
+        assert_eq!(remove_stale_temps(&path).unwrap(), (2, 14));
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                ".devices.json",
+                ".machines.json.89ab.tmp",
+                "devices.json",
+                "devices.json.audit-key"
+            ]
+        );
+        assert_eq!(remove_stale_temps(&path).unwrap(), (0, 0));
+        assert_eq!(
+            remove_stale_temps(&dir.path().join("missing/devices.json")).unwrap(),
+            (0, 0)
+        );
+    }
 
     #[cfg(unix)]
     #[test]

@@ -5,6 +5,7 @@ communicating via Docker network.
 """
 
 import asyncio
+import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -104,6 +105,7 @@ class TaskResult:
     env_logs: str
     output_dir: Optional[str] = None
     error: Optional[str] = None
+    oracle_result: Optional[dict] = None
 
 
 # =============================================================================
@@ -356,12 +358,40 @@ class TaskRunner:
             agent_logs = await get_container_logs(agent_container_name, tail=500)
             env_logs = await get_container_logs(env_container_name, tail=100)
 
+            oracle_result = None
+            oracle_error = None
+            oracle_path = Path(output_dir) / "oracle-result.json" if output_dir else None
+            if oracle_path and oracle_path.is_file():
+                try:
+                    oracle_result = json.loads(oracle_path.read_text(encoding="utf-8"))
+                    if (
+                        oracle_result.get("schema_version") != "cua-bench-oracle-result/v1"
+                        or oracle_result.get("task_index") != task_index
+                        or oracle_result.get("evaluated") is not True
+                        or not isinstance(oracle_result.get("success"), bool)
+                    ):
+                        oracle_error = "Invalid oracle result receipt"
+                except (OSError, ValueError, TypeError):
+                    oracle_error = "Unreadable oracle result receipt"
+            else:
+                oracle_error = "Missing oracle result receipt"
+
+            oracle_passed = (
+                oracle_error is None
+                and oracle_result is not None
+                and oracle_result["success"] is True
+            )
             return TaskResult(
-                success=exit_code == 0,
+                success=exit_code == 0 and oracle_passed,
                 exit_code=exit_code,
                 agent_logs=agent_logs,
                 env_logs=env_logs,
                 output_dir=output_dir,
+                error=oracle_error or (
+                    "Oracle rejected task" if oracle_result and not oracle_passed
+                    else None
+                ),
+                oracle_result=oracle_result,
             )
 
         except Exception as e:

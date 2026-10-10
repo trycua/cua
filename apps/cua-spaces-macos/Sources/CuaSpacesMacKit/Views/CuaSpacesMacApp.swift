@@ -247,6 +247,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         start(Self.model)
+        cleanUpInstaller(Self.model, ask: !Self.launchedAtLogin)
+    }
+
+    func cleanUpInstaller(_ model: AppModel, ask: Bool) {
+        guard let cleanup = InstallerCleanup.forThisApp() else { return }
+        Task.detached(priority: .utility) {
+            let offered = cleanup.ejectLeftovers()
+            guard ask, !offered.isEmpty else { return }
+            await MainActor.run {
+                Self.afterOnboarding(model.onboarding) { Self.offerTrash(offered, cleanup, model) }
+            }
+        }
+    }
+
+    static func afterOnboarding(_ onboarding: OnboardingModel, _ action: @escaping @MainActor () -> Void) {
+        guard !onboarding.completed else { return action() }
+        withObservationTracking { _ = onboarding.completed } onChange: {
+            DispatchQueue.main.async { afterOnboarding(onboarding, action) }
+        }
+    }
+
+    // Trashing a file in Downloads makes macOS ask for folder access, so the user chooses first.
+    static func offerTrash(_ images: [InstallerImage], _ cleanup: InstallerCleanup, _ model: AppModel) {
+        let alert = NSAlert()
+        alert.messageText = images.count == 1 ? "Move the installer to the Trash?" : "Move the installers to the Trash?"
+        let names = images.map { "\u{201C}\($0.name)\u{201D}" }.joined(separator: ", ")
+        alert.informativeText = "Cua Spaces is in Applications, so you no longer need \(names) in Downloads."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Keep")
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            images.forEach(cleanup.keep)
+            return
+        }
+        do {
+            try images.forEach(cleanup.trash)
+            model.show(info: images.count == 1 ? "Moved the installer to the Trash." : "Moved the installers to the Trash.")
+        } catch {
+            model.show(error: "Could not move the installer to the Trash: \(error.localizedDescription)")
+        }
     }
 
     func start(_ model: AppModel) {

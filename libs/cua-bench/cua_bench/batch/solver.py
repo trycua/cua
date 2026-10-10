@@ -237,9 +237,9 @@ async def main():
 
             tasks = env.tasks_config_fn()
 
-            if task_index >= len(tasks):
-                print(f"Task index {task_index} >= number of tasks {len(tasks)}, skipping")
-                sys.exit(0)
+            if not 0 <= task_index < len(tasks):
+                print(f"Error: Task index {task_index} out of range for {len(tasks)} tasks")
+                sys.exit(1)
 
             task_cfg = tasks[task_index]
             print(f"Running task {task_index}: {task_cfg.description}")
@@ -382,9 +382,22 @@ async def main():
                 and math.isfinite(value)
                 for value in rewards
             )
+            # A 0.5 reward is not automatically a completed task. Default to
+            # full reward; a task can explicitly define its own success bar.
+            metadata = getattr(task_cfg, "metadata", None) or {}
+            threshold = metadata.get("success_threshold", 1.0)
+            threshold_valid = (
+                isinstance(threshold, (int, float))
+                and not isinstance(threshold, bool)
+                and math.isfinite(threshold)
+                and 0.0 <= threshold <= 1.0
+            )
             evaluation_receipt["evaluated"] = valid
             evaluation_receipt["rewards"] = list(rewards) if valid else None
-            evaluation_receipt["success"] = valid and all(value >= 0.5 for value in rewards)
+            evaluation_receipt["success_threshold"] = threshold if threshold_valid else None
+            evaluation_receipt["success"] = (
+                valid and threshold_valid and all(value >= threshold for value in rewards)
+            )
 
             # Record evaluation event
             try:

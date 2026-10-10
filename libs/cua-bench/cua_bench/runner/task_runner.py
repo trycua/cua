@@ -354,7 +354,7 @@ class TaskRunner:
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
-                return TaskResult(
+                completed_result = TaskResult(
                     success=False,
                     exit_code=-1,
                     agent_logs=await get_container_logs(agent_container_name, tail=100),
@@ -362,6 +362,7 @@ class TaskRunner:
                     output_dir=output_dir,
                     error="Task timed out",
                 )
+                return completed_result
 
             # 5. Collect logs
             agent_logs = await get_container_logs(agent_container_name, tail=500)
@@ -418,7 +419,7 @@ class TaskRunner:
             except Exception:
                 pass
 
-            return TaskResult(
+            completed_result = TaskResult(
                 success=False,
                 exit_code=-1,
                 agent_logs=agent_logs,
@@ -426,6 +427,7 @@ class TaskRunner:
                 output_dir=output_dir,
                 error=str(e),
             )
+            return completed_result
 
         finally:
             # 6. Stop log streaming if active

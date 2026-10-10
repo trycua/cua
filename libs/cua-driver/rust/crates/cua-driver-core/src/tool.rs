@@ -1330,14 +1330,17 @@ impl ToolRegistry {
         self.register(Box::new(crate::batch_tools::RunStepsTool::new(
             self.replay_registry.clone(),
         )));
-        // Experimental and opt-in: only when the operator turned it on.
+        // On by default; the operator can turn it off (see script_tool).
         #[cfg(feature = "script")]
-        if crate::script_tool::enabled() {
-            self.register_script_tool();
+        match crate::script_tool::disabled_by() {
+            None => self.register_script_tool(),
+            Some(setting) => tracing::debug!("run_script not offered: turned off by {setting}"),
         }
+        #[cfg(not(feature = "script"))]
+        tracing::debug!("run_script not offered: built without the `script` engine feature");
     }
 
-    /// Register the experimental `run_script` tool, which, like
+    /// Register the `run_script` tool, which, like
     /// `run_steps`, re-enters this registry for every driver call.
     #[cfg(feature = "script")]
     pub fn register_script_tool(&mut self) {

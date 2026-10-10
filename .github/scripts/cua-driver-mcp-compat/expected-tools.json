@@ -51,6 +51,7 @@
     "press_key",
     "replay_trajectory",
     "right_click",
+    "run_script",
     "run_steps",
     "scroll",
     "set_agent_cursor_enabled",

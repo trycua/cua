@@ -98,6 +98,20 @@ cua-driver run_steps '{"session":"run-1","steps":[
 - `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
 - Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action. When a step fails because another window of the app holds focus (a dialog opened mid-batch), the end read is of that window, even without `observe`; when a pixel step names a window with no screenshot yet, the end read includes its screenshot. A step refused because its app ignores background input (Electron, LibreOffice) says how to re-send it; set `foreground_fallback:true` on `run_steps` to retry such steps once in the foreground (the window is activated and the pointer may move).
 
+## Script a flow
+
+Use `run_script` when the flow needs logic between actions: a loop over rows, a branch on what the app shows, a retry, or a value read in one window and typed into another. The script is JavaScript, the body of an async function; it runs in ONE call and only its `return` value, console output and a per-call log come back. Use `run_steps` for a fixed list of steps you have already decided, and plain calls when the next step needs your judgement.
+
+```bash
+cua-driver run_script '{"session":"run-1","script":"const app = await cua.getApp(\"Calculator\"); for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key}); const [display] = await app.query({role: \"statictext\"}); return display.value;"}'
+```
+
+- The only API is `cua`: `getApp`, `launch`, `listApps`, `listWindows`, `sleep`, and on an app `getState`, `query`, `waitFor`, `verify` and the actions (`click`, `typeText`, `pressKey`, `setValue`, `scroll`, `drag`, ...). A target is `{role, name, nth?}` (found fresh, waits up to 3 s), an `element_token`, or `[x, y]` window pixels. `describe run_script` lists the full API.
+- A failed driver call throws; catch it to recover. An uncaught error names the script line, the call and the reason.
+- Every driver call passes the same session, permission, capability-manifest and approval checks as a direct call, so a script grants nothing the same direct calls lack. It cannot call `run_steps`, `run_script`, `set_config` or tools outside its allowlist.
+- Sandbox: QuickJS with no filesystem, network, process, timers or environment. Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), a 32 MiB heap, a bounded stack, and a 64 KiB script. The script stops when the request is cancelled.
+- `run_script` is on by default. Whoever runs the driver can turn it off with `CUA_DRIVER_DISABLE_RUN_SCRIPT=1` or `"disable_run_script": true` in `~/.cua-driver/config.json` (the older `CUA_DRIVER_EXPERIMENTAL_SCRIPT=0` and `"experimental_script": false` also work). `set_config` cannot change it. When it is off, it is not in `tools/list`.
+
 ## Pixel coordinates
 
 Ground window actions on the PNG from that exact `get_window_state`; ground desktop actions on `get_desktop_state`. Origins are top-left, increasing downward. The driver handles its own window capture scaling; do not add window offsets to window-local input.

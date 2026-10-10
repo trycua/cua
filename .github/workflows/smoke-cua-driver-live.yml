@@ -3,7 +3,7 @@ name: "Smoke: Cua Driver live agent loop"
 # Builds cua-driver from the checked-out commit and drives a real GUI window on
 # Windows and on Linux (Xvfb): the lean get_window_state default and
 # full_output, `since` diffs, act-by-element_token (with and without pid),
-# run_steps, and set_value on combo boxes (background, foreground and an
+# run_steps, run_script, and set_value on combo boxes (background, foreground and an
 # unknown option). The checks live in scripts/ci/cua-driver-live-smoke/smoke.py.
 
 on:
@@ -14,6 +14,8 @@ on:
       - "scripts/ci/cua-driver-live-smoke/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/batch_tools.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/script_tool.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/script_tool/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/element_token.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/snapshot_store.rs"
       - "libs/cua-driver/rust/crates/cua-driver-core/src/tool.rs"

@@ -8,6 +8,7 @@ fixture window (GTK3 on Linux, WinForms on Windows) and checks:
   * the act-by-element_token loop (snapshot, click a token, fresh snapshot),
   * `since` (a diff against an earlier snapshot, and `no change`),
   * run_steps (one batch with an end-of-batch observation),
+  * run_script (listed by default; a script loop clicks by token; no I/O),
   * set_value on a drop-down combo box and on an editable combo box,
   * display_only previews (and plain screenshot-only reads) keep the agent's
     element tokens valid.
@@ -414,6 +415,9 @@ def run_checks(smoke):
     # 7c. The pre-0.35 name run_actions still runs, unlisted, with a note.
     renamed_tool_alias_check(smoke)
 
+    # 7d. run_script is on by default: listed, runs a loop, has no I/O.
+    run_script_check(smoke)
+
     # 8. The drop-down combo with delivery_mode foreground (last because a
     # broken route may leave a popup open), then a click by token must still
     # land, which it does not while a popup holds the pointer grab.
@@ -634,6 +638,45 @@ def renamed_tool_alias_check(smoke):
         if "`run_actions` is deprecated" not in old.text or "`run_steps`" not in old.text:
             problems.append(f"no deprecation note in the run_actions result: {old.text[-300:]!r}")
     smoke.record(check, "fail" if problems else "pass", "; ".join(problems) or "listed: run_steps only; run_actions ran with the note")
+
+
+def run_script_check(smoke):
+    """run_script is listed by default, a script clicks Increment twice in a
+    loop, and the sandbox has no require, process or fetch."""
+    check = "run_script: listed by default, loop of clicks, sandboxed"
+    problems = []
+    listed = smoke.mcp.request("tools/list", {})
+    names = {t.get("name") for t in (listed.get("result") or {}).get("tools") or []}
+    if "run_script" not in names:
+        problems.append("tools/list lacks run_script")
+
+    state = smoke.read()
+    before = count_value(tree(state))
+    increment = find_row(tree(state), BUTTON, "Increment")
+    if before is None or increment is None:
+        problems.append("fixture Increment row or Count label not found")
+    else:
+        script = (
+            f"const app = await cua.getApp({{pid: {smoke.pid}, windowId: {smoke.window_id}}});\n"
+            f"for (let i = 0; i < 2; i++) await app.click({json.dumps(token(state, increment))});\n"
+            "return {sandbox: [typeof require, typeof process, typeof fetch].join(',')};"
+        )
+        ran = smoke.call("run_script", {"script": script, "timeout_ms": 30000})
+        value = (ran.structured or {}).get("value") or {}
+        if ran.is_error:
+            problems.append(f"run_script -> {ran.text[:600]!r}")
+        elif value.get("sandbox") != "undefined,undefined,undefined":
+            problems.append(f"sandbox exposes {value.get('sandbox')!r}")
+        after = smoke.wait_for_text(f"Count: {before + 2}")
+        if f"Count: {before + 2}" not in tree(after):
+            problems.append(f"Count went {before} -> {count_value(tree(after))}, expected {before + 2}")
+    smoke.record(
+        check,
+        "fail" if problems else "pass",
+        "; ".join(problems)
+        or f"listed; 2 clicks in a script loop moved Count {before} -> {before + 2}; "
+        "require/process/fetch undefined",
+    )
 
 
 def unknown_option_check(smoke):

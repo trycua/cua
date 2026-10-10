@@ -382,6 +382,15 @@ async def run_benchmark(
                 or not isinstance(result.steps, int)
                 or isinstance(result.steps, bool)
                 or result.steps < 0
+                or (
+                    result.action_trace_digest is not None
+                    and (
+                        not isinstance(result.action_trace_digest, str)
+                        or len(result.action_trace_digest) != 64
+                        or any(c not in "0123456789abcdef" for c in result.action_trace_digest)
+                        or result.steps == 0
+                    )
+                )
                 or (bool(result.error) and (result.success or result.reward != 0.0))
                 or (not result.error and result.success != (result.reward >= 0.5))
             )

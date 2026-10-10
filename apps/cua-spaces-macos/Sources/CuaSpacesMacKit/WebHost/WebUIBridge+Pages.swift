@@ -354,8 +354,8 @@ extension WebUIBridge {
         }
         /// An error enum case (`InsufficientDisk`), or empty when the shell has none.
         func variant(_ k: String) -> String? {
-            let v = s[k] as? String ?? ""
-            guard v.count <= 64, v.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return nil }
+            guard let v = s[k] as? String, v.count <= 64,
+                  v.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return nil }
             return v
         }
         switch type {

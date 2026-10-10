@@ -122,8 +122,7 @@ export function sanitizeSignals(signals: readonly unknown[]): TelemetrySignal[] 
     const clean: Record<string, unknown> = { type };
     let ok = true;
     for (const [key, kind] of Object.entries(shape)) {
-      let v = (s as Record<string, unknown>)[key];
-      if (kind === "variant" && v === undefined) v = "";
+      const v = (s as Record<string, unknown>)[key];
       if (!valid(kind, v)) {
         ok = false;
         break;

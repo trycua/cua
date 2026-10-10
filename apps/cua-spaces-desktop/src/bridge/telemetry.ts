@@ -52,8 +52,7 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
     case "space-create": {
       const [location, guestOs, kind, outcome, failedPhase] = [word("location"), word("guestOs"), word("kind"), word("outcome"), word("failedPhase")];
       const [stalled, gpu, elapsedMs] = [flag("stalled"), flag("gpu"), ms("elapsedMs")];
-      const rawVariant = s.errorVariant === undefined ? "" : s.errorVariant;
-      const errorVariant = typeof rawVariant === "string" && VARIANT.test(rawVariant) ? rawVariant : null;
+      const errorVariant = typeof s.errorVariant === "string" && VARIANT.test(s.errorVariant) ? s.errorVariant : null;
       if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null || errorVariant === null) return null;
       return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant });
     }

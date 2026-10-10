@@ -10,12 +10,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from typing import Any
 
 SENTINEL_BID = "ai.cua.benchsentinel"
 DEVIATION_PX = 10.0
 HID_KEYS = ("move", "down", "key", "scroll")
+# Amendment 15: overlay and indicator windows of the computer-use tools themselves (the agent cursor, the
+# "ChatGPT Computer Use" banner) are not raises. They are logged as metadata (`overlay_owners`) only.
+OVERLAY_OWNER_RE = re.compile(r"(?i)cua ?driver|chatgpt computer use|computer use|codex|app-cu-helper|claude")
 FRONT_EVENTS = ("s", "front", "armed", "disarmed")
 # Idle values only ever grow between samples unless a real event resets them.
 DROP_EPSILON_S = 1e-3
@@ -155,6 +159,7 @@ def summarize(log_path: str) -> dict[str, Any]:
                     in_episode = False
 
     _windows_raised(window, result)
+    _user_activity(window, result)
     result["pointer_max_deviation_px"] = round(result["pointer_max_deviation_px"], 2)
     result["front_changed_to"] = sorted(changed_to)
     result["available"] = result["samples"] >= 10
@@ -170,11 +175,24 @@ def _windows_raised(window: list[dict[str, Any]], result: dict[str, Any]) -> Non
         result["windows_raised"] = None
         result["raised_by"] = []
         return
-    prev = set(measured[0].get("above") or [])
+    overlays: set[str] = set()
+
+    def task_owners(line: dict[str, Any]) -> set[str]:
+        out = set()
+        for o in line.get("above") or []:
+            if not isinstance(o, str):
+                continue
+            if OVERLAY_OWNER_RE.search(o):
+                overlays.add(o)
+            else:
+                out.add(o)
+        return out
+
+    prev = task_owners(measured[0])
     raised = 0
     owners: set[str] = set()
     for line in measured[1:]:
-        now = {o for o in (line.get("above") or []) if isinstance(o, str)}
+        now = task_owners(line)
         new = now - prev
         if new:
             raised += 1
@@ -182,7 +200,29 @@ def _windows_raised(window: list[dict[str, Any]], result: dict[str, Any]) -> Non
         prev = now
     result["windows_raised"] = raised
     result["raised_by"] = sorted(owners)
+    result["overlay_owners"] = sorted(overlays)
     result["above_at_start"] = sorted(o for o in (measured[0].get("above") or []) if isinstance(o, str))
+
+
+def _user_activity(window: list[dict[str, Any]], result: dict[str, Any]) -> None:
+    """Amendment 15: the simulated user's typing in the user-activity window. None when the sentinel ran
+    without --user-activity (no user_* lines and no user_text line)."""
+    evs = [ln.get("ev") for ln in window]
+    texts = [ln for ln in window if ln.get("ev") == "user_text"]
+    if not texts and not any(e in ("user_type", "user_blocked", "user_text_disrupted") for e in evs):
+        result["user_activity"] = None
+        return
+    typed = evs.count("user_type")
+    blocked = evs.count("user_blocked")
+    disrupted = evs.count("user_text_disrupted")
+    intact = texts[-1].get("intact") if texts else None
+    result["user_activity"] = {
+        "typed": typed,
+        "blocked": blocked,
+        "text_disruptions": disrupted,
+        "text_intact_at_end": intact,
+        "disrupted": bool(blocked or disrupted or intact is False),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

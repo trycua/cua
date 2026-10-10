@@ -90,6 +90,21 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "input_leaked": sum(int(b.get("input_leaked") or 0) for b in measured),
         },
         "gui_only_violations": sum(1 for g in gui if g.get("violation")),
+        "background_condition": _bgc(rows),
+    }
+
+
+def _bgc(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Amendment 15: the primary metric of the background condition and its secondaries."""
+    items = [r.get("background_condition") or {} for r in rows]
+    bg_rows = [i for i in items if i.get("condition") == "background"]
+    return {
+        "background_completion": _rate(sum(1 for i in bg_rows if i.get("background_completion")), len(bg_rows))
+        if bg_rows
+        else None,
+        "user_window_held": sum(1 for i in items if i.get("user_window_held")),
+        "user_input_disrupted": sum(1 for i in items if i.get("user_input_disrupted")),
+        "overlay_owners": sorted({o for i in items for o in (i.get("overlay_owners") or [])}),
     }
 
 
@@ -114,16 +129,19 @@ def interruptions(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_arm: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for r in rows:
-        by_arm[r["arm"]].append(r)
+    for r in rows:  # Amendment 15: one block per arm and condition
+        by_arm[f"{r['arm']}|{r.get('condition') or 'foreground'}"].append(r)
     report: dict[str, Any] = {"bench_version": v2.BENCH_VERSION, "categories": v2.CATEGORIES, "arms": {}}
-    for arm, arm_rows in sorted(by_arm.items()):
+    for key, arm_rows in sorted(by_arm.items()):
+        arm, condition = key.split("|")
         cats = {}
         for cat in v2.CATEGORIES:
             sub = [r for r in arm_rows if r.get("category") == cat]
             cats[cat] = summarize(sub) if sub else None
-        report["arms"][arm] = {
-            "label": ARM_LABELS.get(arm, f"{arm} (internal baseline)"),
+        report["arms"][key] = {
+            "arm": arm,
+            "condition": condition,
+            "label": ARM_LABELS.get(arm, f"{arm} (internal baseline)") + f" [{condition}]",
             "overall": summarize(arm_rows),
             "by_category": cats,
             "interruptions": interruptions(arm_rows),
@@ -138,6 +156,9 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def headline(s: dict[str, Any]) -> str:
     b = s["background"]
+    bc = (s.get("background_condition") or {}).get("background_completion")
+    if bc:  # A15.3: the background condition leads with background completion
+        return f"{bc['k']}/{bc['n']} completed in the background, {s['success']['k']}/{s['trials']} passed, {b['focus_steals']} focus steals"
     return f"{s['success']['k']}/{s['trials']} passed, {b['focus_steals']} focus steals"
 
 
@@ -178,6 +199,17 @@ def markdown(report: dict[str, Any]) -> str:
                 f"| {a['label']} | {task} | {i['kind']} | {i['shown']}/{i['trials']} | {i['exercised']}/{i['trials']} | "
                 f"{i['handled']['k']}/{i['handled']['n']} | {i['completed']['k']}/{i['completed']['n']} |"
             )
+    lines += ["", "## Background condition (Amendment 15)", "", "| Setup | Background completion | Success regardless of focus | Focus steals | User window held | User input disrupted | Overlays (metadata) |", "|---|---|---|---|---|---|---|"]
+    for arm, a in report["arms"].items():
+        s = a["overall"]
+        bc = s["background_condition"]
+        if a["condition"] != "background":
+            continue
+        c = bc["background_completion"]
+        lines.append(
+            f"| {a['label']} | {c['k']}/{c['n']} | {s['success']['k']}/{s['trials']} | {s['background']['focus_steals']} | "
+            f"{bc['user_window_held']}/{s['trials']} | {bc['user_input_disrupted']} | {', '.join(bc['overlay_owners']) or 'none'} |"
+        )
     viol = [(a["label"], v) for a in report["arms"].values() for v in a["violations"]]
     lines += ["", "## GUI-only violations", ""]
     lines += [f"- {label}: {v['trial_id']}: {v['evidence']}" for label, v in viol] or ["None."]

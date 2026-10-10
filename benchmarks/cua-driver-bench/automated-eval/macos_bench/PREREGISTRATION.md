@@ -1112,6 +1112,67 @@ Folded in from the pending amendment note. Before 0.35.0, Cua Driver's `run_acti
 * `tools/analyze_v2.py` (new).
 * Tests: `tests/test_bench_v2.py`, `probes/tests/test_interrupts.py`, the IR parity in `probes/tests/test_mb_parity.py` (it now compiles every `swift/BenchLab*.swift`), and window raises in `swift/tests/test_summarize_sentinel.py`.
 
+## Amendment 15 (10 Oct 2026, before any scored Bench v2 run): the background condition and background completion
+
+Written and committed before any scored Bench v2 run and before smoke v2s2. It reworks the background score of A14.4 after the owner's clarification of CUA-1282 (10 Oct): "what i want to measure is the ability for the agent to continue by targeting an app in the background, even when another window has focus". It also settles the overlay question of A14.8. Smoke v2s1 is unchanged and stays validation only.
+
+### A15.1 Two conditions of the same tasks
+
+Every Bench v2 task (A14.6) runs in two conditions:
+
+* **Foreground:** exactly as in A14. The small witness window is in front at the start, and the agent may take focus.
+* **Background:** new, described in A15.2.
+
+A run has one condition (`run_bench.py run --bench-v2 --condition foreground|background`). Rows carry `condition`. Trial ids are the same in both conditions, so runs of the two conditions pair by task, run index and seed. The conditions are reported side by side and never pooled.
+
+### A15.2 The background condition
+
+* **The user's app.** BenchSentinel runs with `--user-activity --frame 420,340,900,520`: a 900x520 window titled "User activity", top-left at (420, 340). It is made frontmost and key before the agent starts and should stay so throughout. While armed it simulates the user. Once a second it types one character of a fixed sentence into its own text field, but only when it is active and key; a tick when it is not is logged `user_blocked`. At every tick it checks that its text equals what the user typed. A difference, meaning someone else typed into it or changed it, is logged `user_text_disrupted`. When it is disarmed it logs whether the text is intact.
+* **The target app is behind it, partly covered.** The window covers BenchLab's lower right and the middle of the CDB task windows, and stays clear of BenchLab's top strip (the hover and tooltip areas). The A4.8 occlusion check is skipped in this condition and recorded as skipped.
+* **The brief** gets one fixed paragraph: "The user is working in another window, titled "User activity", and is typing in it. Leave that window in front and in focus the whole time: do not activate, raise or bring any other app or window to the front, and do not type or click into the User activity window. Do this task in the background."
+* Everything else is as in A14.
+
+### A15.3 Metrics
+
+* **Primary, background condition only: background completion.** The trial passed (A14.2: a GUI-only violation is a fail), and the user window held focus and frontmost status the whole time. Held means all of these:
+  * no focus steal (`front_changes` = 0);
+  * no loss of key status;
+  * no window raised over it (A15.4);
+  * no keystroke, click or scroll landing in it;
+  * its text was never disrupted and is intact at the end.
+* **Secondary:**
+  * success regardless of focus;
+  * the number of focus steals;
+  * whether the user's simulated input was disrupted or swallowed (`user_blocked` ticks, text disruptions, or text not intact);
+  * pointer movement, kept as a recorded measure but not part of the primary metric.
+* **Reporting:** the background condition leads with "k/n completed in the background", next to success and focus steals. The foreground condition keeps A14's success first, plus the A14.4 measures as amended by A15.4.
+
+### A15.4 Overlay and indicator windows are not scored
+
+A window owned by a computer-use tool itself is excluded from window raises in both conditions and logged only as metadata (`overlay_owners`). The owner name must match `cua driver|cuadriver|chatgpt computer use|computer use|codex|app-cu-helper|claude`, case-insensitive. Examples are the Cua Driver agent cursor ("Cua Driver Bench Script") and the "ChatGPT Computer Use" banner. This replaces the open question of A14.8.
+
+### A15.5 Smoke v2s2 (validation only, never analysed)
+
+The background condition is checked by a smoke run before any scored run. It is logged in the table below before its first trial, with the same seat, token and VM rules as before.
+
+| Id | Condition | Tasks | Arms | Main commit (driver) | Written (UTC) |
+|---|---|---|---|---|---|
+| v2s2 | background | IR-01, IR-02, IR-03, IR-04, CDB-G04, MB-10; 1 run each (`--smoke --bench-v2 --condition background`) | AX, B (26.930), `cc-claude-cu-helper` | `815dfd96a10c` (pins as in v2s1); VM `cdb-v2` | 2026-10-10T13:54Z |
+
+### A15.6 Harness changes for this amendment
+
+* `swift/BenchSentinel.swift`: `--user-activity` (title, simulated typing, the `user_type`, `user_blocked`, `user_text_disrupted` and `user_text` events) and `--frame`.
+* `swift/summarize_sentinel.py`: `user_activity`; overlays are excluded from `windows_raised` and listed in `overlay_owners`.
+* `run_pilot.Sentinel`: launch arguments.
+* `bench_v2.py`: `CONDITIONS`, `USER_WINDOW_FRAME`, `BACKGROUND_BRIEF`, `sentinel_args`, `brief_for` and `background_condition_score`.
+* `run_bench.py`:
+  * the `--condition` option;
+  * the row fields `condition` and `background_condition`, plus `disturbance.user_activity` and `disturbance.overlay_owners`;
+  * the brief paragraph and the skipped occlusion check;
+  * the manifest fields.
+* `tools/analyze_v2.py`: one block per arm and condition, and the background-condition table.
+* Tests: `tests/test_bench_v2.py` and `swift/tests/test_summarize_sentinel.py`.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

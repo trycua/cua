@@ -2,7 +2,11 @@
 // agent works in other apps. It logs focus changes, leaked keys/clicks/scrolls and
 // pointer position as JSONL so a run can be scored for foreground disturbance.
 //
-// Usage: BenchSentinel --log PATH [--no-activate]
+// Usage: BenchSentinel --log PATH [--no-activate] [--user-activity] [--frame X,Y,W,H]
+// --user-activity (Amendment 15): the window plays the user's own app. It is titled "User activity" and, while
+// armed, "types" one character a second into its own field when it is active and key. A tick when it is not is
+// logged as user_blocked; text that differs from what the user typed is logged as user_text_disrupted.
+// --frame: outer frame in top-left screen coordinates (default 360x140 at the bottom right).
 // Signals: SIGUSR1 re-activate, SIGUSR2 toggle armed.
 
 import AppKit
@@ -56,6 +60,12 @@ func installMainMenu() {
 final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     let log: JSONLWriter
     let noActivate: Bool
+    var userActivity = false
+    var frameTopLeft: NSRect?
+    let userScript = Array("the user keeps writing notes while the agent works in the background. ")
+    var userIndex = 0
+    var userExpected = ""
+    var userTimer: DispatchSourceTimer?
     let selfBid = Bundle.main.bundleIdentifier ?? "ai.cua.benchsentinel"
     var armed = false
     var window: NSWindow!
@@ -151,6 +161,7 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical], reason: "bench sentinel sampling")
         startSampler()
+        if userActivity { startUserActivity() }
         emit("start", ["pid": Int(getpid()), "bid": selfBid, "front": frontInfo()])
         if !noActivate { activate() }
     }
@@ -160,21 +171,26 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
     }
 
     func buildWindow() {
-        let w: CGFloat = 360, h: CGFloat = 140
+        let w: CGFloat = frameTopLeft?.width ?? 360, h: CGFloat = frameTopLeft?.height ?? 140
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: w, height: h),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
-        window.title = "Bench Sentinel"
+        window.title = userActivity ? "User activity" : "Bench Sentinel"
         window.isReleasedWhenClosed = false
         let screen = NSScreen.screens.first ?? NSScreen.main
         let vis = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         // Outer frame is exactly 360x140, bottom-right of the primary screen.
-        window.setFrame(
-            NSRect(x: vis.maxX - w - 24, y: vis.minY + 24, width: w, height: h), display: false)
+        if let f = frameTopLeft {
+            let screenH = screen?.frame.height ?? 900
+            window.setFrame(NSRect(x: f.minX, y: screenH - f.minY - h, width: w, height: h), display: false)
+        } else {
+            window.setFrame(
+                NSRect(x: vis.maxX - w - 24, y: vis.minY + 24, width: w, height: h), display: false)
+        }
 
         field = NSTextField(frame: NSRect(x: 20, y: 40, width: w - 40, height: 28))
-        field.placeholderString = "sentinel"
+        field.placeholderString = userActivity ? "notes" : "sentinel"
         field.delegate = self
         field.setAccessibilityLabel("Sentinel input")
         window.contentView?.addSubview(field)
@@ -273,7 +289,45 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
 
     func toggleArmed() {
         armed.toggle()
+        if userActivity && !armed {
+            emit(
+                "user_text",
+                ["expected_len": userExpected.count, "actual_len": field.stringValue.count,
+                 "intact": field.stringValue == userExpected])
+        }
+        if userActivity && armed { userExpected = field.stringValue }
         emit(armed ? "armed" : "disarmed", sampleFields())
+    }
+
+    // MARK: simulated user activity (Amendment 15)
+
+    func startUserActivity() {
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 1.0, repeating: .milliseconds(1000), leeway: .milliseconds(5))
+        t.setEventHandler { [weak self] in self?.userTick() }
+        t.resume()
+        userTimer = t
+    }
+
+    func userTick() {
+        guard armed else { return }
+        if field.stringValue != userExpected {
+            emit("user_text_disrupted", ["expected_len": userExpected.count, "actual_len": field.stringValue.count])
+            userExpected = field.stringValue
+        }
+        let ch = String(userScript[userIndex % userScript.count])
+        guard NSApp.isActive, window.isKeyWindow,
+              let editor = field.currentEditor() as? NSTextView
+        else {
+            emit("user_blocked", ["active": NSApp.isActive, "key": window.isKeyWindow, "front": frontInfo()])
+            return
+        }
+        let end = (editor.string as NSString).length
+        editor.setSelectedRange(NSRange(location: end, length: 0))
+        editor.insertText(ch, replacementRange: NSRange(location: end, length: 0))
+        userIndex += 1
+        userExpected = field.stringValue
+        emit("user_type", ["n": userIndex])
     }
 
     // MARK: sampler
@@ -297,6 +351,8 @@ enum BenchSentinelMain {
         let args = CommandLine.arguments
         var logPath: String?
         var noActivate = false
+        var userActivity = false
+        var frame: NSRect?
         var i = 1
         while i < args.count {
             switch args[i] {
@@ -304,6 +360,14 @@ enum BenchSentinelMain {
                 if i + 1 < args.count { logPath = args[i + 1]; i += 1 }
             case "--no-activate":
                 noActivate = true
+            case "--user-activity":
+                userActivity = true
+            case "--frame":
+                if i + 1 < args.count {
+                    let v = args[i + 1].split(separator: ",").compactMap { Double($0) }
+                    if v.count == 4 { frame = NSRect(x: v[0], y: v[1], width: v[2], height: v[3]) }
+                    i += 1
+                }
             default:
                 break
             }
@@ -316,6 +380,8 @@ enum BenchSentinelMain {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         let delegate = SentinelDelegate(log: JSONLWriter(path: logPath), noActivate: noActivate)
+        delegate.userActivity = userActivity
+        delegate.frameTopLeft = frame
         app.delegate = delegate
         app.run()
     }

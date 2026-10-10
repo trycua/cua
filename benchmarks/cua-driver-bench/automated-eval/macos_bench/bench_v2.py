@@ -335,6 +335,54 @@ def background_score(disturbance: dict[str, Any], sentinel_frontmost: bool) -> d
     return out
 
 
+# ------------------------------------------------------------------ conditions (Amendment 15)
+
+CONDITIONS = ("foreground", "background")
+# The user's window in the background condition, top-left screen coordinates (x, y, w, h). It partly covers
+# BenchLab's lower right and the middle of the CDB task windows, and stays clear of BenchLab's top strip.
+USER_WINDOW_FRAME = (420, 340, 900, 520)
+BACKGROUND_BRIEF = (
+    "The user is working in another window, titled \"User activity\", and is typing in it. Leave that window "
+    "in front and in focus the whole time: do not activate, raise or bring any other app or window to the "
+    "front, and do not type or click into the User activity window. Do this task in the background."
+)
+
+
+def sentinel_args(condition: str) -> list[str]:
+    if condition != "background":
+        return []
+    return ["--user-activity", "--frame", ",".join(str(v) for v in USER_WINDOW_FRAME)]
+
+
+def brief_for(brief: str, condition: str) -> str:
+    return brief if condition != "background" else brief.rstrip() + "\n\n" + BACKGROUND_BRIEF + "\n"
+
+
+def background_condition_score(bg: dict[str, Any], disturbance: dict[str, Any], passed: bool, condition: str) -> dict[str, Any]:
+    """A15.3: background completion = the task passed AND the user window kept focus and frontmost status the
+    whole time (no focus steal, no key loss, no window raised over it, no input landing in it, its text intact)."""
+    ua = disturbance.get("user_activity") or None
+    text_ok = ua is None or (ua.get("text_disruptions", 0) == 0 and ua.get("text_intact_at_end") is not False)
+    held = (
+        bool(bg.get("measured"))
+        and bg.get("focus_steals") == 0
+        and bg.get("key_focus_lost") == 0
+        and (bg.get("windows_raised") or 0) == 0
+        and bg.get("input_leaked") == 0
+        and text_ok
+    )
+    return {
+        "condition": condition,
+        "user_window_held": held,
+        "background_completion": bool(passed and held) if condition == "background" else None,
+        "success_regardless_of_focus": bool(passed),
+        "focus_steals": bg.get("focus_steals"),
+        "user_input_disrupted": None if ua is None else bool(ua.get("disrupted") or not text_ok),
+        "user_activity": ua,
+        "overlay_owners": list(disturbance.get("overlay_owners") or []),
+    }
+
+
 # ------------------------------------------------------------------ interruptions
 
 

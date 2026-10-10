@@ -220,17 +220,49 @@ class AnalyzeV2Test(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "results.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
             report = av.analyze(av.load_rows([Path(tmp)]))
-        a = report["arms"]["cc-cua-driver-script"]
-        self.assertEqual(a["label"], "Cua Driver")
+        a = report["arms"]["cc-cua-driver-script|foreground"]
+        self.assertEqual(a["label"], "Cua Driver [foreground]")
         self.assertEqual(av.headline(a["overall"]), "2/3 passed, 2 focus steals")
         self.assertEqual(a["by_category"]["precision"]["success"]["k"], 1)
         self.assertIsNone(a["by_category"]["web_forms"])
         self.assertEqual(a["interruptions"]["IR-04"]["handled"]["k"], 0)
-        b = report["arms"]["cc-codex-cu"]
+        b = report["arms"]["cc-codex-cu|foreground"]
         self.assertEqual(b["overall"]["success"]["k"], 0)
         self.assertEqual(b["overall"]["passed_raw"], 1)
         self.assertEqual(len(b["violations"]), 1)
         self.assertIn("## Interruptions", av.markdown(report))
+
+
+class BackgroundConditionTest(unittest.TestCase):
+    """Amendment 15."""
+
+    def bg(self, **kw):
+        return v2.background_score(dict(BackgroundTest.QUIET, **kw), True)
+
+    def test_completion_needs_pass_and_held_window(self) -> None:
+        ua = {"typed": 30, "blocked": 0, "text_disruptions": 0, "text_intact_at_end": True, "disrupted": False}
+        d = dict(BackgroundTest.QUIET, user_activity=ua, overlay_owners=["Cua Driver Bench Script"])
+        out = v2.background_condition_score(self.bg(), d, True, "background")
+        self.assertTrue(out["background_completion"])
+        self.assertEqual(out["overlay_owners"], ["Cua Driver Bench Script"])
+        self.assertFalse(v2.background_condition_score(self.bg(), d, False, "background")["background_completion"])
+        steal = v2.background_condition_score(self.bg(front_changes=1), d, True, "background")
+        self.assertFalse(steal["background_completion"])
+        self.assertTrue(steal["success_regardless_of_focus"])
+        typed_into = dict(d, user_activity=dict(ua, text_disruptions=1, disrupted=True))
+        out = v2.background_condition_score(self.bg(), typed_into, True, "background")
+        self.assertFalse(out["background_completion"])
+        self.assertTrue(out["user_input_disrupted"])
+
+    def test_foreground_condition_has_no_completion_metric(self) -> None:
+        out = v2.background_condition_score(self.bg(), BackgroundTest.QUIET, True, "foreground")
+        self.assertIsNone(out["background_completion"])
+
+    def test_sentinel_args_and_brief(self) -> None:
+        self.assertEqual(v2.sentinel_args("foreground"), [])
+        self.assertIn("--user-activity", v2.sentinel_args("background"))
+        self.assertIn("User activity", v2.brief_for("Do X.", "background"))
+        self.assertEqual(v2.brief_for("Do X.", "foreground"), "Do X.")
 
 
 if __name__ == "__main__":

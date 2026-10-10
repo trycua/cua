@@ -289,6 +289,23 @@ class WindowsRaisedTests(unittest.TestCase):
         self.assertEqual(result["windows_raised"], 2)
         self.assertEqual(result["raised_by"], ["BenchLab", "Google Chrome"])
 
+    def test_tool_overlays_are_metadata_not_raises(self) -> None:
+        seq = [["Cua Driver Bench Script"]] * 3 + [["ChatGPT Computer Use"]] * 3
+        lines = [self.line("armed", 0, [])] + [self.line("s", i + 1, a) for i, a in enumerate(seq)]
+        lines += [self.line("s", 20 + i, []) for i in range(6)]
+        result = self.summarize(lines)
+        self.assertEqual(result["windows_raised"], 0)
+        self.assertEqual(result["overlay_owners"], ["ChatGPT Computer Use", "Cua Driver Bench Script"])
+
+    def test_user_activity_counts(self) -> None:
+        lines = [self.line("armed", 0, [])] + [self.line("s", i, []) for i in range(1, 12)]
+        lines += [{"ev": "user_type", "t": T0 + 700, "armed": True}, {"ev": "user_blocked", "t": T0 + 800, "armed": True},
+                  {"ev": "user_text", "t": T0 + 900, "armed": True, "intact": True}]
+        ua = self.summarize(lines)["user_activity"]
+        self.assertEqual((ua["typed"], ua["blocked"], ua["disrupted"]), (1, 1, True))
+        plain = [self.line("armed", 0, [])] + [self.line("s", i, []) for i in range(1, 12)]
+        self.assertIsNone(self.summarize(plain)["user_activity"])
+
     def test_windows_already_above_at_arm_are_not_raises(self) -> None:
         lines = [self.line("armed", 0, ["Terminal"])] + [self.line("s", i, ["Terminal"]) for i in range(1, 12)]
         result = self.summarize(lines)

@@ -223,9 +223,10 @@ def kill_group(pid: int) -> None:
 class Sentinel:
     """BenchSentinel app: frontmost witness for focus, keystroke, click and pointer leaks."""
 
-    def __init__(self, app: Path | None, log: Path) -> None:
+    def __init__(self, app: Path | None, log: Path, args: list[str] | None = None) -> None:
         self.app = app
         self.log = log
+        self.args = list(args or [])  # Amendment 15: --user-activity --frame X,Y,W,H in the background condition
         self.proc: subprocess.Popen[bytes] | None = None
 
     @property
@@ -238,7 +239,7 @@ class Sentinel:
         exe = next((self.app / "Contents/MacOS").iterdir())
         self.log.parent.mkdir(parents=True, exist_ok=True)
         self.proc = subprocess.Popen(
-            [str(exe), "--log", str(self.log)],
+            [str(exe), "--log", str(self.log), *self.args],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

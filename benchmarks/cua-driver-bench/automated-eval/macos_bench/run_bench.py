@@ -695,6 +695,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     seed = core.probe_seed(task.id, run_index)
     bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
+    condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
     build_versions = (ctx.versions.get("builds") or {}).get(arm) or (
         ctx.versions.get("builds") or {}
@@ -724,6 +725,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "dimension_tags": task.tags,
         "bench_version": v2.BENCH_VERSION if bench_v2 else 1,
         "category": spec.get("category"),
+        "condition": condition,
         "order_index": entry.get("order_index"),
         "task_pos": entry["task_pos"],
         "arm_slot": entry["arm_slot"],
@@ -765,6 +767,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if args.build_dir and not args.no_sentinel
         else None,
         artifacts / "sentinel.jsonl",
+        v2.sentinel_args(condition) if bench_v2 else None,
     )
     app_env = pilot.clean_app_env(trial_dir / "apphome")
     lab: subprocess.Popen[bytes] | None = None
@@ -824,7 +827,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
         if sentinel_front:
             sentinel.activate()
-        if cdb is None and getattr(args, "check_occlusion", True):
+        if condition == "background":  # A15.2: the user window covers part of the target on purpose
+            row["lab_occlusion"] = {"skipped": "background condition", "user_window": v2.USER_WINDOW_FRAME}
+        elif cdb is None and getattr(args, "check_occlusion", True):
             row["lab_occlusion"] = ensure_lab_unoccluded(ctx)
             row["lab_unoccluded"] = row["lab_occlusion"].get("unoccluded")
         cwd = ca.prepare_cwd(arm)
@@ -840,7 +845,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             coding_tools=bool(spec.get("coding_tools")) and not bench_v2,
             system_prompt=ca.system_prompt_for(arm),
         )
-        prompt = brief.strip() + "\n"
+        prompt = (v2.brief_for(brief.strip(), condition) if bench_v2 else brief.strip()) + "\n"
         if args.tell_budget:
             prompt += f"\nYou have about {timeout_s // 60} minutes and at most {max_turns} turns.\n"
         (artifacts / "prompt.txt").write_text(prompt, "utf-8")
@@ -1068,6 +1073,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "human_input_suspected": bool(hid_total and idle_start < 900),
                 "windows_raised": summary_sentinel.get("windows_raised"),
                 "raised_by": summary_sentinel.get("raised_by", []),
+                "overlay_owners": summary_sentinel.get("overlay_owners", []),
+                "user_activity": summary_sentinel.get("user_activity"),
             },
             "sentinel_frontmost": sentinel_front,
             "gui_only": gui_only,
@@ -1091,6 +1098,11 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     )
     # A14.4: the background-operation score, on every v2 trial
     row["background"] = v2.background_score(row["disturbance"], sentinel_front) if bench_v2 else None
+    row["background_condition"] = (
+        v2.background_condition_score(row["background"], row["disturbance"], bool(row["passed"]), condition)
+        if bench_v2
+        else None
+    )
     if video_raw and ctx.compress:
         ctx.compress.submit(video_raw, trial_dir / "video")
     (trial_dir / "trial.json").write_text(json.dumps(row, indent=2) + "\n", "utf-8")
@@ -2099,6 +2111,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bench v2 (Amendment 14): GUI-only v2 task list, categories, background score, interruption probes",
     )
     p.add_argument(
+        "--condition",
+        choices=list(v2.CONDITIONS),
+        default="foreground",
+        help="v2 (Amendment 15): foreground, or background (a user window keeps focus; the target app is behind it)",
+    )
+    p.add_argument(
         "--gui-only-enforce",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -2290,6 +2308,9 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
             "categories": v2.CATEGORIES,
             "task_categories": {t: task_spec(ctx.tasks[t]).get("category") for t in ctx.task_ids},
             "gui_only_enforce": getattr(args, "gui_only_enforce", True),
+            "condition": getattr(args, "condition", "foreground"),
+            "user_window_frame": v2.USER_WINDOW_FRAME,
+            "background_brief": v2.BACKGROUND_BRIEF,
             "exec_patterns": list(v2.EXEC_PATTERNS),
             "side_door_bundles": v2.SIDE_DOOR_BUNDLES,
             "side_door_processes": list(v2.SIDE_DOOR_PROCESSES),

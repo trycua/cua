@@ -70,8 +70,90 @@ fn consent_surface_ids(
         .collect()
 }
 
+/// The Chinese consent prompt title, shared with the browser window matcher in
+/// `platform.rs`, which still identifies the prompt window by its title.
 pub(super) const CHINESE_PROMPT: &str = "要允许远程调试吗？";
 const CHINESE_WARNING: &str = "为进行调试，一款外部应用请求完全控制此 Chrome 会话，包括访问您保存的数据、Cookie 和网站数据，以及前往任意网址。";
+
+fn is_pressable_button(node: &AXNode) -> bool {
+    node.role == "AXButton" && node.actions.iter().any(|action| action == "AXPress")
+}
+
+/// Splits an accessibility identifier into lowercase terms.
+///
+/// Identifiers are matched term by term rather than by substring, so an
+/// unrelated control cannot turn into consent evidence: `disallow` contains
+/// "allow" and `wallow-confirm` contains "confirm", but neither names the
+/// decision. Both separators and camel-case boundaries split terms, so
+/// `remote-debugging-allow` and `allowRemoteDebugging` are read the same way.
+fn identifier_terms(node: &AXNode) -> Vec<String> {
+    let Some(identifier) = node.identifier.as_deref() else {
+        return Vec::new();
+    };
+    let mut spaced = String::with_capacity(identifier.len());
+    let mut previous: Option<char> = None;
+    let mut characters = identifier.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character.is_ascii_uppercase()
+            && (previous.is_some_and(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
+                || (previous.is_some_and(|value| value.is_ascii_uppercase())
+                    && characters
+                        .peek()
+                        .is_some_and(|value| value.is_ascii_lowercase())))
+        {
+            spaced.push(' ');
+        }
+        spaced.push(character);
+        previous = Some(character);
+    }
+    spaced
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(|term| term.to_ascii_lowercase())
+        .collect()
+}
+
+/// The identifier must name both halves of the decision: `allow` on its own is
+/// too common to identify a prompt, and `debug`/`confirm` is what ties the
+/// signal to a consent sheet rather than to any sheet the browser renders.
+fn identifier_allows_remote_debugging(node: &AXNode) -> bool {
+    let terms = identifier_terms(node);
+    let names = |needle: &str| terms.iter().any(|term| term == needle);
+    names("allow") && (names("debug") || names("debugging") || names("confirm"))
+}
+
+fn identifier_is_cancel(node: &AXNode) -> bool {
+    identifier_terms(node).iter().any(|term| term == "cancel")
+}
+
+/// The captured Chinese sheet's third control links to Settings rather than
+/// answering the prompt. Pressing it would leave the sheet open, so it is never
+/// treated as an allow or cancel decision — including when it happens to carry
+/// an accessibility identifier that reads like one.
+fn is_settings_link(node: &AXNode) -> bool {
+    has_text(node, "在“设置”中关闭")
+}
+
+fn semantic_allow(node: &AXNode) -> bool {
+    if !is_pressable_button(node) || is_settings_link(node) {
+        return false;
+    }
+    let label = normalized_text(node);
+    matches!(label.as_str(), "allow" | "allow remote debugging")
+        || identifier_allows_remote_debugging(node)
+        // The captured Chinese labels are compared exactly: they are byte
+        // literals, not case-folded text, and the sheet must already have been
+        // proven to be the consent sheet for this to be consulted.
+        || has_text(node, "允许")
+}
+
+fn semantic_cancel(node: &AXNode) -> bool {
+    if !is_pressable_button(node) || is_settings_link(node) {
+        return false;
+    }
+    let label = normalized_text(node);
+    label == "cancel" || identifier_is_cancel(node) || has_text(node, "取消")
+}
 
 fn has_text(node: &AXNode, expected: &str) -> bool {
     [
@@ -84,6 +166,43 @@ fn has_text(node: &AXNode, expected: &str) -> bool {
     .any(|text| text.trim() == expected)
 }
 
+/// The captured Chinese consent prompt: its title plus the localized warning
+/// that only the real remote-debugging sheet carries.
+fn chinese_sheet(sheet: &[AXNode]) -> bool {
+    has_text(&sheet[0], CHINESE_PROMPT)
+        && sheet[1..]
+            .iter()
+            .any(|node| has_text(node, CHINESE_WARNING))
+}
+
+fn validate_sheet_decisions(sheet: &[AXNode]) -> Result<(), BrowserRefusal> {
+    if sheet
+        .iter()
+        .any(|node| semantic_allow(node) && semantic_cancel(node))
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "a browser consent action matched both allow and cancel decisions",
+        ));
+    }
+    // The captured Chinese sheet needs exactly one allow and one cancel: it is
+    // matched from captured labels rather than English text, so a sheet missing
+    // either side would otherwise silently press nothing and leave the prompt
+    // standing.
+    if chinese_sheet(sheet) {
+        let allows = sheet.iter().filter(|node| semantic_allow(node)).count();
+        let cancels = sheet.iter().filter(|node| semantic_cancel(node)).count();
+        if allows != 1 || cancels != 1 {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "localized browser consent requires unique positive allow and cancel actions",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The nodes of one `AXSheet` subtree, starting at the sheet itself.
 fn sheet_subtree(nodes: &[AXNode], sheet_index: usize) -> &[AXNode] {
     let end = nodes
         .iter()
@@ -94,97 +213,153 @@ fn sheet_subtree(nodes: &[AXNode], sheet_index: usize) -> &[AXNode] {
     &nodes[sheet_index..end]
 }
 
-fn chinese_sheet(sheet: &[AXNode]) -> bool {
-    has_text(&sheet[0], CHINESE_PROMPT)
-        && sheet[1..]
-            .iter()
-            .any(|node| has_text(node, CHINESE_WARNING))
+/// True when the sheet states the prompt in English. Kept as one predicate so
+/// detection and the matchers cannot disagree about what an English host is.
+fn sheet_prompt_is_english(sheet: &[AXNode]) -> bool {
+    sheet.iter().any(|node| {
+        let text = normalized_text(node);
+        text.contains("remote debugging") || text.contains("remote-debugging")
+    })
 }
 
-fn consent_sheets(nodes: &[AXNode]) -> impl Iterator<Item = &[AXNode]> {
+/// Recognizes Chrome's remote-debugging consent sheet without depending on the
+/// host language.
+///
+/// Detection must not be gated on the prompt's visible text. That text is
+/// localized, so an English-only gate rejects the sheet on a non-English host
+/// before either button matcher can run, which leaves teardown unable to
+/// dismiss the sheet it is looking for. The English text stays as a fast path
+/// so English hosts behave exactly as before; it is no longer the only way in.
+fn sheet_is_consent_prompt(sheet: &[AXNode]) -> bool {
+    // The consent sheet is browser chrome. A dialog the page renders sits
+    // under an `AXWebArea`, so web content is never the consent sheet — the
+    // macOS counterpart of the trust gate the Windows matcher applies to
+    // every node it considers.
+    if sheet.iter().any(|node| node.in_web_content) {
+        return false;
+    }
+    // Captured localized path: the Chinese prompt is recognized by its title
+    // together with the warning only the real consent sheet carries.
+    if chinese_sheet(sheet) {
+        return true;
+    }
+    // Unchanged fast path: the browser UI is running in English.
+    if sheet_prompt_is_english(sheet) {
+        return true;
+    }
+    // Localized fast path: the accessibility identifier is not localized, so a
+    // pressable button that names the allow decision identifies the sheet in
+    // any language. Only the allow side is specific enough to stand alone
+    // here — a bare "cancel" identifier is shared with Chrome's own save and
+    // print sheets, which this code must never dismiss.
+    sheet
+        .iter()
+        .any(|node| is_pressable_button(node) && identifier_allows_remote_debugging(node))
+}
+
+/// Every sheet in `nodes` that carries the remote-debugging consent decision.
+///
+/// Detection, allow matching and cancel matching all read this one view, so
+/// they cannot disagree about which sheets are in scope.
+fn consent_sheets(nodes: &[AXNode]) -> Vec<&[AXNode]> {
     nodes
         .iter()
         .enumerate()
         .filter(|(_, node)| node.role == "AXSheet")
         .map(|(index, _)| sheet_subtree(nodes, index))
-        .filter(|sheet| !sheet.iter().any(|node| node.in_web_content))
-        .filter(|sheet| {
-            chinese_sheet(sheet)
-                || sheet.iter().any(|node| {
-                    let text = normalized_text(node);
-                    text.contains("remote debugging") || text.contains("remote-debugging")
-                })
-        })
+        .filter(|sheet| sheet_is_consent_prompt(sheet))
+        .collect()
 }
 
 fn remote_debugging_sheet_present(nodes: &[AXNode]) -> bool {
-    consent_sheets(nodes).next().is_some()
+    !consent_sheets(nodes).is_empty()
 }
 
-fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserRefusal> {
+fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
     let mut matches = Vec::new();
     for sheet in consent_sheets(nodes) {
-        let chinese = chinese_sheet(sheet);
-        let mut allows = Vec::new();
-        let mut cancels = Vec::new();
-        for node in sheet.iter().filter(|node| {
-            node.role == "AXButton" && node.actions.iter().any(|action| action == "AXPress")
-        }) {
-            let (is_allow, is_cancel) = if chinese {
-                (has_text(node, "允许"), has_text(node, "取消"))
-            } else {
-                let text = normalized_text(node);
-                let id = node
-                    .identifier
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                (
-                    matches!(text.as_str(), "allow" | "allow remote debugging")
-                        || (id.contains("allow")
-                            && (id.contains("debug") || id.contains("confirm"))),
-                    text == "cancel",
-                )
-            };
-            if (is_allow && is_cancel)
-                || (chinese && (is_allow || is_cancel) && has_text(node, "在“设置”中关闭"))
-            {
-                return Err(refusal(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "a browser consent button matched conflicting decisions",
-                ));
-            }
-            if is_allow {
-                allows.push(node.element_ptr);
-            }
-            if is_cancel {
-                cancels.push(node.element_ptr);
-            }
+        validate_sheet_decisions(sheet)?;
+        for node in sheet.iter().filter(|node| semantic_allow(node)) {
+            matches.push(node.element_ptr);
         }
-        if chinese && (allows.len() != 1 || cancels.len() != 1) {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "localized browser consent requires unique positive allow and cancel actions",
-            ));
-        }
-        matches.extend(if allow { allows } else { cancels });
     }
     match matches.as_slice() {
         [] => Ok(None),
         [element] => Ok(Some(*element)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple browser consent actions matched the requested decision",
+            "multiple semantic allow actions matched the browser consent sheet",
         )),
     }
 }
 
-fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
-    exact_button(nodes, true)
-}
-
 fn exact_cancel_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
-    exact_button(nodes, false)
+    let mut matches = Vec::new();
+    for sheet in consent_sheets(nodes) {
+        validate_sheet_decisions(sheet)?;
+        // Language-independent structural signal: a consent sheet that exposes
+        // exactly two pressable buttons presents a decision pair, so once the
+        // allow side is identified the remaining button is the cancel side in
+        // every locale. The allow identifier proves the localized sheet;
+        // the cancel button does not need its own identifier.
+        //
+        // It only runs for sheets that English text could not prove. On an
+        // English host the label path below already decides, and "not allow"
+        // is not the same thing as "cancel" — a sheet pairing `Allow` with
+        // `Deny` or `Block` must keep refusing instead of pressing the other
+        // button, which is what teardown has always done.
+        if !sheet_prompt_is_english(sheet) {
+            let pressable = sheet
+                .iter()
+                .filter(|node| is_pressable_button(node))
+                .collect::<Vec<_>>();
+            if pressable.len() == 2 {
+                let allow = pressable
+                    .iter()
+                    .filter(|node| semantic_allow(node))
+                    .collect::<Vec<_>>();
+                let [allow] = allow.as_slice() else {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "the localized browser consent pair exposed no unique semantic allow action",
+                    ));
+                };
+                let Some(cancel) = pressable
+                    .iter()
+                    .find(|node| node.element_ptr != allow.element_ptr)
+                else {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "the localized browser consent pair exposed no distinct cancel action",
+                    ));
+                };
+                matches.push(cancel.element_ptr);
+                continue;
+            }
+        }
+        for node in sheet {
+            // The button label is localized, so a label equality check only
+            // matches English hosts. The accessibility identifier is not
+            // localized; accept it as an equivalent signal, mirroring how
+            // `semantic_allow` already considers the identifier alongside the
+            // label. The label check is kept so English hosts are unaffected.
+            // Matching a bare "cancel" term is safe here only because the
+            // sheet has already been proven to be the consent sheet — the
+            // sheet, not the button, carries the meaning — and ambiguity still
+            // refuses below.
+            if semantic_cancel(node) {
+                matches.push(node.element_ptr);
+            }
+        }
+    }
+    match matches.as_slice() {
+        [] => Ok(None),
+        [element] => Ok(Some(*element)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "multiple semantic cancel actions matched the browser consent sheet",
+        )),
+    }
 }
 
 struct ConsentTrees(Vec<Vec<AXNode>>);
@@ -375,7 +550,13 @@ pub async fn handle(
 mod tests {
     use super::*;
 
-    fn node(role: &str, depth: usize, title: Option<&str>, actions: &[&str]) -> AXNode {
+    fn node_with_ptr(
+        role: &str,
+        depth: usize,
+        title: Option<&str>,
+        actions: &[&str],
+        element_ptr: usize,
+    ) -> AXNode {
         AXNode {
             element_index: (!actions.is_empty()).then_some(0),
             role: role.to_owned(),
@@ -385,7 +566,7 @@ mod tests {
             identifier: None,
             help: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
-            element_ptr: 7,
+            element_ptr,
             depth,
             parent_element_index: None,
             frame: None,
@@ -397,6 +578,31 @@ mod tests {
             selected: None,
             in_web_content: false,
         }
+    }
+
+    fn node(role: &str, depth: usize, title: Option<&str>, actions: &[&str]) -> AXNode {
+        node_with_ptr(role, depth, title, actions, 7)
+    }
+
+    /// A consent sheet as a non-English host renders it: localized labels and
+    /// no English "remote debugging" text anywhere in the subtree.
+    fn localized_sheet(button_identifiers: [Option<&str>; 3]) -> Vec<AXNode> {
+        let sheet = node("AXSheet", 1, Some("Debuggen aus der Ferne erlauben?"), &[]);
+        let mut allow = node_with_ptr("AXButton", 2, Some("Zulassen"), &["AXPress"], 11);
+        allow.identifier = button_identifiers[0].map(str::to_owned);
+        let mut cancel = node_with_ptr("AXButton", 2, Some("Abbrechen"), &["AXPress"], 12);
+        cancel.identifier = button_identifiers[1].map(str::to_owned);
+        // A third pressable button so the two-button structural complement
+        // cannot answer for the identifier path.
+        let mut extra = node_with_ptr("AXButton", 2, Some("Einstellungen"), &["AXPress"], 13);
+        extra.identifier = button_identifiers[2].map(str::to_owned);
+        vec![
+            node("AXWindow", 0, Some("Chrome"), &[]),
+            sheet,
+            allow,
+            cancel,
+            extra,
+        ]
     }
 
     #[tokio::test]
@@ -434,6 +640,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
+    }
+
+    fn localized_decision_pair(button_identifiers: [Option<&str>; 2]) -> Vec<AXNode> {
+        let mut nodes = localized_sheet([button_identifiers[0], button_identifiers[1], None]);
+        nodes.pop();
+        nodes
     }
 
     #[test]
@@ -478,6 +690,184 @@ mod tests {
             node("AXButton", 2, Some("Cancel"), &["AXPress"]),
         ];
         assert_eq!(exact_cancel_button(&unrelated).unwrap(), None);
+    }
+
+    #[test]
+    fn localized_consent_sheet_is_detected_without_english_text() {
+        let nodes = localized_sheet([
+            Some("remote-debugging-allow"),
+            Some("remote-debugging-cancel"),
+            Some("settings"),
+        ]);
+        assert!(
+            remote_debugging_sheet_present(&nodes),
+            "a localized consent sheet must be recognized without English prompt text"
+        );
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(11));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(12));
+    }
+
+    #[test]
+    fn cancel_matcher_uses_the_identified_allow_pair_without_a_cancel_identifier() {
+        // The allow identifier proves the localized sheet. With exactly two
+        // pressable buttons, its complement needs no cancel identifier.
+        let nodes = localized_decision_pair([Some("remote-debugging-allow"), None]);
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(12));
+    }
+
+    #[test]
+    fn localized_decision_pair_refuses_multiple_allow_actions() {
+        let nodes =
+            localized_decision_pair([Some("remote-debugging-allow"), Some("allow-confirm")]);
+        assert_eq!(
+            exact_cancel_button(&nodes).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            exact_allow_button(&nodes).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn localized_cancel_matcher_refuses_duplicate_cancel_identifiers() {
+        let nodes = localized_sheet([
+            Some("remote-debugging-allow"),
+            Some("remote-debugging-cancel"),
+            Some("cancel"),
+        ]);
+        assert_eq!(
+            exact_cancel_button(&nodes).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn matchers_refuse_conflicting_allow_and_cancel_decisions() {
+        for identifier in ["remote-debugging-allow-cancel", "allow-confirm-cancel"] {
+            let nodes = localized_decision_pair([Some(identifier), None]);
+            assert_eq!(
+                exact_allow_button(&nodes).unwrap_err().code,
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "{identifier} must not select allow"
+            );
+            assert_eq!(
+                exact_cancel_button(&nodes).unwrap_err().code,
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "{identifier} must not select cancel"
+            );
+        }
+    }
+
+    #[test]
+    fn english_sheet_pairing_allow_with_a_second_decision_still_refuses() {
+        // Regression: the decision-pair shortcut must not turn "not allow"
+        // into "cancel" on an English host. `Deny` carries a different
+        // decision, so teardown has to keep refusing rather than press it.
+        for label in ["Deny", "Not now", "Block"] {
+            let nodes = vec![
+                node("AXWindow", 0, Some("Chrome"), &[]),
+                node("AXSheet", 1, Some("Allow remote debugging?"), &[]),
+                node_with_ptr("AXButton", 2, Some("Allow"), &["AXPress"], 11),
+                node_with_ptr("AXButton", 2, Some(label), &["AXPress"], 12),
+            ];
+            assert_eq!(
+                exact_cancel_button(&nodes).unwrap(),
+                None,
+                "{label} must not be treated as the cancel control"
+            );
+        }
+    }
+
+    #[test]
+    fn identifier_terms_are_matched_whole_not_as_substrings() {
+        // `disallow` contains "allow" and `wallow-confirm` contains
+        // "confirm". Promoting the identifier to sheet-level evidence means a
+        // substring match here would make an unrelated control prove consent.
+        for identifier in [
+            "disallow-debug",
+            "wallow-confirm",
+            "allowance-debug",
+            "allow-confirmation",
+            "allow-debugger",
+            "allow-debuggings",
+        ] {
+            let mut allow = node_with_ptr("AXButton", 2, Some("Zulassen"), &["AXPress"], 11);
+            allow.identifier = Some(identifier.to_owned());
+            let nodes = vec![
+                node("AXWindow", 0, Some("Chrome"), &[]),
+                node("AXSheet", 1, Some("Debuggen aus der Ferne erlauben?"), &[]),
+                allow,
+                node_with_ptr("AXButton", 2, Some("Abbrechen"), &["AXPress"], 12),
+            ];
+            assert!(
+                !remote_debugging_sheet_present(&nodes),
+                "{identifier} must not prove a consent sheet"
+            );
+            assert_eq!(exact_allow_button(&nodes).unwrap(), None);
+            assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn identifier_terms_split_on_separators_and_camel_case() {
+        // Separator, camel-case and acronym forms name the same decisions.
+        for identifier in [
+            "allow-debug",
+            "remote-debugging-allow",
+            "remote_debugging_allow",
+            "allowRemoteDebugging",
+            "AllowRemoteDebugging",
+            "ALLOW_REMOTE_DEBUGGING",
+            "remoteDebuggingALLOW",
+            "ALLOWRemoteDebugging",
+            "allow-confirm",
+        ] {
+            let mut allow = node_with_ptr("AXButton", 2, Some("Zulassen"), &["AXPress"], 11);
+            allow.identifier = Some(identifier.to_owned());
+            let nodes = vec![
+                node("AXWindow", 0, Some("Chrome"), &[]),
+                node("AXSheet", 1, Some("Debuggen aus der Ferne erlauben?"), &[]),
+                allow,
+                node_with_ptr("AXButton", 2, Some("Abbrechen"), &["AXPress"], 12),
+            ];
+            assert_eq!(
+                exact_allow_button(&nodes).unwrap(),
+                Some(11),
+                "{identifier} must name the allow decision"
+            );
+        }
+    }
+
+    #[test]
+    fn localized_sheet_without_identifiers_stays_unmatched() {
+        // Documented limitation: with no English text and no identifier the
+        // sheet cannot be proven to be the consent sheet, so it must not be
+        // touched rather than guessed at.
+        for nodes in [
+            localized_sheet([None, None, None]),
+            localized_decision_pair([None, None]),
+        ] {
+            assert!(!remote_debugging_sheet_present(&nodes));
+            assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
+            assert_eq!(exact_allow_button(&nodes).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn web_content_sheet_is_never_the_consent_sheet() {
+        // A page can render a look-alike dialog carrying the English text.
+        // Web content is not browser chrome, so it must not be trusted.
+        let mut nodes = vec![
+            node("AXWindow", 0, Some("Chrome"), &[]),
+            node("AXSheet", 1, Some("Allow remote debugging?"), &[]),
+            node_with_ptr("AXButton", 2, Some("Cancel"), &["AXPress"], 12),
+        ];
+        for node in &mut nodes {
+            node.in_web_content = true;
+        }
+        assert!(!remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
     }
 
     #[test]
@@ -541,16 +931,36 @@ mod tests {
     }
 
     #[test]
-    fn localized_purpose_cannot_come_from_identifier_or_title_alone() {
+    fn purpose_cannot_come_from_the_title_alone() {
+        // The title is not consent evidence: a sheet titled like the prompt but
+        // stripped of the warning must not be recognized, whatever the title
+        // says. The warning is removed so the captured Chinese path cannot
+        // answer for the title.
         for title in ["Save changes?", CHINESE_PROMPT] {
             let mut nodes = captured_chinese_sheet();
             nodes[0].title = Some(title.to_owned());
             nodes[1].value = None;
-            nodes[4].identifier = Some("remote-debugging-allow".to_owned());
-            assert!(!remote_debugging_sheet_present(&nodes));
+            assert!(
+                !remote_debugging_sheet_present(&nodes),
+                "{title} must not prove a consent sheet on its own"
+            );
             assert_eq!(exact_allow_button(&nodes).unwrap(), None);
             assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn localized_purpose_can_come_from_the_allow_identifier_alone() {
+        // Detection must not depend on the prompt's visible text, so once the
+        // title and warning are stripped a button whose identifier names the
+        // allow decision still identifies the sheet in any language.
+        let mut nodes = captured_chinese_sheet();
+        nodes[0].title = Some("Save changes?".to_owned());
+        nodes[1].value = None;
+        nodes[4].identifier = Some("remote-debugging-allow".to_owned());
+        assert!(remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(27));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(26));
     }
 
     #[test]

@@ -39,6 +39,11 @@ jobs:
         run: |
           python3 scripts/dataset_manifest.py datasets/cua-bench-basic --output /tmp/cua-basic-manifest.json
           python3 scripts/dataset_manifest.py datasets/cua-bench-basic --verify /tmp/cua-basic-manifest.json
+      - name: Exercise installed manifest CLI
+        working-directory: libs/cua-bench
+        run: |
+          uv run --extra dev python -m cua_bench.cli.main run manifest datasets/cua-bench-basic --output /tmp/cua-cli-pinned.json
+          uv run --extra dev python -c "import json; from pathlib import Path; from cua_bench.dataset_manifest import verify_dataset; verify_dataset(Path('datasets/cua-bench-basic'), json.loads(Path('/tmp/cua-cli-pinned.json').read_text()))"
       - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
         run: |

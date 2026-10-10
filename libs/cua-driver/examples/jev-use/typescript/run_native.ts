@@ -82,7 +82,11 @@ export function parseArgs(argv: string[]): Arguments {
 }
 
 export function isStaleTokenError(error: unknown): boolean {
-  if (error instanceof DriverToolError && error.code && STALE_TOKEN_CODES.has(error.code)) return true;
+  if (error instanceof DriverToolError && error.code) {
+    // Structured codes outrank diagnostic text; a different refusal must
+    // not be turned into stale-token recovery by an incidental message.
+    return STALE_TOKEN_CODES.has(error.code);
+  }
   return String(error instanceof Error ? error.message : error).includes('element_token is stale');
 }
 

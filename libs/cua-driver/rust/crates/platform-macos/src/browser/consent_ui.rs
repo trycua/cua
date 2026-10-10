@@ -9,13 +9,10 @@ use cua_driver_core::browser::{
 };
 
 use crate::ax::bindings::{kAXErrorSuccess, perform_action, AXUIElementRef};
-use crate::ax::tree::{walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_DEPTH};
+use crate::ax::tree::{walk_native_chrome_bounded, AXNode, TreeWalkResult};
 
-// Large Chromium pages can put the browser-owned consent sheet after the
-// ordinary 2,000-node snapshot cap. Keep this privileged scan bounded while
-// allowing enough headroom to inspect Chrome's top-level sheet on pages such
-// as Gmail. The matcher below still requires one exact AXSheet and one exact
-// semantic Allow action before it will press anything.
+// Keep the native-chrome walk bounded even though it skips web content.
+// The matcher still requires one exact AXSheet and semantic Allow action.
 const CONSENT_MAX_ELEMENTS: usize = 5_000;
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
@@ -214,15 +211,33 @@ impl Drop for ConsentTrees {
 fn read_consent_trees(pid: i32, window_id: u32) -> Result<ConsentTrees, BrowserRefusal> {
     let mut trees = ConsentTrees(Vec::new());
     for candidate in consent_surface_ids(crate::windows::all_windows(), pid, window_id) {
-        trees.push(walk_tree_bounded(
+        trees.push(walk_native_chrome_bounded(
             pid,
-            Some(candidate),
-            None,
+            candidate,
             CONSENT_MAX_ELEMENTS,
-            DEFAULT_MAX_DEPTH,
         ))?;
     }
     Ok(trees)
+}
+
+fn settled_after_scan(
+    accepted_prompt: bool,
+    prompt_present: bool,
+    deadline_expired: bool,
+    attempt: u8,
+) -> Result<Option<BrowserConsentOutcome>, BrowserRefusal> {
+    if accepted_prompt && !prompt_present {
+        return Ok(Some(BrowserConsentOutcome::Accepted));
+    }
+    if deadline_expired {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "Chrome remote-debugging consent did not settle for reconnect attempt {attempt}"
+            ),
+        ));
+    }
+    Ok(None)
 }
 
 /// Dismiss any exact Chrome-owned remote-debugging sheet before teardown.
@@ -309,20 +324,19 @@ pub async fn handle(
                     format!("could not inspect the browser consent UI: {error}"),
                 )
             })??;
-        if Instant::now() >= deadline {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "Chrome remote-debugging consent did not settle for reconnect attempt {}",
-                    request.attempt
-                ),
-            ));
-        }
         let prompt_present = trees
             .0
             .iter()
             .any(|nodes| remote_debugging_sheet_present(nodes));
         saw_prompt |= prompt_present;
+        if let Some(outcome) = settled_after_scan(
+            accepted_prompt,
+            prompt_present,
+            Instant::now() >= deadline,
+            request.attempt,
+        )? {
+            return Ok(outcome);
+        }
         let mut candidates = Vec::new();
         for nodes in &trees.0 {
             if let Some(element) = exact_allow_button(nodes)? {
@@ -358,9 +372,6 @@ pub async fn handle(
                 "multiple Chrome-owned remote-debugging consent sheets exposed semantic allow actions",
             ));
         }
-        if accepted_prompt && !prompt_present {
-            return Ok(BrowserConsentOutcome::Accepted);
-        }
         if saw_prompt && !prompt_present {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRevoked,
@@ -374,6 +385,22 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmed_closed_sheet_wins_over_elapsed_deadline() {
+        assert_eq!(
+            settled_after_scan(true, false, true, 1).unwrap(),
+            Some(BrowserConsentOutcome::Accepted)
+        );
+        assert_eq!(
+            settled_after_scan(true, true, true, 1).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            settled_after_scan(false, false, true, 1).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
 
     fn node(role: &str, depth: usize, title: Option<&str>, actions: &[&str]) -> AXNode {
         AXNode {

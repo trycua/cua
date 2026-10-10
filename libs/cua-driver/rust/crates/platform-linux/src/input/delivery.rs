@@ -97,7 +97,7 @@ impl BackgroundUnavailable {
                  background injection"
             }
             Self::FocusedInputOnly => {
-                "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
+                "the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget"
             }
             Self::WebKitSyntheticInput => {
                 "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
@@ -129,6 +129,35 @@ pub fn background_unavailable_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focused_input_refusal_does_not_claim_an_x11_backend() {
+        let result = background_unavailable_error(BackgroundUnavailable::FocusedInputOnly);
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        assert_eq!(
+            structured["suggestion"],
+            cua_driver_core::delivery::FOREGROUND_RETRY_SUGGESTION
+        );
+        let detail = structured["detail"].as_str().unwrap();
+        assert!(detail.contains("globally focused widget"));
+        assert!(!detail.contains("XTest"));
+        assert!(!detail.contains("X11"));
+        let text = result
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                cua_driver_core::protocol::Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!text.contains("XTest"));
+        assert!(!text.contains("X11"));
+        assert!(text.contains("delivery_mode:\"foreground\""));
+    }
 
     #[test]
     fn delivery_mode_schema_advertises_two_modes() {

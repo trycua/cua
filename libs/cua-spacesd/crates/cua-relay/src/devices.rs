@@ -507,6 +507,11 @@ struct StoredState {
     audit: BTreeMap<String, Vec<AuditEntry>>,
 }
 
+/// The live device sessions are kept in the devices file's path plus this
+/// suffix, so a relay restart does not cut every client off until its
+/// session expires.
+pub const SESSIONS_FILE_SUFFIX: &str = ".sessions.json";
+
 /// The audit log file is the devices file's path plus this suffix.
 pub const AUDIT_FILE_SUFFIX: &str = ".audit.jsonl";
 
@@ -688,7 +693,7 @@ impl AuditLog {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Session {
     account: String,
     device: String,
@@ -822,7 +827,10 @@ pub struct DeviceStore {
     path: Option<PathBuf>,
     policy: DevicePolicy,
     state: Mutex<State>,
+    /// Live sessions by the SHA-256 of their token (never the token).
     sessions: Mutex<HashMap<String, Session>>,
+    /// Where `sessions` is persisted (`<devices>`[`SESSIONS_FILE_SUFFIX`]).
+    sessions_path: Option<PathBuf>,
     /// Signed timestamps already used (replay guard), with their expiry.
     proofs: Mutex<HashMap<String, u64>>,
     /// Last recorded access per (account, actor, machine).
@@ -946,6 +954,7 @@ impl DeviceStore {
             policy,
             state: Mutex::new(state),
             sessions: Mutex::default(),
+            sessions_path: None,
             proofs: Mutex::default(),
             throttle: Mutex::default(),
             audit_key,
@@ -1004,7 +1013,20 @@ impl DeviceStore {
         } else {
             AuditLog::load(audit_path)?
         };
-        let store = Self::with_state(Some(path), policy, state, audit_key, audit);
+        let sessions_path = PathBuf::from(format!("{}{SESSIONS_FILE_SUFFIX}", path.display()));
+        let now = now_secs();
+        let sessions: HashMap<String, Session> = match std::fs::read(&sessions_path) {
+            // An unreadable file only costs clients a new session.
+            Ok(raw) => serde_json::from_slice(&raw).unwrap_or_default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+            Err(e) => return Err(e),
+        };
+        let mut store = Self::with_state(Some(path), policy, state, audit_key, audit);
+        *store.sessions.get_mut().expect("sessions") = sessions
+            .into_iter()
+            .filter(|(_, s)| s.expires > now)
+            .collect();
+        store.sessions_path = Some(sessions_path);
         if fresh || moved {
             let mut state = store.state.lock().expect("devices");
             if fresh {
@@ -1233,10 +1255,24 @@ impl DeviceStore {
         if devices.is_empty() {
             return;
         }
-        self.sessions
-            .lock()
-            .expect("sessions")
-            .retain(|_, s| !devices.contains(&s.device));
+        let mut sessions = self.sessions.lock().expect("sessions");
+        sessions.retain(|_, s| !devices.contains(&s.device));
+        self.persist_sessions(&sessions);
+    }
+
+    /// Saves the live sessions (best effort: a lost write only means
+    /// clients open new sessions after the next restart).
+    fn persist_sessions(&self, sessions: &HashMap<String, Session>) {
+        let Some(path) = &self.sessions_path else {
+            return;
+        };
+        let written = serde_json::to_vec(sessions)
+            .map_err(std::io::Error::other)
+            .and_then(|raw| write_private(path, &raw));
+        self.record_write(written.is_ok());
+        if let Err(e) = written {
+            tracing::warn!(error = %e, "device sessions not persisted");
+        }
     }
 
     /// Registers (or re-registers) a device, its key proven by `r.sig` over
@@ -1614,6 +1650,7 @@ impl DeviceStore {
                 expires,
             },
         );
+        self.persist_sessions(&sessions);
         Ok((token, expires))
     }
 
@@ -2328,6 +2365,42 @@ pub(crate) mod tests {
             store.audit("acct", AuditEvent::new("machine_access"));
             assert!(store.writes_ok());
         }
+    }
+
+    #[test]
+    fn sessions_survive_a_restart_but_not_a_revocation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let laptop = TestKey::new();
+        let phone = TestKey::new();
+        register(&store, "acct", &laptop, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
+        let laptop_session = session(&store, "acct", &laptop).unwrap();
+        let phone_session = session(&store, "acct", &phone).unwrap();
+        let saved =
+            std::fs::read_to_string(format!("{}{SESSIONS_FILE_SUFFIX}", path.display())).unwrap();
+        assert!(
+            !saved.contains(&laptop_session),
+            "only token hashes are stored"
+        );
+        drop(store);
+
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(
+            reopened.session_device("acct", &laptop_session),
+            Some(laptop.id())
+        );
+        assert_eq!(reopened.session_device("other", &laptop_session), None);
+        reopened.revoke("acct", &laptop.id(), &phone.id()).unwrap();
+        assert_eq!(reopened.session_device("acct", &phone_session), None);
+        drop(reopened);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(again.session_device("acct", &phone_session), None);
+        assert_eq!(
+            again.session_device("acct", &laptop_session),
+            Some(laptop.id())
+        );
     }
 
     #[test]

@@ -57,11 +57,15 @@ struct State {
     notifier: Option<(ExtIdleNotifierV1, u32)>,
     marks: Marks,
     synced: bool,
+    /// When the first `resumed` after the barrier was handled; timing only,
+    /// for diagnosing a skipped hand-back.
+    first_resumed: Option<Instant>,
 }
 
 /// Physical-input watch over one transaction. Hold it from before the first
 /// change until the decision to hand anything back.
 pub(crate) struct InputQuiet {
+    begun: Instant,
     connection: Connection,
     queue: EventQueue<State>,
     state: State,
@@ -80,6 +84,7 @@ impl InputQuiet {
         let qh = queue.handle();
         connection.display().get_registry(&qh, ());
         let mut watch = Self {
+            begun: Instant::now(),
             connection,
             queue,
             state: State::default(),
@@ -123,6 +128,14 @@ impl InputQuiet {
     /// again immediately before each change made on the person's behalf.
     pub(crate) fn quiet_since_begin(&mut self, budget: Duration) -> bool {
         self.sync_by(Instant::now() + budget).is_ok() && self.state.marks.quiet()
+    }
+
+    /// Milliseconds from the start of the watch to the first input after the
+    /// barrier, when there was any. A content-free diagnostic.
+    pub(crate) fn first_input_after_ms(&self) -> Option<u128> {
+        self.state
+            .first_resumed
+            .map(|at| at.saturating_duration_since(self.begun).as_millis())
     }
 
     /// One bounded `wl_display.sync`: every event sent before it is handled.
@@ -250,7 +263,12 @@ impl Dispatch<ExtIdleNotificationV1, ()> for State {
     ) {
         match event {
             ext_idle_notification_v1::Event::Idled => state.marks.observe(Activity::Idled),
-            ext_idle_notification_v1::Event::Resumed => state.marks.observe(Activity::Resumed),
+            ext_idle_notification_v1::Event::Resumed => {
+                if state.marks.barrier && state.first_resumed.is_none() {
+                    state.first_resumed = Some(Instant::now());
+                }
+                state.marks.observe(Activity::Resumed)
+            }
             _ => {}
         }
     }
@@ -281,6 +299,65 @@ mod tests {
             marks.observe(*event);
         }
         marks
+    }
+
+    /// Read-only probe of the live desktop: run with
+    /// `cargo test -- --ignored input_quiet_live_probe --nocapture`.
+    #[test]
+    #[ignore = "reads the live compositor"]
+    fn input_quiet_live_probe() {
+        let started = Instant::now();
+        match InputQuiet::begin(Duration::from_millis(400)) {
+            Ok(mut watch) => {
+                println!(
+                    "begin ok in {:?}; notifier version {:?}",
+                    started.elapsed(),
+                    watch.state.notifier.as_ref().map(|(_, version)| *version)
+                );
+                println!(
+                    "quiet now: {}",
+                    watch.quiet_since_begin(Duration::from_millis(500))
+                );
+            }
+            Err(error) => println!("begin failed in {:?}: {error:#}", started.elapsed()),
+        }
+        println!(
+            "active={:?} workspace={:?} cursor={:?} locked={:?}",
+            super::super::hyprland::active_window_address().map_err(|e| e.to_string()),
+            super::super::hyprland::single_output_workspace().map_err(|e| e.to_string()),
+            super::super::hyprland::cursor_position().map_err(|e| e.to_string()),
+            super::super::hyprland::session_locked().map_err(|e| e.to_string()),
+        );
+    }
+
+    /// Read-only: record only the times of idle/resume transitions for
+    /// `CUA_IDLE_TRACE_SECS` seconds (no input content is observable here).
+    #[test]
+    #[ignore = "reads the live compositor"]
+    fn input_quiet_live_activity_trace() {
+        let secs: u64 = std::env::var("CUA_IDLE_TRACE_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        let mut watch = match InputQuiet::begin(Duration::from_millis(2000)) {
+            Ok(watch) => watch,
+            Err(error) => return println!("begin failed: {error:#}"),
+        };
+        let start = Instant::now();
+        let mut last = watch.state.marks;
+        println!("t=0.000 barrier");
+        while start.elapsed() < Duration::from_secs(secs) {
+            watch.state.marks = Marks {
+                barrier: true,
+                resumed: false,
+            };
+            let _ = watch.dispatch_for(Duration::from_millis(200));
+            if watch.state.marks.resumed {
+                println!("t={:.3} resumed", start.elapsed().as_secs_f64());
+            }
+            last = watch.state.marks;
+        }
+        let _ = last;
     }
 
     #[test]

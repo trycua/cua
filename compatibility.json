@@ -113,9 +113,9 @@
         "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
       },
       "main": {
-        "checked_at": "2026-10-09T12:36:33Z",
+        "checked_at": "2026-10-10T07:01:56Z",
         "status": "pass",
-        "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
+        "tree": "b477f0617505b45ef87ea7e1a3b56ad8ce51fff4"
       }
     },
     "omarchy-edge": {
@@ -130,9 +130,9 @@
         "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
       },
       "main": {
-        "checked_at": "2026-10-09T12:36:33Z",
+        "checked_at": "2026-10-10T07:01:56Z",
         "status": "pass",
-        "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
+        "tree": "b477f0617505b45ef87ea7e1a3b56ad8ce51fff4"
       }
     },
     "omarchy-rc": {
@@ -147,9 +147,9 @@
         "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
       },
       "main": {
-        "checked_at": "2026-10-09T12:36:17Z",
+        "checked_at": "2026-10-10T07:02:00Z",
         "status": "pass",
-        "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
+        "tree": "b477f0617505b45ef87ea7e1a3b56ad8ce51fff4"
       }
     },
     "omarchy-stable": {
@@ -164,14 +164,342 @@
         "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
       },
       "main": {
-        "checked_at": "2026-10-09T12:36:17Z",
+        "checked_at": "2026-10-10T07:02:00Z",
         "status": "pass",
-        "tree": "0dec07dc8358e50ed2834c867bc0367bb18fc160"
+        "tree": "b477f0617505b45ef87ea7e1a3b56ad8ce51fff4"
       }
     }
   },
   "detection_errors": {},
   "entries": [
+    {
+      "abi_key": "c80eed71005fef40",
+      "built_from_channel": "omarchy-rc",
+      "channels": [
+        "omarchy-rc",
+        "omarchy-stable"
+      ],
+      "checked_at": "2026-10-10T07:02:00Z",
+      "checks": {
+        "build": {
+          "status": "pass"
+        },
+        "ctest": {
+          "failed": 0,
+          "failures": [],
+          "status": "pass",
+          "total": 20
+        },
+        "load": {
+          "checks": {
+            "abi_match": true,
+            "compositor_epoch": true,
+            "input_v3_state": true,
+            "keyboard_layout_independent": true,
+            "transport_ready": true
+          },
+          "status": "pass"
+        },
+        "smoke": {
+          "checks": {
+            "application_received_text": true,
+            "claim": true,
+            "hello_protocol_3": true,
+            "keys_acknowledged": true,
+            "primary_focus_unchanged": true
+          },
+          "status": "pass"
+        }
+      },
+      "compiler": {
+        "sha256": "f04191f6a7b2cd7d9a62e1745872b8a6088791e5af6955488c69c9b2c4668bc9",
+        "version": "16.2.1 20260810"
+      },
+      "detection_drift": {},
+      "error": null,
+      "hyprland": {
+        "header_version": "0.56.2",
+        "headers_sha256": "88a6875af00203627b264a5c1f9908781be4ad8d9cee4e577fef174e72dd0e28",
+        "package_version": "0.56.2-2",
+        "sha256": "da8fcacf347bcbed83edc40108c6e2298da095e22246bd764e9bb382786cebb2"
+      },
+      "plugin": {
+        "driver_version": "",
+        "module_sha256": "17ce4c243b81665770e0429c7301224a20b4f14de28d050d9fa43ede1958f9d2",
+        "options": {
+          "CUA_HYPRLAND_INPUT": "ON",
+          "CUA_HYPRLAND_INPUT_TRACE": "OFF",
+          "CUA_HYPRLAND_TEST_INPUT": "OFF"
+        },
+        "refs": [
+          "main"
+        ],
+        "tree": "b477f0617505b45ef87ea7e1a3b56ad8ce51fff4"
+      },
+      "run_url": "https://github.com/trycua/cua/actions/runs/38032833166",
+      "runtime": {
+        "basename": "libstdc++.so.6.0.36",
+        "packages": {
+          "abseil-cpp": "20260817.0-2",
+          "aquamarine": "0.15.0-2",
+          "brotli": "1.2.0-1",
+          "bzip2": "1.0.8-6",
+          "cairo": "1.18.4-1",
+          "dav1d": "1.5.4-1",
+          "expat": "2.8.4-1",
+          "file": "5.48-1",
+          "fontconfig": "2:2.18.3-2",
+          "freetype2": "2.14.3-1",
+          "fribidi": "1.0.16-2",
+          "gdk-pixbuf2": "2.44.7-1",
+          "glib2": "2.88.3-1",
+          "glibc": "2.44+r24+g16be1518495f-1",
+          "glslang": "1:1.4.357.0-1",
+          "glycin": "2.1.5-2",
+          "graphite": "1:1.3.15-1",
+          "harfbuzz": "14.4.0-1",
+          "highway": "1.4.0-1",
+          "hyprcursor": "0.1.13-7",
+          "hyprgraphics": "0.5.1-4",
+          "hyprlang": "0.6.8-5",
+          "hyprutils": "0.14.2-1",
+          "icu": "78.3-1",
+          "lcms2": "2.19.1-1",
+          "libdatrie": "0.2.14-1",
+          "libdisplay-info": "0.3.0-1",
+          "libdrm": "2.4.134-1",
+          "libei": "1.6.0-1",
+          "libevdev": "1.13.7-1",
+          "libffi": "3.8.0-1",
+          "libgcc": "16.2.1+r23+gd564253eb6c8-1",
+          "libglvnd": "1.7.0-3",
+          "libgomp": "16.2.1+r23+gd564253eb6c8-1",
+          "libgudev": "238-3",
+          "libinput": "1.31.3-1",
+          "libjpeg-turbo": "3.2.0-2",
+          "libjxl": "0.12.0-1",
+          "libpng": "1.6.58-2",
+          "librsvg": "2:2.62.3-1",
+          "libseccomp": "2.6.0-1",
+          "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+          "libthai": "0.1.30-1",
+          "libwacom": "2.19.1-1",
+          "libwebp": "1.6.0-2",
+          "libx11": "1.8.13-1",
+          "libxau": "1.0.12-1",
+          "libxcb": "1.17.0-1",
+          "libxcursor": "1.2.3-1",
+          "libxdmcp": "1.1.5-2",
+          "libxext": "1.3.7-1",
+          "libxfixes": "6.0.2-1",
+          "libxkbcommon": "1.13.2-1",
+          "libxml2": "2.15.4-1",
+          "libxrender": "0.9.12-1",
+          "libzip": "1.11.4-1",
+          "lua": "5.5.1-1",
+          "lua54": "5.4.9-1",
+          "mesa": "1:26.2.2-1",
+          "mtdev": "1.1.7-1",
+          "muparser": "2.3.5-2",
+          "openssl": "3.6.4-1",
+          "pango": "1:1.58.2-1",
+          "pcre2": "10.48-1",
+          "pixman": "0.46.4-1",
+          "re2": "2:2025.11.05-6",
+          "seatd": "0.9.3-1",
+          "spirv-tools": "1:1.4.357.0-1",
+          "systemd-libs": "261.2-1",
+          "tomlplusplus": "3.4.0-2",
+          "util-linux-libs": "2.42.3-1",
+          "wayland": "1.26.0-1",
+          "xcb-util-errors": "1.0.1-2",
+          "xcb-util-wm": "0.4.2-2",
+          "xz": "5.8.3-1",
+          "zlib": "1:1.3.2-3",
+          "zstd": "1.5.7-3"
+        },
+        "sha256": "f5fc7380f2ae46fa4053a64be04e7b98109f1066a4bbfff3c37042488aa0be0e"
+      },
+      "status": "pass",
+      "tracked_packages": {
+        "aquamarine": "0.15.0-2",
+        "gcc": "16.2.1+r23+gd564253eb6c8-1",
+        "glibc": "2.44+r24+g16be1518495f-1",
+        "hyprcursor": "0.1.13-7",
+        "hyprgraphics": "0.5.1-4",
+        "hyprland": "0.56.2-2",
+        "hyprlang": "0.6.8-5",
+        "hyprutils": "0.14.2-1",
+        "libgcc": "16.2.1+r23+gd564253eb6c8-1",
+        "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+        "libxkbcommon": "1.13.2-1",
+        "wayland": "1.26.0-1"
+      }
+    },
+    {
+      "abi_key": "89cc2f58bf5a70e9",
+      "built_from_channel": "arch",
+      "channels": [
+        "arch",
+        "omarchy-edge"
+      ],
+      "checked_at": "2026-10-10T07:01:56Z",
+      "checks": {
+        "build": {
+          "status": "pass"
+        },
+        "ctest": {
+          "failed": 0,
+          "failures": [],
+          "status": "pass",
+          "total": 20
+        },
+        "load": {
+          "checks": {
+            "abi_match": true,
+            "compositor_epoch": true,
+            "input_v3_state": true,
+            "keyboard_layout_independent": true,
+            "transport_ready": true
+          },
+          "status": "pass"
+        },
+        "smoke": {
+          "checks": {
+            "application_received_text": true,
+            "claim": true,
+            "hello_protocol_3": true,
+            "keys_acknowledged": true,
+            "primary_focus_unchanged": true
+          },
+          "status": "pass"
+        }
+      },
+      "compiler": {
+        "sha256": "f04191f6a7b2cd7d9a62e1745872b8a6088791e5af6955488c69c9b2c4668bc9",
+        "version": "16.2.1 20260810"
+      },
+      "detection_drift": {},
+      "error": null,
+      "hyprland": {
+        "header_version": "0.56.2",
+        "headers_sha256": "1fdefe6ac027a159d04a5dfee4928ec7ebd15544a9a25b5f66d2f5a46fcf364a",
+        "package_version": "0.56.2-4",
+        "sha256": "55da553be71222566ee73b973d2f56dbb9939044d8f22f81aa54b66c83f2f6d1"
+      },
+      "plugin": {
+        "driver_version": "",
+        "module_sha256": "1b08260f4db02ff26698055ff2001512f2d0c11672bd6ef21723644f23ce508c",
+        "options": {
+          "CUA_HYPRLAND_INPUT": "ON",
+          "CUA_HYPRLAND_INPUT_TRACE": "OFF",
+          "CUA_HYPRLAND_TEST_INPUT": "OFF"
+        },
+        "refs": [
+          "main"
+        ],
+        "tree": "b477f0617505b45ef87ea7e1a3b56ad8ce51fff4"
+      },
+      "run_url": "https://github.com/trycua/cua/actions/runs/38032833166",
+      "runtime": {
+        "basename": "libstdc++.so.6.0.36",
+        "packages": {
+          "abseil-cpp": "20260817.0-2",
+          "aquamarine": "0.15.1-1",
+          "brotli": "1.2.0-1",
+          "bzip2": "1.0.8-6",
+          "cairo": "1.18.6-1",
+          "dav1d": "1.5.4-1",
+          "expat": "2.9.0-1",
+          "file": "5.48-1",
+          "fontconfig": "2:2.18.3-2",
+          "freetype2": "2.14.3-1",
+          "fribidi": "1.0.17-1",
+          "gdk-pixbuf2": "2.44.8-1",
+          "glib2": "2.90.1-1",
+          "glibc": "2.44+r50+g1848099f063e-1",
+          "glslang": "1:1.4.363.0-1",
+          "glycin": "2.2.2-1",
+          "graphite": "1:1.3.15-1",
+          "harfbuzz": "14.6.0-1",
+          "highway": "1.4.0-1",
+          "hyprcursor": "0.1.13-7",
+          "hyprgraphics": "0.5.1-4",
+          "hyprlang": "0.6.8-5",
+          "hyprutils": "0.14.2-1",
+          "icu": "78.3-1",
+          "lcms2": "2.19.1-1",
+          "libdatrie": "0.2.14-1",
+          "libdisplay-info": "0.3.0-1",
+          "libdrm": "2.4.134-1",
+          "libei": "1.6.0-1",
+          "libevdev": "1.14.0-1",
+          "libffi": "3.8.0-1",
+          "libgcc": "16.2.1+r23+gd564253eb6c8-1",
+          "libglvnd": "1.7.0-3",
+          "libgomp": "16.2.1+r23+gd564253eb6c8-1",
+          "libgudev": "238-3",
+          "libinput": "1.32.0-1",
+          "libjpeg-turbo": "3.2.0-2",
+          "libjxl": "0.12.0-1",
+          "libpng": "1.6.59-1",
+          "librsvg": "2:2.63.2-1",
+          "libseccomp": "2.6.0-1",
+          "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+          "libthai": "0.1.30-1",
+          "libwacom": "2.20.0-1",
+          "libwebp": "1.6.0-2",
+          "libx11": "1.8.13-2",
+          "libxau": "1.0.12-1",
+          "libxcb": "1.17.0-1",
+          "libxcursor": "1.2.3-1",
+          "libxdmcp": "1.1.5-2",
+          "libxext": "1.3.7-1",
+          "libxfixes": "6.0.2-1",
+          "libxkbcommon": "1.13.2-1",
+          "libxml2": "2.15.4-1",
+          "libxrender": "0.9.12-1",
+          "libzip": "1.11.4-1",
+          "lua": "5.5.1-1",
+          "lua54": "5.4.9-1",
+          "mesa": "1:26.2.4-1",
+          "mtdev": "1.1.7-1",
+          "muparser": "2.3.5-2",
+          "openssl": "3.6.5-1",
+          "pango": "1:1.58.2-1",
+          "pcre2": "10.49-1",
+          "pixman": "0.46.4-1",
+          "re2": "2:2025.11.05-6",
+          "seatd": "0.9.3-1",
+          "spirv-tools": "1:1.4.363.0-1",
+          "systemd-libs": "262-1",
+          "tomlplusplus": "3.4.0-2",
+          "util-linux-libs": "2.42.4-1",
+          "wayland": "1.26.0-1",
+          "xcb-util-errors": "1.0.1-2",
+          "xcb-util-wm": "0.4.2-2",
+          "xz": "5.8.4-1",
+          "zlib": "1:1.3.2-3",
+          "zstd": "1.5.7-3"
+        },
+        "sha256": "f5fc7380f2ae46fa4053a64be04e7b98109f1066a4bbfff3c37042488aa0be0e"
+      },
+      "status": "pass",
+      "tracked_packages": {
+        "aquamarine": "0.15.1-1",
+        "gcc": "16.2.1+r23+gd564253eb6c8-1",
+        "glibc": "2.44+r50+g1848099f063e-1",
+        "hyprcursor": "0.1.13-7",
+        "hyprgraphics": "0.5.1-4",
+        "hyprland": "0.56.2-4",
+        "hyprlang": "0.6.8-5",
+        "hyprutils": "0.14.2-1",
+        "libgcc": "16.2.1+r23+gd564253eb6c8-1",
+        "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+        "libxkbcommon": "1.13.2-1",
+        "wayland": "1.26.0-1"
+      }
+    },
     {
       "abi_key": "89cc2f58bf5a70e9",
       "built_from_channel": "arch",
@@ -831,9 +1159,9 @@
       }
     }
   ],
-  "generated_at": "2026-10-09T12:36:55Z",
+  "generated_at": "2026-10-10T07:02:22Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/37930840071",
+  "run_url": "https://github.com/trycua/cua/actions/runs/38032833166",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

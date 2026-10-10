@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, write_private};
+use crate::assertion::{now_secs, remove_stale_temps, write_private};
 use crate::oidc::Identity;
 
 /// Prefix of machine tokens (tells them apart from static relay tokens and
@@ -244,8 +244,10 @@ impl Directory {
         }
     }
 
-    /// Loads (or starts) the directory persisted at `path`.
+    /// Loads (or starts) the directory persisted at `path`, first removing
+    /// temp files an interrupted write left behind.
     pub fn open(path: PathBuf, max_per_account: usize) -> std::io::Result<Self> {
+        remove_stale_temps(&path)?;
         let records = match std::fs::read(&path) {
             Ok(raw) => {
                 let list: Vec<MachineRecord> = serde_json::from_slice(&raw)

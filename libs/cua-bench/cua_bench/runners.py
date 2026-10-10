@@ -101,6 +101,14 @@ async def run_single_task(
         result = await run_single_task(Path("./task"), agent_fn=my_agent)
     """
     env = None
+    step_count = 0
+    outcome = None
+
+    def finish(**kwargs):
+        nonlocal outcome
+        outcome = TaskResult(**kwargs)
+        return outcome
+
     try:
         # Create environment using gym interface
         env = make(str(env_path), split=split)
@@ -118,7 +126,7 @@ async def run_single_task(
                 await env.solve()
                 step_count = env.step_count
             else:
-                return TaskResult(
+                return finish(
                     task_path=str(env_path),
                     variant_id=task_index,
                     success=False,
@@ -158,7 +166,7 @@ async def run_single_task(
         if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
             raise ValueError("Evaluator reward must be finite and within [0, 1]")
 
-        return TaskResult(
+        return finish(
             task_path=str(env_path),
             variant_id=task_index,
             success=reward >= 0.5,  # Common threshold
@@ -167,20 +175,24 @@ async def run_single_task(
         )
 
     except Exception as e:
-        return TaskResult(
+        return finish(
             task_path=str(env_path),
             variant_id=task_index,
             success=False,
             reward=0.0,
-            steps=0,
+            steps=step_count,
             error=str(e),
         )
     finally:
         if env is not None:
             try:
                 await env.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                if outcome is not None:
+                    outcome.success = False
+                    outcome.reward = 0.0
+                    detail = f"Environment cleanup failed: {close_error}"
+                    outcome.error = f"{outcome.error}; {detail}" if outcome.error else detail
 
 
 async def run_benchmark(

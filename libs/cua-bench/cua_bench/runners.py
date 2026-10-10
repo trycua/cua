@@ -100,6 +100,9 @@ async def run_single_task(
 
         result = await run_single_task(Path("./task"), agent_fn=my_agent)
     """
+    if type(max_steps) is not int or max_steps < 1:
+        raise ValueError("max_steps must be a positive integer")
+
     env = None
     step_count = 0
     outcome = None

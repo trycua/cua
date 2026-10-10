@@ -173,7 +173,7 @@ impl ActionCancellation {
         (CancelOnDrop(cancellation.clone()), cancellation)
     }
 
-    fn check(&self) -> Result<()> {
+    pub(crate) fn check(&self) -> Result<()> {
         if self.0.load(Ordering::Acquire) {
             return Err(ActionCancelled.into());
         }

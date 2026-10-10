@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private int _counter;
     private int _accelCount;
     private int _clickCount;
+    private int _rightClickCount;
     private bool _targetPointerSeen;
     private readonly ScenariosManifest _manifest;
     private readonly string? _fixtureStatePath;
@@ -223,6 +224,7 @@ public partial class MainWindow : Window
 
     private void OnTargetDoubleClick(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton != MouseButton.Left) return;
         // Belt + suspenders: Button raises MouseDoubleClick separately from
         // the second MouseLeftButtonDown. Capturing both means even
         // back-end implementations that fire only one path still register.
@@ -233,7 +235,8 @@ public partial class MainWindow : Window
 
     private void OnTargetRightDown(object sender, MouseButtonEventArgs e)
     {
-        LblLastAction.Text = "last_action=right_click";
+        _rightClickCount++;
+        LblLastAction.Text = $"last_action=right_click modifiers={Keyboard.Modifiers} right_clicks={_rightClickCount}";
         PublishFixtureState();
     }
 

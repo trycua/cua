@@ -7263,8 +7263,9 @@ impl Tool for RightClickTool {
                 child window at that point.\n\n\
                 Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is \
                 required in both modes. \
-                `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't \
-                propagate modifier-key state).".into(),
+                `modifier` holds keys during delivery_mode:\"foreground\" via SendInput. \
+                Background right-clicks with modifiers return background_unavailable because \
+                PostMessage cannot carry live modifier-key state.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Target process ID."},
@@ -7297,6 +7298,21 @@ impl Tool for RightClickTool {
         let y = args.opt_f64("y");
         let delivery = DeliveryMode::from_args(&args);
         let cursor_key = resolve_cursor_key(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
+        if !modifiers.is_empty() && delivery != DeliveryMode::Foreground {
+            return ToolResult::error(
+                "right_click modifiers require delivery_mode:\"foreground\" on Windows; \
+                 PostMessage cannot carry live modifier-key state",
+            )
+            .with_structured(json!({
+                "code": "background_unavailable",
+                "effect": "refused",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": "Windows modifier clicks require SendInput so the target observes live modifier state"
+                }
+            }));
+        }
         // Port Swift's full validation set.
         let has_xy = x.is_some() && y.is_some();
         let partial_xy = x.is_some() != y.is_some();
@@ -7424,13 +7440,9 @@ impl Tool for RightClickTool {
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
+                        let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                         crate::input::send_click_synthesized_active_mods(
-                            hwnd,
-                            cx,
-                            cy,
-                            1,
-                            "right",
-                            &[],
+                            hwnd, cx, cy, 1, "right", &mod_refs,
                         )
                     }
                 })
@@ -7542,13 +7554,9 @@ impl Tool for RightClickTool {
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
+                        let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                         crate::input::send_click_synthesized_active_mods(
-                            hwnd,
-                            sx_i,
-                            sy_i,
-                            1,
-                            "right",
-                            &[],
+                            hwnd, sx_i, sy_i, 1, "right", &mod_refs,
                         )
                     }
                 })

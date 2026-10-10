@@ -1015,7 +1015,7 @@ class TaskRunner:
         if process.returncode == 0:
             return False
         message = stderr.decode("utf-8", errors="replace").lower()
-        missing = ("no such object", "no such container", "no such network")
+        missing = ("no such object", "no such container", "no such network", "not found")
         if process.returncode == 1 and any(token in message for token in missing):
             return True
         raise RuntimeError(f"Docker {kind} inspection failed: {message[:300]}")

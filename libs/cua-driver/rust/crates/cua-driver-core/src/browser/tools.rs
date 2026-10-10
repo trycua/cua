@@ -911,7 +911,9 @@ impl BrowserClickTool {
                 input_route=\"dom_event\" (synthetic \
                 el.click(), ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
-                controls may ignore synthetic events. \
+                controls may ignore synthetic events. If the handler opens a \
+                page-owned JavaScript dialog, the call returns at once with a \
+                dialog block (present, kind, dialog_id) to pass to browser_dialog. \
                 Refused for heuristic bindings."
                 .into(),
             input_schema: json!({
@@ -1054,6 +1056,20 @@ impl Tool for BrowserClickTool {
             }
         }
 
+        // A page-owned dialog blocks the renderer, so any frame revalidation
+        // below would wait out its timeout. Refuse before touching the page.
+        if let Some(open) = conn_dialog_state(&validated) {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!(
+                    "a {} dialog is already open on the exact tab; resolve it with browser_dialog before clicking",
+                    open.kind
+                ),
+            )
+            .with_detail(json!({ "dialog": dialog_block(Some(&open)) }))
+            .to_tool_result();
+        }
+
         // Ref path: re-prove the ref's frame/document identity and get
         // the session (tab or contained OOPIF child) its node lives in.
         let (backend_node_id, frame_kind, cdp_session) = match &ext_ref {
@@ -1102,6 +1118,11 @@ impl Tool for BrowserClickTool {
         // dom_event route: explicit opt-in only.
         if route == "dom_event" {
             let backend = backend_node_id.expect("checked above");
+            let cdp_target_id = validated.tab.cdp_target_id.as_str();
+            // A handler that opens a page-owned dialog blocks the frame, and
+            // with it the reply to the click. Observe dialog events before
+            // dispatching so the click can return as soon as one opens.
+            ensure_dialog_observation(conn, validated.cdp_session.as_str(), cdp_target_id).await;
             let resolved = match conn
                 .call(
                     Some(cdp),
@@ -1163,36 +1184,72 @@ impl Tool for BrowserClickTool {
                         .await;
                 }
             }
-            return match conn
-                .call(
-                    Some(cdp),
-                    "Runtime.callFunctionOn",
-                    json!({
-                        "objectId": object_id,
-                        "functionDeclaration": "function() { this.click(); }",
-                    }),
-                )
-                .await
-            {
-                Ok(_) => ToolResult::text(format!(
-                    "dispatched synthetic DOM click on {} in {tab_id}; application effect not \
-                     verified (trust-gated controls may ignore untrusted events). Refresh page \
-                     state and verify the expected postcondition",
-                    ext_ref.as_deref().unwrap_or("?")
-                ))
-                .with_structured(json!({
-                    "status": "ok",
-                    "effect": "unverifiable",
-                    "route": "dom_event",
-                    "target_id": target_id,
-                    "tab_id": tab_id,
-                    "ref": ext_ref,
-                    "frame": frame_kind,
-                    "escalation": {
-                        "recommended": "page",
-                        "reason": "synthetic DOM dispatch cannot prove control activation; refresh page state and verify the expected postcondition",
-                    },
-                })),
+            // Race the click's reply against a dialog opening. confirm(),
+            // alert(), and prompt() block the JS frame that the call is
+            // awaiting, so the reply never arrives while the dialog is up.
+            // The dialog event is browser-side and still gets through.
+            let click = conn.call(
+                Some(cdp),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": "function() { this.click(); }",
+                }),
+            );
+            tokio::pin!(click);
+            let outcome = loop {
+                tokio::select! {
+                    replied = &mut click => break replied.map(|_| ()),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                        if conn.dialog_state(cdp_target_id).is_some() {
+                            break Ok(());
+                        }
+                    }
+                }
+            };
+            // A dialog can also open and be reported before a quick reply.
+            let dialog = conn.dialog_state(cdp_target_id);
+            return match outcome {
+                Ok(()) => {
+                    let text = match &dialog {
+                        Some(open) => format!(
+                            "dispatched synthetic DOM click on {} in {tab_id}; its handler opened \
+                             a {} dialog that is blocking the page. Inspect and resolve it with \
+                             browser_dialog (dialog_id {}) before any other action on this tab",
+                            ext_ref.as_deref().unwrap_or("?"),
+                            open.kind,
+                            dialog_capability_id(open.generation)
+                        ),
+                        None => format!(
+                            "dispatched synthetic DOM click on {} in {tab_id}; application effect not \
+                             verified (trust-gated controls may ignore untrusted events). Refresh page \
+                             state and verify the expected postcondition",
+                            ext_ref.as_deref().unwrap_or("?")
+                        ),
+                    };
+                    let escalation = if dialog.is_some() {
+                        json!({
+                            "recommended": "page",
+                            "reason": "the click opened a page-owned JavaScript dialog; resolve it with browser_dialog, then refresh page state",
+                        })
+                    } else {
+                        json!({
+                            "recommended": "page",
+                            "reason": "synthetic DOM dispatch cannot prove control activation; refresh page state and verify the expected postcondition",
+                        })
+                    };
+                    ToolResult::text(text).with_structured(json!({
+                        "status": "ok",
+                        "effect": "unverifiable",
+                        "route": "dom_event",
+                        "target_id": target_id,
+                        "tab_id": tab_id,
+                        "ref": ext_ref,
+                        "frame": frame_kind,
+                        "dialog": dialog_block(dialog.as_ref()),
+                        "escalation": escalation,
+                    }))
+                }
                 Err(e) => ToolResult::error(format!("DOM click failed: {e}")),
             };
         }
@@ -1334,6 +1391,52 @@ impl Tool for BrowserClickTool {
 }
 
 /// Center of the content quad from a `DOM.getBoxModel` result.
+/// The public id for one dialog generation, shared by `browser_click` and
+/// `browser_dialog` so a caller can hand the click's id straight back.
+fn dialog_capability_id(generation: u64) -> String {
+    format!("dialog-{generation}")
+}
+
+/// Make sure a `Page.javascriptDialogOpening` on this tab is attributed to
+/// its target: register the tab session and enable Page events once. Best
+/// effort; a failure only means a dialog cannot be observed from here.
+async fn ensure_dialog_observation(conn: &CdpConnection, tab_session: &str, cdp_target_id: &str) {
+    if conn.dialog_state(cdp_target_id).is_some() || conn.has_dialog_session(cdp_target_id) {
+        return;
+    }
+    // Register before Page.enable so an opening event delivered before the
+    // command reply is still attributed to the exact target.
+    conn.register_dialog_session(tab_session, cdp_target_id);
+    if conn
+        .call(Some(tab_session), "Page.enable", json!({}))
+        .await
+        .is_err()
+        && conn.dialog_state(cdp_target_id).is_none()
+    {
+        conn.unregister_dialog_session(tab_session, cdp_target_id);
+    }
+}
+
+/// The dialog currently blocking a validated tab, if any is known.
+fn conn_dialog_state(
+    validated: &super::engine::ValidatedTab,
+) -> Option<super::cdp_ws::CdpDialogState> {
+    validated
+        .conn
+        .dialog_state(validated.tab.cdp_target_id.as_str())
+}
+
+fn dialog_block(dialog: Option<&super::cdp_ws::CdpDialogState>) -> Value {
+    match dialog {
+        Some(dialog) => json!({
+            "present": true,
+            "kind": dialog.kind,
+            "dialog_id": dialog_capability_id(dialog.generation),
+        }),
+        None => json!({ "present": false }),
+    }
+}
+
 fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let quad = box_model.get("model")?.get("content")?.as_array()?;
     if quad.len() < 8 {
@@ -2253,7 +2356,7 @@ impl Tool for BrowserDialogTool {
                 .to_tool_result()
             };
         };
-        let dialog_id = format!("dialog-{}", dialog.generation);
+        let dialog_id = dialog_capability_id(dialog.generation);
         if action == "inspect" {
             return ToolResult::text(format!("{} dialog is open in {tab_id}", dialog.kind))
                 .with_structured(json!({

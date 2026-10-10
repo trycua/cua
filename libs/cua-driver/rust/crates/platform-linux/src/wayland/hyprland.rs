@@ -357,7 +357,7 @@ fn query_with<T: serde::de::DeserializeOwned>(
     // dispatch commands. JSON output does not imply a read-only operation.
     let read_only = matches!(
         command,
-        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos" | "j/locked"
+        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos" | "j/locked" | "j/cua:status"
     );
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
@@ -886,6 +886,16 @@ struct Locked {
 /// client is still running.
 pub fn session_locked() -> Result<bool> {
     Ok(query::<Locked>("j/locked")?.locked)
+}
+
+/// The Cua plugin's content-free count of input a person produces (keys,
+/// pointer-device motion, buttons, wheel and gestures, touch, tablet, switch
+/// toggles and input-device arrivals; never compositor warps, modifier-only
+/// updates or virtual-keyboard creation).
+/// `None` for a plugin that does not report it.
+pub fn plugin_external_input_count() -> Result<Option<u64>> {
+    let status: serde_json::Value = query("j/cua:status")?;
+    Ok(status["input"]["external_input_count"].as_u64())
 }
 
 /// The availability predicate a compositor projection can establish, for a

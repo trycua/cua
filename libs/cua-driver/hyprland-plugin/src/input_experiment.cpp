@@ -2,6 +2,7 @@
 // TARGET uses independent resources; FOREGROUND_TARGET explicitly uses the primary seat.
 #include "input_experiment.hpp"
 #include "session_availability.hpp"
+#include "external_input.hpp"
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
 #include "input_client_deadline.hpp"
@@ -21,6 +22,10 @@
 #include <src/state/MonitorState.hpp>
 #include <src/desktop/state/FocusState.hpp>
 #include <src/managers/input/InputManager.hpp>
+#include <src/protocols/VirtualKeyboard.hpp>
+#include <src/protocols/VirtualPointer.hpp>
+#include <src/helpers/WLClasses.hpp>
+#include <aquamarine/backend/Backend.hpp>
 #include <src/pointer/PointerManager.hpp>
 #include <src/protocols/core/Seat.hpp>
 #include <src/protocols/core/DataDevice.hpp>
@@ -1429,6 +1434,45 @@ struct InputExperiment::DesktopListeners {
     CHyprSignalListener lock, unlock, active, layout, added, removed, destroyed;
     CHyprSignalListener keyboard_layout, pointer_focus, keyboard_focus;
     CHyprSignalListener mouse_move, mouse_button, mouse_axis, keyboard_key, touch_down, tablet_tip;
+    CHyprSignalListener touch_up, touch_motion, touch_cancel, tablet_axis, tablet_button, tablet_proximity;
+    // Per-device pointer listeners: only device events, never the
+    // compositor's own warps or refocus, reach these signals.
+    struct PointerListeners {
+        WP<IPointer> device;
+        CHyprSignalListener motion, absolute, swipe_begin, swipe_update, swipe_end, pinch_begin, pinch_update,
+            pinch_end, hold_begin, hold_end;
+    };
+    std::vector<PointerListeners> pointers;
+    // Tablet-pad buttons, rings and strips bypass the tablet bus.
+    struct PadListeners {
+        WP<CTabletPad> device;
+        CHyprSignalListener button, ring, strip;
+    };
+    std::vector<PadListeners> pads;
+    // Keys are counted from bus, physical-device and virtual-device listeners:
+    // Hyprland drops disabled or not-yet-permitted keyboards' keys before the
+    // bus notification. Modifier-only and keymap events are never counted.
+    struct KeyboardListeners {
+        WP<IKeyboard> device;
+        CHyprSignalListener key;
+    };
+    std::vector<KeyboardListeners> keyboards;
+    // Protocol resources are watched synchronously at creation, so even a
+    // virtual keyboard used and destroyed between scans has its keys counted.
+    struct VirtualKeyboardListeners {
+        WP<CVirtualKeyboardV1Resource> resource;
+        CHyprSignalListener key;
+    };
+    std::vector<VirtualKeyboardListeners> virtual_keyboards;
+    // Lid and tablet-mode switches go straight to switch bindings.
+    struct SwitchListeners {
+        WP<Aquamarine::ISwitch> device;
+        CHyprSignalListener fire;
+    };
+    std::vector<SwitchListeners> switches;
+    // Device arrivals are counted immediately, except protocol virtual
+    // keyboards: their creation only attaches a key listener.
+    CHyprSignalListener new_pointer, new_virtual_pointer, new_pad, new_switch, new_keyboard, new_virtual_keyboard;
 
     explicit DesktopListeners(InputExperiment& input) : owner(input) {
         lock = g_pSessionLockManager->m_events.lock.listen([this] { changed(); });
@@ -1443,12 +1487,46 @@ struct InputExperiment::DesktopListeners {
             keyboard_focus = g_pSeatManager->m_events.keyboardFocusChange.listen([this] { primary_changed(); });
             // These notifications precede physical delivery. Retire our owned
             // press before the user's event can become held on the same resource.
-            mouse_move = Event::bus()->m_events.input.mouse.move.listen([this](Vector2D, Event::SCallbackInfo&) { external_input(); });
-            mouse_button = Event::bus()->m_events.input.mouse.button.listen([this](IPointer::SButtonEvent, Event::SCallbackInfo&) { external_input(); });
-            mouse_axis = Event::bus()->m_events.input.mouse.axis.listen([this](IPointer::SAxisEvent, Event::SCallbackInfo&) { external_input(); });
-            keyboard_key = Event::bus()->m_events.input.keyboard.key.listen([this](IKeyboard::SKeyEvent, Event::SCallbackInfo&) { external_input(); });
-            touch_down = Event::bus()->m_events.input.touch.down.listen([this](ITouch::SDownEvent, Event::SCallbackInfo&) { external_input(); });
-            tablet_tip = Event::bus()->m_events.input.tablet.tip.listen([this](CTablet::STipEvent, Event::SCallbackInfo&) { external_input(); });
+            mouse_move = Event::bus()->m_events.input.mouse.move.listen([this](Vector2D, Event::SCallbackInfo&) {
+                // Attach to any device that appeared since the last scan.
+                watch_devices(true);
+                external_input(ExternalInputKind::unified_motion);
+            });
+            mouse_button = Event::bus()->m_events.input.mouse.button.listen([this](IPointer::SButtonEvent, Event::SCallbackInfo&) { external_input(ExternalInputKind::button); });
+            mouse_axis = Event::bus()->m_events.input.mouse.axis.listen([this](IPointer::SAxisEvent, Event::SCallbackInfo&) { external_input(ExternalInputKind::axis); });
+            keyboard_key = Event::bus()->m_events.input.keyboard.key.listen([this](IKeyboard::SKeyEvent, Event::SCallbackInfo&) { external_input(ExternalInputKind::key); });
+            touch_down = Event::bus()->m_events.input.touch.down.listen([this](ITouch::SDownEvent, Event::SCallbackInfo&) { external_input(ExternalInputKind::touch); });
+            tablet_tip = Event::bus()->m_events.input.tablet.tip.listen([this](CTablet::STipEvent, Event::SCallbackInfo&) { external_input(ExternalInputKind::tablet); });
+            touch_up = Event::bus()->m_events.input.touch.up.listen([this](ITouch::SUpEvent, Event::SCallbackInfo&) { count_input(ExternalInputKind::touch); });
+            touch_motion = Event::bus()->m_events.input.touch.motion.listen([this](ITouch::SMotionEvent, Event::SCallbackInfo&) { count_input(ExternalInputKind::touch); });
+            touch_cancel = Event::bus()->m_events.input.touch.cancel.listen([this](ITouch::SCancelEvent, Event::SCallbackInfo&) { count_input(ExternalInputKind::touch); });
+            tablet_axis = Event::bus()->m_events.input.tablet.axis.listen([this](CTablet::SAxisEvent, Event::SCallbackInfo&) { count_input(ExternalInputKind::tablet); });
+            tablet_button = Event::bus()->m_events.input.tablet.button.listen([this](CTablet::SButtonEvent, Event::SCallbackInfo&) { count_input(ExternalInputKind::tablet); });
+            tablet_proximity = Event::bus()->m_events.input.tablet.proximity.listen([this](CTablet::SProximityEvent, Event::SCallbackInfo&) { count_input(ExternalInputKind::tablet); });
+            if (g_pCompositor->m_aqBackend) {
+                auto& backend = g_pCompositor->m_aqBackend->events;
+                new_pointer = backend.newPointer.listen(
+                    [this](const SP<Aquamarine::IPointer>&) { count_input(ExternalInputKind::device_added); });
+                // Backend keyboards are physical (or kernel uinput); protocol
+                // virtual keyboards never arrive here.
+                new_keyboard = backend.newKeyboard.listen(
+                    [this](const SP<Aquamarine::IKeyboard>&) { count_input(ExternalInputKind::device_added); });
+                new_pad = backend.newTabletPad.listen(
+                    [this](const SP<Aquamarine::ITabletPad>&) { count_input(ExternalInputKind::device_added); });
+                new_switch = backend.newSwitch.listen([this](const SP<Aquamarine::ISwitch>& device) {
+                    count_input(ExternalInputKind::device_added);
+                    watch_switch(device);
+                });
+            }
+            if (PROTO::virtualPointer)
+                new_virtual_pointer = PROTO::virtualPointer->m_events.newPointer.listen(
+                    [this](const SP<CVirtualPointerV1Resource>&) { count_input(ExternalInputKind::device_added); });
+            if (PROTO::virtualKeyboard)
+                new_virtual_keyboard = PROTO::virtualKeyboard->m_events.newKeyboard.listen(
+                    [this](const SP<CVirtualKeyboardV1Resource>& resource) { watch_virtual_keyboard(resource); });
+            for (const auto& entry : g_pInputManager->m_switches)
+                if (const auto device = entry.pDevice.lock()) watch_switch(device);
+            watch_devices(false);
         }
         added = Event::bus()->m_events.monitor.preAdded.listen([this](PHLMONITOR monitor) {
             changed(); watch(monitor);
@@ -1463,7 +1541,81 @@ struct InputExperiment::DesktopListeners {
     void changed() {
         for (auto& lane : owner.lanes_) lane->desktop_transition();
     }
-    void external_input() {
+    // Count only: these events never interrupted a foreground lease before
+    // and still do not.
+    void count_input(ExternalInputKind kind) { owner.external_input_.note(kind); }
+    void watch_virtual_keyboard(const SP<CVirtualKeyboardV1Resource>& resource) {
+        std::erase_if(virtual_keyboards, [](const auto& entry) { return entry.resource.expired(); });
+        if (!resource || std::ranges::any_of(virtual_keyboards, [&](const auto& entry) { return entry.resource.lock() == resource; }))
+            return;
+        auto& entry = virtual_keyboards.emplace_back();
+        entry.resource = resource;
+        // Resource keys are emitted before InputManager's enabled/allowed
+        // checks; this hook does not depend on newKeyboard listener order.
+        entry.key = resource->m_events.key.listen(
+            [this](const IKeyboard::SKeyEvent&) { count_input(ExternalInputKind::key); });
+    }
+    void watch_switch(const SP<Aquamarine::ISwitch>& device) {
+        std::erase_if(switches, [](const auto& entry) { return entry.device.expired(); });
+        if (!device || std::ranges::any_of(switches, [&](const auto& entry) { return entry.device.lock() == device; }))
+            return;
+        auto& entry = switches.emplace_back();
+        entry.device = device;
+        entry.fire = device->events.fire.listen(
+            [this](const Aquamarine::ISwitch::SFireEvent&) { count_input(ExternalInputKind::switch_toggle); });
+    }
+    // Rescanned on unified motion and before every status reading, so a
+    // device that appears without moving the cursor is still observed; a
+    // device found after the first scan counts once, because it may already
+    // have produced input unobserved. Virtual keyboard discovery only attaches
+    // listeners; creation and discovery are not deliberate input.
+    void watch_devices(bool count_new) {
+        if (!kProduction) return;
+        std::erase_if(virtual_keyboards, [](const auto& entry) { return entry.resource.expired(); });
+        std::erase_if(pointers, [](const auto& entry) { return entry.device.expired(); });
+        for (const auto& device : g_pInputManager->m_pointers) {
+            if (!device || std::ranges::any_of(pointers, [&](const auto& entry) { return entry.device.lock() == device; }))
+                continue;
+            auto& entry = pointers.emplace_back();
+            entry.device = device;
+            auto& events = device->m_pointerEvents;
+            entry.motion = events.motion.listen([this](const IPointer::SMotionEvent&) { count_input(ExternalInputKind::pointer_motion); });
+            entry.absolute = events.motionAbsolute.listen([this](const IPointer::SMotionAbsoluteEvent&) { count_input(ExternalInputKind::pointer_motion); });
+            entry.swipe_begin = events.swipeBegin.listen([this](const IPointer::SSwipeBeginEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.swipe_update = events.swipeUpdate.listen([this](const IPointer::SSwipeUpdateEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.swipe_end = events.swipeEnd.listen([this](const IPointer::SSwipeEndEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.pinch_begin = events.pinchBegin.listen([this](const IPointer::SPinchBeginEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.pinch_update = events.pinchUpdate.listen([this](const IPointer::SPinchUpdateEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.pinch_end = events.pinchEnd.listen([this](const IPointer::SPinchEndEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.hold_begin = events.holdBegin.listen([this](const IPointer::SHoldBeginEvent&) { count_input(ExternalInputKind::gesture); });
+            entry.hold_end = events.holdEnd.listen([this](const IPointer::SHoldEndEvent&) { count_input(ExternalInputKind::gesture); });
+            if (count_new) count_input(ExternalInputKind::device_added);
+        }
+        std::erase_if(keyboards, [](const auto& entry) { return entry.device.expired(); });
+        for (const auto& device : g_pInputManager->m_keyboards) {
+            if (!device || std::ranges::any_of(keyboards, [&](const auto& entry) { return entry.device.lock() == device; }))
+                continue;
+            auto& entry = keyboards.emplace_back();
+            entry.device = device;
+            entry.key = device->m_keyboardEvents.key.listen(
+                [this](const IKeyboard::SKeyEvent&) { count_input(ExternalInputKind::key); });
+            if (count_new && !device->isVirtual()) count_input(ExternalInputKind::device_added);
+        }
+        std::erase_if(pads, [](const auto& entry) { return entry.device.expired(); });
+        for (const auto& device : g_pInputManager->m_tabletPads) {
+            if (!device || std::ranges::any_of(pads, [&](const auto& entry) { return entry.device.lock() == device; }))
+                continue;
+            auto& entry = pads.emplace_back();
+            entry.device = device;
+            auto& events = device->m_padEvents;
+            entry.button = events.button.listen([this](const CTabletPad::SButtonEvent&) { count_input(ExternalInputKind::tablet); });
+            entry.ring = events.ring.listen([this](const CTabletPad::SRingEvent&) { count_input(ExternalInputKind::tablet); });
+            entry.strip = events.strip.listen([this](const CTabletPad::SStripEvent&) { count_input(ExternalInputKind::tablet); });
+            if (count_new) count_input(ExternalInputKind::device_added);
+        }
+    }
+    void external_input(ExternalInputKind kind) {
+        owner.external_input_.note(kind);
         for (auto& lane : owner.lanes_)
             if (lane->lease && lane->lease->route == InputRoute::primary_foreground)
                 lane->cancel_authority("foreground_interrupted", false);
@@ -1525,6 +1677,10 @@ void InputExperiment::resume() {
         throw;
     }
 }
+void InputExperiment::refresh_input_watch() {
+    if (desktop_listeners_) desktop_listeners_->watch_devices(true);
+}
+
 std::string InputExperiment::status_json() const {
     std::string states;
     for (const auto& lane : lanes_) {
@@ -1536,9 +1692,10 @@ std::string InputExperiment::status_json() const {
             lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus, lane->availability().json());
     }
     // Aggregate legacy fields remain available to existing test probes.
-    return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
+    return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"external_input_count":{},"lanes":[{}]}})",
         kProduction ? 3 : 0, !kProduction, !lanes_[0]->suspended && !lanes_[1]->suspended, lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
         lanes_[0]->seats.size() + lanes_[1]->seats.size(), lanes_[0]->pointers.size() + lanes_[1]->pointers.size(),
-        lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, states);
+        lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches,
+        external_input_.value(), states);
 }
 } // namespace cua::hyprland

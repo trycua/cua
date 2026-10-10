@@ -6,6 +6,7 @@ interactive environments, using the core gym interface (make, reset, step, evalu
 
 import asyncio
 import fnmatch
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -135,14 +136,22 @@ async def run_single_task(
                 done = isinstance(action, DoneAction)
 
         # Evaluate
-        if env.evaluate_task_fn is not None:
-            result = await env.evaluate()
-            if isinstance(result, (int, float)):
-                reward = float(result)
-            elif isinstance(result, list) and len(result) > 0:
-                reward = float(result[0])
-            elif isinstance(result, dict) and "reward" in result:
-                reward = float(result["reward"])
+        if env.evaluate_task_fn is None:
+            raise ValueError("Task has no evaluator")
+        result = await env.evaluate()
+        if isinstance(result, (int, float)) and not isinstance(result, bool):
+            raw_reward = result
+        elif isinstance(result, list) and result:
+            raw_reward = result[0]
+        elif isinstance(result, dict) and "reward" in result:
+            raw_reward = result["reward"]
+        else:
+            raise ValueError("Unsupported evaluator reward")
+        if isinstance(raw_reward, bool) or not isinstance(raw_reward, (int, float)):
+            raise ValueError("Evaluator reward must be numeric")
+        reward = float(raw_reward)
+        if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
+            raise ValueError("Evaluator reward must be finite and within [0, 1]")
 
         return TaskResult(
             task_path=str(env_path),

@@ -368,6 +368,7 @@ class TaskRunner:
                     if (
                         oracle_result.get("schema_version") != "cua-bench-oracle-result/v1"
                         or oracle_result.get("task_index") != task_index
+                        or oracle_result.get("execution_id") != task_id
                         or oracle_result.get("evaluated") is not True
                         or not isinstance(oracle_result.get("success"), bool)
                     ):
@@ -886,6 +887,7 @@ class TaskRunner:
             "CUA_PROVIDER": "simulated" if is_simulated else "remote",
             "CUA_TASK_PATH": "/app/env",
             "CUA_TASK_INDEX": str(task_index),
+            "CUA_EXECUTION_ID": task_id,
             "BATCH_TASK_INDEX": str(task_index),  # Legacy compat
             "BATCH_TASK_COUNT": "1",
         }

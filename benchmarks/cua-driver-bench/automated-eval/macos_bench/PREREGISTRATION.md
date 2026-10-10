@@ -1082,6 +1082,7 @@ A probe whose smoke shows a harness or app defect is fixed. The fix and its reas
 
 | Id | Tasks | Arms | Main commit (driver) | Written (UTC) |
 |---|---|---|---|---|
+| v2s1 | IR-01, IR-02, IR-03, IR-04, CDB-G04; 1 run each (`--smoke --bench-v2`) | AX (`cc-cua-driver-script`), B (`cc-codex-cu`, 26.930), `cc-claude-cu-helper` | `815dfd96a10c` (#4935, #4936; AX binary `d15b330db1f6`, A binary `33b85a6e3d2b`, skill tree `11cf6b720c31`); VM `cdb-v2`, a clone of `cdb-claudecu` | 2026-10-10T13:15Z |
 
 ### A14.9 Rename: `run_actions` is now `run_steps` (no protocol change)
 

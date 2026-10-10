@@ -204,6 +204,7 @@ final class IRModalController: NSObject, ModeController, NSTextFieldDelegate {
         status.setAccessibilityLabel("Status")
         content.addSubview(status)
         showPage(1, emit: false)
+        last = values()
 
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.sync(via: "poll")

@@ -784,3 +784,54 @@ class TestIndependentlyRecomputableActionTrace:
         report = await runners.run_benchmark(tmp_path, agent_fn=lambda *_: DoneAction())
         assert report.success_count == 0
         assert report.avg_reward == 0.0
+
+
+class TestPinnedDatasetRuntimeIntegration:
+    @pytest.mark.asyncio
+    async def test_modified_dataset_aborts_before_task_import_or_worker(self, tmp_path, monkeypatch):
+        import json
+        from cua_bench.dataset_manifest import scan_dataset
+        import cua_bench.runners as runners
+
+        task = tmp_path / "case"
+        task.mkdir()
+        (task / "main.py").write_text("fixture = 1\n")
+        manifest_path = tmp_path.parent / (tmp_path.name + "-manifest.json")
+        manifest_path.write_text(json.dumps(scan_dataset(tmp_path)))
+        (task / "main.py").write_text("fixture = 2\n")
+
+        def no_import(*args, **kwargs):
+            raise AssertionError("task discovery must not execute when manifest differs")
+
+        monkeypatch.setattr(runners, "make", no_import)
+        with pytest.raises(ValueError, match="dataset differs from manifest"):
+            await runners.run_benchmark(tmp_path, dataset_manifest=manifest_path, oracle=True)
+
+    @pytest.mark.asyncio
+    async def test_matching_manifest_is_bound_to_benchmark_result(self, tmp_path, monkeypatch):
+        import hashlib
+        import json
+        from types import SimpleNamespace
+        from cua_bench.dataset_manifest import scan_dataset
+        import cua_bench.runners as runners
+
+        task = tmp_path / "case"
+        task.mkdir()
+        (task / "main.py").write_text("fixture = 1\n")
+        manifest = scan_dataset(tmp_path)
+        pinned = tmp_path.parent / (tmp_path.name + "-pinned.json")
+        pinned.write_text(json.dumps(manifest))
+        monkeypatch.setattr(runners, "make", lambda *args, **kwargs: SimpleNamespace(
+            tasks_config_fn=lambda: [object()]
+        ))
+
+        async def worker(path, task_index=0, **kwargs):
+            return TaskResult(task_path=str(path), variant_id=task_index,
+                              success=True, reward=1.0, steps=1)
+        monkeypatch.setattr(runners, "run_single_task", worker)
+        outcome = await runners.run_benchmark(tmp_path, dataset_manifest=pinned, oracle=True)
+        expected = hashlib.sha256(json.dumps(
+            manifest, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        assert outcome.success_count == 1
+        assert outcome.dataset_manifest_sha256 == expected

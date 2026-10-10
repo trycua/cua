@@ -506,8 +506,9 @@ fn release_key_focus_fn() -> Option<ReleaseKeyFocusWithIdFn> {
     *SYM.get_or_init(|| find_sym(b"SLPSReleaseKeyFocusWithID\0").map(|p| unsafe { as_fn(p) }))
 }
 
-/// `OSStatus SLPSGetKeyFocusProcess(ProcessSerialNumber *psn)`
-type GetKeyFocusProcessFn = unsafe extern "C" fn(*mut c_void) -> i32;
+/// `OSStatus SLPSGetKeyFocusProcess(ProcessSerialNumber *psn, uint32_t *connection)`.
+/// Both are out-parameters; the second must be a valid pointer.
+type GetKeyFocusProcessFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32;
 
 /// `OSStatus GetProcessPID(const ProcessSerialNumber *psn, pid_t *pid)`
 type GetProcessPidFn = unsafe extern "C" fn(*const c_void, *mut pid_t) -> i32;
@@ -529,7 +530,15 @@ pub fn key_focus_pid() -> Option<pid_t> {
     let get = get_key_focus_process_fn()?;
     let to_pid = get_process_pid_fn()?;
     let mut psn = [0u8; 8];
-    if unsafe { get(psn.as_mut_ptr() as *mut c_void) } != 0 || psn == [0u8; 8] {
+    // Room for whatever the second out-parameter holds (a connection id).
+    let mut second = [0u64; 2];
+    let err = unsafe {
+        get(
+            psn.as_mut_ptr() as *mut c_void,
+            second.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if err != 0 || psn == [0u8; 8] {
         return None;
     }
     let mut pid: pid_t = 0;

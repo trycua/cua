@@ -1,6 +1,7 @@
 // Independent-seat design adapted from Dillon DuPont's Hyprland prototype.
 // TARGET uses independent resources; FOREGROUND_TARGET explicitly uses the primary seat.
 #include "input_experiment.hpp"
+#include "session_availability.hpp"
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
 #include "input_client_deadline.hpp"
@@ -462,10 +463,18 @@ struct InputExperiment::Impl {
         if (keymap_fd >= 0) close(keymap_fd);
     }
     std::uint32_t serial() const { return wl_display_next_serial(g_pCompositor->m_wlDisplay); }
-    bool available() const {
-        return !retired && !suspended && g_pCompositor->m_sessionActive && g_pCompositor->m_dpmsStateOn &&
-            !g_pCompositor->m_isShuttingDown && !g_pSessionLockManager->isSessionLocked();
+    SessionAvailability availability() const {
+        return {
+            .retired = retired,
+            .suspended = suspended,
+            .compositor_session_active = g_pCompositor->m_sessionActive,
+            .compositor_dpms_on = g_pCompositor->m_dpmsStateOn,
+            .shutting_down = g_pCompositor->m_isShuttingDown,
+            .session_locked = g_pSessionLockManager->isSessionLocked(),
+        };
     }
+    bool available() const { return availability().available(); }
+    std::string unavailable_refusal() const { return with_unavailable(refusal("session_unavailable"), availability()); }
     static void bind_seat(wl_client* client, void* data, std::uint32_t version, std::uint32_t id) {
         auto& self = *static_cast<Impl*>(data);
         if (self.seats.size() >= kMaxResources) { wl_client_post_no_memory(client); return; }
@@ -744,7 +753,12 @@ struct InputExperiment::Impl {
                 const bool started = c.foreground_attempted;
                 const bool drag_reply = self.drag && self.drag->client == &c;
                 self.revoke("foreground_partial_unknown", false, failure);
-                if (!drag_reply) self.send(c, refusal(ForegroundFailure::code(started), failure));
+                if (!drag_reply) {
+                    auto reply = refusal(ForegroundFailure::code(started), failure);
+                    if (failure.reason == ForegroundFailureReason::session_unavailable)
+                        reply = with_unavailable(std::move(reply), self.availability());
+                    self.send(c, reply);
+                }
             }
             catch (...) {
                 const bool foreground_partial = c.foreground_attempted;
@@ -783,7 +797,7 @@ struct InputExperiment::Impl {
         if (lease) { send(c, refusal("lease_busy")); return; }
         if (agent_conflict(**found)) { send(c, refusal("agent_target_busy")); return; }
         if (deadline <= (*found)->approved_deadline) { send(c, refusal("invalid_grant")); return; }
-        if (!available()) { send(c, refusal("session_unavailable")); return; }
+        if (!available()) { send(c, unavailable_refusal()); return; }
         // Bind steady-clock lifetime once; a clock change cannot extend a lease.
         lease = found->get(); capabilities = caps; expires = Clock::now() + std::chrono::milliseconds(deadline - now);
         lease->approved_deadline = deadline;
@@ -1142,7 +1156,7 @@ struct InputExperiment::Impl {
             const auto requested_cap = kProduction ? number(f[3]) : 0;
             if (kProduction && (!InputGrant::single_operation(requested_cap) ||
                 (requested_cap == 16 && route != InputRoute::primary_foreground))) { invalidate(c); send(c, refusal("unsupported")); return; }
-            if (kProduction && !available()) { invalidate(c, false); send(c, refusal("session_unavailable")); return; }
+            if (kProduction && !available()) { invalidate(c, false); send(c, unavailable_refusal()); return; }
             if (!input_layout_qualified(route, requested_cap == 2, layout_qualified())) { invalidate(c, false); send(c, refusal("unsupported_layout")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
@@ -1202,7 +1216,7 @@ struct InputExperiment::Impl {
         c.sequence = sequence;
         if (c.token.empty() || f[2] != c.token || !refresh(c)) { send(c, refusal("stale_target")); return; }
         if (number(f[3]) != c.revision) { if (kProduction) revoke("stale_geometry"); send(c, refusal("stale_geometry")); return; }
-        if (!available()) { revoke("session_unavailable", true); send(c, refusal("session_unavailable")); return; }
+        if (!available()) { revoke("session_unavailable", true); send(c, unavailable_refusal()); return; }
         if (!input_layout_qualified(c.route, cap == 2, layout_qualified())) { revoke("unsupported_layout", true); send(c, refusal("unsupported_layout")); return; }
         if (lease && Clock::now() >= expires) revoke("lease_expired");
         if (drag) { send(c, refusal("lease_busy")); return; }
@@ -1517,9 +1531,9 @@ std::string InputExperiment::status_json() const {
         if (!states.empty()) states += ',';
         const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
         const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
-        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
+        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{},"availability":{}}})",
             lane->lane, lane->epoch, lane->desktop_generation, lane->reservation != nullptr, lane->socket_cleanup, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
-            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
+            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus, lane->availability().json());
     }
     // Aggregate legacy fields remain available to existing test probes.
     return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",

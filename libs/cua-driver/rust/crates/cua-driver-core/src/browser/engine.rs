@@ -215,8 +215,9 @@ pub(crate) struct ValidatedTab {
     pub record: TargetRecord,
     pub tab: TabRecord,
     /// Live native metadata from this mutation's revalidation, rather than
-    /// the bind-time geometry retained in `record`.
-    pub native: NativeWindowInfo,
+    /// the bind-time geometry retained in `record`. `None` for a driver-owned
+    /// headless binding, which has no native window.
+    pub native: Option<NativeWindowInfo>,
     /// Flattened CDP session id attached to the tab's target.
     pub cdp_session: String,
 }
@@ -664,6 +665,9 @@ impl BrowserEngine {
                                     pid: grant.pid,
                                     window_id: grant.window_id,
                                     browser: grant.browser_product,
+                                    fingerprint: grant.fingerprint.clone(),
+                                    session: grant.public_session.clone(),
+                                    transport_session: Some(grant.transport_session.clone()),
                                 });
                             }
                             if let Some(protected) = grant.protected_consent.as_ref() {
@@ -733,6 +737,9 @@ impl BrowserEngine {
                         pid: grant.pid,
                         window_id: grant.window_id,
                         browser: grant.browser_product,
+                        fingerprint: grant.fingerprint.clone(),
+                        session: grant.public_session.clone(),
+                        transport_session: Some(grant.transport_session.clone()),
                     };
                     if self
                         .platform
@@ -777,6 +784,9 @@ impl BrowserEngine {
                     pid: grant.pid,
                     window_id: grant.window_id,
                     browser: grant.browser_product,
+                    fingerprint: grant.fingerprint.clone(),
+                    session: grant.public_session.clone(),
+                    transport_session: Some(grant.transport_session.clone()),
                 };
                 if self
                     .platform
@@ -1366,7 +1376,8 @@ impl BrowserEngine {
         let record = TargetRecord {
             target_id: String::new(),
             pid,
-            window_id,
+            window_id: Some(window_id),
+            headless_target: None,
             ws_url: endpoint.ws_url.clone(),
             endpoint_owner_pid: endpoint.ownership.owner_pid,
             endpoint_transport: endpoint.transport,
@@ -1385,6 +1396,84 @@ impl BrowserEngine {
             tabs,
         };
         let target_id = self.store.mint_target(session, record.clone());
+        let record = self.store.get_target(session, &target_id)?;
+        Ok((target_id, record))
+    }
+
+    /// Bind a driver-owned headless browser by the opaque anchor that
+    /// `browser_prepare` minted for this session. Ownership comes from the
+    /// launch record (driver-spawned process group, driver-created profile,
+    /// attested endpoint), re-proven here against the live process start
+    /// identity and socket owner. No native window or compositor is consulted.
+    pub(crate) async fn bind_headless(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        headless_target: &str,
+    ) -> Result<(String, TargetRecord), BrowserRefusal> {
+        let (pid, launch) = self.headless_launch(session, transport_session, headless_target)?;
+        let fingerprint = self.platform.process_fingerprint(pid).await?;
+        if !launch.fingerprint.matches(&fingerprint) {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the driver-owned headless browser process exited or was replaced; prepare it again",
+            ));
+        }
+        let endpoint = self.owned_endpoint(pid).await?;
+        if endpoint.ws_url != launch.ws_url {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the driver-owned headless browser's DevTools endpoint changed; prepare it again",
+            ));
+        }
+        let conn = self.connect(&endpoint.ws_url).await?;
+        // Every page target of a driver-launched browser belongs to the
+        // driver; no window correlation is needed or possible.
+        let candidates = self.window_candidates(&conn).await?;
+        let Some(first) = candidates.first() else {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserTabNotFound,
+                "the driver-owned headless browser has no page target",
+            ));
+        };
+        let tabs = candidates
+            .iter()
+            .map(|candidate| {
+                let tab_id = self.store.mint_tab_id();
+                (
+                    tab_id.clone(),
+                    TabRecord {
+                        tab_id,
+                        cdp_target_id: candidate.cdp_target_id.clone(),
+                        title: candidate.title.clone(),
+                        url: candidate.url.clone(),
+                        active: None,
+                        generation: 0,
+                        snapshots: HashMap::new(),
+                    },
+                )
+            })
+            .collect();
+        let record = TargetRecord {
+            target_id: String::new(),
+            pid,
+            window_id: None,
+            headless_target: Some(launch.target),
+            ws_url: endpoint.ws_url.clone(),
+            endpoint_owner_pid: endpoint.ownership.owner_pid,
+            endpoint_transport: endpoint.transport,
+            endpoint_access_class: EndpointAccessClass::DriverOwned,
+            generation: 0,
+            transport_session: transport_session.map(str::to_owned),
+            fingerprint: launch.fingerprint,
+            native_title: String::new(),
+            native_bounds: Rect::default(),
+            cdp_target_id: first.cdp_target_id.clone(),
+            cdp_window_id: None,
+            quality: BindingQuality::Exact,
+            tabs,
+        };
+        let target_id = self.store.mint_target(session, record);
         let record = self.store.get_target(session, &target_id)?;
         Ok((target_id, record))
     }
@@ -1504,6 +1593,26 @@ impl BrowserEngine {
             }
         }
 
+        // 0. Headless: the exact driver-owned launch record must still be
+        //    live for this session/transport, pid, endpoint and process
+        //    identity. It stands in for the native-window proof below.
+        if let Some(headless_target) = &record.headless_target {
+            let (pid, launch) = self.headless_launch(
+                session,
+                record.transport_session.as_deref(),
+                headless_target,
+            )?;
+            if pid != record.pid
+                || launch.ws_url != record.ws_url
+                || !launch.fingerprint.matches(&record.fingerprint)
+            {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "the driver-owned headless launch changed since binding; bind it again",
+                ));
+            }
+        }
+
         // 1. Process fingerprint — pid reuse / restart detection.
         let fp_now = self.platform.process_fingerprint(record.pid).await?;
         if !record.fingerprint.matches(&fp_now) {
@@ -1518,9 +1627,19 @@ impl BrowserEngine {
         }
 
         // 2. Native window still exists and is still owned by the pid.
-        let native = self
-            .native_window_checked(record.pid, record.window_id)
-            .await?;
+        let native = match (record.window_id, &record.headless_target) {
+            (Some(window_id), None) => Some((
+                window_id,
+                self.native_window_checked(record.pid, window_id).await?,
+            )),
+            (None, Some(_)) => None,
+            _ => {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the binding has neither exactly one native window nor a headless anchor",
+                ))
+            }
+        };
 
         // 3. Endpoint still owned and unchanged.
         let endpoint = if record.generation > 0 {
@@ -1556,45 +1675,50 @@ impl BrowserEngine {
                     format!("tab {tab_id} no longer has a live CDP page target"),
                 )
             })?;
-        if let Some(bound_window_id) = record.cdp_window_id {
-            if live.cdp_window_id != Some(bound_window_id) {
-                return Err(refuse(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "the tab moved to a different browser window since binding",
-                ));
-            }
-            let geometry_matches = live
-                .bounds
-                .is_some_and(|bounds| bounds.approx_eq(&native.bounds, BOUNDS_TOLERANCE_PX));
-            let correlation_still_exact = if geometry_matches {
-                true
-            } else {
-                let only_native_window = self
-                    .platform
-                    .is_only_exact_native_window(record.pid, record.window_id)
-                    .await?;
-                cardinality_exact_candidate(&native.title, &candidates, only_native_window)
-                    .is_some_and(|candidate| candidate.cdp_window_id == Some(bound_window_id))
-            };
-            if !correlation_still_exact {
-                return Err(refuse(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "CDP window no longer has an exact geometry or singleton-cardinality \
+        // Headless: a live page target of the re-proven driver-owned endpoint
+        // is the complete proof; there is no native window to correlate.
+        if let Some((window_id, native)) = &native {
+            let window_id = *window_id;
+            if let Some(bound_window_id) = record.cdp_window_id {
+                if live.cdp_window_id != Some(bound_window_id) {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "the tab moved to a different browser window since binding",
+                    ));
+                }
+                let geometry_matches = live
+                    .bounds
+                    .is_some_and(|bounds| bounds.approx_eq(&native.bounds, BOUNDS_TOLERANCE_PX));
+                let correlation_still_exact = if geometry_matches {
+                    true
+                } else {
+                    let only_native_window = self
+                        .platform
+                        .is_only_exact_native_window(record.pid, window_id)
+                        .await?;
+                    cardinality_exact_candidate(&native.title, &candidates, only_native_window)
+                        .is_some_and(|candidate| candidate.cdp_window_id == Some(bound_window_id))
+                };
+                if !correlation_still_exact {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "CDP window no longer has an exact geometry or singleton-cardinality \
                      correlation with the native window — refusing to mutate it",
+                    ));
+                }
+            } else if candidates.len() != 1
+                || live.cdp_window_id.is_some()
+                || self
+                    .platform
+                    .is_only_exact_native_window(record.pid, window_id)
+                    .await?
+                    != Some(true)
+            {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "the embedded browser is no longer provably single-page and single-window",
                 ));
             }
-        } else if candidates.len() != 1
-            || live.cdp_window_id.is_some()
-            || self
-                .platform
-                .is_only_exact_native_window(record.pid, record.window_id)
-                .await?
-                != Some(true)
-        {
-            return Err(refuse(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "the embedded browser is no longer provably single-page and single-window",
-            ));
         }
 
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
@@ -1623,7 +1747,7 @@ impl BrowserEngine {
             conn,
             record,
             tab,
-            native,
+            native: native.map(|(_, native)| native),
             cdp_session,
         })
     }
@@ -1681,6 +1805,10 @@ impl BrowserEngine {
         viewport_y: f64,
         kind: BrowserVisualActionKind,
     ) {
+        // A headless browser has no screen to draw on.
+        let Some(native) = &validated.native else {
+            return;
+        };
         // `document.visibilityState` distinguishes the selected tab without
         // focusing its native window or invoking any CDP activation command.
         // Treat an unavailable or malformed proof as inactive: omitting
@@ -1708,12 +1836,7 @@ impl BrowserEngine {
                 .await
                 .ok()
                 .and_then(|metrics| {
-                    viewport_point_to_screen(
-                        validated.native.bounds,
-                        &metrics,
-                        viewport_x,
-                        viewport_y,
-                    )
+                    viewport_point_to_screen(native.bounds, &metrics, viewport_x, viewport_y)
                 })
         } else {
             // Child-frame coordinates are not necessarily in the top-level
@@ -1727,7 +1850,7 @@ impl BrowserEngine {
         self.platform
             .visualize_browser_action(BrowserVisualAction {
                 session: session.to_owned(),
-                window_id: validated.native.window_id,
+                window_id: native.window_id,
                 cdp_target_id: validated.tab.cdp_target_id.clone(),
                 tab_is_active,
                 screen_x,

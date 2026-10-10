@@ -41,6 +41,9 @@ pub mod cdp_ws;
 pub mod download;
 pub mod engine;
 mod grant;
+// The fixture fakes Unix process exit statuses and process groups.
+#[cfg(all(test, unix))]
+mod headless_tests;
 mod keyed_gates;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
@@ -71,7 +74,8 @@ pub use platform::{
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{
-    existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_SETUP_READY_TIMEOUT,
+    existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_CONSENT_TIMEOUT,
+    EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
 pub use tools::register_browser_tools;
 pub use types::{

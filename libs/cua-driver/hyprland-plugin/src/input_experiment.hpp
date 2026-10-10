@@ -4,6 +4,8 @@
 #include <string>
 #include <array>
 
+#include "external_input.hpp"
+
 namespace cua::hyprland {
 class PrimaryTrace;
 // Shared native seat/lifetime implementation. Build options select production
@@ -18,6 +20,8 @@ class InputExperiment {
     void suspend();
     void resume();
     std::string status_json() const;
+    // Observe input devices added since the last scan before reporting.
+    void refresh_input_watch();
 
   private:
     struct Impl;
@@ -25,5 +29,6 @@ class InputExperiment {
     std::array<std::unique_ptr<Impl>, 2> lanes_;
     std::unique_ptr<PrimaryTrace> trace_;
     std::unique_ptr<DesktopListeners> desktop_listeners_;
+    ExternalInputCount external_input_;
 };
 } // namespace cua::hyprland

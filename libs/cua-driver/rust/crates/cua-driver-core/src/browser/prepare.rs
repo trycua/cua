@@ -21,6 +21,7 @@ use super::platform::{
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
     BrowserEngineFamily, EndpointOwnershipMethod, EndpointOwnershipProof, OwnedEndpoint,
+    ProcessFingerprint,
 };
 use super::BrowserEngine;
 
@@ -60,6 +61,43 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
     Ok(())
 }
 
+/// `headless` is an opt-in variant of the driver-owned isolated_new launch
+/// only. isolated_named is refused because its profile outlives the session,
+/// so cleanup could not remove it; existing profiles, pid-selected launches,
+/// and window anchors are refused because they reach a browser or window the
+/// driver did not create.
+fn validate_headless_request(request: &PrepareRequest) -> Result<(), BrowserRefusal> {
+    if request.strategy.is_some() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true is only for a driver-owned isolated_new launch; it cannot be combined with strategy (existing_profile)",
+        ));
+    }
+    if request.pid.is_some() || request.window_id.is_some() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true launches a new driver-owned browser; omit pid and window_id",
+        ));
+    }
+    if !request.allow_launch {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true requires allow_launch=true",
+        ));
+    }
+    match request.profile.as_ref().map(|profile| profile.mode) {
+        Some(PrepareProfileMode::IsolatedNew) => Ok(()),
+        Some(PrepareProfileMode::IsolatedNamed) => Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "headless=true is not supported with profile.mode=isolated_named: a named profile outlives the session and is not removed at cleanup; use isolated_new",
+        )),
+        None => Err(refusal(
+            BrowserRefusalCode::BrowserConsentRequired,
+            "headless=true requires profile.mode=isolated_new",
+        )),
+    }
+}
+
 async fn claim_with_optional_consent<T, Claim, Consent>(
     claim: &mut Pin<Box<Claim>>,
     action: &BrowserConsentAction,
@@ -73,7 +111,7 @@ where
     let mut consent = Box::pin(consent);
     let (result, outcome) = {
         let mut bounded = Box::pin(tokio::time::timeout(
-            Duration::from_secs(4),
+            super::EXISTING_PROFILE_CONSENT_TIMEOUT,
             consent.as_mut(),
         ));
         tokio::select! {
@@ -117,6 +155,33 @@ where
         },
         accepted,
     ))
+}
+
+/// A platform consent focus guard whose capture and restoration may do
+/// blocking compositor IPC; both stay off the async executor, including the
+/// implicit drop on an early return or cancellation.
+struct ConsentFocus(Option<Box<dyn Send>>);
+
+impl ConsentFocus {
+    async fn settle(mut self) {
+        if let Some(guard) = self.0.take() {
+            let _ = tokio::task::spawn_blocking(move || drop(guard)).await;
+        }
+    }
+}
+
+impl Drop for ConsentFocus {
+    fn drop(&mut self) {
+        let Some(guard) = self.0.take() else {
+            return;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(move || drop(guard));
+            }
+            Err(_) => drop(guard),
+        }
+    }
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -299,17 +364,28 @@ pub(crate) struct ManagedBrowser {
     delete_profile: bool,
     marker: ProfileMarker,
     owner_sessions: Vec<String>,
+    headless: Option<HeadlessLaunch>,
+}
+
+/// Launch record of a driver-owned headless browser. `target` is the opaque,
+/// unguessable bind anchor (122 random bits). It names exactly this launch, so
+/// it doubles as the launch generation: a relaunch mints a new one. It is
+/// valid only for the public session and private transport that prepared it.
+#[derive(Clone, Debug)]
+pub(crate) struct HeadlessLaunch {
+    pub(crate) target: String,
+    pub(crate) fingerprint: ProcessFingerprint,
+    pub(crate) ws_url: String,
+    session: String,
+    transport_session: Option<String>,
 }
 
 impl Drop for ManagedBrowser {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        unsafe {
-            // The isolated browser is spawned as its own process group. Chrome
-            // fans out into renderer/utility descendants, so killing only the
-            // root Child can leave profile writers alive after cleanup.
-            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-        }
+        // The isolated browser is spawned as its own process group. Chrome
+        // fans out into renderer/utility descendants, so killing only the
+        // root Child can leave profile writers alive after cleanup.
+        signal_group_if_unreaped(self.child.as_mut());
         #[cfg(target_os = "windows")]
         if self.owned_pid != i64::from(self.child.id()) {
             // Edge on Windows ARM may use a short-lived launcher process and
@@ -337,7 +413,19 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam: keeps launch tests out of the user's real profile root
+    /// without mutating process-global environment.
+    pub(super) static TEST_PROFILE_ROOT: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn profile_root() -> Result<PathBuf, BrowserRefusal> {
+    #[cfg(test)]
+    if let Some(root) = TEST_PROFILE_ROOT.with(|root| root.borrow().clone()) {
+        return Ok(root);
+    }
     if let Some(root) = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT") {
         return Ok(PathBuf::from(root));
     }
@@ -409,10 +497,25 @@ fn remove_owned_profile_as_browser(
     });
 }
 
+/// Signal the driver-launched process group only while its leader is still
+/// running and unreaped: until then its id cannot be reused. Once the leader
+/// has been reaped (for example by a launch-time `try_wait`), the numeric
+/// group id may already belong to an unrelated process, so it is never
+/// signalled. Chromium children normally exit when the browser process does,
+/// but that is not guaranteed; a surviving descendant is not signalled here.
+pub(super) fn signal_group_if_unreaped(browser: &mut dyn IsolatedBrowserProcess) -> bool {
+    if matches!(browser.try_wait(), Ok(None)) {
+        browser.kill_process_group();
+        return true;
+    }
+    false
+}
+
 fn cleanup_created_profile_as_browser(
     browser: &mut dyn IsolatedBrowserProcess,
     profile: &PreparedProfile,
 ) {
+    signal_group_if_unreaped(browser);
     let _ = browser.kill();
     let _ = browser.wait();
     if profile.delete_on_cleanup {
@@ -470,7 +573,7 @@ fn linux_browser_sandbox(var: impl Fn(&str) -> Option<String>) -> LinuxBrowserSa
     }
 }
 
-fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
+fn isolated_browser_command(executable: &str, profile: &Path, headless: bool) -> Command {
     let mut command = Command::new(executable);
     #[cfg(unix)]
     {
@@ -486,14 +589,19 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
         .arg("--disable-component-update")
         .arg("--disable-default-apps")
         .arg("--disable-extensions");
+    if headless {
+        command.arg("--headless=new");
+    }
     #[cfg(target_os = "windows")]
     command
         .arg("--window-position=40,40")
         .arg("--window-size=900,640");
     #[cfg(target_os = "linux")]
     {
-        let native_wayland = std::env::var("XDG_SESSION_TYPE")
-            .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
+        // Headless Chromium uses its own ozone backend and no display.
+        let native_wayland = !headless
+            && std::env::var("XDG_SESSION_TYPE")
+                .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
             && std::env::var_os("WAYLAND_DISPLAY").is_some()
             && std::env::var_os("DISPLAY").is_none();
         let sandbox = linux_browser_sandbox(|name| std::env::var(name).ok());
@@ -791,6 +899,37 @@ impl BrowserEngine {
         })
     }
 
+    /// Resolve a headless bind anchor. Unknown, forged, ended, and
+    /// other-session anchors all refuse identically.
+    pub(crate) fn headless_launch(
+        &self,
+        session: &str,
+        transport_session: Option<&str>,
+        target: &str,
+    ) -> Result<(i64, HeadlessLaunch), BrowserRefusal> {
+        self.managed_browsers
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|browser| {
+                browser
+                    .headless
+                    .as_ref()
+                    .filter(|launch| {
+                        launch.target == target
+                            && launch.session == session
+                            && launch.transport_session.as_deref() == transport_session
+                    })
+                    .map(|launch| (browser.owned_pid, launch.clone()))
+            })
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "headless_target is not a live driver-owned headless launch of this session; run browser_prepare with headless=true again",
+                )
+            })
+    }
+
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
         self.protected_resource_ownership.remove_session(session);
         self.managed_browsers
@@ -803,6 +942,9 @@ impl BrowserEngine {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
+        if request.headless {
+            validate_headless_request(&request)?;
+        }
         if request.strategy == Some(PrepareStrategy::ExistingProfile) {
             return self.attach_existing_profile(request).await;
         }
@@ -868,7 +1010,8 @@ impl BrowserEngine {
             self.platform.isolated_browser_executable()?
         };
         let prepared_profile = prepare_profile(profile_request)?;
-        let command = isolated_browser_command(&executable, &prepared_profile.path);
+        let command =
+            isolated_browser_command(&executable, &prepared_profile.path, request.headless);
         let mut child = self
             .platform
             .spawn_isolated_browser(command, &prepared_profile.path)
@@ -890,18 +1033,48 @@ impl BrowserEngine {
             }
         };
         let prepared_pid = endpoint.ownership.owner_pid;
+        let fingerprint = self.platform.process_fingerprint(prepared_pid).await;
+        let headless = if request.headless {
+            // Headless binding has no native window to re-prove, so the
+            // process start identity is mandatory rather than best-effort.
+            match &fingerprint {
+                Ok(fingerprint) if fingerprint.start_time.is_some() => Some(HeadlessLaunch {
+                    target: format!("hl-{}", uuid::Uuid::new_v4()),
+                    fingerprint: fingerprint.clone(),
+                    ws_url: endpoint.ws_url.clone(),
+                    session: request.session.clone(),
+                    transport_session: request.transport_session.clone(),
+                }),
+                _ => {
+                    cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "could not prove the headless browser's process start identity",
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         let mut owner_sessions = vec![request.session];
         if let Some(transport_session) = request.transport_session {
             if !owner_sessions.contains(&transport_session) {
                 owner_sessions.push(transport_session);
             }
         }
-        if let Ok(fingerprint) = self.platform.process_fingerprint(prepared_pid).await {
+        if let Ok(fingerprint) = fingerprint {
             for owner in &owner_sessions {
                 self.protected_resource_ownership
                     .mark_driver_owned_process(owner, fingerprint.clone());
             }
         }
+        let attachment = headless.as_ref().map(|launch| PrepareAttachment {
+            kind: PrepareAttachmentKind::DriverOwnedHeadless,
+            browser: "chromium".to_owned(),
+            capabilities_invalidated: false,
+            next_action: "get_browser_state".to_owned(),
+            headless_target: Some(launch.target.clone()),
+        });
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
             owned_pid: prepared_pid,
@@ -909,11 +1082,16 @@ impl BrowserEngine {
             delete_profile: prepared_profile.delete_on_cleanup,
             marker: prepared_profile.marker,
             owner_sessions,
+            headless,
         });
         Ok(PrepareOutcome {
             action: PrepareAction::LaunchedIsolatedBrowser,
             endpoint: Some(endpoint),
-            message: "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned(),
+            message: if attachment.is_some() {
+                "Launched a separate driver-owned headless Chromium process with a fresh isolated profile; bind it with get_browser_state headless_target.".to_owned()
+            } else {
+                "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned()
+            },
             prepared_pid: Some(prepared_pid),
             side_effects: PrepareSideEffects {
                 launched_browser: true,
@@ -921,7 +1099,7 @@ impl BrowserEngine {
                 reused_driver_profile: !prepared_profile.created,
                 ..PrepareSideEffects::default()
             },
-            attachment: None,
+            attachment,
         })
     }
 
@@ -1006,6 +1184,21 @@ impl BrowserEngine {
             ));
         }
 
+        // Any contact with the endpoint, from discovery's probe to the claim,
+        // can raise a browser-owned consent prompt that the compositor
+        // focuses. Capture the person's focus before the first contact; the
+        // platform hands it back once consent settles below. Wrap inside the
+        // worker: if this future is cancelled after capture completes, the
+        // abandoned output still drops off the executor.
+        let consent_focus = {
+            let platform = Arc::clone(&self.platform);
+            tokio::task::spawn_blocking(move || {
+                ConsentFocus(platform.existing_profile_consent_focus_guard(pid, window_id))
+            })
+            .await
+            .unwrap_or(ConsentFocus(None))
+        };
+
         let classification = self.platform.classify_browser(pid).await?;
         if !classification.supports_cdp || classification.engine != BrowserEngineFamily::Chromium {
             return Err(unsupported_engine_refusal(
@@ -1020,6 +1213,9 @@ impl BrowserEngine {
             pid,
             window_id,
             browser: classification.product_kind,
+            fingerprint: fingerprint.clone(),
+            session: request.session.clone(),
+            transport_session: request.transport_session.clone(),
         };
         let mut setup_pending = false;
         let mut setup_guard = None;
@@ -1294,6 +1490,7 @@ impl BrowserEngine {
                     return Err(error);
                 }
             };
+        consent_focus.settle().await;
         let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
         if let Err(_final_claim_error) = claimed {
             self.revoke_existing_profile_grant(
@@ -1371,6 +1568,7 @@ impl BrowserEngine {
                 browser: "chromium".to_owned(),
                 capabilities_invalidated: true,
                 next_action: "get_browser_state".to_owned(),
+                headless_target: None,
             }),
         })
     }
@@ -1378,6 +1576,37 @@ impl BrowserEngine {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn consent_focus_guard_drops_off_the_async_executor() {
+        struct Probe(std::sync::mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+        let executor = std::thread::current().id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(super::ConsentFocus(Some(Box::new(Probe(tx.clone())))));
+        let dropped_on = tokio::task::spawn_blocking(move || rx.recv().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(dropped_on, executor);
+
+        // A completed worker output abandoned by a cancelled caller.
+        let (tx2, rx2) = std::sync::mpsc::channel();
+        let worker =
+            tokio::task::spawn_blocking(move || super::ConsentFocus(Some(Box::new(Probe(tx2)))));
+        while !worker.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        drop(worker);
+        let dropped_on = tokio::task::spawn_blocking(move || rx2.recv().unwrap())
+            .await
+            .unwrap();
+        assert_ne!(dropped_on, executor);
+        drop(tx);
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -1496,7 +1725,10 @@ mod tests {
                     if outcome >= 2 {
                         // Model Linux's non-cancellable native action worker.
                         tokio::task::spawn_blocking(|| {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(
+                                super::super::EXISTING_PROFILE_CONSENT_TIMEOUT
+                                    + Duration::from_millis(100),
+                            );
                         })
                         .await
                         .unwrap();
@@ -1557,7 +1789,10 @@ mod tests {
                 action
                     .perform(|| {
                         tokio::task::spawn_blocking(move || {
-                            std::thread::sleep(Duration::from_millis(4100));
+                            std::thread::sleep(
+                                super::super::EXISTING_PROFILE_CONSENT_TIMEOUT
+                                    + Duration::from_millis(100),
+                            );
                             assert!(!dropped_during_worker.load(Ordering::SeqCst));
                             finished.store(true, Ordering::SeqCst);
                         })
@@ -1906,7 +2141,7 @@ mod tests {
     #[test]
     fn isolated_launch_uses_a_deterministic_clean_profile() {
         let profile = Path::new("profile-under-test");
-        let command = isolated_browser_command("chromium-under-test", profile);
+        let command = isolated_browser_command("chromium-under-test", profile, false);
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1931,6 +2166,38 @@ mod tests {
         }
         #[cfg(target_os = "linux")]
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));
+    }
+
+    #[test]
+    fn headless_launch_adds_only_the_headless_flag_when_requested() {
+        let args = |headless| {
+            isolated_browser_command("chromium-under-test", Path::new("p"), headless)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .filter(|arg| arg != "--ozone-platform=wayland")
+                .collect::<Vec<_>>()
+        };
+        let windowed = args(false);
+        let headless = args(true);
+        assert!(!windowed.iter().any(|arg| arg.starts_with("--headless")));
+        for required in [
+            "--headless=new",
+            "--remote-debugging-port=0",
+            "--user-data-dir=p",
+        ] {
+            assert!(
+                headless.iter().any(|arg| arg == required),
+                "missing {required}"
+            );
+        }
+        let without_flag: Vec<_> = headless
+            .into_iter()
+            .filter(|arg| arg != "--headless=new")
+            .collect();
+        assert_eq!(without_flag, windowed);
+        assert!(!isolated_browser_command("c", Path::new("p"), true)
+            .get_args()
+            .any(|arg| arg == "--ozone-platform=wayland"));
     }
 
     #[test]

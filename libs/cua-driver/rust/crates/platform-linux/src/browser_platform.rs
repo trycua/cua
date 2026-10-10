@@ -48,6 +48,86 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+/// Retain admitted lifecycle authority across blocking native work. Dropping
+/// the async caller cancels input, while its worker keeps teardown deferred.
+struct SetupDispatch {
+    input: crate::browser_setup_ui::SetupInput,
+    lifecycle: Arc<cua_driver_core::session::SessionDispatchGuard>,
+    _cancel: crate::wayland::hyprland_input::CancelOnDrop,
+}
+
+impl SetupDispatch {
+    fn admit(request: &ExistingProfileSetupRequest) -> Result<Self, BrowserRefusal> {
+        use cua_driver_core::session;
+        verify_setup_process(request)?;
+        let transport = request
+            .transport_session
+            .as_deref()
+            .unwrap_or(&request.session);
+        let snapshot = session::session_snapshot(&request.session, transport, Duration::ZERO)
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "admitted browser setup lifecycle required",
+                )
+            })?;
+        let lifecycle = session::begin_session_dispatch(
+            &request.session,
+            snapshot.public_label.as_deref(),
+            transport,
+            snapshot.implicit,
+            snapshot.transport,
+            snapshot.client_kind,
+        )
+        .map_err(|error| refusal(BrowserRefusalCode::BrowserRouteUnavailable, error))?;
+        let (_cancel, cancellation) =
+            crate::wayland::hyprland_input::ActionCancellation::invocation();
+        Ok(Self {
+            input: crate::browser_setup_ui::SetupInput {
+                owner: request.session.clone(),
+                lane_owner: request.session.clone(),
+                fingerprint: request.fingerprint.clone(),
+                hyprland: std::env::var_os("WAYLAND_DISPLAY").is_some()
+                    && crate::wayland::hyprland::is_session(),
+                cancellation,
+                focus: Default::default(),
+            },
+            lifecycle: Arc::new(lifecycle),
+            _cancel,
+        })
+    }
+
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(crate::browser_setup_ui::SetupInput) -> T + Send + 'static,
+    ) -> Result<T, BrowserRefusal> {
+        let input = self.input.clone();
+        let lifecycle = self.lifecycle.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lifecycle = lifecycle;
+            let _restore = input.focus.restore_on_drop();
+            work(input)
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("exact browser setup worker failed: {error}"),
+            )
+        })
+    }
+}
+
+/// Cached-grant teardown runs after session tombstoning and after ordinary
+/// input hooks. Its private, one-shot lane must therefore retire itself.
+struct SetupCleanupLane(String);
+
+impl Drop for SetupCleanupLane {
+    fn drop(&mut self) {
+        crate::wayland::hyprland_input::cleanup_session(&self.0);
+    }
+}
+
 fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
     pid != 0 && window_id != 0 && owner_pid == pid && address == window_id
 }
@@ -62,6 +142,45 @@ fn hyprland_is_only_owned_window(
         return false;
     };
     hyprland_identity_matches(pid, window_id, owner, address) && owned.next().is_none()
+}
+
+fn verify_setup_process(request: &ExistingProfileSetupRequest) -> Result<(), BrowserRefusal> {
+    verify_setup_identity(request.pid, request.window_id, &request.fingerprint)
+}
+
+pub(crate) fn verify_setup_identity(
+    pid: i64,
+    window_id: u64,
+    expected: &ProcessFingerprint,
+) -> Result<(), BrowserRefusal> {
+    let (start_time, executable) = process_identity(pid)?;
+    let current = ProcessFingerprint {
+        pid,
+        start_time: Some(start_time),
+        executable,
+    };
+    if expected != &current {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            "approved browser process identity changed before setup or cleanup",
+        ));
+    }
+    let pid = u32::try_from(pid).map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            "invalid approved browser pid",
+        )
+    })?;
+    if !crate::wayland::list_windows_dispatch(Some(pid))
+        .iter()
+        .any(|window| window.xid == window_id)
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            "approved browser window ownership changed before setup or cleanup",
+        ));
+    }
+    Ok(())
 }
 
 fn run_existing_profile_cleanup<T: Send + 'static>(
@@ -1005,6 +1124,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         // sessions. Where identity genuinely cannot be established — a generic
         // Wayland session with no compositor window list — that same proof fails
         // and setup refuses with a reason that names the cause.
+        let dispatch = SetupDispatch::admit(&request)?;
         let window_id = request.window_id;
         let listeners_before =
             tokio::task::spawn_blocking(move || loopback_ports_for_pid(request.pid))
@@ -1015,19 +1135,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         format!("listener inspection task failed: {error}"),
                     )
                 })??;
-        let handle = tokio::task::spawn_blocking(move || {
-            crate::browser_setup_ui::enable(pid_u32, window_id, descriptor)
-        })
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!(
-                    "could not inspect {}'s remote-debugging setup UI: {error}",
-                    descriptor.product_name
-                ),
-            )
-        })??;
+        let handle = dispatch
+            .run(move |input| {
+                crate::browser_setup_ui::enable(pid_u32, window_id, descriptor, input)
+            })
+            .await??;
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
         let focused_setup_address_field = handle.focused_setup_address_field;
@@ -1142,14 +1254,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 if enabled_remote_debugging
                     && error.code == BrowserRefusalCode::BrowserRequiresSetup =>
             {
-                let closed = tokio::task::spawn_blocking(move || handle.close_for_success())
-                    .await
-                    .map_err(|join_error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserRouteUnavailable,
-                            format!("could not finish browser setup cleanup: {join_error}"),
-                        )
-                    })??;
+                let closed = dispatch
+                    .run(move |input| {
+                        let mut handle = handle;
+                        handle.input = input;
+                        handle.close_for_success()
+                    })
+                    .await??;
                 return Err(refusal(
                     BrowserRefusalCode::BrowserRequiresSetup,
                     format!(
@@ -1175,18 +1286,29 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 })));
             }
             Err(error) => {
-                let error = tokio::task::spawn_blocking(move || handle.abort(error))
-                    .await
-                    .map_err(|join_error| {
-                        refusal(
-                            BrowserRefusalCode::BrowserRouteUnavailable,
-                            format!("could not roll back browser setup: {join_error}"),
-                        )
-                    })?;
+                let error = dispatch
+                    .run(move |input| {
+                        let mut handle = handle;
+                        handle.input = input;
+                        handle.abort(error)
+                    })
+                    .await?;
                 return Err(error);
             }
         };
-        crate::browser_setup_ui::retain_pending(pid_u32, window_id, handle)?;
+        // Retain synchronously so cancellation cannot strand an armed handle;
+        // a duplicate's abort does blocking AT-SPI and input work, which must
+        // not run on the async executor.
+        if let Err(handle) = crate::browser_setup_ui::retain_pending(pid_u32, window_id, handle) {
+            let error = dispatch
+                .run(move |input| {
+                    let mut handle = *handle;
+                    handle.input = input;
+                    handle.abort(crate::browser_setup_ui::duplicate_pending_refusal())
+                })
+                .await?;
+            return Err(error);
+        }
 
         Ok(ExistingProfileSetupOutcome {
             opened_setup_page,
@@ -1210,16 +1332,12 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 "the approved browser pid is outside the Linux process-id range",
             )
         })?;
-        tokio::task::spawn_blocking(move || {
-            crate::browser_setup_ui::commit_pending(pid, request.window_id)
-        })
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not commit exact browser setup cleanup: {error}"),
-            )
-        })?
+        let dispatch = SetupDispatch::admit(&request)?;
+        dispatch
+            .run(move |input| {
+                crate::browser_setup_ui::commit_pending(pid, request.window_id, input)
+            })
+            .await?
     }
 
     fn cleanup_existing_profile_setup(
@@ -1242,9 +1360,30 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         let window_id = request.window_id;
+        static NEXT_CLEANUP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let lane = SetupCleanupLane(format!(
+            "{}:browser-cleanup:{}",
+            request.session,
+            NEXT_CLEANUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         run_existing_profile_cleanup(move || {
+            verify_setup_process(&request)?;
+            let (_cancel, cancellation) =
+                crate::wayland::hyprland_input::ActionCancellation::invocation();
+            let input = crate::browser_setup_ui::SetupInput {
+                owner: request.session.clone(),
+                lane_owner: lane.0.clone(),
+                fingerprint: request.fingerprint.clone(),
+                hyprland: std::env::var_os("WAYLAND_DISPLAY").is_some()
+                    && crate::wayland::hyprland::is_session(),
+                cancellation,
+                focus: Default::default(),
+            };
+            let _restore = input.focus.restore_on_drop();
+            let _lane = lane;
             let dismissed_before = crate::browser_consent_ui::dismiss(pid, window_id)?;
-            let closed_setup_page = crate::browser_setup_ui::disable(pid, window_id, descriptor)?;
+            let closed_setup_page =
+                crate::browser_setup_ui::disable(pid, window_id, descriptor, input)?;
             let dismissed_after = crate::browser_consent_ui::dismiss(pid, window_id)?;
             Ok(dismissed_before || closed_setup_page || dismissed_after)
         })?
@@ -1258,14 +1397,41 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         let Ok(pid) = u32::try_from(request.pid) else {
             return error;
         };
+        // Rollback is cached-resource authority, including after session end.
+        // It never revives the original lifecycle or its ordinary input lane.
         tokio::task::spawn_blocking(move || {
-            crate::browser_setup_ui::abort_pending(pid, request.window_id, error)
+            static NEXT_ABORT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let lane = SetupCleanupLane(format!(
+                "{}:browser-abort:{}",
+                request.session,
+                NEXT_ABORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            let (_cancel, cancellation) =
+                crate::wayland::hyprland_input::ActionCancellation::invocation();
+            let input = crate::browser_setup_ui::SetupInput {
+                owner: request.session.clone(),
+                lane_owner: lane.0.clone(),
+                fingerprint: request.fingerprint.clone(),
+                hyprland: std::env::var_os("WAYLAND_DISPLAY").is_some()
+                    && crate::wayland::hyprland::is_session(),
+                cancellation,
+                focus: Default::default(),
+            };
+            let _restore = input.focus.restore_on_drop();
+            let _lane = lane;
+            if verify_setup_process(&request).is_err() {
+                // Remove only this owner's cached handle, without input to a
+                // process/window that no longer has the approved identity.
+                crate::browser_setup_ui::discard_pending(pid, request.window_id, &request.session);
+                return error;
+            }
+            crate::browser_setup_ui::abort_pending(pid, request.window_id, error, input)
         })
         .await
         .unwrap_or_else(|join_error| {
             refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not roll back exact browser setup: {join_error}"),
+                format!("exact browser rollback worker failed: {join_error}"),
             )
         })
     }
@@ -1275,6 +1441,24 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         request: BrowserConsentRequest,
     ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
         crate::browser_consent_ui::handle(request).await
+    }
+
+    fn existing_profile_consent_focus_guard(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn Send>> {
+        // Hyprland's focus-on-activate lets Chromium's own consent prompt
+        // pull focus and workspace although the driver sends no input.
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() || !crate::wayland::hyprland::is_session()
+        {
+            return None;
+        }
+        let guard = crate::browser_setup_ui::FocusRestore::guard_consent_prompt(
+            u32::try_from(pid).ok()?,
+            window_id,
+        )?;
+        Some(Box::new(guard))
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
@@ -1323,6 +1507,75 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_setup_worker_defers_teardown_until_it_releases_admission() {
+        use cua_driver_core::session::{self, SessionClientKind, SessionTransport};
+        let owner = "setup-worker-cancel-transport-5156e71a";
+        let sid = "setup-worker-cancel-private-5156e71a";
+        let lifecycle = session::begin_session_dispatch(
+            sid,
+            None,
+            owner,
+            true,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        let (cancel, cancellation) =
+            crate::wayland::hyprland_input::ActionCancellation::invocation();
+        let dispatch = SetupDispatch {
+            input: crate::browser_setup_ui::SetupInput {
+                owner: sid.to_owned(),
+                lane_owner: sid.to_owned(),
+                fingerprint: ProcessFingerprint {
+                    pid: 1,
+                    start_time: Some(1),
+                    executable: None,
+                },
+                hyprland: true,
+                cancellation,
+                focus: Default::default(),
+            },
+            lifecycle: Arc::new(lifecycle),
+            _cancel: cancel,
+        };
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
+        let (ended_tx, ended_rx) = tokio::sync::oneshot::channel();
+        let ended_tx = Mutex::new(Some(ended_tx));
+        let _hook = session::register_scoped_session_end_hook(move |ended| {
+            if ended == sid {
+                if let Some(sender) = ended_tx.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+            }
+        });
+        let call = tokio::spawn(async move {
+            dispatch
+                .run(move |input| {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    let _ = cancelled_tx.send(input.cancellation.check().is_err());
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        assert!(session::end_session_for_owner(sid, owner));
+        assert!(session::is_session_ending(sid));
+        assert!(!session::is_session_ended(sid));
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        assert!(!session::is_session_ended(sid));
+        release_tx.send(()).unwrap();
+        assert!(cancelled_rx.await.unwrap());
+        tokio::time::timeout(Duration::from_secs(2), ended_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(session::is_session_ended(sid));
+    }
 
     #[test]
     fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
@@ -1487,5 +1740,144 @@ mod tests {
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
         );
+    }
+
+    /// Real driver-owned headless Chrome: prepare, bind by anchor, type,
+    /// click, read back, clean up. Opt-in only; it launches the installed
+    /// root-owned Chrome with a fresh throwaway profile and never touches
+    /// another browser. Run:
+    /// `CUA_TEST_REAL_HEADLESS_CHROME=1 env -u DISPLAY -u WAYLAND_DISPLAY \
+    ///  cargo test -p platform-linux real_headless_chrome -- --ignored --test-threads=1`
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn real_headless_chrome_types_clicks_reads_back_and_cleans_up() {
+        use cua_driver_core::browser::tools::{
+            BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool, BrowserTypeTool,
+            GetBrowserStateTool,
+        };
+        use cua_driver_core::browser::BrowserEngine;
+        use cua_driver_core::tool::Tool;
+        use serde_json::{json, Value};
+        use std::io::{Read, Write};
+
+        if std::env::var("CUA_TEST_REAL_HEADLESS_CHROME").as_deref() != Ok("1") {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        std::env::set_var("CUA_DRIVER_BROWSER_PROFILE_ROOT", root.path());
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("WAYLAND_DISPLAY");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            const PAGE: &str = "<!doctype html><title>headless</title>\
+                <input id=\"q\" aria-label=\"query\">\
+                <button id=\"go\" onclick=\"this.setAttribute('aria-label', \
+                'done:' + document.getElementById('q').value)\">Go</button>";
+            for mut stream in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
+                    PAGE.len()
+                );
+            }
+        });
+
+        let engine = BrowserEngine::new(Arc::new(LinuxBrowserPlatform::default()));
+        let session = format!("real-headless-{}", std::process::id());
+        let call = |tool: Box<dyn Tool>, args: Value| async move {
+            let result = tool.invoke(args).await;
+            result.structured_content.expect("structured result")
+        };
+        let prepared = call(
+            Box::new(BrowserPrepareTool::new(engine.clone())),
+            json!({"session": session, "headless": true, "allow_launch": true,
+                   "profile": {"mode": "isolated_new"}}),
+        )
+        .await;
+        assert_eq!(prepared["status"], "ok", "{prepared}");
+        let pid = prepared["prepared_pid"].as_i64().unwrap();
+        let anchor = prepared["attachment"]["headless_target"].as_str().unwrap();
+
+        let bound = call(
+            Box::new(GetBrowserStateTool::new(engine.clone())),
+            json!({"session": session, "headless_target": anchor}),
+        )
+        .await;
+        assert_eq!(bound["binding_route"], "driver_owned_headless", "{bound}");
+        assert_eq!(bound["mutation_allowed"], true);
+        let target = bound["target_id"].as_str().unwrap().to_owned();
+        let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+        let page = json!({"session": session, "target_id": target, "tab_id": tab});
+        let with = |extra: Value| {
+            let mut args = page.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+
+        let navigated = call(
+            Box::new(BrowserNavigateTool::new(engine.clone())),
+            with(json!({"url": format!("http://127.0.0.1:{port}/")})),
+        )
+        .await;
+        assert_eq!(navigated["status"], "ok", "{navigated}");
+        let snapshot = || {
+            let engine = engine.clone();
+            let args = with(json!({"snapshot_format": "dom_refs_v1"}));
+            async move {
+                GetBrowserStateTool::new(engine)
+                    .invoke(args)
+                    .await
+                    .structured_content
+                    .unwrap()
+            }
+        };
+        let ref_with = |snap: &Value, label: &str| {
+            snap["refs"].as_array().and_then(|refs| {
+                refs.iter()
+                    .find(|r| r["label"].as_str().unwrap_or("").contains(label))
+                    .and_then(|r| r["ref"].as_str())
+                    .map(str::to_owned)
+            })
+        };
+        let mut snap = snapshot().await;
+        for _ in 0..50 {
+            if ref_with(&snap, "id=go").is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            snap = snapshot().await;
+        }
+        let typed = call(
+            Box::new(BrowserTypeTool::new(engine.clone())),
+            with(json!({"ref": ref_with(&snap, "id=q").expect("input ref"), "text": "hello"})),
+        )
+        .await;
+        assert_eq!(typed["status"], "ok", "{typed}");
+        let clicked = call(
+            Box::new(BrowserClickTool::new(engine.clone())),
+            with(json!({"ref": ref_with(&snap, "id=go").expect("button ref"),
+                        "input_route": "dom_event"})),
+        )
+        .await;
+        assert_eq!(clicked["status"], "ok", "{clicked}");
+        let fresh = snapshot().await;
+        assert!(
+            ref_with(&fresh, "aria-label=done:hello").is_some(),
+            "{fresh}"
+        );
+
+        cua_driver_core::session::fire_session_end(&session);
+        assert_eq!(
+            std::fs::read_dir(root.path()).unwrap().count(),
+            0,
+            "the isolated_new profile is removed"
+        );
+        assert_ne!(unsafe { libc::kill(pid as i32, 0) }, 0, "browser reaped");
     }
 }

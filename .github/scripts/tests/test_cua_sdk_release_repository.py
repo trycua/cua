@@ -140,7 +140,12 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     assert "pnpm native -- --target x86_64-apple-darwin" in mac
     assert "pnpm notch" in mac
     assert mac.index("pnpm notch") < mac.index("pnpm dist:mac")
-    assert 'CSC_LINK="$APPLICATION_CERT_BASE64"' in mac and 'APPLE_TEAM_ID="$TEAM_ID"' in mac
+    # Signed with the Developer ID identity of a keychain the job imports
+    # (electron-builder's own CSC_LINK keychain fails on macos-26).
+    assert "security import" in mac and "set-key-partition-list" in mac
+    assert 'CSC_NAME="$SIGNING_NAME" CSC_KEYCHAIN="$SIGNING_KEYCHAIN"' in mac and 'APPLE_TEAM_ID="$TEAM_ID"' in mac
+    assert "CSC_LINK" not in mac
+    assert mac.index("security import") < mac.index("pnpm dist:mac") < mac.index("security delete-keychain")
     assert "com.trycua.spaces.macos" in mac
     windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows"))
     assert "pnpm native -- --target x86_64-pc-windows-msvc" in windows

@@ -62,8 +62,10 @@ def host_platform() -> Platform:
 
 
 def is_stale_token_error(error: BaseException) -> bool:
-    if isinstance(error, DriverToolError) and error.code in STALE_TOKEN_CODES:
-        return True
+    if isinstance(error, DriverToolError) and error.code:
+        # Structured codes outrank diagnostic text; a different refusal must
+        # not be turned into stale-token recovery by an incidental message.
+        return error.code in STALE_TOKEN_CODES
     return "element_token is stale" in str(error)
 
 

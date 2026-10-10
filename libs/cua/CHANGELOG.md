@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.5.0](https://github.com/trycua/cua/compare/cua-sdk-v0.4.1...cua-sdk-v0.5.0) (2026-10-10)
+
+
+### Features
+
+* **cli:** let cua do target relay Spaces ([#4797](https://github.com/trycua/cua/issues/4797)) ([ad563fe](https://github.com/trycua/cua/commit/ad563fef24973df11f9186f6bb8205cf91f69ebe))
+* **cua-driver:** six agent cursor motion styles ([#4659](https://github.com/trycua/cua/issues/4659)) ([5e5370f](https://github.com/trycua/cua/commit/5e5370f7c9a57e9540eadc17c19b5bfeca0d9d91))
+* **spaces:** empty home with one-click Linux and macOS create ([#4870](https://github.com/trycua/cua/issues/4870)) ([2e4736b](https://github.com/trycua/cua/commit/2e4736b3ebff61ef99e8c0c74270b5cd75894643))
+* **spaces:** new shared UI — React web UI in the Mac app and an Electron app (preview) ([#4893](https://github.com/trycua/cua/issues/4893)) ([7cc4bd0](https://github.com/trycua/cua/commit/7cc4bd0bfc3ce1a3246ae47fe02948dc9f64f010))
+
+
+### Bug Fixes
+
+* **cli:** unselect a direct cua do target that stops answering ([#4868](https://github.com/trycua/cua/issues/4868)) ([97ef165](https://github.com/trycua/cua/commit/97ef165a7b5024087861879ff3b43d96f309e7b7)), closes [#4788](https://github.com/trycua/cua/issues/4788)
+* **cua-daemon:** compile without the client feature ([#4937](https://github.com/trycua/cua/issues/4937)) ([ac967b9](https://github.com/trycua/cua/commit/ac967b9006aafa10870aadb5a645b038cba9721a))
+* **cua-daemon:** replace another app's daemon whose executable is gone or replaced ([#4942](https://github.com/trycua/cua/issues/4942)) ([d7a713c](https://github.com/trycua/cua/commit/d7a713c0338d78bf3dcbe997e911fa0a0d34d8e1))
+* **cua-spacesd:** stream 6K displays and carry tool results over 4 MiB ([#4850](https://github.com/trycua/cua/issues/4850)) ([a88f100](https://github.com/trycua/cua/commit/a88f100b428a3eb9a73bd60757540d6ecd1fd00f)), closes [#4623](https://github.com/trycua/cua/issues/4623)
+* **cua-spaces:** name a local Space what it was created as ([#4849](https://github.com/trycua/cua/issues/4849)) ([b0a6348](https://github.com/trycua/cua/commit/b0a6348133a34b3d158eae38d06a606215eec6df)), closes [#4707](https://github.com/trycua/cua/issues/4707)
+* **cua-spaces:** report missing Spaces in share queries ([#4730](https://github.com/trycua/cua/issues/4730)) ([149b35c](https://github.com/trycua/cua/commit/149b35cc3298cad93644619c1dbf5e67c827d560)), closes [#4706](https://github.com/trycua/cua/issues/4706)
+* **cua-vmm:** detect live processes on Windows in pid_alive ([#4845](https://github.com/trycua/cua/issues/4845)) ([43e4c42](https://github.com/trycua/cua/commit/43e4c42ed3cfc3af1a31015715d6429cc47976a1)), closes [#4756](https://github.com/trycua/cua/issues/4756)
+* **cua:** support host-only sign-in from a remote machine ([#4675](https://github.com/trycua/cua/issues/4675)) ([ea763a1](https://github.com/trycua/cua/commit/ea763a110ff967e8caaea4ff551b1b083d113849))
+* **keyvault:** delete items whose delivery target or import is gone ([#4889](https://github.com/trycua/cua/issues/4889)) ([cf1217c](https://github.com/trycua/cua/commit/cf1217ce90092f1409b195d951cf2bb40be3cbba)), closes [#4887](https://github.com/trycua/cua/issues/4887)
+* **sandbox:** report the live status of local VMs in sandbox ls ([#4657](https://github.com/trycua/cua/issues/4657)) ([9db2208](https://github.com/trycua/cua/commit/9db2208f942460445c0f5b589f6862b91ebf09a6))
+* **sdk:** honor HTTP proxies for controller RPC ([#4795](https://github.com/trycua/cua/issues/4795)) ([23e23d4](https://github.com/trycua/cua/commit/23e23d4cc321b1e64f5832d44a150667ff0d5c04))
+* **spaces:** boot local Windows VMs from AHCI like the image build ([#4851](https://github.com/trycua/cua/issues/4851)) ([7d0354f](https://github.com/trycua/cua/commit/7d0354fdfbe4ad8135ad8c4e7f9d0755f72bf3d8)), closes [#4777](https://github.com/trycua/cua/issues/4777)
+* **spaces:** one owner for relay machine state ([9994fc2](https://github.com/trycua/cua/commit/9994fc2e41a87808514cdaa0b62f9e20bfc235db)), closes [#4784](https://github.com/trycua/cua/issues/4784)
+* **spaces:** preserve live OS metadata and show unknown honestly ([#4671](https://github.com/trycua/cua/issues/4671)) ([f25fe36](https://github.com/trycua/cua/commit/f25fe3691e651cc8ac6adf92931940ed25d9a6bb))
+* **spaces:** reach a macOS Space again after lume serve exits ([#4661](https://github.com/trycua/cua/issues/4661)) ([bba73a6](https://github.com/trycua/cua/commit/bba73a6e51339567819120f91f1c7c65fce0d999))
+* **spaces:** register gVisor with --allow-suid so the Space user can sudo and mount FUSE ([#4852](https://github.com/trycua/cua/issues/4852)) ([cacc440](https://github.com/trycua/cua/commit/cacc4409baedd1693017029a4876e4109a126e06)), closes [#4667](https://github.com/trycua/cua/issues/4667)
+* **spaces:** renew rejected device sessions during discovery ([#4780](https://github.com/trycua/cua/issues/4780)) ([12af913](https://github.com/trycua/cua/commit/12af9135471d03d96863a910f9020b2845d67a21))
+* **spaces:** report directory refresh failures ([#4716](https://github.com/trycua/cua/issues/4716)) ([1f96a4b](https://github.com/trycua/cua/commit/1f96a4bf0e3f02dcf79ab83d78a4fc9c017d24ff))
+
 ## [0.4.1](https://github.com/trycua/cua/compare/cua-sdk-v0.4.0...cua-sdk-v0.4.1) (2026-10-05)
 
 

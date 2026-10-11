@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use cua_proto::env::v1::{EntryInfo, ErrorReason, WriteMode};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
+use std::io::SeekFrom;
+
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tonic::{Code, Status};
 
 use crate::error::{io_status, status, StatusBuilder};
@@ -125,15 +127,55 @@ impl AtomicWriter {
     }
 
     /// Appends bytes.
+    ///
+    /// A `tokio::fs::File` write is buffered and flushed on a background
+    /// thread, so an I/O error from one `write_all` can surface only on the
+    /// next call, and a failing write can still leave part of its bytes on
+    /// disk. If that went unnoticed, `self.written` and the running hash
+    /// would count bytes the file never durably held, and `finish` would
+    /// publish a short or duplicated file while reporting the expected
+    /// size and checksum.
+    ///
+    /// So each write is flushed here, where its own error is charged to it,
+    /// and on any error the file is cut back to the last fully written
+    /// offset. A resumed upload then resends from `written` onto a clean
+    /// boundary instead of past a partial tail.
     pub async fn write(&mut self, data: &[u8]) -> Result<(), Status> {
         let shown = self.tmp.clone().unwrap_or_else(|| self.target.dest.clone());
-        self.file
-            .write_all(data)
-            .await
-            .map_err(|e| io_status(&e, &shown))?;
+        if let Err(e) = self.write_flushed(data).await {
+            self.restore_to_written().await;
+            return Err(io_status(&e, &shown));
+        }
         self.hasher.update(data);
         self.written += data.len() as u64;
         Ok(())
+    }
+
+    async fn write_flushed(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.file.write_all(data).await?;
+        self.file.flush().await
+    }
+
+    /// Drop any bytes written past `self.written` after a failed write, so
+    /// the file on disk holds exactly the data the counter and hash cover.
+    /// Append mode writes straight to the destination, which already holds
+    /// prior content, so it cannot be safely rewound and is left alone.
+    async fn restore_to_written(&mut self) {
+        if self.tmp.is_none() {
+            return;
+        }
+        let _ = self.file.set_len(self.written).await;
+        let _ = self.file.seek(SeekFrom::Start(self.written)).await;
+    }
+
+    /// On-disk length of the file bytes this writer produced, or `None` in
+    /// append mode, where the destination also holds content from before
+    /// this session and a length comparison would not be meaningful.
+    async fn durable_len(&self) -> std::io::Result<Option<u64>> {
+        match &self.tmp {
+            Some(tmp) => Ok(Some(tokio::fs::metadata(tmp).await?.len())),
+            None => Ok(None),
+        }
     }
 
     /// Hex SHA-256 of everything written so far (does not consume).
@@ -154,8 +196,25 @@ impl AtomicWriter {
             .sync_all()
             .await
             .map_err(|e| io_status(&e, &dest))?;
-        let digest = hex_digest(self.hasher.clone().finalize());
+        // Defence in depth: the bytes the hash and counter cover must be the
+        // bytes on disk. If a buffered write was lost without surfacing an
+        // error, refuse to publish rather than commit a file whose contents
+        // do not match the checksum we are about to report as verified.
         let written = self.written;
+        let on_disk = self.durable_len().await.map_err(|e| io_status(&e, &dest))?;
+        if let Some(on_disk) = on_disk {
+            if on_disk != written {
+                self.abort().await;
+                return Err(status(
+                    Code::Internal,
+                    ErrorReason::Unspecified,
+                    format!(
+                        "upload was not durably written: {written} bytes accepted,                          {on_disk} bytes on disk; the transfer was discarded, retry it"
+                    ),
+                ));
+            }
+        }
+        let digest = hex_digest(self.hasher.clone().finalize());
         if expected_size != 0 && expected_size != written {
             self.abort().await;
             return Err(StatusBuilder::new(
@@ -278,6 +337,32 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error.code(), Code::AlreadyExists);
+    }
+
+    #[tokio::test]
+    async fn finish_refuses_a_file_shorter_on_disk_than_counted() {
+        // The headline bug: a buffered write can be lost without surfacing an
+        // error, leaving the file short while the counter and hash still cover
+        // the full data. Reproduce that end state by truncating the temp file
+        // behind the writer, then confirm finish refuses instead of publishing
+        // a file whose bytes do not match the checksum it would report.
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("f.bin");
+        let mut w = AtomicWriter::create(target(dest.clone(), WriteMode::Overwrite))
+            .await
+            .unwrap();
+        w.write(&vec![b'a'; 1024]).await.unwrap();
+        let tmp = w.tmp.clone().expect("overwrite uses a temp file");
+        // Lose the last 24 bytes, as a dropped buffered write would.
+        let short = std::fs::OpenOptions::new().write(true).open(&tmp).unwrap();
+        short.set_len(1000).unwrap();
+        drop(short);
+
+        let sha = hex_digest(Sha256::digest(&vec![b'a'; 1024]));
+        let error = w.finish(1024, &sha).await.unwrap_err();
+        assert_eq!(error.code(), Code::Internal, "{error:?}");
+        assert!(!dest.exists(), "a short file must not be published");
+        assert!(!tmp.exists(), "the temp file is discarded");
     }
 
     #[tokio::test]

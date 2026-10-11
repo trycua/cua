@@ -315,6 +315,7 @@ fn get_bounds_num(
                 None
             }
         })
+        .map(cua_driver_core::window_target::finite_window_coordinate)
         .unwrap_or(0.0)
 }
 

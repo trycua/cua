@@ -534,6 +534,75 @@ fn exact_window_is_ready(
     frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
 }
 
+/// The item could not be invoked with its app in the background. Activating
+/// the app would take the user's front window, so refuse and name the route.
+fn background_unavailable(reason: String) -> ToolResult {
+    let message = format!(
+        "{reason}. invoke_menu does not activate a background app: macOS keeps this menu item \
+         unavailable while the app is behind the user's window. If the user allows it, call \
+         bring_to_front for this window first, then invoke_menu; or use the app's keyboard \
+         shortcut with hotkey, or the control in the window."
+    );
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "code": "background_unavailable",
+        "refusal": { "code": "background_unavailable", "message": message }
+    }))
+}
+
+/// Resolve the whole path from the app's live menu bar without opening any
+/// level, then perform the final item's action. Used for a background app:
+/// opening a menu-bar menu would take key focus and draw over the user's
+/// front app.
+unsafe fn invoke_path_in_background(
+    pid: i32,
+    window_id: u32,
+    path: &[String],
+) -> Result<(), String> {
+    let app = AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return Err("invoke_menu: target application is unavailable".into());
+    }
+    set_messaging_timeout(app);
+    let menu_bar = copy_element_attr(app, "AXMenuBar");
+    CFRelease(app as CFTypeRef);
+    let menu_bar = menu_bar.ok_or_else(|| "invoke_menu: target exposes no AXMenuBar".to_owned())?;
+    set_messaging_timeout(menu_bar);
+    let target = resolve_exact_prefix(menu_bar, path);
+    CFRelease(menu_bar as CFTypeRef);
+    let target = target?;
+    set_messaging_timeout(target);
+    let result = (|| {
+        // AppKit validates menu items against the key window. Make the target
+        // window AppKit-key without raising it or touching the user's window
+        // (the focus record only), so items that need a key window enable.
+        if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+        {
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        if copy_bool_attr(target, "AXEnabled") == Some(false) {
+            return Err(format!(
+                "invoke_menu: path segment {} is disabled while the app is in the background",
+                path.len().saturating_sub(1)
+            ));
+        }
+        let actions = copy_action_names(target);
+        let action = choose_action(&actions, true).ok_or_else(|| {
+            "invoke_menu: the final menu item has no usable native menu action".to_owned()
+        })?;
+        let error = perform_action(target, action);
+        if error != kAXErrorSuccess {
+            return Err(format!(
+                "invoke_menu: native action for the final menu item failed with AX error {error}"
+            ));
+        }
+        Ok(())
+    })();
+    CFRelease(target as CFTypeRef);
+    result
+}
+
 fn refusal(message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
@@ -574,6 +643,49 @@ impl Tool for InvokeMenuTool {
             .any(|window| window.pid == pid && window.window_id == window_id)
         {
             return refusal("invoke_menu: window_id does not belong to pid".into());
+        }
+
+        // A background target: invoke the item without activating the app or
+        // raising its window. When macOS keeps the item unavailable to a
+        // background app, refuse and say so instead of activating it.
+        let target_in_front = tokio::task::spawn_blocking(move || {
+            live_frontmost_app().or_else(crate::apps::frontmost_pid) == Some(pid)
+        })
+        .await
+        .unwrap_or(false);
+        if !target_in_front {
+            let background_path = path.clone();
+            let outcome = tokio::task::spawn_blocking(move || {
+                let _key_focus = crate::key_focus_guard::protect(pid);
+                unsafe { invoke_path_in_background(pid, window_id, &background_path) }
+            })
+            .await;
+            return match outcome {
+                Ok(Ok(())) => ToolResult::text(
+                    "Invoked the native menu item through accessibility with the app in the background (not activated); verify the command's semantic effect from fresh state.",
+                )
+                .with_action_record(
+                    ActionExecutionRecord::builder(
+                        ActionEffect::Unverifiable,
+                        ActionTransport::MacosAxAction,
+                        RequestedDelivery::Background,
+                    )
+                    .actual_delivery(ActualDelivery::Background)
+                    .evidence(ActionEvidence {
+                        kind: EvidenceKind::NativeApiResult,
+                        detail: "Every menu hop resolved uniquely without opening it and AX accepted the final action".into(),
+                    })
+                    .build()
+                    .expect("invoke_menu record is valid"),
+                ),
+                // Only a disabled item is a background limit; a missing or
+                // ambiguous path is the same refusal as in the foreground.
+                Ok(Err(error)) if error.contains("while the app is in the background") => {
+                    background_unavailable(error)
+                }
+                Ok(Err(error)) => refusal(error),
+                Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
+            };
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
@@ -631,6 +743,17 @@ impl Tool for InvokeMenuTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_background_menu_refusal_names_the_code_and_the_route() {
+        let result = background_unavailable("invoke_menu: path segment 1 is disabled".into());
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "background_unavailable");
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains("does not activate a background app"));
+        assert!(message.contains("bring_to_front"));
+    }
 
     #[test]
     fn path_normalization_rejects_empty_segments() {

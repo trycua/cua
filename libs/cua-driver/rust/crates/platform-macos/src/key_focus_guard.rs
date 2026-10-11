@@ -15,6 +15,15 @@
 //! `SLPSReleaseKeyFocusWithID` and drops the event. The user's app never sees
 //! the loss; the menu stays open and is still operable through accessibility.
 //!
+//! Opening a menu also makes WindowServer order the menu's window group to the
+//! front, which lifts the target's parent window above the user's window. No
+//! client can stop that ordering or reorder another app's windows, so the
+//! guard restores the order right after: once the menu window is on screen
+//! (and again when the action ends), if a target window sits above the user's
+//! front window, the already-active front app is re-activated with all its
+//! windows. Key status does not move and the menu stays open; the raise is
+//! visible for at most a frame or two.
+//!
 //! Theft ids come from one session-wide counter that only the thief learns.
 //! [`protect`] therefore calibrates before each guarded action: it steals and
 //! releases key focus on the driver's own connection (the tap drops that
@@ -40,17 +49,122 @@ const MENU_WAIT: Duration = Duration::from_millis(150);
 /// CGWindowLevel of popup menus (`kCGPopUpMenuWindowLevel`).
 const POPUP_MENU_LAYER: i32 = 101;
 
+/// Whether a normal-level window of `target` sits above the frontmost
+/// normal-level window of `front` in the on-screen order.
+fn target_above_front(target: i32, front: i32) -> bool {
+    // Every layer, without the Space queries of `visible_windows`: this runs
+    // while the raise is on screen, so it has to be quick.
+    let windows = crate::windows::all_windows_any_layer();
+    target_above_front_in(&windows, target, front)
+}
+
+fn target_above_front_in(windows: &[crate::windows::WindowInfo], target: i32, front: i32) -> bool {
+    let top = |pid: i32| {
+        windows
+            .iter()
+            .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
+            .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
+            .map(|w| w.z_index)
+            .max()
+    };
+    match (top(target), top(front)) {
+        (Some(t), Some(f)) => t > f,
+        _ => false,
+    }
+}
+
+/// Put the user's front app back above a background target that raised its
+/// window (AppKit orders a popup menu's window group to the front, which
+/// lifts its parent window). Re-activating the already-active front app with
+/// all its windows restores the order without moving key status; the
+/// target's menu stays open.
+fn restore_front_if_raised(target: i32, front: i32) -> bool {
+    if crate::apps::frontmost_pid() != Some(front) || !target_above_front(target, front) {
+        return false;
+    }
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    let restored = unsafe {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(front).is_some_and(|app| {
+            app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
+        })
+    };
+    RESTORED.fetch_add(1, Ordering::Relaxed);
+    tracing::debug!(
+        target,
+        front,
+        restored,
+        "restored the user's window above a background target"
+    );
+    true
+}
+
+/// How long the order stays watched after a guarded action ends. A target
+/// can raise a window a moment after the call that caused it returns (a
+/// banner, a sheet, or a menu that a renderer process opens later).
+const ORDER_WATCH: Duration = Duration::from_millis(2500);
+const ORDER_POLL: Duration = Duration::from_millis(20);
+const MAX_RESTORES_PER_WATCH: u32 = 3;
+
+/// Keep restoring the user's window above `target` for a short while after
+/// the action. One watcher per target; a later action extends it.
+fn watch_order_after_action(target: i32, front: i32) {
+    static WATCHING: OnceLock<Mutex<HashMap<i32, Instant>>> = OnceLock::new();
+    let watching = WATCHING.get_or_init(|| Mutex::new(HashMap::new()));
+    let until = Instant::now() + ORDER_WATCH;
+    {
+        let mut map = watching
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = map.contains_key(&target);
+        map.insert(target, until);
+        if running {
+            return;
+        }
+    }
+    let spawned = std::thread::Builder::new()
+        .name("cua-order-watch".into())
+        .spawn(move || {
+            // Some apps re-raise right after each restore (a Chromium popup
+            // that stays open); cap the restores so the user's app is not
+            // re-activated in a loop.
+            let mut restores = 0;
+            loop {
+                std::thread::sleep(ORDER_POLL);
+                if restores < MAX_RESTORES_PER_WATCH && restore_front_if_raised(target, front) {
+                    restores += 1;
+                }
+                let mut map = watching
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if map
+                    .get(&target)
+                    .is_none_or(|until| Instant::now() >= *until)
+                {
+                    map.remove(&target);
+                    return;
+                }
+            }
+        });
+    if spawned.is_err() {
+        watching
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&target);
+    }
+}
+
 /// Wait until `pid` shows a menu-level window, or `budget` runs out.
 fn wait_for_menu_window(pid: i32, budget: Duration) {
     let deadline = Instant::now() + budget;
     while Instant::now() < deadline {
-        if crate::windows::visible_windows()
+        // `visible_windows` lists layer 0 only; a menu is at layer 101.
+        if crate::windows::all_windows_any_layer()
             .iter()
             .any(|w| w.pid == pid && w.layer >= POPUP_MENU_LAYER && w.is_on_screen)
         {
             return;
         }
-        std::thread::sleep(Duration::from_millis(3));
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -137,6 +251,7 @@ static OWN_NOTICES: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_FRONT: AtomicI32 = AtomicI32::new(0);
 static RELEASED: AtomicU64 = AtomicU64::new(0);
 static MISSED: AtomicU64 = AtomicU64::new(0);
+static RESTORED: AtomicU64 = AtomicU64::new(0);
 
 /// Counters since the daemon started.
 pub fn stats() -> Stats {
@@ -150,10 +265,18 @@ pub fn stats() -> Stats {
 /// user's frontmost app. Dropping it starts a short tail (see [`TAIL`]).
 pub struct Lease {
     pid: i32,
+    front: i32,
+    /// A target window already sat above the user's window when the action
+    /// started (the user arranged it so); then nothing is restored.
+    above_before: bool,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
+        if !self.above_before {
+            restore_front_if_raised(self.pid, self.front);
+            watch_order_after_action(self.pid, self.front);
+        }
         let mut st = lock();
         if let Some((leases, until)) = st.guarded.get_mut(&self.pid) {
             *leases = leases.saturating_sub(1);
@@ -196,7 +319,11 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
         entry.0 += 1;
         entry.1 = Instant::now() + TAIL;
     }
-    let lease = Lease { pid: target_pid };
+    let lease = Lease {
+        pid: target_pid,
+        front,
+        above_before: target_above_front(target_pid, front),
+    };
     if !ensure_tap(front) {
         return None;
     }
@@ -331,6 +458,10 @@ extern "C" fn tap_callback(
                 .name("cua-key-focus-release".into())
                 .spawn(move || {
                     wait_for_menu_window(thief_pid, MENU_WAIT);
+                    let front = lock().tap.as_ref().map(|tap| tap.front_pid);
+                    if let Some(front) = front {
+                        restore_front_if_raised(thief_pid, front);
+                    }
                     if release_target_theft() {
                         RELEASED.fetch_add(1, Ordering::Relaxed);
                         tracing::debug!(thief_pid, "released a background key-focus theft");
@@ -449,6 +580,41 @@ mod tests {
     fn a_guarded_target_theft_is_released_and_swallowed() {
         let action = classify_notice(21, 0x4000, 42, OWN, |pid| pid == 42);
         assert_eq!(action, NoticeAction::ReleaseAndDrop);
+    }
+
+    fn win(pid: i32, layer: i32, z_index: usize) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id: z_index as u32,
+            pid,
+            app_name: String::new(),
+            title: String::new(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 300.0,
+            },
+            layer,
+            z_index,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn a_target_window_above_the_users_window_is_detected() {
+        // z_index: higher is closer to the front.
+        let raised = [win(7, 0, 3), win(42, 0, 5), win(7, 0, 4)];
+        assert!(target_above_front_in(&raised, 42, 7));
+        let below = [win(7, 0, 5), win(42, 0, 3)];
+        assert!(!target_above_front_in(&below, 42, 7));
+        // A menu-level window does not count; only normal windows are raised.
+        let menu_only = [win(7, 0, 4), win(42, 101, 9), win(42, 0, 2)];
+        assert!(!target_above_front_in(&menu_only, 42, 7));
+        // Without a window of either app there is nothing to restore.
+        assert!(!target_above_front_in(&[win(42, 0, 9)], 42, 7));
     }
 
     #[test]

@@ -499,6 +499,7 @@ struct RecordingInner {
     state_budget: Option<StateCaptureBudget>,
     next_turn: u32,
     session_start_ms: u64,
+    manifest_started_at_ms: u64,
     /// Monotonic clock anchor for the cursor sampler so its `t_ms`
     /// matches the action-timeline anchor in `action.json`.
     session_monotonic_start: Option<Instant>,
@@ -554,6 +555,7 @@ impl RecordingSession {
                 state_budget: Some(StateCaptureBudget::default()),
                 next_turn: 1,
                 session_start_ms: 0,
+                manifest_started_at_ms: 0,
                 session_monotonic_start: None,
                 last_error: None,
                 video: None,
@@ -711,7 +713,8 @@ impl RecordingSession {
         inner.output_dir = Some(dir);
         inner.state_budget = state_budget;
         inner.next_turn = 1;
-        inner.session_start_ms = started_at_ms;
+        inner.session_start_ms = now_ms();
+        inner.manifest_started_at_ms = started_at_ms;
         inner.session_monotonic_start = Some(monotonic_start);
         inner.last_error = video_error;
         inner.last_video = None;
@@ -753,7 +756,8 @@ impl RecordingSession {
         }
         inner.owner = None;
         let dir = inner.output_dir.clone();
-        let started_at_ms = inner.session_start_ms;
+        // Reuse the start time captured in start(); finalization must not change it.
+        let started_at_ms = inner.manifest_started_at_ms;
         let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
             Some(Ok(meta)) => match validate_video_metadata(meta) {
                 Ok(meta) => (Some(meta), None),
@@ -768,6 +772,7 @@ impl RecordingSession {
         inner.output_dir = None;
         inner.next_turn = 1;
         inner.session_start_ms = 0;
+        inner.manifest_started_at_ms = 0;
         inner.session_monotonic_start = None;
         if let Some(error) = &stop_error {
             inner.last_error = Some(error.clone());
@@ -2851,7 +2856,7 @@ mod tests {
             .as_u64()
             .expect("start timestamp is an integer");
 
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(100));
         session.stop_owner(None).expect("stop recording");
 
         assert_eq!(

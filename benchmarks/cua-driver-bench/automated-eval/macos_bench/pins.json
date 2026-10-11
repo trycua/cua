@@ -33,7 +33,7 @@
     "version": "0.34.0",
     "version_string": "cua-driver 0.34.0",
     "binary_sha256": "4c7136ae2b2004aa4738ed70006031029b9e7fb7adbd3f9b4c23d79441dfcccb",
-    "skills_tree_sha256": "820559825d57078eb4697d9c5f7b8cdf8c29a45e32826424404e502d72d0b752",
+    "skills_tree_sha256": "7f1c0fd0f22cb4a3dd0ae04256a3e78c9f4d51194e92284765cc554381249504",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
     "script_binary_sha256": "7e89e910244c10e3a18b7a56ef6e4e7957777c6e0249d24fd87444cab6e05d1f"
   },

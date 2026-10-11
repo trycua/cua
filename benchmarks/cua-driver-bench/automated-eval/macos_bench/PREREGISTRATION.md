@@ -1313,7 +1313,7 @@ The four A14.3 categories keep their meaning. Every task still has exactly one c
 
 ### A18.3 The new tasks
 
-Thirty-two tasks, written from scratch on 11 Oct 2026 for this amendment, in the private pack under `tasks/v2/` (branch `bench/v2-40`, revision `02258fa1d26f`; per-task tree digests and the kit's digest in `v2-42-taskset.json`, committed with this amendment). Their ids are opaque runner selectors here, as for the CDB tasks; the briefs, fixtures and checkers stay private.
+Thirty-two tasks, written from scratch on 11 Oct 2026 for this amendment, in the private pack under `tasks/v2/` (branch `bench/v2-40`, revision `02258fa1d26f`, `420df63df403` after the A18.5 fixes; per-task tree digests and the kit's digest in `v2-42-taskset.json`, committed with this amendment). Their ids are opaque runner selectors here, as for the CDB tasks; the briefs, fixtures and checkers stay private.
 
 | Category | New tasks | With the A14.6 tasks | Apps used by the new tasks |
 |---|---|---|---|
@@ -1366,6 +1366,8 @@ A task whose validation shows a defect is fixed before any scored trial, and the
 Smoke rows are validation only: they check that every task starts, can be solved through the GUI and is graded as intended, and are never pooled or analysed. A failure caused by the task (setup, window, brief or checker) is fixed and logged here before any scored trial; a failure of the agent is only recorded.
 
 No scored run is registered here. The full run of the 42 tasks (conditions, setups, runs per task, seats and stop rule) gets its own dated line before its first trial, on the owner's go.
+
+**A18.5 step 2 outcome (11 Oct 2026, 13:20-14:00Z, `cdb-v2-40`, no token, no model call).** All 32 tasks reset and verify; every untouched state fails with score 0 through the export step and the evaluator; the evaluator user's path (`cdb-eval-run`) runs the new tasks. The scripted solutions of NA-01 to NA-07 pass. Fixes, made before any trial (pack `420df63df403`, digests in `v2-42-taskset.json` updated): the app-data reset deletes calendars, lists and folders by name one at a time; the Calendar export tolerates calendars without events; Notes fixtures no longer repeat their title; NA-05 no longer asks to keep a reminder's flag, because Reminders' scripting can neither set nor read it. Provisioning: Terminal's Automation consent for Calendar, Reminders, Notes and Finder, and calendar and reminders access, were granted inside the VM with the VM's own driver; `/Applications/CuaDriver.app` was given the direct-capture consent it asked for when its daemon started.
 
 ### A18.8 The held-out set
 

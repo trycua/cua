@@ -1,9 +1,9 @@
 {
   "repo": "trycua/cua-driver-bench (private)",
   "branch": "bench/v2-40",
-  "revision": "02258fa1d26f889dd0109c057d082f61912c2187",
+  "revision": "420df63df403e29763479a8f8fae01621c638517",
   "scheme": "sha256 tree digest, cdb_adapter.tree_sha256",
-  "kit": "d23c61edca11c3c03bec78555315299bde155e6831e4ed27b281aef8ac07cc34",
+  "kit": "bdc029e1eeb2ce1a7960585fc8339eebddd85aee3d04fae286a5b93f9d61ec19",
   "tasks": {
     "DS-01": {
       "pack_task": "v2/ds01-flour-order-lookup",
@@ -63,11 +63,11 @@
     },
     "NA-01": {
       "pack_task": "v2/na01-theatre-calendar",
-      "tree_sha256": "20e3297d66550f8f32309677e21361b1c01dd9bb156b934072eee2286c4e8382"
+      "tree_sha256": "878026228691bbbd0a930bdda0a2e6c43f0187637a80c68244c963eb0b7056a5"
     },
     "NA-02": {
       "pack_task": "v2/na02-lido-recurring",
-      "tree_sha256": "7a9eb0a02370e395d4c9af050f8c4e5b0f846129d77d567ff3e4f6c3faaf1071"
+      "tree_sha256": "4e9a263aca0cc1f1ba2e1ec180650d0daaa454a5bd4437b3fb5d43aea208521d"
     },
     "NA-03": {
       "pack_task": "v2/na03-seed-packet-tags",
@@ -79,7 +79,7 @@
     },
     "NA-05": {
       "pack_task": "v2/na05-fridge-rota-reminders",
-      "tree_sha256": "63fd6757843ebda80091fe322b1f3e5c3c5e2eff73081abb7e0526d82edebe5b"
+      "tree_sha256": "0a296c7fd80ac07df17ea1391760892dd4d42c876d3edb6809f98f3188f69e66"
     },
     "NA-06": {
       "pack_task": "v2/na06-tasting-panel-notes",

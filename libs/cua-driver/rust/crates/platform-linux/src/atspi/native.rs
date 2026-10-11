@@ -6151,10 +6151,6 @@ fn screen_extent_rebase(
     x11_origin: (i32, i32),
     accessible_frame_extents: (i32, i32, i32, i32),
 ) -> Option<(i32, i32)> {
-    // A frame that reports no real extents has no origin to rebase from.
-    // Java's ATK wrapper answers (-1, -1, -1, -1) for every top-level window,
-    // which would otherwise pass for Chromium's (0, 0) frame below and shift
-    // its correct screen coordinates by the client origin.
     if !crate::snapshot_queries::plausible_raw_extents(accessible_frame_extents) {
         return None;
     }
@@ -7053,8 +7049,6 @@ mod coord_tests {
 
     #[test]
     fn sentinel_frame_extents_are_not_a_renderer_origin() {
-        // java-atk-wrapper reports every Swing top-level as (-1, -1, -1, -1):
-        // its frames have no accessible parent to measure from.
         assert_eq!(screen_extent_rebase((155, 149), (-1, -1, -1, -1)), None);
         assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0)), None);
     }

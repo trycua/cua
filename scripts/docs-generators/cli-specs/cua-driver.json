@@ -265,7 +265,7 @@
     },
     {
      "default_value": null,
-     "help": "Override the pid-file path on Unix targets.",
+     "help": "Override the pid-file path.",
      "is_optional": true,
      "name": "pid-file",
      "short_name": null,
@@ -461,7 +461,7 @@
     },
     {
      "default_value": null,
-     "help": "Override the pid-file path on Unix targets.",
+     "help": "Override the pid-file path.",
      "is_optional": true,
      "name": "pid-file",
      "short_name": null,

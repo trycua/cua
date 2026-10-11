@@ -48,7 +48,7 @@ final class CuaSpacesMacUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Cua Spaces"].waitForExistence(timeout: 10))
         app.buttons["Get started"].click()
         // First run no longer has a Command line page: Sign in follows Welcome.
-        XCTAssertTrue(app.staticTexts["Connect your machines and your team."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Sign in for account-based access to your machines and Spaces across devices; skip to continue without it."].waitForExistence(timeout: 5))
     }
 
     func testSpaceDetailShowsFactsAndTheDropWell() {

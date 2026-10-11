@@ -217,7 +217,7 @@ impl MoveCursorTool {
             .unwrap_or(false)
         {
             let js = crate::input::hover::electron_hover_js(wid, local_x, local_y);
-            if let Ok(reply) = crate::browser::ElectronJs::execute(&js, pid).await {
+            if let Ok(reply) = crate::browser::ElectronJs::execute_main(&js, pid).await {
                 if crate::input::hover::electron_hover_delivered(&reply) {
                     return ToolResult::text(format!(
                         "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}). \

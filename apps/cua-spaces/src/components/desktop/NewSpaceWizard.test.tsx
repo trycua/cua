@@ -308,9 +308,23 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.disk)} (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked)}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("includes the first Linux runtime in the Summary footprint", () => {
+    renderWizard({
+      hostArch: "arm64",
+      storage: { ...storage(), linuxRuntimeDownloadBytes: 455 * 1024 * 1024 },
+    });
+    runOn("local");
+    next();
+    expect(screen.getByText(/455 MB one-time download, included in Disk/)).toBeInTheDocument();
+    next();
+    next();
+    expect(screen.getByText(/455 MB one-time download, included in Disk/)).toBeInTheDocument();
+    expect(screen.getByText(/GB–.*GB initially; grows with use/)).toBeInTheDocument();
   });
 
   it("blocks Continue in one line when the Space does not fit", () => {

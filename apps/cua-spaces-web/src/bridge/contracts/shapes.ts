@@ -354,6 +354,7 @@ const LocalStorageShape = ref(
   "LocalStorage",
   obj<LocalStorage>()({
     reserveBytes: num,
+    linuxRuntimeDownloadBytes: opt(num),
     lume: nullable(StorageVolumeShape),
     qemu: nullable(StorageVolumeShape),
     container: nullable(StorageVolumeShape),

@@ -1168,6 +1168,9 @@
         "reserveBytes": {
           "type": "number"
         },
+        "linuxRuntimeDownloadBytes": {
+          "type": "number"
+        },
         "lume": {
           "type": [
             "object",

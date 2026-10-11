@@ -21653,7 +21653,8 @@ export type AppLocalStorage = {
     /**
      * Catalog refs already pulled here.
      */
-    pulled: Array<string>
+    pulled: Array<string>,
+    linuxRuntimeDownloadBytes: bigint
 }
 
 /**
@@ -21681,7 +21682,8 @@ const FfiConverterTypeAppLocalStorage = (() => {
                 lume: FfiConverterOptionalTypeAppStorageVolume.read(from),
                 qemu: FfiConverterOptionalTypeAppStorageVolume.read(from),
                 container: FfiConverterOptionalTypeAppStorageVolume.read(from),
-                pulled: FfiConverterSequenceString.read(from)
+                pulled: FfiConverterSequenceString.read(from),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -21690,13 +21692,15 @@ const FfiConverterTypeAppLocalStorage = (() => {
             FfiConverterOptionalTypeAppStorageVolume.write(value.qemu, into);
             FfiConverterOptionalTypeAppStorageVolume.write(value.container, into);
             FfiConverterSequenceString.write(value.pulled, into);
+            FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt64.allocationSize(value.reserveBytes) +
              FfiConverterOptionalTypeAppStorageVolume.allocationSize(value.lume) +
              FfiConverterOptionalTypeAppStorageVolume.allocationSize(value.qemu) +
              FfiConverterOptionalTypeAppStorageVolume.allocationSize(value.container) +
-             FfiConverterSequenceString.allocationSize(value.pulled);
+             FfiConverterSequenceString.allocationSize(value.pulled) +
+             FfiConverterUInt64.allocationSize(value.linuxRuntimeDownloadBytes);
 
         }
     };

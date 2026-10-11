@@ -30832,6 +30832,8 @@ data class LocalStorage (
      * Catalog image refs already pulled here at their published digest.
      */
     var `pulled`: List<kotlin.String>
+    ,
+    var `linuxRuntimeDownloadBytes`: kotlin.ULong
 
 ){
 
@@ -30854,6 +30856,7 @@ public object FfiConverterTypeLocalStorage: FfiConverterRustBuffer<LocalStorage>
             FfiConverterOptionalTypeStorageVolume.read(buf),
             FfiConverterOptionalTypeStorageVolume.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterULong.read(buf),
         )
     }
 
@@ -30863,7 +30866,8 @@ public object FfiConverterTypeLocalStorage: FfiConverterRustBuffer<LocalStorage>
             FfiConverterOptionalTypeStorageVolume.allocationSize(value.`lume`) +
             FfiConverterOptionalTypeStorageVolume.allocationSize(value.`qemu`) +
             FfiConverterOptionalTypeStorageVolume.allocationSize(value.`container`) +
-            FfiConverterSequenceString.allocationSize(value.`pulled`)
+            FfiConverterSequenceString.allocationSize(value.`pulled`) +
+            FfiConverterULong.allocationSize(value.`linuxRuntimeDownloadBytes`)
     )
 
     override fun write(value: LocalStorage, buf: ByteBuffer) {
@@ -30873,6 +30877,7 @@ public object FfiConverterTypeLocalStorage: FfiConverterRustBuffer<LocalStorage>
             FfiConverterOptionalTypeStorageVolume.write(value.`qemu`, buf)
             FfiConverterOptionalTypeStorageVolume.write(value.`container`, buf)
             FfiConverterSequenceString.write(value.`pulled`, buf)
+            FfiConverterULong.write(value.`linuxRuntimeDownloadBytes`, buf)
     }
 }
 

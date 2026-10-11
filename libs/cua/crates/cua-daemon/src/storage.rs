@@ -28,6 +28,8 @@ pub struct StorageReport {
     pub container: Option<Volume>,
     /// Catalog refs whose published digest is already pulled here.
     pub pulled: Vec<String>,
+    #[serde(default)]
+    pub linux_runtime_download_bytes: u64,
 }
 
 const PROBE: Duration = Duration::from_secs(10);
@@ -73,7 +75,22 @@ pub async fn storage_report() -> StorageReport {
         (vol, pulled_containers(&entries).await)
     };
     let ((lume, a), (qemu, b), (container, c)) = tokio::join!(lume, qemu, container);
+    let linux_runtime_download_bytes = if cua_vmm::managed::supported()
+        && !cua_vmm::managed::exists()
+        && matches!(
+            cua_vmm::managed::choose(
+                cua_vmm::container::ContainerConfig::default(),
+                cua_vmm::managed::LinuxSource::current(),
+            )
+            .await,
+            Ok(cua_vmm::managed::Choice::Builtin(_))
+        ) {
+        cua_vmm::managed::first_use_download()
+    } else {
+        0
+    };
     StorageReport {
+        linux_runtime_download_bytes,
         host_arch,
         reserve: cua_vmm::disk::CacheConfig::load().min_free,
         lume,

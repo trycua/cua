@@ -17582,6 +17582,7 @@ public struct AppLocalStorage: Equatable, Hashable {
      * Catalog refs already pulled here.
      */
     public var pulled: [String]
+    public var linuxRuntimeDownloadBytes: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17601,12 +17602,13 @@ public struct AppLocalStorage: Equatable, Hashable {
          */container: AppStorageVolume?,
         /**
          * Catalog refs already pulled here.
-         */pulled: [String]) {
+         */pulled: [String], linuxRuntimeDownloadBytes: UInt64) {
         self.reserveBytes = reserveBytes
         self.lume = lume
         self.qemu = qemu
         self.container = container
         self.pulled = pulled
+        self.linuxRuntimeDownloadBytes = linuxRuntimeDownloadBytes
     }
 
 
@@ -17629,7 +17631,8 @@ public struct FfiConverterTypeAppLocalStorage: FfiConverterRustBuffer {
                 lume: FfiConverterOptionTypeAppStorageVolume.read(from: &buf),
                 qemu: FfiConverterOptionTypeAppStorageVolume.read(from: &buf),
                 container: FfiConverterOptionTypeAppStorageVolume.read(from: &buf),
-                pulled: FfiConverterSequenceString.read(from: &buf)
+                pulled: FfiConverterSequenceString.read(from: &buf),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -17639,6 +17642,7 @@ public struct FfiConverterTypeAppLocalStorage: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppStorageVolume.write(value.qemu, into: &buf)
         FfiConverterOptionTypeAppStorageVolume.write(value.container, into: &buf)
         FfiConverterSequenceString.write(value.pulled, into: &buf)
+        FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into: &buf)
     }
 }
 

@@ -108,7 +108,6 @@ struct OnboardingTests {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(sh.terminationStatus == 0)
         #expect(found == target)
-        // Walk the rest: Done shows where it went.
         o.send(.signinDone)
         o.send(.agentsDone(configured: []))
         #expect(o.view.step == .presentation)
@@ -125,8 +124,6 @@ struct OnboardingTests {
         #expect(again.view.step == .signin, "no Command line page once current")
     }
 
-    /// Skip (or Continue with the switch off) on the Command line page
-    /// writes nothing: no `cua`, no shell profile.
     @Test func skippingTheCommandLinePageWritesNothing() async throws {
         let tmp = try TempInstall()
         defer { tmp.remove() }

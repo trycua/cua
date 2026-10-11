@@ -7,8 +7,8 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// The first-launch installer of the bundled `cua`: the app core's, through
-/// the cua SDK (`AppCliInstaller`), the same one the Tauri app runs.
+/// The Command line page's installer of the bundled `cua`: the app core's,
+/// through the cua SDK (`AppCliInstaller`), the same one the Tauri app runs.
 public protocol CliInstallRunning: AnyObject, Sendable {
     func plan() async -> AppCliInstallPlan
     func install(request: AppCliInstallRequest) async throws -> AppCliInstallPlan
@@ -17,8 +17,8 @@ public protocol CliInstallRunning: AnyObject, Sendable {
 extension AppCliInstaller: CliInstallRunning {}
 
 /// First run: the core's step order and answers, plus the writes the flow
-/// runs through the shared core: installing the bundled `cua` command on
-/// first launch (no page) and host setup.
+/// runs through the shared core: installing the bundled `cua` command after
+/// its page, and host setup.
 @MainActor
 @Observable
 public final class OnboardingModel {
@@ -47,7 +47,7 @@ public final class OnboardingModel {
     /// The fixed words.
     public let copy = appOnboardingCopy()
 
-    /// The bundled `cua` after the first-launch install (nil until checked).
+    /// The bundled `cua`'s install plan, then the install (nil until checked).
     public private(set) var cliPlan: AppCliInstallPlan?
     /// Where Cua Spaces shows up was picked (menu bar only or not): the app
     /// saves it as the "Spaces tab in the notch" setting.
@@ -114,22 +114,28 @@ public final class OnboardingModel {
     /// Welcome's "Share anonymous usage data" switch.
     public func setShareUsage(_ on: Bool) { send(.usageDataToggled(on: on)) }
 
-    // MARK: - The cua command (no page)
+    // MARK: - The cua command
 
-    /// First launch: installs the bundled `cua` silently onto the core's
-    /// target, adding its bin dir to the shell profile when it is not on
-    /// PATH (the Tauri app does the same). A current install, or a build
-    /// without the CLI, writes nothing. Done shows where it went.
-    public func installCliSilently() async {
+    /// Reads what installing the bundled `cua` would do (writes nothing):
+    /// the Command line page shows when it needs installing.
+    public func planCli() async {
         guard let cli, cliPlan == nil else { return }
         let plan = await cli.plan()
         cliPlan = plan
-        var installed: AppCliInstallPlan? = plan.upToDate ? plan : nil
-        if !plan.upToDate, plan.source != nil {
-            installed = try? await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath))
-            if let installed { cliPlan = installed }
+        send(.cliPlanned(plan: plan))
+    }
+
+    /// Continue (`install`: the page's switch) or Skip from Command line:
+    /// only with `install` on, installs the bundled `cua` onto the core's
+    /// target, adding its bin dir to the shell profile when it is not on
+    /// PATH. Done shows where it went.
+    public func finishCli(install: Bool) async {
+        send(.cliDone(install: install))
+        guard install, let cli, let plan = cliPlan, !plan.upToDate, plan.source != nil else { return }
+        if let installed = try? await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath)) {
+            cliPlan = installed
+            send(.cliInstalled(target: installed.target))
         }
-        if let installed { send(.cliInstalled(target: installed.target)) }
     }
 
     /// Another `cua` that comes first on PATH (an old Python cua-cli, say),
@@ -374,7 +380,7 @@ public final class OnboardingModel {
         agentOutcomes = nil
         state = appOnboardingInitial(installerMode: state.installerMode, identity: state.identity)
         if let x = currentExperiments?() { send(.experimentsLoaded(experiments: x)) }
-        if let plan = cliPlan, plan.upToDate { send(.cliInstalled(target: plan.target)) }
+        if let plan = cliPlan { send(.cliPlanned(plan: plan)) }
         Task { await checkDrive() }
     }
 

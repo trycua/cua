@@ -448,7 +448,7 @@ async fn pairing_list(State(s): State<S>, headers: HeaderMap) -> Response {
         .values()
         .filter(|p| p.owner.id == who.id)
         .collect();
-    codes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    codes.sort_by_key(|p| std::cmp::Reverse(p.created_at));
     let codes: Vec<_> = codes.into_iter().map(|p| p.view(None)).collect();
     Json(serde_json::json!({ "codes": codes })).into_response()
 }

@@ -1,0 +1,4656 @@
+{
+  "cells": {
+    "cc-codex-cu": {
+      "CDB-S01": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 2.780000000000001,
+            "max": 49.68,
+            "mean": 41.318,
+            "median": 38.89,
+            "min": 38.36,
+            "n": 5,
+            "q1": 38.44,
+            "q3": 41.22
+          },
+          "est_cost_usd": {
+            "iqr": 0.052269399999999994,
+            "max": 0.21938899999999997,
+            "mean": 0.17494428,
+            "median": 0.16587000000000005,
+            "min": 0.13812580000000002,
+            "n": 5,
+            "q1": 0.14953360000000002,
+            "q3": 0.201803
+          },
+          "steps": {
+            "iqr": 2.0,
+            "max": 17.0,
+            "mean": 16.0,
+            "median": 16.0,
+            "min": 15.0,
+            "n": 5,
+            "q1": 15.0,
+            "q3": 17.0
+          },
+          "steps_field": {
+            "iqr": 2.0,
+            "max": 17.0,
+            "mean": 16.0,
+            "median": 16.0,
+            "min": 15.0,
+            "n": 5,
+            "q1": 15.0,
+            "q3": 17.0
+          },
+          "tokens_cached_input": {
+            "iqr": 29837.0,
+            "max": 276140.0,
+            "mean": 244607.4,
+            "median": 243875.0,
+            "min": 205029.0,
+            "n": 5,
+            "q1": 234078.0,
+            "q3": 263915.0
+          },
+          "tokens_input": {
+            "iqr": 4.0,
+            "max": 32.0,
+            "mean": 29.6,
+            "median": 30.0,
+            "min": 26.0,
+            "n": 5,
+            "q1": 28.0,
+            "q3": 32.0
+          },
+          "tokens_output": {
+            "iqr": 192.0,
+            "max": 2744.0,
+            "mean": 2585.4,
+            "median": 2572.0,
+            "min": 2401.0,
+            "n": 5,
+            "q1": 2509.0,
+            "q3": 2701.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 190.0,
+            "max": 2776.0,
+            "mean": 2615.0,
+            "median": 2600.0,
+            "min": 2427.0,
+            "n": 5,
+            "q1": 2541.0,
+            "q3": 2731.0
+          },
+          "wall_s": {
+            "iqr": 2.8499999999999943,
+            "max": 63.68,
+            "mean": 55.242,
+            "median": 52.78,
+            "min": 52.28,
+            "n": 5,
+            "q1": 52.31,
+            "q3": 55.16
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            15.0,
+            17.0,
+            17.0,
+            15.0,
+            16.0
+          ],
+          "trial_id": [
+            "CDB-S01-r1-cc-codex-cu",
+            "CDB-S01-r2-cc-codex-cu",
+            "CDB-S01-r3-cc-codex-cu",
+            "CDB-S01-r4-cc-codex-cu",
+            "CDB-S01-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            52.31,
+            52.78,
+            63.68,
+            55.16,
+            52.28
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "CDB-S01",
+        "tool_calls": {
+          "failed_calls_sum": 11.0,
+          "mean_by_class": {
+            "builtin": 9.2,
+            "click": 3.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 2.8,
+            "other": 1.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 46.0,
+            "click": 15.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 14.0,
+            "other": 5.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "CDB-S02": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 5,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 2.8599999999999994,
+            "max": 20.05,
+            "mean": 17.131999999999998,
+            "median": 16.37,
+            "min": 14.6,
+            "n": 5,
+            "q1": 15.89,
+            "q3": 18.75
+          },
+          "est_cost_usd": {
+            "iqr": 0.005745199999999999,
+            "max": 0.0658814,
+            "mean": 0.05790412,
+            "median": 0.058739400000000004,
+            "min": 0.0516974,
+            "n": 5,
+            "q1": 0.053728599999999994,
+            "q3": 0.05947379999999999
+          },
+          "steps": {
+            "iqr": 1.0,
+            "max": 6.0,
+            "mean": 5.4,
+            "median": 5.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 6.0
+          },
+          "steps_field": {
+            "iqr": 1.0,
+            "max": 6.0,
+            "mean": 5.4,
+            "median": 5.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 6.0
+          },
+          "tokens_cached_input": {
+            "iqr": 14036.0,
+            "max": 61367.0,
+            "mean": 51482.6,
+            "median": 47337.0,
+            "min": 42727.0,
+            "n": 5,
+            "q1": 45973.0,
+            "q3": 60009.0
+          },
+          "tokens_input": {
+            "iqr": 2.0,
+            "max": 12.0,
+            "mean": 10.8,
+            "median": 10.0,
+            "min": 10.0,
+            "n": 5,
+            "q1": 10.0,
+            "q3": 12.0
+          },
+          "tokens_output": {
+            "iqr": 436.0,
+            "max": 2460.0,
+            "mean": 2013.4,
+            "median": 1877.0,
+            "min": 1760.0,
+            "n": 5,
+            "q1": 1767.0,
+            "q3": 2203.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 438.0,
+            "max": 2472.0,
+            "mean": 2024.2,
+            "median": 1887.0,
+            "min": 1770.0,
+            "n": 5,
+            "q1": 1777.0,
+            "q3": 2215.0
+          },
+          "wall_s": {
+            "iqr": 2.7499999999999964,
+            "max": 35.67,
+            "mean": 32.774,
+            "median": 32.02,
+            "min": 30.19,
+            "n": 5,
+            "q1": 31.62,
+            "q3": 34.37
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.0,
+        "raw": {
+          "passed": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            0.75,
+            0.75,
+            0.75,
+            0.75,
+            0.55
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            5.0,
+            5.0,
+            5.0,
+            6.0,
+            6.0
+          ],
+          "trial_id": [
+            "CDB-S02-r1-cc-codex-cu",
+            "CDB-S02-r2-cc-codex-cu",
+            "CDB-S02-r3-cc-codex-cu",
+            "CDB-S02-r4-cc-codex-cu",
+            "CDB-S02-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            31.62,
+            30.19,
+            32.02,
+            35.67,
+            34.37
+          ]
+        },
+        "score": {
+          "mean": 0.71,
+          "mean_null_as_zero": 0.71,
+          "n_scored": 5
+        },
+        "successes": 0,
+        "task": "CDB-S02",
+        "tool_calls": {
+          "failed_calls_sum": 1.0,
+          "mean_by_class": {
+            "builtin": 5.4,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 27.0,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "CDB-S03": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 1.9000000000000021,
+            "max": 40.63,
+            "mean": 31.52,
+            "median": 29.54,
+            "min": 27.55,
+            "n": 5,
+            "q1": 28.99,
+            "q3": 30.89
+          },
+          "est_cost_usd": {
+            "iqr": 0.007796999999999998,
+            "max": 0.16377,
+            "mean": 0.13487904,
+            "median": 0.1316748,
+            "min": 0.1216898,
+            "n": 5,
+            "q1": 0.1247318,
+            "q3": 0.1325288
+          },
+          "steps": {
+            "iqr": 2.0,
+            "max": 8.0,
+            "mean": 6.8,
+            "median": 6.0,
+            "min": 6.0,
+            "n": 5,
+            "q1": 6.0,
+            "q3": 8.0
+          },
+          "steps_field": {
+            "iqr": 2.0,
+            "max": 8.0,
+            "mean": 6.8,
+            "median": 6.0,
+            "min": 6.0,
+            "n": 5,
+            "q1": 6.0,
+            "q3": 8.0
+          },
+          "tokens_cached_input": {
+            "iqr": 13530.0,
+            "max": 126010.0,
+            "mean": 110619.2,
+            "median": 109329.0,
+            "min": 98459.0,
+            "n": 5,
+            "q1": 102884.0,
+            "q3": 116414.0
+          },
+          "tokens_input": {
+            "iqr": 2.0,
+            "max": 16.0,
+            "mean": 14.8,
+            "median": 14.0,
+            "min": 14.0,
+            "n": 5,
+            "q1": 14.0,
+            "q3": 16.0
+          },
+          "tokens_output": {
+            "iqr": 520.0,
+            "max": 4896.0,
+            "mean": 3632.8,
+            "median": 3324.0,
+            "min": 2804.0,
+            "n": 5,
+            "q1": 3310.0,
+            "q3": 3830.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 522.0,
+            "max": 4912.0,
+            "mean": 3647.6,
+            "median": 3338.0,
+            "min": 2818.0,
+            "n": 5,
+            "q1": 3324.0,
+            "q3": 3846.0
+          },
+          "wall_s": {
+            "iqr": 1.8899999999999935,
+            "max": 53.51,
+            "mean": 44.706,
+            "median": 43.25,
+            "min": 41.2,
+            "n": 5,
+            "q1": 41.84,
+            "q3": 43.73
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            8.0,
+            6.0,
+            6.0,
+            6.0,
+            8.0
+          ],
+          "trial_id": [
+            "CDB-S03-r1-cc-codex-cu",
+            "CDB-S03-r2-cc-codex-cu",
+            "CDB-S03-r3-cc-codex-cu",
+            "CDB-S03-r4-cc-codex-cu",
+            "CDB-S03-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            53.51,
+            43.25,
+            41.2,
+            41.84,
+            43.73
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "CDB-S03",
+        "tool_calls": {
+          "failed_calls_sum": 4.0,
+          "mean_by_class": {
+            "builtin": 6.8,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 34.0,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "CDB-S04": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 31.09,
+            "max": 55.03,
+            "mean": 32.488,
+            "median": 36.75,
+            "min": 12.39,
+            "n": 5,
+            "q1": 13.59,
+            "q3": 44.68
+          },
+          "est_cost_usd": {
+            "iqr": 0.12900560000000005,
+            "max": 0.21968680000000002,
+            "mean": 0.14039524,
+            "median": 0.17585860000000003,
+            "min": 0.037341599999999996,
+            "n": 5,
+            "q1": 0.0700418,
+            "q3": 0.19904740000000004
+          },
+          "steps": {
+            "iqr": 14.0,
+            "max": 23.0,
+            "mean": 13.8,
+            "median": 17.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 19.0
+          },
+          "steps_field": {
+            "iqr": 14.0,
+            "max": 23.0,
+            "mean": 13.8,
+            "median": 17.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 19.0
+          },
+          "tokens_cached_input": {
+            "iqr": 337228.0,
+            "max": 439204.0,
+            "mean": 259084.2,
+            "median": 363393.0,
+            "min": 46378.0,
+            "n": 5,
+            "q1": 54609.0,
+            "q3": 391837.0
+          },
+          "tokens_input": {
+            "iqr": 28.0,
+            "max": 42.0,
+            "mean": 26.8,
+            "median": 34.0,
+            "min": 10.0,
+            "n": 5,
+            "q1": 10.0,
+            "q3": 38.0
+          },
+          "tokens_output": {
+            "iqr": 1836.0,
+            "max": 2853.0,
+            "mean": 1796.0,
+            "median": 1780.0,
+            "min": 811.0,
+            "n": 5,
+            "q1": 850.0,
+            "q3": 2686.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 1864.0,
+            "max": 2895.0,
+            "mean": 1822.8,
+            "median": 1814.0,
+            "min": 821.0,
+            "n": 5,
+            "q1": 860.0,
+            "q3": 2724.0
+          },
+          "wall_s": {
+            "iqr": 31.140000000000004,
+            "max": 70.18,
+            "mean": 47.644,
+            "median": 51.97,
+            "min": 27.53,
+            "n": 5,
+            "q1": 28.7,
+            "q3": 59.84
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            23.0,
+            5.0,
+            19.0,
+            5.0,
+            17.0
+          ],
+          "trial_id": [
+            "CDB-S04-r1-cc-codex-cu",
+            "CDB-S04-r2-cc-codex-cu",
+            "CDB-S04-r3-cc-codex-cu",
+            "CDB-S04-r4-cc-codex-cu",
+            "CDB-S04-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            70.18,
+            28.7,
+            59.84,
+            27.53,
+            51.97
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "CDB-S04",
+        "tool_calls": {
+          "failed_calls_sum": 5.0,
+          "mean_by_class": {
+            "builtin": 4.4,
+            "click": 6.4,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 1.6,
+            "other": 1.2,
+            "scroll": 0.0,
+            "set_value": 0.2,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 22.0,
+            "click": 32.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 8.0,
+            "other": 6.0,
+            "scroll": 0.0,
+            "set_value": 1.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "MB-09": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 85.38,
+            "max": 144.5,
+            "mean": 81.386,
+            "median": 66.2,
+            "min": 25.73,
+            "n": 5,
+            "q1": 42.56,
+            "q3": 127.94
+          },
+          "est_cost_usd": {
+            "iqr": 0.25707299999999994,
+            "max": 0.435369,
+            "mean": 0.27505344,
+            "median": 0.22467320000000005,
+            "min": 0.1254836,
+            "n": 5,
+            "q1": 0.1663342,
+            "q3": 0.42340719999999993
+          },
+          "steps": {
+            "iqr": 23.0,
+            "max": 40.0,
+            "mean": 24.6,
+            "median": 22.0,
+            "min": 10.0,
+            "n": 5,
+            "q1": 14.0,
+            "q3": 37.0
+          },
+          "steps_field": {
+            "iqr": 23.0,
+            "max": 40.0,
+            "mean": 24.6,
+            "median": 22.0,
+            "min": 10.0,
+            "n": 5,
+            "q1": 14.0,
+            "q3": 37.0
+          },
+          "tokens_cached_input": {
+            "iqr": 677325.0,
+            "max": 1010855.0,
+            "mean": 553749.2,
+            "median": 424016.0,
+            "min": 155748.0,
+            "n": 5,
+            "q1": 250401.0,
+            "q3": 927726.0
+          },
+          "tokens_input": {
+            "iqr": 46.0,
+            "max": 82.0,
+            "mean": 51.2,
+            "median": 46.0,
+            "min": 22.0,
+            "n": 5,
+            "q1": 30.0,
+            "q3": 76.0
+          },
+          "tokens_output": {
+            "iqr": 5996.0,
+            "max": 7857.0,
+            "mean": 4482.2,
+            "median": 3473.0,
+            "min": 1551.0,
+            "n": 5,
+            "q1": 1767.0,
+            "q3": 7763.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 6048.0,
+            "max": 7933.0,
+            "mean": 4533.4,
+            "median": 3519.0,
+            "min": 1573.0,
+            "n": 5,
+            "q1": 1797.0,
+            "q3": 7845.0
+          },
+          "wall_s": {
+            "iqr": 85.41999999999999,
+            "max": 154.73,
+            "mean": 91.58,
+            "median": 76.39,
+            "min": 35.86,
+            "n": 5,
+            "q1": 52.75,
+            "q3": 138.17
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            22.0,
+            40.0,
+            37.0,
+            10.0,
+            14.0
+          ],
+          "trial_id": [
+            "MB-09-r1-cc-codex-cu",
+            "MB-09-r2-cc-codex-cu",
+            "MB-09-r3-cc-codex-cu",
+            "MB-09-r4-cc-codex-cu",
+            "MB-09-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            76.39,
+            138.17,
+            154.73,
+            35.86,
+            52.75
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "MB-09",
+        "tool_calls": {
+          "failed_calls_sum": 0.0,
+          "mean_by_class": {
+            "builtin": 1.0,
+            "click": 1.2,
+            "drag": 14.4,
+            "key": 0.0,
+            "observe": 1.0,
+            "other": 7.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 5.0,
+            "click": 6.0,
+            "drag": 72.0,
+            "key": 0.0,
+            "observe": 5.0,
+            "other": 35.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "MB-10": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 5,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 11.25,
+            "max": 43.06,
+            "mean": 26.189999999999998,
+            "median": 21.62,
+            "min": 16.86,
+            "n": 5,
+            "q1": 19.08,
+            "q3": 30.33
+          },
+          "est_cost_usd": {
+            "iqr": 0.010819999999999996,
+            "max": 0.1379084,
+            "mean": 0.10262327999999998,
+            "median": 0.10034059999999999,
+            "min": 0.068687,
+            "n": 5,
+            "q1": 0.0976802,
+            "q3": 0.10850019999999999
+          },
+          "steps": {
+            "iqr": 1.0,
+            "max": 13.0,
+            "mean": 9.4,
+            "median": 9.0,
+            "min": 6.0,
+            "n": 5,
+            "q1": 9.0,
+            "q3": 10.0
+          },
+          "steps_field": {
+            "iqr": 1.0,
+            "max": 13.0,
+            "mean": 9.4,
+            "median": 9.0,
+            "min": 6.0,
+            "n": 5,
+            "q1": 9.0,
+            "q3": 10.0
+          },
+          "tokens_cached_input": {
+            "iqr": 42670.0,
+            "max": 203162.0,
+            "mean": 131486.4,
+            "median": 122793.0,
+            "min": 74845.0,
+            "n": 5,
+            "q1": 106981.0,
+            "q3": 149651.0
+          },
+          "tokens_input": {
+            "iqr": 4.0,
+            "max": 28.0,
+            "mean": 20.4,
+            "median": 20.0,
+            "min": 14.0,
+            "n": 5,
+            "q1": 18.0,
+            "q3": 22.0
+          },
+          "tokens_output": {
+            "iqr": 508.0,
+            "max": 1846.0,
+            "mean": 1176.6,
+            "median": 972.0,
+            "min": 651.0,
+            "n": 5,
+            "q1": 953.0,
+            "q3": 1461.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 510.0,
+            "max": 1874.0,
+            "mean": 1197.0,
+            "median": 990.0,
+            "min": 665.0,
+            "n": 5,
+            "q1": 973.0,
+            "q3": 1483.0
+          },
+          "wall_s": {
+            "iqr": 11.250000000000004,
+            "max": 53.22,
+            "mean": 36.346,
+            "median": 31.8,
+            "min": 26.98,
+            "n": 5,
+            "q1": 29.24,
+            "q3": 40.49
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.0,
+        "raw": {
+          "passed": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            9.0,
+            13.0,
+            9.0,
+            6.0,
+            10.0
+          ],
+          "trial_id": [
+            "MB-10-r1-cc-codex-cu",
+            "MB-10-r2-cc-codex-cu",
+            "MB-10-r3-cc-codex-cu",
+            "MB-10-r4-cc-codex-cu",
+            "MB-10-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            29.24,
+            53.22,
+            31.8,
+            26.98,
+            40.49
+          ]
+        },
+        "score": {
+          "mean": 0.8,
+          "mean_null_as_zero": 0.8,
+          "n_scored": 5
+        },
+        "successes": 0,
+        "task": "MB-10",
+        "tool_calls": {
+          "failed_calls_sum": 0.0,
+          "mean_by_class": {
+            "builtin": 1.0,
+            "click": 3.6,
+            "drag": 1.0,
+            "key": 0.0,
+            "observe": 1.0,
+            "other": 1.6,
+            "scroll": 1.2,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 5.0,
+            "click": 18.0,
+            "drag": 5.0,
+            "key": 0.0,
+            "observe": 5.0,
+            "other": 8.0,
+            "scroll": 6.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "MB-11": {
+        "arm": "cc-codex-cu",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 5,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 24.169999999999998,
+            "max": 71.88,
+            "mean": 46.394,
+            "median": 45.36,
+            "min": 26.74,
+            "n": 5,
+            "q1": 31.91,
+            "q3": 56.08
+          },
+          "est_cost_usd": {
+            "iqr": 0.019341799999999992,
+            "max": 0.15418880000000001,
+            "mean": 0.12002648,
+            "median": 0.12485360000000001,
+            "min": 0.08957820000000001,
+            "n": 5,
+            "q1": 0.10608500000000001,
+            "q3": 0.1254268
+          },
+          "steps": {
+            "iqr": 1.0,
+            "max": 14.0,
+            "mean": 10.6,
+            "median": 11.0,
+            "min": 7.0,
+            "n": 5,
+            "q1": 10.0,
+            "q3": 11.0
+          },
+          "steps_field": {
+            "iqr": 1.0,
+            "max": 14.0,
+            "mean": 10.6,
+            "median": 11.0,
+            "min": 7.0,
+            "n": 5,
+            "q1": 10.0,
+            "q3": 11.0
+          },
+          "tokens_cached_input": {
+            "iqr": 46349.0,
+            "max": 225964.0,
+            "mean": 153756.4,
+            "median": 162948.0,
+            "min": 89051.0,
+            "n": 5,
+            "q1": 122235.0,
+            "q3": 168584.0
+          },
+          "tokens_input": {
+            "iqr": 4.0,
+            "max": 30.0,
+            "mean": 22.8,
+            "median": 24.0,
+            "min": 16.0,
+            "n": 5,
+            "q1": 20.0,
+            "q3": 24.0
+          },
+          "tokens_output": {
+            "iqr": 674.0,
+            "max": 2334.0,
+            "mean": 1706.0,
+            "median": 1878.0,
+            "min": 1002.0,
+            "n": 5,
+            "q1": 1321.0,
+            "q3": 1995.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 678.0,
+            "max": 2364.0,
+            "mean": 1728.8,
+            "median": 1902.0,
+            "min": 1018.0,
+            "n": 5,
+            "q1": 1341.0,
+            "q3": 2019.0
+          },
+          "wall_s": {
+            "iqr": 24.200000000000003,
+            "max": 82.03,
+            "mean": 56.556000000000004,
+            "median": 55.55,
+            "min": 36.88,
+            "n": 5,
+            "q1": 42.06,
+            "q3": 66.26
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.0,
+        "raw": {
+          "passed": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            14.0,
+            7.0,
+            11.0,
+            10.0,
+            11.0
+          ],
+          "trial_id": [
+            "MB-11-r1-cc-codex-cu",
+            "MB-11-r2-cc-codex-cu",
+            "MB-11-r3-cc-codex-cu",
+            "MB-11-r4-cc-codex-cu",
+            "MB-11-r5-cc-codex-cu"
+          ],
+          "wall_s": [
+            82.03,
+            36.88,
+            55.55,
+            42.06,
+            66.26
+          ]
+        },
+        "score": {
+          "mean": 0.05,
+          "mean_null_as_zero": 0.05,
+          "n_scored": 5
+        },
+        "successes": 0,
+        "task": "MB-11",
+        "tool_calls": {
+          "failed_calls_sum": 0.0,
+          "mean_by_class": {
+            "builtin": 1.0,
+            "click": 5.4,
+            "drag": 0.4,
+            "key": 0.0,
+            "observe": 1.0,
+            "other": 2.6,
+            "scroll": 0.2,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 5.0,
+            "click": 27.0,
+            "drag": 2.0,
+            "key": 0.0,
+            "observe": 5.0,
+            "other": 13.0,
+            "scroll": 1.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      }
+    },
+    "cc-cua-driver": {
+      "CDB-S01": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 10.75,
+            "max": 84.89,
+            "mean": 75.97999999999999,
+            "median": 75.17,
+            "min": 61.99,
+            "n": 5,
+            "q1": 73.55,
+            "q3": 84.3
+          },
+          "est_cost_usd": {
+            "iqr": 0.04327480000000006,
+            "max": 0.6144603999999999,
+            "mean": 0.562595,
+            "median": 0.556984,
+            "min": 0.5077541999999999,
+            "n": 5,
+            "q1": 0.5452507999999999,
+            "q3": 0.5885256
+          },
+          "steps": {
+            "iqr": 2.0,
+            "max": 31.0,
+            "mean": 27.4,
+            "median": 28.0,
+            "min": 24.0,
+            "n": 5,
+            "q1": 26.0,
+            "q3": 28.0
+          },
+          "steps_field": {
+            "iqr": 2.0,
+            "max": 31.0,
+            "mean": 27.4,
+            "median": 28.0,
+            "min": 24.0,
+            "n": 5,
+            "q1": 26.0,
+            "q3": 28.0
+          },
+          "tokens_cached_input": {
+            "iqr": 99944.0,
+            "max": 1186152.0,
+            "mean": 1038941.0,
+            "median": 1029000.0,
+            "min": 942301.0,
+            "n": 5,
+            "q1": 968654.0,
+            "q3": 1068598.0
+          },
+          "tokens_input": {
+            "iqr": 2.0,
+            "max": 48.0,
+            "mean": 45.2,
+            "median": 46.0,
+            "min": 42.0,
+            "n": 5,
+            "q1": 44.0,
+            "q3": 46.0
+          },
+          "tokens_output": {
+            "iqr": 130.0,
+            "max": 4939.0,
+            "mean": 4395.8,
+            "median": 4398.0,
+            "min": 3886.0,
+            "n": 5,
+            "q1": 4313.0,
+            "q3": 4443.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 132.0,
+            "max": 4983.0,
+            "mean": 4441.0,
+            "median": 4444.0,
+            "min": 3928.0,
+            "n": 5,
+            "q1": 4359.0,
+            "q3": 4491.0
+          },
+          "wall_s": {
+            "iqr": 10.939999999999998,
+            "max": 98.89,
+            "mean": 89.95,
+            "median": 89.1,
+            "min": 75.88,
+            "n": 5,
+            "q1": 87.47,
+            "q3": 98.41
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            28.0,
+            31.0,
+            24.0,
+            26.0,
+            28.0
+          ],
+          "trial_id": [
+            "CDB-S01-r1-cc-cua-driver",
+            "CDB-S01-r2-cc-cua-driver",
+            "CDB-S01-r3-cc-cua-driver",
+            "CDB-S01-r4-cc-cua-driver",
+            "CDB-S01-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            98.41,
+            87.47,
+            75.88,
+            89.1,
+            98.89
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "CDB-S01",
+        "tool_calls": {
+          "failed_calls_sum": 16.0,
+          "mean_by_class": {
+            "builtin": 10.6,
+            "click": 5.4,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 9.0,
+            "other": 0.0,
+            "scroll": 1.4,
+            "set_value": 0.6,
+            "type": 0.4
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 53.0,
+            "click": 27.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 45.0,
+            "other": 0.0,
+            "scroll": 7.0,
+            "set_value": 3.0,
+            "type": 2.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "CDB-S02": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 5,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 2.5100000000000016,
+            "max": 25.67,
+            "mean": 19.212,
+            "median": 19.0,
+            "min": 15.9,
+            "n": 5,
+            "q1": 16.49,
+            "q3": 19.0
+          },
+          "est_cost_usd": {
+            "iqr": 0.0008849999999999969,
+            "max": 0.1124096,
+            "mean": 0.07856592,
+            "median": 0.07423740000000001,
+            "min": 0.0582236,
+            "n": 5,
+            "q1": 0.073537,
+            "q3": 0.074422
+          },
+          "steps": {
+            "iqr": 0.0,
+            "max": 7.0,
+            "mean": 5.4,
+            "median": 5.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 5.0
+          },
+          "steps_field": {
+            "iqr": 0.0,
+            "max": 7.0,
+            "mean": 5.4,
+            "median": 5.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 5.0
+          },
+          "tokens_cached_input": {
+            "iqr": 4733.0,
+            "max": 97808.0,
+            "mean": 70801.6,
+            "median": 62910.0,
+            "min": 62847.0,
+            "n": 5,
+            "q1": 62855.0,
+            "q3": 67588.0
+          },
+          "tokens_input": {
+            "iqr": 0.0,
+            "max": 14.0,
+            "mean": 10.8,
+            "median": 10.0,
+            "min": 10.0,
+            "n": 5,
+            "q1": 10.0,
+            "q3": 10.0
+          },
+          "tokens_output": {
+            "iqr": 46.0,
+            "max": 2872.0,
+            "mean": 2218.8,
+            "median": 2071.0,
+            "min": 2025.0,
+            "n": 5,
+            "q1": 2040.0,
+            "q3": 2086.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 46.0,
+            "max": 2886.0,
+            "mean": 2229.6,
+            "median": 2081.0,
+            "min": 2035.0,
+            "n": 5,
+            "q1": 2050.0,
+            "q3": 2096.0
+          },
+          "wall_s": {
+            "iqr": 2.469999999999999,
+            "max": 41.49,
+            "mean": 34.886,
+            "median": 34.62,
+            "min": 31.55,
+            "n": 5,
+            "q1": 32.15,
+            "q3": 34.62
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.0,
+        "raw": {
+          "passed": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            0.75,
+            0.45,
+            0.55,
+            0.75,
+            0.75
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            7.0,
+            5.0,
+            5.0,
+            5.0,
+            5.0
+          ],
+          "trial_id": [
+            "CDB-S02-r1-cc-cua-driver",
+            "CDB-S02-r2-cc-cua-driver",
+            "CDB-S02-r3-cc-cua-driver",
+            "CDB-S02-r4-cc-cua-driver",
+            "CDB-S02-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            41.49,
+            34.62,
+            34.62,
+            32.15,
+            31.55
+          ]
+        },
+        "score": {
+          "mean": 0.65,
+          "mean_null_as_zero": 0.65,
+          "n_scored": 5
+        },
+        "successes": 0,
+        "task": "CDB-S02",
+        "tool_calls": {
+          "failed_calls_sum": 2.0,
+          "mean_by_class": {
+            "builtin": 5.4,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 27.0,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "CDB-S03": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 2,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 5.760000000000002,
+            "max": 40.03,
+            "mean": 31.862000000000002,
+            "median": 29.97,
+            "min": 26.29,
+            "n": 5,
+            "q1": 28.63,
+            "q3": 34.39
+          },
+          "est_cost_usd": {
+            "iqr": 0.016010999999999997,
+            "max": 0.14783960000000002,
+            "mean": 0.13230124000000001,
+            "median": 0.13318180000000002,
+            "min": 0.11743899999999999,
+            "n": 5,
+            "q1": 0.1235174,
+            "q3": 0.1395284
+          },
+          "steps": {
+            "iqr": 3.0,
+            "max": 9.0,
+            "mean": 6.6,
+            "median": 6.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 8.0
+          },
+          "steps_field": {
+            "iqr": 3.0,
+            "max": 9.0,
+            "mean": 6.6,
+            "median": 6.0,
+            "min": 5.0,
+            "n": 5,
+            "q1": 5.0,
+            "q3": 8.0
+          },
+          "tokens_cached_input": {
+            "iqr": 67492.0,
+            "max": 164318.0,
+            "mean": 118564.2,
+            "median": 106472.0,
+            "min": 72405.0,
+            "n": 5,
+            "q1": 91067.0,
+            "q3": 158559.0
+          },
+          "tokens_input": {
+            "iqr": 6.0,
+            "max": 20.0,
+            "mean": 14.8,
+            "median": 14.0,
+            "min": 10.0,
+            "n": 5,
+            "q1": 12.0,
+            "q3": 18.0
+          },
+          "tokens_output": {
+            "iqr": 454.0,
+            "max": 4069.0,
+            "mean": 3539.0,
+            "median": 3487.0,
+            "min": 2905.0,
+            "n": 5,
+            "q1": 3390.0,
+            "q3": 3844.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 460.0,
+            "max": 4089.0,
+            "mean": 3553.8,
+            "median": 3497.0,
+            "min": 2919.0,
+            "n": 5,
+            "q1": 3402.0,
+            "q3": 3862.0
+          },
+          "wall_s": {
+            "iqr": 6.619999999999997,
+            "max": 52.97,
+            "mean": 45.076,
+            "median": 42.79,
+            "min": 40.0,
+            "n": 5,
+            "q1": 41.5,
+            "q3": 48.12
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.6,
+        "raw": {
+          "passed": [
+            0,
+            1,
+            1,
+            1,
+            0
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            0.85,
+            1.0,
+            1.0,
+            1.0,
+            0.85
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            6.0,
+            8.0,
+            9.0,
+            5.0,
+            5.0
+          ],
+          "trial_id": [
+            "CDB-S03-r1-cc-cua-driver",
+            "CDB-S03-r2-cc-cua-driver",
+            "CDB-S03-r3-cc-cua-driver",
+            "CDB-S03-r4-cc-cua-driver",
+            "CDB-S03-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            40.0,
+            48.12,
+            52.97,
+            41.5,
+            42.79
+          ]
+        },
+        "score": {
+          "mean": 0.9400000000000001,
+          "mean_null_as_zero": 0.9400000000000001,
+          "n_scored": 5
+        },
+        "successes": 3,
+        "task": "CDB-S03",
+        "tool_calls": {
+          "failed_calls_sum": 4.0,
+          "mean_by_class": {
+            "builtin": 6.6,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 33.0,
+            "click": 0.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 0.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 0.882379225767352,
+        "wilson_low": 0.2307242812760128
+      },
+      "CDB-S04": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 13.769999999999996,
+            "max": 124.78,
+            "mean": 82.974,
+            "median": 94.13,
+            "min": 7.69,
+            "n": 5,
+            "q1": 87.25,
+            "q3": 101.02
+          },
+          "est_cost_usd": {
+            "iqr": 0.1347952,
+            "max": 0.7310314,
+            "mean": 0.5456042799999999,
+            "median": 0.6523805999999999,
+            "min": 0.028773400000000005,
+            "n": 5,
+            "q1": 0.5905204000000001,
+            "q3": 0.7253156000000001
+          },
+          "steps": {
+            "iqr": 2.0,
+            "max": 61.0,
+            "mean": 40.8,
+            "median": 46.0,
+            "min": 3.0,
+            "n": 5,
+            "q1": 46.0,
+            "q3": 48.0
+          },
+          "steps_field": {
+            "iqr": 2.0,
+            "max": 61.0,
+            "mean": 40.8,
+            "median": 46.0,
+            "min": 3.0,
+            "n": 5,
+            "q1": 46.0,
+            "q3": 48.0
+          },
+          "tokens_cached_input": {
+            "iqr": 341726.0,
+            "max": 1484277.0,
+            "mean": 1101087.4,
+            "median": 1418363.0,
+            "min": 38647.0,
+            "n": 5,
+            "q1": 1111212.0,
+            "q3": 1452938.0
+          },
+          "tokens_input": {
+            "iqr": 8.0,
+            "max": 52.0,
+            "mean": 40.0,
+            "median": 48.0,
+            "min": 8.0,
+            "n": 5,
+            "q1": 42.0,
+            "q3": 50.0
+          },
+          "tokens_output": {
+            "iqr": 243.0,
+            "max": 8702.0,
+            "mean": 5754.2,
+            "median": 6436.0,
+            "min": 648.0,
+            "n": 5,
+            "q1": 6371.0,
+            "q3": 6614.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 253.0,
+            "max": 8752.0,
+            "mean": 5794.2,
+            "median": 6484.0,
+            "min": 656.0,
+            "n": 5,
+            "q1": 6413.0,
+            "q3": 6666.0
+          },
+          "wall_s": {
+            "iqr": 13.810000000000002,
+            "max": 140.09,
+            "mean": 98.24600000000001,
+            "median": 109.47,
+            "min": 22.86,
+            "n": 5,
+            "q1": 102.5,
+            "q3": 116.31
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            46.0,
+            3.0,
+            46.0,
+            48.0,
+            61.0
+          ],
+          "trial_id": [
+            "CDB-S04-r1-cc-cua-driver",
+            "CDB-S04-r2-cc-cua-driver",
+            "CDB-S04-r3-cc-cua-driver",
+            "CDB-S04-r4-cc-cua-driver",
+            "CDB-S04-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            116.31,
+            22.86,
+            109.47,
+            102.5,
+            140.09
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "CDB-S04",
+        "tool_calls": {
+          "failed_calls_sum": 14.0,
+          "mean_by_class": {
+            "builtin": 4.2,
+            "click": 12.2,
+            "drag": 0.0,
+            "key": 6.6,
+            "observe": 11.0,
+            "other": 0.2,
+            "scroll": 0.6,
+            "set_value": 3.2,
+            "type": 2.8
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 21.0,
+            "click": 61.0,
+            "drag": 0.0,
+            "key": 33.0,
+            "observe": 55.0,
+            "other": 1.0,
+            "scroll": 3.0,
+            "set_value": 16.0,
+            "type": 14.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "MB-09": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 0,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 2.3099999999999987,
+            "max": 28.04,
+            "mean": 22.978,
+            "median": 23.44,
+            "min": 15.78,
+            "n": 5,
+            "q1": 22.66,
+            "q3": 24.97
+          },
+          "est_cost_usd": {
+            "iqr": 0.07139480000000004,
+            "max": 0.18484159999999997,
+            "mean": 0.14151432000000003,
+            "median": 0.16963640000000002,
+            "min": 0.07363960000000001,
+            "n": 5,
+            "q1": 0.1040296,
+            "q3": 0.17542440000000004
+          },
+          "steps": {
+            "iqr": 0.0,
+            "max": 12.0,
+            "mean": 9.2,
+            "median": 9.0,
+            "min": 7.0,
+            "n": 5,
+            "q1": 9.0,
+            "q3": 9.0
+          },
+          "steps_field": {
+            "iqr": 0.0,
+            "max": 12.0,
+            "mean": 9.2,
+            "median": 9.0,
+            "min": 7.0,
+            "n": 5,
+            "q1": 9.0,
+            "q3": 9.0
+          },
+          "tokens_cached_input": {
+            "iqr": 100624.0,
+            "max": 213838.0,
+            "mean": 147165.6,
+            "median": 149242.0,
+            "min": 70368.0,
+            "n": 5,
+            "q1": 100878.0,
+            "q3": 201502.0
+          },
+          "tokens_input": {
+            "iqr": 2.0,
+            "max": 20.0,
+            "mean": 16.8,
+            "median": 16.0,
+            "min": 14.0,
+            "n": 5,
+            "q1": 16.0,
+            "q3": 18.0
+          },
+          "tokens_output": {
+            "iqr": 221.0,
+            "max": 1695.0,
+            "mean": 1249.8,
+            "median": 1166.0,
+            "min": 873.0,
+            "n": 5,
+            "q1": 1147.0,
+            "q3": 1368.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 221.0,
+            "max": 1715.0,
+            "mean": 1266.6,
+            "median": 1184.0,
+            "min": 887.0,
+            "n": 5,
+            "q1": 1163.0,
+            "q3": 1384.0
+          },
+          "wall_s": {
+            "iqr": 2.3000000000000043,
+            "max": 38.28,
+            "mean": 33.176,
+            "median": 33.6,
+            "min": 25.96,
+            "n": 5,
+            "q1": 32.87,
+            "q3": 35.17
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 1.0,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            9.0,
+            9.0,
+            12.0,
+            9.0,
+            7.0
+          ],
+          "trial_id": [
+            "MB-09-r1-cc-cua-driver",
+            "MB-09-r2-cc-cua-driver",
+            "MB-09-r3-cc-cua-driver",
+            "MB-09-r4-cc-cua-driver",
+            "MB-09-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            33.6,
+            32.87,
+            38.28,
+            35.17,
+            25.96
+          ]
+        },
+        "score": {
+          "mean": 1.0,
+          "mean_null_as_zero": 1.0,
+          "n_scored": 5
+        },
+        "successes": 5,
+        "task": "MB-09",
+        "tool_calls": {
+          "failed_calls_sum": 1.0,
+          "mean_by_class": {
+            "builtin": 1.0,
+            "click": 1.6,
+            "drag": 2.0,
+            "key": 0.0,
+            "observe": 4.6,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 5.0,
+            "click": 8.0,
+            "drag": 10.0,
+            "key": 0.0,
+            "observe": 23.0,
+            "other": 0.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "MB-10": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 1,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 23.459999999999994,
+            "max": 142.84,
+            "mean": 90.89,
+            "median": 86.95,
+            "min": 56.02,
+            "n": 5,
+            "q1": 72.59,
+            "q3": 96.05
+          },
+          "est_cost_usd": {
+            "iqr": 0.06899940000000004,
+            "max": 0.8532551999999998,
+            "mean": 0.5675416,
+            "median": 0.5836232,
+            "min": 0.2796114,
+            "n": 5,
+            "q1": 0.5261094000000001,
+            "q3": 0.5951088000000001
+          },
+          "steps": {
+            "iqr": 8.0,
+            "max": 63.0,
+            "mean": 44.4,
+            "median": 45.0,
+            "min": 18.0,
+            "n": 5,
+            "q1": 44.0,
+            "q3": 52.0
+          },
+          "steps_field": {
+            "iqr": 8.0,
+            "max": 63.0,
+            "mean": 44.4,
+            "median": 45.0,
+            "min": 18.0,
+            "n": 5,
+            "q1": 44.0,
+            "q3": 52.0
+          },
+          "tokens_cached_input": {
+            "iqr": 318257.0,
+            "max": 1926956.0,
+            "mean": 1175938.0,
+            "median": 1081206.0,
+            "min": 409737.0,
+            "n": 5,
+            "q1": 1071767.0,
+            "q3": 1390024.0
+          },
+          "tokens_input": {
+            "iqr": 18.0,
+            "max": 70.0,
+            "mean": 54.0,
+            "median": 54.0,
+            "min": 28.0,
+            "n": 5,
+            "q1": 50.0,
+            "q3": 68.0
+          },
+          "tokens_output": {
+            "iqr": 758.0,
+            "max": 10724.0,
+            "mean": 6760.6,
+            "median": 6935.0,
+            "min": 2158.0,
+            "n": 5,
+            "q1": 6614.0,
+            "q3": 7372.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 744.0,
+            "max": 10794.0,
+            "mean": 6814.6,
+            "median": 6985.0,
+            "min": 2186.0,
+            "n": 5,
+            "q1": 6682.0,
+            "q3": 7426.0
+          },
+          "wall_s": {
+            "iqr": 23.460000000000008,
+            "max": 153.07,
+            "mean": 101.136,
+            "median": 97.22,
+            "min": 66.23,
+            "n": 5,
+            "q1": 82.85,
+            "q3": 106.31
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.8,
+        "raw": {
+          "passed": [
+            1,
+            0,
+            1,
+            1,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            0.1,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            18.0,
+            63.0,
+            44.0,
+            45.0,
+            52.0
+          ],
+          "trial_id": [
+            "MB-10-r1-cc-cua-driver",
+            "MB-10-r2-cc-cua-driver",
+            "MB-10-r3-cc-cua-driver",
+            "MB-10-r4-cc-cua-driver",
+            "MB-10-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            66.23,
+            153.07,
+            82.85,
+            106.31,
+            97.22
+          ]
+        },
+        "score": {
+          "mean": 0.82,
+          "mean_null_as_zero": 0.82,
+          "n_scored": 5
+        },
+        "successes": 4,
+        "task": "MB-10",
+        "tool_calls": {
+          "failed_calls_sum": 4.0,
+          "mean_by_class": {
+            "builtin": 2.0,
+            "click": 4.0,
+            "drag": 1.8,
+            "key": 0.2,
+            "observe": 20.6,
+            "other": 15.6,
+            "scroll": 0.2,
+            "set_value": 0.0,
+            "type": 0.0
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 10.0,
+            "click": 20.0,
+            "drag": 9.0,
+            "key": 1.0,
+            "observe": 103.0,
+            "other": 78.0,
+            "scroll": 1.0,
+            "set_value": 0.0,
+            "type": 0.0
+          }
+        },
+        "wilson_high": 0.9637758913675698,
+        "wilson_low": 0.37553462976252533
+      },
+      "MB-11": {
+        "arm": "cc-cua-driver",
+        "confirmation_requested": 0,
+        "excluded_runs": [],
+        "failures": {
+          "agent_error": 0,
+          "completed_but_failed": 1,
+          "infra_error_not_excluded": 0,
+          "timeout": 0
+        },
+        "metrics": {
+          "agent_wall_s": {
+            "iqr": 5.280000000000001,
+            "max": 60.82,
+            "mean": 46.525999999999996,
+            "median": 50.03,
+            "min": 26.76,
+            "n": 5,
+            "q1": 44.87,
+            "q3": 50.15
+          },
+          "est_cost_usd": {
+            "iqr": 0.1081026,
+            "max": 0.464992,
+            "mean": 0.35543712000000005,
+            "median": 0.32926920000000004,
+            "min": 0.25415699999999997,
+            "n": 5,
+            "q1": 0.3103324,
+            "q3": 0.418435
+          },
+          "steps": {
+            "iqr": 12.0,
+            "max": 33.0,
+            "mean": 23.6,
+            "median": 20.0,
+            "min": 15.0,
+            "n": 5,
+            "q1": 19.0,
+            "q3": 31.0
+          },
+          "steps_field": {
+            "iqr": 12.0,
+            "max": 33.0,
+            "mean": 23.6,
+            "median": 20.0,
+            "min": 15.0,
+            "n": 5,
+            "q1": 19.0,
+            "q3": 31.0
+          },
+          "tokens_cached_input": {
+            "iqr": 124603.0,
+            "max": 1006700.0,
+            "mean": 663117.6,
+            "median": 615136.0,
+            "min": 425585.0,
+            "n": 5,
+            "q1": 571782.0,
+            "q3": 696385.0
+          },
+          "tokens_input": {
+            "iqr": 2.0,
+            "max": 48.0,
+            "mean": 37.6,
+            "median": 36.0,
+            "min": 30.0,
+            "n": 5,
+            "q1": 36.0,
+            "q3": 38.0
+          },
+          "tokens_output": {
+            "iqr": 1252.0,
+            "max": 3730.0,
+            "mean": 2660.8,
+            "median": 2282.0,
+            "min": 1562.0,
+            "n": 5,
+            "q1": 2239.0,
+            "q3": 3491.0
+          },
+          "tokens_reasoning": {
+            "iqr": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "n": 5,
+            "q1": 0.0,
+            "q3": 0.0
+          },
+          "tokens_total": {
+            "iqr": 1254.0,
+            "max": 3778.0,
+            "mean": 2698.4,
+            "median": 2318.0,
+            "min": 1592.0,
+            "n": 5,
+            "q1": 2275.0,
+            "q3": 3529.0
+          },
+          "wall_s": {
+            "iqr": 5.299999999999997,
+            "max": 71.07,
+            "mean": 56.760000000000005,
+            "median": 60.26,
+            "min": 36.97,
+            "n": 5,
+            "q1": 55.1,
+            "q3": 60.4
+          }
+        },
+        "n": 5,
+        "n_excluded": 0,
+        "n_total": 5,
+        "rate": 0.8,
+        "raw": {
+          "passed": [
+            1,
+            1,
+            1,
+            0,
+            1
+          ],
+          "run_index": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "score": [
+            1.0,
+            1.0,
+            1.0,
+            0.05,
+            1.0
+          ],
+          "status": [
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+          ],
+          "steps": [
+            20.0,
+            19.0,
+            15.0,
+            31.0,
+            33.0
+          ],
+          "trial_id": [
+            "MB-11-r1-cc-cua-driver",
+            "MB-11-r2-cc-cua-driver",
+            "MB-11-r3-cc-cua-driver",
+            "MB-11-r4-cc-cua-driver",
+            "MB-11-r5-cc-cua-driver"
+          ],
+          "wall_s": [
+            55.1,
+            60.26,
+            36.97,
+            60.4,
+            71.07
+          ]
+        },
+        "score": {
+          "mean": 0.8099999999999999,
+          "mean_null_as_zero": 0.8099999999999999,
+          "n_scored": 5
+        },
+        "successes": 4,
+        "task": "MB-11",
+        "tool_calls": {
+          "failed_calls_sum": 7.0,
+          "mean_by_class": {
+            "builtin": 1.6,
+            "click": 1.8,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 10.8,
+            "other": 8.6,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 0.8
+          },
+          "n_runs_with_data": 5,
+          "sum_by_class": {
+            "builtin": 8.0,
+            "click": 9.0,
+            "drag": 0.0,
+            "key": 0.0,
+            "observe": 54.0,
+            "other": 43.0,
+            "scroll": 0.0,
+            "set_value": 0.0,
+            "type": 4.0
+          }
+        },
+        "wilson_high": 0.9637758913675698,
+        "wilson_low": 0.37553462976252533
+      }
+    }
+  },
+  "data_quality": {
+    "confirmation_requested_non_excluded": {
+      "cc-codex-cu": 0,
+      "cc-cua-driver": 0
+    },
+    "evaluator_read_suspected_non_excluded": {
+      "cc-codex-cu": 0,
+      "cc-cua-driver": 0
+    },
+    "excluded_without_reason": [],
+    "human_input_suspected_non_excluded": {
+      "cc-codex-cu": 0,
+      "cc-cua-driver": 13
+    },
+    "infra_error_not_excluded": {
+      "cc-codex-cu": 0,
+      "cc-cua-driver": 0
+    },
+    "passed_true_but_status_not_completed": [],
+    "tasks_with_inconsistent_group_or_tags": [],
+    "tasks_with_unequal_runs_between_arms": []
+  },
+  "data_summary": {
+    "n_rows": 70,
+    "per_arm": {
+      "cc-codex-cu": {
+        "analyzed": 35,
+        "excluded": 0,
+        "excluded_by_task": {},
+        "excluded_reasons": {},
+        "rows": 35,
+        "status_counts_non_excluded": {
+          "agent_error": 0,
+          "completed": 35,
+          "infra_error": 0,
+          "timeout": 0
+        }
+      },
+      "cc-cua-driver": {
+        "analyzed": 35,
+        "excluded": 0,
+        "excluded_by_task": {},
+        "excluded_reasons": {},
+        "rows": 35,
+        "status_counts_non_excluded": {
+          "agent_error": 0,
+          "completed": 35,
+          "infra_error": 0,
+          "timeout": 0
+        }
+      }
+    }
+  },
+  "disturbance": {
+    "cc-codex-cu": {
+      "any_disturbance": {
+        "count": 0,
+        "fraction": 0.0,
+        "n": 35,
+        "wilson_high": 0.09890099232440402,
+        "wilson_low": 0.0
+      },
+      "fields": {
+        "clicks_leaked": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "front_changes": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_down": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_key": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_move": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_scroll": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_total": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "key_loss": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "keystrokes_leaked": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "pointer_deviation_episodes": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "pointer_max_deviation_px": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "scrolls_leaked": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        }
+      },
+      "n_available": 35,
+      "n_dropped_human_input_suspected": 0,
+      "n_non_excluded": 35,
+      "n_unavailable": 0,
+      "n_used": 35
+    },
+    "cc-cua-driver": {
+      "any_disturbance": {
+        "count": 4,
+        "fraction": 0.18181818181818182,
+        "n": 22,
+        "wilson_high": 0.38516607437126543,
+        "wilson_low": 0.07306884583422052
+      },
+      "fields": {
+        "clicks_leaked": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "front_changes": {
+          "max": 2.0,
+          "mean": 0.22727272727272727,
+          "sum": 5.0
+        },
+        "hid_events_down": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_key": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_move": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_scroll": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "hid_events_total": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "key_loss": {
+          "max": 1.0,
+          "mean": 0.13636363636363635,
+          "sum": 3.0
+        },
+        "keystrokes_leaked": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        },
+        "pointer_deviation_episodes": {
+          "max": 1.0,
+          "mean": 0.13636363636363635,
+          "sum": 3.0
+        },
+        "pointer_max_deviation_px": {
+          "max": 498.02,
+          "mean": 56.65454545454545,
+          "sum": 1246.3999999999999
+        },
+        "scrolls_leaked": {
+          "max": 0.0,
+          "mean": 0.0,
+          "sum": 0.0
+        }
+      },
+      "n_available": 35,
+      "n_dropped_human_input_suspected": 13,
+      "n_non_excluded": 35,
+      "n_unavailable": 0,
+      "n_used": 22
+    }
+  },
+  "efficiency": {
+    "all": {
+      "cc-codex-cu": {
+        "all_non_excluded": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 23.035000000000004,
+              "max": 144.5,
+              "mean": 39.489714285714285,
+              "median": 31.91,
+              "min": 12.39,
+              "n": 35,
+              "q1": 20.835,
+              "q3": 43.870000000000005
+            },
+            "est_cost_usd": {
+              "iqr": 0.07247290000000003,
+              "max": 0.435369,
+              "mean": 0.14368941142857145,
+              "median": 0.1254836,
+              "min": 0.037341599999999996,
+              "n": 35,
+              "q1": 0.0936292,
+              "q3": 0.16610210000000003
+            },
+            "steps": {
+              "iqr": 9.5,
+              "max": 40.0,
+              "mean": 12.371428571428572,
+              "median": 10.0,
+              "min": 5.0,
+              "n": 35,
+              "q1": 6.0,
+              "q3": 15.5
+            },
+            "steps_field": {
+              "iqr": 9.5,
+              "max": 40.0,
+              "mean": 12.371428571428572,
+              "median": 10.0,
+              "min": 5.0,
+              "n": 35,
+              "q1": 6.0,
+              "q3": 15.5
+            },
+            "tokens_cached_input": {
+              "iqr": 153383.0,
+              "max": 1010855.0,
+              "mean": 214969.34285714285,
+              "median": 149651.0,
+              "min": 42727.0,
+              "n": 35,
+              "q1": 93755.0,
+              "q3": 247138.0
+            },
+            "tokens_input": {
+              "iqr": 16.0,
+              "max": 82.0,
+              "mean": 25.2,
+              "median": 22.0,
+              "min": 10.0,
+              "n": 35,
+              "q1": 14.0,
+              "q3": 30.0
+            },
+            "tokens_output": {
+              "iqr": 1118.5,
+              "max": 7857.0,
+              "mean": 2484.6285714285714,
+              "median": 2203.0,
+              "min": 651.0,
+              "n": 35,
+              "q1": 1655.5,
+              "q3": 2774.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 35,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 1125.5,
+              "max": 7933.0,
+              "mean": 2509.8285714285716,
+              "median": 2215.0,
+              "min": 665.0,
+              "n": 35,
+              "q1": 1671.5,
+              "q3": 2797.0
+            },
+            "wall_s": {
+              "iqr": 20.335,
+              "max": 154.73,
+              "mean": 52.12114285714286,
+              "median": 43.73,
+              "min": 26.98,
+              "n": 35,
+              "q1": 35.019999999999996,
+              "q3": 55.355
+            }
+          },
+          "n_trials": 35
+        },
+        "success_only": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 16.5275,
+              "max": 144.5,
+              "mean": 46.678,
+              "median": 38.665,
+              "min": 12.39,
+              "n": 20,
+              "q1": 29.4025,
+              "q3": 45.93
+            },
+            "est_cost_usd": {
+              "iqr": 0.07607249999999999,
+              "max": 0.435369,
+              "mean": 0.181318,
+              "median": 0.16482000000000002,
+              "min": 0.037341599999999996,
+              "n": 20,
+              "q1": 0.13012700000000002,
+              "q3": 0.2061995
+            },
+            "steps": {
+              "iqr": 10.0,
+              "max": 40.0,
+              "mean": 15.3,
+              "median": 15.0,
+              "min": 5.0,
+              "n": 20,
+              "q1": 7.5,
+              "q3": 17.5
+            },
+            "steps_field": {
+              "iqr": 10.0,
+              "max": 40.0,
+              "mean": 15.3,
+              "median": 15.0,
+              "min": 5.0,
+              "n": 20,
+              "q1": 7.5,
+              "q3": 17.5
+            },
+            "tokens_cached_input": {
+              "iqr": 255861.25,
+              "max": 1010855.0,
+              "mean": 292015.0,
+              "median": 238976.5,
+              "min": 46378.0,
+              "n": 20,
+              "q1": 114642.75,
+              "q3": 370504.0
+            },
+            "tokens_input": {
+              "iqr": 19.5,
+              "max": 82.0,
+              "mean": 30.6,
+              "median": 29.0,
+              "min": 10.0,
+              "n": 20,
+              "q1": 15.5,
+              "q3": 35.0
+            },
+            "tokens_output": {
+              "iqr": 1115.5,
+              "max": 7857.0,
+              "mean": 3124.1,
+              "median": 2722.5,
+              "min": 811.0,
+              "n": 20,
+              "q1": 2245.75,
+              "q3": 3361.25
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 20,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 1109.5,
+              "max": 7933.0,
+              "mean": 3154.7,
+              "median": 2753.5,
+              "min": 821.0,
+              "n": 20,
+              "q1": 2273.75,
+              "q3": 3383.25
+            },
+            "wall_s": {
+              "iqr": 17.902500000000003,
+              "max": 154.73,
+              "mean": 59.79299999999999,
+              "median": 52.53,
+              "min": 27.53,
+              "n": 20,
+              "q1": 42.8975,
+              "q3": 60.800000000000004
+            }
+          },
+          "n_trials": 20
+        }
+      },
+      "cc-cua-driver": {
+        "all_non_excluded": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 54.415,
+              "max": 142.84,
+              "mean": 52.917428571428566,
+              "median": 44.87,
+              "min": 7.69,
+              "n": 35,
+              "q1": 25.32,
+              "q3": 79.735
+            },
+            "est_cost_usd": {
+              "iqr": 0.44982540000000004,
+              "max": 0.8532551999999998,
+              "mean": 0.34050849714285714,
+              "median": 0.2796114,
+              "min": 0.028773400000000005,
+              "n": 35,
+              "q1": 0.1204782,
+              "q3": 0.5703036
+            },
+            "steps": {
+              "iqr": 25.0,
+              "max": 63.0,
+              "mean": 22.485714285714284,
+              "median": 18.0,
+              "min": 3.0,
+              "n": 35,
+              "q1": 7.0,
+              "q3": 32.0
+            },
+            "steps_field": {
+              "iqr": 25.0,
+              "max": 63.0,
+              "mean": 22.485714285714284,
+              "median": 18.0,
+              "min": 3.0,
+              "n": 35,
+              "q1": 7.0,
+              "q3": 32.0
+            },
+            "tokens_cached_input": {
+              "iqr": 970839.5,
+              "max": 1926956.0,
+              "mean": 616516.4857142858,
+              "median": 425585.0,
+              "min": 38647.0,
+              "n": 35,
+              "q1": 99343.0,
+              "q3": 1070182.5
+            },
+            "tokens_input": {
+              "iqr": 33.0,
+              "max": 70.0,
+              "mean": 31.314285714285713,
+              "median": 30.0,
+              "min": 8.0,
+              "n": 35,
+              "q1": 14.0,
+              "q3": 47.0
+            },
+            "tokens_output": {
+              "iqr": 2635.5,
+              "max": 10724.0,
+              "mean": 3797.0,
+              "median": 3487.0,
+              "min": 648.0,
+              "n": 35,
+              "q1": 2055.5,
+              "q3": 4691.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 35,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 2671.5,
+              "max": 10794.0,
+              "mean": 3828.3142857142857,
+              "median": 3497.0,
+              "min": 656.0,
+              "n": 35,
+              "q1": 2065.5,
+              "q3": 4737.0
+            },
+            "wall_s": {
+              "iqr": 57.089999999999996,
+              "max": 153.07,
+              "mean": 65.60428571428572,
+              "median": 55.1,
+              "min": 22.86,
+              "n": 35,
+              "q1": 36.07,
+              "q3": 93.16
+            }
+          },
+          "n_trials": 35
+        },
+        "success_only": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 56.55500000000001,
+              "max": 124.78,
+              "mean": 57.95384615384615,
+              "median": 58.42,
+              "min": 7.69,
+              "n": 26,
+              "q1": 28.1875,
+              "q3": 84.7425
+            },
+            "est_cost_usd": {
+              "iqr": 0.41621659999999994,
+              "max": 0.7310314,
+              "mean": 0.3842396846153846,
+              "median": 0.3971306,
+              "min": 0.028773400000000005,
+              "n": 26,
+              "q1": 0.17108340000000002,
+              "q3": 0.5872999999999999
+            },
+            "steps": {
+              "iqr": 32.25,
+              "max": 61.0,
+              "mean": 25.192307692307693,
+              "median": 22.0,
+              "min": 3.0,
+              "n": 26,
+              "q1": 9.0,
+              "q3": 41.25
+            },
+            "steps_field": {
+              "iqr": 32.25,
+              "max": 61.0,
+              "mean": 25.192307692307693,
+              "median": 22.0,
+              "min": 3.0,
+              "n": 26,
+              "q1": 9.0,
+              "q3": 41.25
+            },
+            "tokens_cached_input": {
+              "iqr": 905232.25,
+              "max": 1484277.0,
+              "mean": 707814.9615384615,
+              "median": 778718.5,
+              "min": 38647.0,
+              "n": 26,
+              "q1": 173614.0,
+              "q3": 1078846.25
+            },
+            "tokens_input": {
+              "iqr": 29.5,
+              "max": 68.0,
+              "mean": 34.92307692307692,
+              "median": 39.0,
+              "min": 8.0,
+              "n": 26,
+              "q1": 18.5,
+              "q3": 48.0
+            },
+            "tokens_output": {
+              "iqr": 4202.25,
+              "max": 8702.0,
+              "mean": 3895.8076923076924,
+              "median": 3865.0,
+              "min": 648.0,
+              "n": 26,
+              "q1": 1810.75,
+              "q3": 6013.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 26,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 4222.75,
+              "max": 8752.0,
+              "mean": 3930.730769230769,
+              "median": 3895.0,
+              "min": 656.0,
+              "n": 26,
+              "q1": 1832.75,
+              "q3": 6055.5
+            },
+            "wall_s": {
+              "iqr": 59.02750000000001,
+              "max": 140.09,
+              "mean": 70.21000000000001,
+              "median": 68.65,
+              "min": 22.86,
+              "n": 26,
+              "q1": 39.085,
+              "q3": 98.11250000000001
+            }
+          },
+          "n_trials": 26
+        }
+      }
+    },
+    "headline": {
+      "cc-codex-cu": {
+        "all_non_excluded": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 85.38,
+              "max": 144.5,
+              "mean": 81.386,
+              "median": 66.2,
+              "min": 25.73,
+              "n": 5,
+              "q1": 42.56,
+              "q3": 127.94
+            },
+            "est_cost_usd": {
+              "iqr": 0.25707299999999994,
+              "max": 0.435369,
+              "mean": 0.27505344,
+              "median": 0.22467320000000005,
+              "min": 0.1254836,
+              "n": 5,
+              "q1": 0.1663342,
+              "q3": 0.42340719999999993
+            },
+            "steps": {
+              "iqr": 23.0,
+              "max": 40.0,
+              "mean": 24.6,
+              "median": 22.0,
+              "min": 10.0,
+              "n": 5,
+              "q1": 14.0,
+              "q3": 37.0
+            },
+            "steps_field": {
+              "iqr": 23.0,
+              "max": 40.0,
+              "mean": 24.6,
+              "median": 22.0,
+              "min": 10.0,
+              "n": 5,
+              "q1": 14.0,
+              "q3": 37.0
+            },
+            "tokens_cached_input": {
+              "iqr": 677325.0,
+              "max": 1010855.0,
+              "mean": 553749.2,
+              "median": 424016.0,
+              "min": 155748.0,
+              "n": 5,
+              "q1": 250401.0,
+              "q3": 927726.0
+            },
+            "tokens_input": {
+              "iqr": 46.0,
+              "max": 82.0,
+              "mean": 51.2,
+              "median": 46.0,
+              "min": 22.0,
+              "n": 5,
+              "q1": 30.0,
+              "q3": 76.0
+            },
+            "tokens_output": {
+              "iqr": 5996.0,
+              "max": 7857.0,
+              "mean": 4482.2,
+              "median": 3473.0,
+              "min": 1551.0,
+              "n": 5,
+              "q1": 1767.0,
+              "q3": 7763.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 5,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 6048.0,
+              "max": 7933.0,
+              "mean": 4533.4,
+              "median": 3519.0,
+              "min": 1573.0,
+              "n": 5,
+              "q1": 1797.0,
+              "q3": 7845.0
+            },
+            "wall_s": {
+              "iqr": 85.41999999999999,
+              "max": 154.73,
+              "mean": 91.58,
+              "median": 76.39,
+              "min": 35.86,
+              "n": 5,
+              "q1": 52.75,
+              "q3": 138.17
+            }
+          },
+          "n_trials": 5
+        },
+        "success_only": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 85.38,
+              "max": 144.5,
+              "mean": 81.386,
+              "median": 66.2,
+              "min": 25.73,
+              "n": 5,
+              "q1": 42.56,
+              "q3": 127.94
+            },
+            "est_cost_usd": {
+              "iqr": 0.25707299999999994,
+              "max": 0.435369,
+              "mean": 0.27505344,
+              "median": 0.22467320000000005,
+              "min": 0.1254836,
+              "n": 5,
+              "q1": 0.1663342,
+              "q3": 0.42340719999999993
+            },
+            "steps": {
+              "iqr": 23.0,
+              "max": 40.0,
+              "mean": 24.6,
+              "median": 22.0,
+              "min": 10.0,
+              "n": 5,
+              "q1": 14.0,
+              "q3": 37.0
+            },
+            "steps_field": {
+              "iqr": 23.0,
+              "max": 40.0,
+              "mean": 24.6,
+              "median": 22.0,
+              "min": 10.0,
+              "n": 5,
+              "q1": 14.0,
+              "q3": 37.0
+            },
+            "tokens_cached_input": {
+              "iqr": 677325.0,
+              "max": 1010855.0,
+              "mean": 553749.2,
+              "median": 424016.0,
+              "min": 155748.0,
+              "n": 5,
+              "q1": 250401.0,
+              "q3": 927726.0
+            },
+            "tokens_input": {
+              "iqr": 46.0,
+              "max": 82.0,
+              "mean": 51.2,
+              "median": 46.0,
+              "min": 22.0,
+              "n": 5,
+              "q1": 30.0,
+              "q3": 76.0
+            },
+            "tokens_output": {
+              "iqr": 5996.0,
+              "max": 7857.0,
+              "mean": 4482.2,
+              "median": 3473.0,
+              "min": 1551.0,
+              "n": 5,
+              "q1": 1767.0,
+              "q3": 7763.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 5,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 6048.0,
+              "max": 7933.0,
+              "mean": 4533.4,
+              "median": 3519.0,
+              "min": 1573.0,
+              "n": 5,
+              "q1": 1797.0,
+              "q3": 7845.0
+            },
+            "wall_s": {
+              "iqr": 85.41999999999999,
+              "max": 154.73,
+              "mean": 91.58,
+              "median": 76.39,
+              "min": 35.86,
+              "n": 5,
+              "q1": 52.75,
+              "q3": 138.17
+            }
+          },
+          "n_trials": 5
+        }
+      },
+      "cc-cua-driver": {
+        "all_non_excluded": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 2.3099999999999987,
+              "max": 28.04,
+              "mean": 22.978,
+              "median": 23.44,
+              "min": 15.78,
+              "n": 5,
+              "q1": 22.66,
+              "q3": 24.97
+            },
+            "est_cost_usd": {
+              "iqr": 0.07139480000000004,
+              "max": 0.18484159999999997,
+              "mean": 0.14151432000000003,
+              "median": 0.16963640000000002,
+              "min": 0.07363960000000001,
+              "n": 5,
+              "q1": 0.1040296,
+              "q3": 0.17542440000000004
+            },
+            "steps": {
+              "iqr": 0.0,
+              "max": 12.0,
+              "mean": 9.2,
+              "median": 9.0,
+              "min": 7.0,
+              "n": 5,
+              "q1": 9.0,
+              "q3": 9.0
+            },
+            "steps_field": {
+              "iqr": 0.0,
+              "max": 12.0,
+              "mean": 9.2,
+              "median": 9.0,
+              "min": 7.0,
+              "n": 5,
+              "q1": 9.0,
+              "q3": 9.0
+            },
+            "tokens_cached_input": {
+              "iqr": 100624.0,
+              "max": 213838.0,
+              "mean": 147165.6,
+              "median": 149242.0,
+              "min": 70368.0,
+              "n": 5,
+              "q1": 100878.0,
+              "q3": 201502.0
+            },
+            "tokens_input": {
+              "iqr": 2.0,
+              "max": 20.0,
+              "mean": 16.8,
+              "median": 16.0,
+              "min": 14.0,
+              "n": 5,
+              "q1": 16.0,
+              "q3": 18.0
+            },
+            "tokens_output": {
+              "iqr": 221.0,
+              "max": 1695.0,
+              "mean": 1249.8,
+              "median": 1166.0,
+              "min": 873.0,
+              "n": 5,
+              "q1": 1147.0,
+              "q3": 1368.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 5,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 221.0,
+              "max": 1715.0,
+              "mean": 1266.6,
+              "median": 1184.0,
+              "min": 887.0,
+              "n": 5,
+              "q1": 1163.0,
+              "q3": 1384.0
+            },
+            "wall_s": {
+              "iqr": 2.3000000000000043,
+              "max": 38.28,
+              "mean": 33.176,
+              "median": 33.6,
+              "min": 25.96,
+              "n": 5,
+              "q1": 32.87,
+              "q3": 35.17
+            }
+          },
+          "n_trials": 5
+        },
+        "success_only": {
+          "metrics": {
+            "agent_wall_s": {
+              "iqr": 2.3099999999999987,
+              "max": 28.04,
+              "mean": 22.978,
+              "median": 23.44,
+              "min": 15.78,
+              "n": 5,
+              "q1": 22.66,
+              "q3": 24.97
+            },
+            "est_cost_usd": {
+              "iqr": 0.07139480000000004,
+              "max": 0.18484159999999997,
+              "mean": 0.14151432000000003,
+              "median": 0.16963640000000002,
+              "min": 0.07363960000000001,
+              "n": 5,
+              "q1": 0.1040296,
+              "q3": 0.17542440000000004
+            },
+            "steps": {
+              "iqr": 0.0,
+              "max": 12.0,
+              "mean": 9.2,
+              "median": 9.0,
+              "min": 7.0,
+              "n": 5,
+              "q1": 9.0,
+              "q3": 9.0
+            },
+            "steps_field": {
+              "iqr": 0.0,
+              "max": 12.0,
+              "mean": 9.2,
+              "median": 9.0,
+              "min": 7.0,
+              "n": 5,
+              "q1": 9.0,
+              "q3": 9.0
+            },
+            "tokens_cached_input": {
+              "iqr": 100624.0,
+              "max": 213838.0,
+              "mean": 147165.6,
+              "median": 149242.0,
+              "min": 70368.0,
+              "n": 5,
+              "q1": 100878.0,
+              "q3": 201502.0
+            },
+            "tokens_input": {
+              "iqr": 2.0,
+              "max": 20.0,
+              "mean": 16.8,
+              "median": 16.0,
+              "min": 14.0,
+              "n": 5,
+              "q1": 16.0,
+              "q3": 18.0
+            },
+            "tokens_output": {
+              "iqr": 221.0,
+              "max": 1695.0,
+              "mean": 1249.8,
+              "median": 1166.0,
+              "min": 873.0,
+              "n": 5,
+              "q1": 1147.0,
+              "q3": 1368.0
+            },
+            "tokens_reasoning": {
+              "iqr": 0.0,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 5,
+              "q1": 0.0,
+              "q3": 0.0
+            },
+            "tokens_total": {
+              "iqr": 221.0,
+              "max": 1715.0,
+              "mean": 1266.6,
+              "median": 1184.0,
+              "min": 887.0,
+              "n": 5,
+              "q1": 1163.0,
+              "q3": 1384.0
+            },
+            "wall_s": {
+              "iqr": 2.3000000000000043,
+              "max": 38.28,
+              "mean": 33.176,
+              "median": 33.6,
+              "min": 25.96,
+              "n": 5,
+              "q1": 32.87,
+              "q3": 35.17
+            }
+          },
+          "n_trials": 5
+        }
+      }
+    }
+  },
+  "headline": {
+    "ci_high": 0.0,
+    "ci_low": 0.0,
+    "comparison_possible": true,
+    "diff": 0.0,
+    "n_headline_tasks": 1,
+    "n_runs_a": 5,
+    "n_runs_b": 5,
+    "n_tasks": 1,
+    "pilot_sentence": null,
+    "pilot_sized": false,
+    "verdict": "no resolvable difference"
+  },
+  "latency": {
+    "all_non_excluded": {
+      "cc-codex-cu": {
+        "click": {
+          "median_of_trial_medians_ms": 764.9,
+          "median_of_trial_p90_ms": 1145.7,
+          "n_trials": 23,
+          "n_trials_with_p90": 23,
+          "total_timed_actions": 98,
+          "trial_medians_q1_ms": 534.9,
+          "trial_medians_q3_ms": 1420.15
+        },
+        "drag": {
+          "median_of_trial_medians_ms": 1333.9,
+          "median_of_trial_p90_ms": 1355.6,
+          "n_trials": 11,
+          "n_trials_with_p90": 11,
+          "total_timed_actions": 79,
+          "trial_medians_q1_ms": 839.6,
+          "trial_medians_q3_ms": 1555.1
+        },
+        "key": {
+          "median_of_trial_medians_ms": null,
+          "median_of_trial_p90_ms": null,
+          "n_trials": 0,
+          "n_trials_with_p90": 0,
+          "total_timed_actions": 0,
+          "trial_medians_q1_ms": null,
+          "trial_medians_q3_ms": null
+        },
+        "observe": {
+          "median_of_trial_medians_ms": 882.7,
+          "median_of_trial_p90_ms": 882.7,
+          "n_trials": 23,
+          "n_trials_with_p90": 23,
+          "total_timed_actions": 37,
+          "trial_medians_q1_ms": 187.95,
+          "trial_medians_q3_ms": 890.05
+        },
+        "other": {
+          "median_of_trial_medians_ms": 89.35,
+          "median_of_trial_p90_ms": 451.4,
+          "n_trials": 22,
+          "n_trials_with_p90": 22,
+          "total_timed_actions": 67,
+          "trial_medians_q1_ms": 72.075,
+          "trial_medians_q3_ms": 807.125
+        },
+        "scroll": {
+          "median_of_trial_medians_ms": 1024.5,
+          "median_of_trial_p90_ms": 1026.2,
+          "n_trials": 5,
+          "n_trials_with_p90": 5,
+          "total_timed_actions": 7,
+          "trial_medians_q1_ms": 875.8,
+          "trial_medians_q3_ms": 1026.2
+        },
+        "set_value": {
+          "median_of_trial_medians_ms": 1587.6,
+          "median_of_trial_p90_ms": 1587.6,
+          "n_trials": 1,
+          "n_trials_with_p90": 1,
+          "total_timed_actions": 1,
+          "trial_medians_q1_ms": 1587.6,
+          "trial_medians_q3_ms": 1587.6
+        },
+        "type": {
+          "median_of_trial_medians_ms": null,
+          "median_of_trial_p90_ms": null,
+          "n_trials": 0,
+          "n_trials_with_p90": 0,
+          "total_timed_actions": 0,
+          "trial_medians_q1_ms": null,
+          "trial_medians_q3_ms": null
+        }
+      },
+      "cc-cua-driver": {
+        "click": {
+          "median_of_trial_medians_ms": 1169.5500000000002,
+          "median_of_trial_p90_ms": 1914.1999999999998,
+          "n_trials": 24,
+          "n_trials_with_p90": 24,
+          "total_timed_actions": 125,
+          "trial_medians_q1_ms": 776.1750000000001,
+          "trial_medians_q3_ms": 1773.775
+        },
+        "drag": {
+          "median_of_trial_medians_ms": 1664.4,
+          "median_of_trial_p90_ms": 2496.1,
+          "n_trials": 9,
+          "n_trials_with_p90": 9,
+          "total_timed_actions": 19,
+          "trial_medians_q1_ms": 1161.9,
+          "trial_medians_q3_ms": 2447.3
+        },
+        "key": {
+          "median_of_trial_medians_ms": 1989.5,
+          "median_of_trial_p90_ms": 4329.8,
+          "n_trials": 5,
+          "n_trials_with_p90": 5,
+          "total_timed_actions": 34,
+          "trial_medians_q1_ms": 1342.9,
+          "trial_medians_q3_ms": 2170.4
+        },
+        "observe": {
+          "median_of_trial_medians_ms": 187.55,
+          "median_of_trial_p90_ms": 1022.5,
+          "n_trials": 24,
+          "n_trials_with_p90": 24,
+          "total_timed_actions": 280,
+          "trial_medians_q1_ms": 161.77499999999998,
+          "trial_medians_q3_ms": 271.025
+        },
+        "other": {
+          "median_of_trial_medians_ms": 175.9,
+          "median_of_trial_p90_ms": 187.8,
+          "n_trials": 11,
+          "n_trials_with_p90": 11,
+          "total_timed_actions": 122,
+          "trial_medians_q1_ms": 154.95,
+          "trial_medians_q3_ms": 187.35000000000002
+        },
+        "scroll": {
+          "median_of_trial_medians_ms": 290.2,
+          "median_of_trial_p90_ms": 290.2,
+          "n_trials": 9,
+          "n_trials_with_p90": 9,
+          "total_timed_actions": 11,
+          "trial_medians_q1_ms": 274.0,
+          "trial_medians_q3_ms": 2954.4
+        },
+        "set_value": {
+          "median_of_trial_medians_ms": 2075.85,
+          "median_of_trial_p90_ms": 3160.85,
+          "n_trials": 6,
+          "n_trials_with_p90": 6,
+          "total_timed_actions": 19,
+          "trial_medians_q1_ms": 1965.3250000000003,
+          "trial_medians_q3_ms": 3908.9750000000004
+        },
+        "type": {
+          "median_of_trial_medians_ms": 2907.75,
+          "median_of_trial_p90_ms": 5807.35,
+          "n_trials": 8,
+          "n_trials_with_p90": 8,
+          "total_timed_actions": 20,
+          "trial_medians_q1_ms": 1211.4750000000001,
+          "trial_medians_q3_ms": 7247.875
+        }
+      }
+    }
+  },
+  "mode": "two-arm",
+  "notes": {
+    "fisher": "Per-task Fisher exact p-values are descriptive only. No multiplicity correction is applied and n per cell is tiny, so these p-values must not be used as decision thresholds."
+  },
+  "paired": {
+    "CDB-S01": {
+      "arm_a": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "diff": 0.0,
+      "fisher_p_two_sided": 1.0,
+      "scope": "other"
+    },
+    "CDB-S02": {
+      "arm_a": {
+        "n": 5,
+        "rate": 0.0,
+        "successes": 0,
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 0.0,
+        "successes": 0,
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "diff": 0.0,
+      "fisher_p_two_sided": 1.0,
+      "scope": "other"
+    },
+    "CDB-S03": {
+      "arm_a": {
+        "n": 5,
+        "rate": 0.6,
+        "successes": 3,
+        "wilson_high": 0.882379225767352,
+        "wilson_low": 0.2307242812760128
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "diff": -0.4,
+      "fisher_p_two_sided": 0.4444444444444444,
+      "scope": "other"
+    },
+    "CDB-S04": {
+      "arm_a": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "diff": 0.0,
+      "fisher_p_two_sided": 1.0,
+      "scope": "other"
+    },
+    "MB-09": {
+      "arm_a": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 1.0,
+        "successes": 5,
+        "wilson_high": 1.0,
+        "wilson_low": 0.5655175352168251
+      },
+      "diff": 0.0,
+      "fisher_p_two_sided": 1.0,
+      "scope": "headline"
+    },
+    "MB-10": {
+      "arm_a": {
+        "n": 5,
+        "rate": 0.8,
+        "successes": 4,
+        "wilson_high": 0.9637758913675698,
+        "wilson_low": 0.37553462976252533
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 0.0,
+        "successes": 0,
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "diff": 0.8,
+      "fisher_p_two_sided": 0.047619047619047616,
+      "scope": "coverage"
+    },
+    "MB-11": {
+      "arm_a": {
+        "n": 5,
+        "rate": 0.8,
+        "successes": 4,
+        "wilson_high": 0.9637758913675698,
+        "wilson_low": 0.37553462976252533
+      },
+      "arm_b": {
+        "n": 5,
+        "rate": 0.0,
+        "successes": 0,
+        "wilson_high": 0.43448246478317476,
+        "wilson_low": 0.0
+      },
+      "diff": 0.8,
+      "fisher_p_two_sided": 0.047619047619047616,
+      "scope": "coverage"
+    }
+  },
+  "parameters": {
+    "arm_a": "cc-cua-driver",
+    "arm_b": "cc-codex-cu",
+    "bootstrap": 10000,
+    "coverage_tags": [
+      "coverage_probe",
+      "hover"
+    ],
+    "headline_groups": [
+      "P"
+    ],
+    "pass_k": 3,
+    "pilot_min_runs": 5,
+    "seed": 1234
+  },
+  "present_arms": [
+    "cc-cua-driver",
+    "cc-codex-cu"
+  ],
+  "schema": "cdb-pilot-analysis/1",
+  "scopes": {
+    "coverage": {
+      "arm_bootstrap": {},
+      "arms": {
+        "cc-codex-cu": {
+          "micro_rate": 0.0,
+          "min_runs_per_task": 5,
+          "n_runs": 10,
+          "n_tasks_with_data": 2,
+          "pass_at_1": 0.0,
+          "pass_k": {
+            "k": 3,
+            "n_tasks_used": 2,
+            "per_task": {
+              "MB-10": 0.0,
+              "MB-11": 0.0
+            },
+            "tasks_omitted_n_lt_k": [],
+            "value": 0.0
+          },
+          "successes": 0,
+          "task_macro_success": 0.0,
+          "tasks_with_data": [
+            "MB-10",
+            "MB-11"
+          ]
+        },
+        "cc-cua-driver": {
+          "micro_rate": 0.8,
+          "min_runs_per_task": 5,
+          "n_runs": 10,
+          "n_tasks_with_data": 2,
+          "pass_at_1": 0.8,
+          "pass_k": {
+            "k": 3,
+            "n_tasks_used": 2,
+            "per_task": {
+              "MB-10": 0.4,
+              "MB-11": 0.4
+            },
+            "tasks_omitted_n_lt_k": [],
+            "value": 0.4
+          },
+          "successes": 8,
+          "task_macro_success": 0.8,
+          "tasks_with_data": [
+            "MB-10",
+            "MB-11"
+          ]
+        }
+      },
+      "comparison": {
+        "bootstrap": {
+          "arms": {
+            "cc-codex-cu": {
+              "ci_high": 0.0,
+              "ci_low": 0.0,
+              "point": 0.0
+            },
+            "cc-cua-driver": {
+              "ci_high": 1.0,
+              "ci_low": 0.5,
+              "point": 0.8
+            }
+          },
+          "ci_level": 0.95,
+          "diff": {
+            "ci_high": 1.0,
+            "ci_low": 0.5,
+            "point": 0.8
+          },
+          "method": "hierarchical percentile bootstrap (tasks, then runs within task per arm)",
+          "n_boot": 10000,
+          "n_tasks": 2,
+          "seed": 1234
+        },
+        "ci_degenerate": false,
+        "diff": 0.8,
+        "diff_ci_high": 1.0,
+        "diff_ci_low": 0.5,
+        "macro_a": 0.8,
+        "macro_a_ci": [
+          0.5,
+          1.0
+        ],
+        "macro_b": 0.0,
+        "macro_b_ci": [
+          0.0,
+          0.0
+        ],
+        "n_runs_a": 10,
+        "n_runs_b": 10,
+        "n_tasks": 2,
+        "paired_tasks": [
+          "MB-10",
+          "MB-11"
+        ],
+        "possible": true,
+        "tasks_without_both_arms": [],
+        "verdict": "A better"
+      },
+      "label": "coverage-tagged (not headline)",
+      "pilot_min_runs_required": 5,
+      "pilot_sized": false,
+      "pilot_small_cells": [],
+      "scope": "coverage",
+      "smallest_cell_n": 5,
+      "tasks": [
+        "MB-10",
+        "MB-11"
+      ]
+    },
+    "headline": {
+      "arm_bootstrap": {},
+      "arms": {
+        "cc-codex-cu": {
+          "micro_rate": 1.0,
+          "min_runs_per_task": 5,
+          "n_runs": 5,
+          "n_tasks_with_data": 1,
+          "pass_at_1": 1.0,
+          "pass_k": {
+            "k": 3,
+            "n_tasks_used": 1,
+            "per_task": {
+              "MB-09": 1.0
+            },
+            "tasks_omitted_n_lt_k": [],
+            "value": 1.0
+          },
+          "successes": 5,
+          "task_macro_success": 1.0,
+          "tasks_with_data": [
+            "MB-09"
+          ]
+        },
+        "cc-cua-driver": {
+          "micro_rate": 1.0,
+          "min_runs_per_task": 5,
+          "n_runs": 5,
+          "n_tasks_with_data": 1,
+          "pass_at_1": 1.0,
+          "pass_k": {
+            "k": 3,
+            "n_tasks_used": 1,
+            "per_task": {
+              "MB-09": 1.0
+            },
+            "tasks_omitted_n_lt_k": [],
+            "value": 1.0
+          },
+          "successes": 5,
+          "task_macro_success": 1.0,
+          "tasks_with_data": [
+            "MB-09"
+          ]
+        }
+      },
+      "comparison": {
+        "bootstrap": {
+          "arms": {
+            "cc-codex-cu": {
+              "ci_high": 1.0,
+              "ci_low": 1.0,
+              "point": 1.0
+            },
+            "cc-cua-driver": {
+              "ci_high": 1.0,
+              "ci_low": 1.0,
+              "point": 1.0
+            }
+          },
+          "ci_level": 0.95,
+          "diff": {
+            "ci_high": 0.0,
+            "ci_low": 0.0,
+            "point": 0.0
+          },
+          "method": "hierarchical percentile bootstrap (tasks, then runs within task per arm)",
+          "n_boot": 10000,
+          "n_tasks": 1,
+          "seed": 1234
+        },
+        "ci_degenerate": true,
+        "diff": 0.0,
+        "diff_ci_high": 0.0,
+        "diff_ci_low": 0.0,
+        "macro_a": 1.0,
+        "macro_a_ci": [
+          1.0,
+          1.0
+        ],
+        "macro_b": 1.0,
+        "macro_b_ci": [
+          1.0,
+          1.0
+        ],
+        "n_runs_a": 5,
+        "n_runs_b": 5,
+        "n_tasks": 1,
+        "paired_tasks": [
+          "MB-09"
+        ],
+        "possible": true,
+        "tasks_without_both_arms": [],
+        "verdict": "no resolvable difference"
+      },
+      "label": "headline",
+      "pilot_min_runs_required": 5,
+      "pilot_sized": false,
+      "pilot_small_cells": [],
+      "scope": "headline",
+      "smallest_cell_n": 5,
+      "tasks": [
+        "MB-09"
+      ]
+    },
+    "other": {
+      "arm_bootstrap": {},
+      "arms": {
+        "cc-codex-cu": {
+          "micro_rate": 0.75,
+          "min_runs_per_task": 5,
+          "n_runs": 20,
+          "n_tasks_with_data": 4,
+          "pass_at_1": 0.75,
+          "pass_k": {
+            "k": 3,
+            "n_tasks_used": 4,
+            "per_task": {
+              "CDB-S01": 1.0,
+              "CDB-S02": 0.0,
+              "CDB-S03": 1.0,
+              "CDB-S04": 1.0
+            },
+            "tasks_omitted_n_lt_k": [],
+            "value": 0.75
+          },
+          "successes": 15,
+          "task_macro_success": 0.75,
+          "tasks_with_data": [
+            "CDB-S01",
+            "CDB-S02",
+            "CDB-S03",
+            "CDB-S04"
+          ]
+        },
+        "cc-cua-driver": {
+          "micro_rate": 0.65,
+          "min_runs_per_task": 5,
+          "n_runs": 20,
+          "n_tasks_with_data": 4,
+          "pass_at_1": 0.65,
+          "pass_k": {
+            "k": 3,
+            "n_tasks_used": 4,
+            "per_task": {
+              "CDB-S01": 1.0,
+              "CDB-S02": 0.0,
+              "CDB-S03": 0.1,
+              "CDB-S04": 1.0
+            },
+            "tasks_omitted_n_lt_k": [],
+            "value": 0.525
+          },
+          "successes": 13,
+          "task_macro_success": 0.65,
+          "tasks_with_data": [
+            "CDB-S01",
+            "CDB-S02",
+            "CDB-S03",
+            "CDB-S04"
+          ]
+        }
+      },
+      "comparison": {
+        "bootstrap": {
+          "arms": {
+            "cc-codex-cu": {
+              "ci_high": 1.0,
+              "ci_low": 0.25,
+              "point": 0.75
+            },
+            "cc-cua-driver": {
+              "ci_high": 1.0,
+              "ci_low": 0.25,
+              "point": 0.65
+            }
+          },
+          "ci_level": 0.95,
+          "diff": {
+            "ci_high": 0.0,
+            "ci_low": -0.35,
+            "point": -0.1
+          },
+          "method": "hierarchical percentile bootstrap (tasks, then runs within task per arm)",
+          "n_boot": 10000,
+          "n_tasks": 4,
+          "seed": 1234
+        },
+        "ci_degenerate": false,
+        "diff": -0.1,
+        "diff_ci_high": 0.0,
+        "diff_ci_low": -0.35,
+        "macro_a": 0.65,
+        "macro_a_ci": [
+          0.25,
+          1.0
+        ],
+        "macro_b": 0.75,
+        "macro_b_ci": [
+          0.25,
+          1.0
+        ],
+        "n_runs_a": 20,
+        "n_runs_b": 20,
+        "n_tasks": 4,
+        "paired_tasks": [
+          "CDB-S01",
+          "CDB-S02",
+          "CDB-S03",
+          "CDB-S04"
+        ],
+        "possible": true,
+        "tasks_without_both_arms": [],
+        "verdict": "no resolvable difference"
+      },
+      "label": "other non-headline (task_group not in headline groups)",
+      "pilot_min_runs_required": 5,
+      "pilot_sized": false,
+      "pilot_small_cells": [],
+      "scope": "other",
+      "smallest_cell_n": 5,
+      "tasks": [
+        "CDB-S01",
+        "CDB-S02",
+        "CDB-S03",
+        "CDB-S04"
+      ]
+    }
+  },
+  "tasks": {
+    "CDB-S01": {
+      "dimension_tags": [
+        "coding_harness",
+        "multi_app"
+      ],
+      "scope": "other",
+      "task_group": "CDB",
+      "task_groups_seen": [
+        "CDB"
+      ]
+    },
+    "CDB-S02": {
+      "dimension_tags": [
+        "coding_harness",
+        "multi_app"
+      ],
+      "scope": "other",
+      "task_group": "CDB",
+      "task_groups_seen": [
+        "CDB"
+      ]
+    },
+    "CDB-S03": {
+      "dimension_tags": [
+        "coding_harness",
+        "multi_app"
+      ],
+      "scope": "other",
+      "task_group": "CDB",
+      "task_groups_seen": [
+        "CDB"
+      ]
+    },
+    "CDB-S04": {
+      "dimension_tags": [
+        "coding_harness",
+        "multi_app"
+      ],
+      "scope": "other",
+      "task_group": "CDB",
+      "task_groups_seen": [
+        "CDB"
+      ]
+    },
+    "MB-09": {
+      "dimension_tags": [
+        "drag",
+        "native_ax"
+      ],
+      "scope": "headline",
+      "task_group": "P",
+      "task_groups_seen": [
+        "P"
+      ]
+    },
+    "MB-10": {
+      "dimension_tags": [
+        "coverage_probe",
+        "hover"
+      ],
+      "scope": "coverage",
+      "task_group": "P",
+      "task_groups_seen": [
+        "P"
+      ]
+    },
+    "MB-11": {
+      "dimension_tags": [
+        "coverage_probe",
+        "hover",
+        "tooltip"
+      ],
+      "scope": "coverage",
+      "task_group": "P",
+      "task_groups_seen": [
+        "P"
+      ]
+    }
+  }
+}

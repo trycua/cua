@@ -1,0 +1,34 @@
+{
+  "CDB-S01": {
+    "reset_ok": true,
+    "pristine_fails": true,
+    "correct_passes": true,
+    "correct_score": 1.0,
+    "reset_restores_pristine": true,
+    "ok": true
+  },
+  "CDB-S02": {
+    "reset_ok": true,
+    "pristine_fails": true,
+    "correct_passes": true,
+    "correct_score": 1.0,
+    "reset_restores_pristine": true,
+    "ok": true
+  },
+  "CDB-S03": {
+    "reset_ok": true,
+    "pristine_fails": true,
+    "correct_passes": true,
+    "correct_score": 1.0,
+    "reset_restores_pristine": true,
+    "ok": true
+  },
+  "CDB-S04": {
+    "reset_ok": true,
+    "pristine_fails": true,
+    "correct_passes": true,
+    "correct_score": 1.0,
+    "reset_restores_pristine": true,
+    "ok": true
+  }
+}

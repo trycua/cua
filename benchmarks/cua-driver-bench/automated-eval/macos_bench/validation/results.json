@@ -1,0 +1,372 @@
+{
+  "tasks": {
+    "MB-01": {
+      "check_s": 0.058,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "done_after_clicks",
+        "done_pressed",
+        "left_sequence_in_order",
+        "no_extra_left_clicks"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {
+        "event_pairing_anomalies": 0,
+        "left_misses": 0,
+        "right_clicks": 0
+      },
+      "oracle_ok": true,
+      "oracle_s": 4.8,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.06,
+      "seed": 876957,
+      "setup_s": 1.12,
+      "timing": "setup 1.12 s, check 0.058 s, reset 0.06 s",
+      "wrong": "FAIL as required, failed ['left_sequence_in_order', 'no_extra_left_clicks']",
+      "wrong_expected": [
+        "left_sequence_in_order",
+        "no_extra_left_clicks"
+      ],
+      "wrong_ok": true
+    },
+    "MB-02": {
+      "check_s": 0.093,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "done_after_actions",
+        "done_pressed",
+        "menu_via_right_press",
+        "target_1_action",
+        "target_2_action",
+        "target_3_action",
+        "target_4_action"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {
+        "action_events": 4,
+        "left_clicks": 0,
+        "menu_dismissed": 0,
+        "menu_opens": 4,
+        "right_down_duplicates_ignored": 0,
+        "right_event_pairing_anomalies": 4
+      },
+      "oracle_ok": true,
+      "oracle_s": 10.2,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.07,
+      "seed": 292556,
+      "setup_s": 1.14,
+      "timing": "setup 1.14 s, check 0.093 s, reset 0.07 s",
+      "wrong": "FAIL as required, failed ['target_2_action']",
+      "wrong_expected": [
+        "target_2_action"
+      ],
+      "wrong_ok": true
+    },
+    "MB-03": {
+      "check_s": 0.073,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "confirm_pressed",
+        "no_wrong_confirm",
+        "selected_target_at_confirm",
+        "selection_events_consistent",
+        "state_matches"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {
+        "confirm_count": 1,
+        "scroll_events": 28,
+        "scrolled_near_target": true,
+        "select_events": 378
+      },
+      "oracle_ok": true,
+      "oracle_s": 8.8,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.07,
+      "seed": 574870,
+      "setup_s": 1.24,
+      "timing": "setup 1.24 s, check 0.073 s, reset 0.07 s",
+      "wrong": "FAIL as required, failed ['no_wrong_confirm', 'selected_target_at_confirm', 'selection_events_consistent', 'state_matches']",
+      "wrong_expected": [
+        "no_wrong_confirm",
+        "selected_target_at_confirm"
+      ],
+      "wrong_ok": true
+    },
+    "MB-04": {
+      "check_s": 0.085,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "blue_in_zone",
+        "done_pressed",
+        "drag_sequences",
+        "green_in_zone",
+        "placed_when_done",
+        "positions_via_events",
+        "red_in_zone",
+        "tiles_moved"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {},
+      "oracle_ok": true,
+      "oracle_s": 6.3,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.09,
+      "seed": 419529,
+      "setup_s": 1.13,
+      "timing": "setup 1.13 s, check 0.085 s, reset 0.09 s",
+      "wrong": "FAIL as required, failed ['green_in_zone', 'placed_when_done', 'red_in_zone']",
+      "wrong_expected": [
+        "green_in_zone",
+        "red_in_zone"
+      ],
+      "wrong_ok": true
+    },
+    "MB-05": {
+      "check_s": 0.047,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "category",
+        "customer_name",
+        "invoice_amount",
+        "notes",
+        "notify",
+        "priority",
+        "quantity",
+        "submitted_once",
+        "ui_events"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {},
+      "oracle_ok": true,
+      "oracle_s": 7.1,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.05,
+      "seed": 117933,
+      "setup_s": 1.12,
+      "timing": "setup 1.12 s, check 0.047 s, reset 0.05 s",
+      "wrong": "FAIL as required, failed ['category']",
+      "wrong_expected": [
+        "category"
+      ],
+      "wrong_ok": true
+    },
+    "MB-06": {
+      "check_s": 0.046,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "bold_covers_sentence",
+        "doc_via_events",
+        "done_pressed",
+        "replacement_applied",
+        "text_correct"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {
+        "format_change_events": 1,
+        "max_selection_length": 33,
+        "selection_events": 232,
+        "text_change_events": 111,
+        "text_change_via": {
+          "typing": 111
+        }
+      },
+      "oracle_ok": true,
+      "oracle_s": 8.9,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.05,
+      "seed": 272704,
+      "setup_s": 1.02,
+      "timing": "setup 1.02 s, check 0.046 s, reset 0.05 s",
+      "wrong": "FAIL as required, failed ['bold_covers_sentence', 'no_bold_elsewhere']",
+      "wrong_expected": [
+        "bold_covers_sentence",
+        "no_bold_elsewhere"
+      ],
+      "wrong_ok": true
+    },
+    "MB-07": {
+      "check_s": 0.053,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "result_correct",
+        "result_saved",
+        "ui_events"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_attempts": 1,
+      "oracle_diag": {
+        "pasteboard_changes": 1,
+        "save_count": 1,
+        "whole_value_in_one_edit": false
+      },
+      "oracle_ok": true,
+      "oracle_s": 6.7,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.14,
+      "seed": 169494,
+      "setup_s": 1.02,
+      "timing": "setup 1.02 s, check 0.053 s, reset 0.14 s",
+      "wrong": "FAIL as required, failed ['result_correct']",
+      "wrong_expected": [
+        "result_correct"
+      ],
+      "wrong_ok": true
+    },
+    "MB-08": {
+      "check_s": 0.043,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "applied_compact",
+        "applied_name",
+        "applied_theme",
+        "confirm_after_apply",
+        "confirm_pressed",
+        "settings_opened",
+        "ticket_correct"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_diag": {
+        "apply_presses": 1,
+        "earlier_confirm_entries": [],
+        "opened_via": [
+          "key"
+        ]
+      },
+      "oracle_ok": true,
+      "oracle_s": 8.3,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.05,
+      "seed": 35926,
+      "setup_s": 1.12,
+      "timing": "setup 1.12 s, check 0.043 s, reset 0.05 s",
+      "wrong": "FAIL as required, failed ['applied_theme', 'ticket_correct']",
+      "wrong_expected": [
+        "applied_theme",
+        "ticket_correct"
+      ],
+      "wrong_ok": true
+    },
+    "MB-09": {
+      "check_s": 0.047,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "done_order_correct",
+        "done_pressed",
+        "initial_consistent",
+        "moves_via_drop",
+        "order_correct"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_attempts": 1,
+      "oracle_diag": {
+        "drag_sessions_begun": 3,
+        "drops": 3
+      },
+      "oracle_ok": true,
+      "oracle_s": 8.0,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.05,
+      "seed": 790113,
+      "setup_s": 1.12,
+      "timing": "setup 1.12 s, check 0.047 s, reset 0.05 s",
+      "wrong": "FAIL as required, failed ['done_order_correct', 'order_correct']",
+      "wrong_expected": [
+        "order_correct"
+      ],
+      "wrong_ok": true
+    },
+    "MB-10": {
+      "check_s": 0.048,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "clicked_target",
+        "hover_genuine",
+        "no_wrong_clicks",
+        "overlay_visible_at_click",
+        "single_click"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_attempts": 1,
+      "oracle_diag": {},
+      "oracle_ok": true,
+      "oracle_s": 3.8,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.05,
+      "seed": 227159,
+      "setup_s": 1.12,
+      "timing": "setup 1.12 s, check 0.048 s, reset 0.05 s",
+      "wrong": "FAIL as required, failed ['clicked_target', 'no_wrong_clicks']",
+      "wrong_expected": [
+        "clicked_target",
+        "no_wrong_clicks"
+      ],
+      "wrong_ok": true
+    },
+    "MB-11": {
+      "check_s": 0.046,
+      "noop": "FAIL (as required)",
+      "noop_failed_checks": [
+        "code_correct",
+        "submitted_once",
+        "tooltip_displayed_for_target",
+        "value_via_events"
+      ],
+      "noop_ok": true,
+      "oracle": "PASS",
+      "oracle_attempts": 1,
+      "oracle_diag": {
+        "icons_queried": [
+          "Flag"
+        ],
+        "wrong_icon_queries": 0
+      },
+      "oracle_ok": true,
+      "oracle_s": 6.9,
+      "oracle_score": 1.0,
+      "reset": "clean twice",
+      "reset_clean": true,
+      "reset_s": 0.05,
+      "seed": 160721,
+      "setup_s": 1.12,
+      "timing": "setup 1.12 s, check 0.046 s, reset 0.05 s",
+      "wrong": "FAIL as required, failed ['code_correct', 'tooltip_displayed_for_target']",
+      "wrong_expected": [
+        "code_correct",
+        "tooltip_displayed_for_target"
+      ],
+      "wrong_ok": true
+    }
+  }
+}

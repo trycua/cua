@@ -1,0 +1,8 @@
+{
+  "id": "PROBE-CANVAS",
+  "title": "Drag three tiles into matching zones on a pixel-only canvas",
+  "category": "precision",
+  "dimension_tags": ["pixel_drag", "no_ax"],
+  "timeout_s": 300,
+  "app_args": ["--mode", "canvas"]
+}

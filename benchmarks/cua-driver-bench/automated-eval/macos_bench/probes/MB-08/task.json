@@ -1,0 +1,20 @@
+{
+  "id": "MB-08",
+  "title": "Open Settings from the menu bar, change three settings, apply, confirm in the main window",
+  "group": "AF",
+  "category": "web_forms",
+  "ability": "multi_window_menu",
+  "dimension_tags": [
+    "multi_window",
+    "menu_bar",
+    "native_ax"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "settings"
+  ],
+  "status": "dropped",
+  "dropped_note": "not run (dropped 6 Oct: unpublished original; reconstruction can't confirm or refute the claim)"
+}

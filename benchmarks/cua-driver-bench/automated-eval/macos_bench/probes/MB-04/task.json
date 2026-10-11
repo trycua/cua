@@ -1,0 +1,19 @@
+{
+  "id": "MB-04",
+  "title": "Drag three tiles to their zones on a custom-drawn board",
+  "group": "AF",
+  "category": "precision",
+  "ability": "canvas_drag",
+  "dimension_tags": [
+    "pixel_drag",
+    "no_ax"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "canvas"
+  ],
+  "status": "dropped",
+  "dropped_note": "not run (dropped 6 Oct: unpublished original; reconstruction can't confirm or refute the claim)"
+}

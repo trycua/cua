@@ -1,0 +1,1 @@
+{"ts": "2026-10-06T11:20:01+00:00", "kind": "retry_rate_limit", "planned_s": 4828.8, "message": "rate_limit_event rejected (five_hour)", "trial_id": "CDB-G04-r2-cc-cua-driver", "event": "start"}

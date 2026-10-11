@@ -1,0 +1,400 @@
+name: Cua Driver Benchmark
+
+# Manual benchmark run on a runner you choose. It needs no cloud execution
+# backend: the job installs the selected Cua Driver release, runs the local
+# runner from benchmarks/cua-driver-bench, and uploads the result bundle.
+#
+# GUI benchmarks need a desktop session with Accessibility and Screen Recording
+# granted to the process that starts the driver. GitHub-hosted runners cannot
+# grant those, so point `runner_label` at a self-hosted macOS runner for real
+# runs.
+#
+# Artifacts of a public repository are readable by anyone who can see the run.
+# The job removes private trial inputs before it uploads anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "driver-comparison: release comparison on the CDB task pack. macos-head-to-head: macOS harness in automated-eval/macos_bench."
+        type: choice
+        required: true
+        default: driver-comparison
+        options:
+          - driver-comparison
+          - macos-head-to-head
+      runner_label:
+        description: "Runner label, for example a self-hosted macOS runner label"
+        type: string
+        required: true
+        default: macos-latest
+      driver_version:
+        description: "Cua Driver release, for example 0.34.0. Baseline for driver-comparison; release under test for macos-head-to-head."
+        type: string
+        required: true
+      candidate_version:
+        description: "Optional second release to compare against (driver-comparison only)"
+        type: string
+        required: false
+        default: ""
+      tasks:
+        description: "Comma-separated task IDs, for example CDB-S01,CDB-S03"
+        type: string
+        required: true
+        default: "CDB-S01"
+      arms:
+        description: "Comma-separated arms (macos-head-to-head only)"
+        type: string
+        required: false
+        default: "cua-driver-mcp,codex-native-cu"
+      runs:
+        description: "Runs per task and arm (macos-head-to-head only)"
+        type: string
+        required: false
+        default: "3"
+      model:
+        description: "Model or provider tier passed to the harness"
+        type: string
+        required: true
+        default: "small"
+      publish_report:
+        description: "Also publish the static report to S3 (driver-comparison only; needs the bucket variable and AWS secrets)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-driver-bench-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: ${{ inputs.suite }} on ${{ inputs.runner_label }}
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 720
+    env:
+      BENCH_SUITE: ${{ inputs.suite }}
+      BENCH_DRIVER_VERSION: ${{ inputs.driver_version }}
+      BENCH_CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+      BENCH_TASKS: ${{ inputs.tasks }}
+      BENCH_ARMS: ${{ inputs.arms }}
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MODEL: ${{ inputs.model }}
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          [[ "$BENCH_DRIVER_VERSION" =~ $semver ]] \
+            || { echo "driver_version must look like 0.34.0" >&2; exit 1; }
+          if [[ -n "$BENCH_CANDIDATE_VERSION" ]]; then
+            [[ "$BENCH_CANDIDATE_VERSION" =~ $semver ]] \
+              || { echo "candidate_version must look like 0.34.0" >&2; exit 1; }
+          fi
+          ids='^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$'
+          tasks="${BENCH_TASKS//[[:space:]]/}"
+          [[ "$tasks" =~ $ids ]] || { echo "tasks must be comma-separated IDs" >&2; exit 1; }
+          if [[ "$BENCH_SUITE" == "driver-comparison" ]]; then
+            for task in ${tasks//,/ }; do
+              case "$task" in
+                CDB-S01|CDB-S02|CDB-S03|CDB-S04) ;;
+                *) echo "driver-comparison supports CDB-S01 to CDB-S04, got $task" >&2; exit 1 ;;
+              esac
+            done
+          else
+            arms="${BENCH_ARMS//[[:space:]]/}"
+            [[ "$arms" =~ $ids ]] || { echo "arms must be comma-separated IDs" >&2; exit 1; }
+            [[ "$BENCH_RUNS" =~ ^[1-9][0-9]*$ ]] \
+              || { echo "runs must be a positive integer" >&2; exit 1; }
+          fi
+          echo "BENCH_TASKS=$tasks" >> "$GITHUB_ENV"
+          echo "BENCH_ARMS=${BENCH_ARMS//[[:space:]]/}" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Set up Node.js
+        if: ${{ inputs.suite == 'driver-comparison' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install Codex CLI
+        if: ${{ inputs.suite == 'driver-comparison' }}
+        run: |
+          set -euo pipefail
+          npm install --global --no-audit --no-fund @openai/codex
+          codex --version
+
+      - name: Fetch Cua Driver releases
+        id: drivers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -s)" != "Darwin" ]]; then
+            echo "This workflow fetches the macOS driver release; run it on a macOS runner." >&2
+            exit 1
+          fi
+          drivers_root="$RUNNER_TEMP/cua-drivers"
+          mkdir -p "$drivers_root"
+          versions="$BENCH_DRIVER_VERSION"
+          if [[ -n "$BENCH_CANDIDATE_VERSION" && "$BENCH_CANDIDATE_VERSION" != "$BENCH_DRIVER_VERSION" ]]; then
+            versions="$versions $BENCH_CANDIDATE_VERSION"
+          fi
+          for version in $versions; do
+            release_dir="$drivers_root/$version"
+            download_dir="$release_dir/download"
+            mkdir -p "$release_dir/binary" "$download_dir"
+            archive="cua-driver-rs-${version}-darwin-universal.tar.gz"
+            skills="cua-driver-rs-v${version}-skills.tar.gz"
+            gh release download "cua-driver-rs-v${version}" \
+              --repo "$GITHUB_REPOSITORY" --dir "$download_dir" \
+              --pattern "$archive" --pattern "$skills" --pattern checksums.txt
+            (
+              cd "$download_dir"
+              grep -E " (\*)?(${archive}|${skills})$" checksums.txt | shasum -a 256 -c -
+            )
+            tar -xzf "$download_dir/$archive" -C "$download_dir"
+            binary="$(find "$download_dir" -type f -name cua-driver -not -path '*/CuaDriver.app/*' | head -n 1)"
+            test -n "$binary"
+            cp "$binary" "$release_dir/binary/cua-driver"
+            chmod 0755 "$release_dir/binary/cua-driver"
+            app="$(find "$download_dir" -type d -name CuaDriver.app | head -n 1)"
+            if [[ -n "$app" ]]; then
+              mv "$app" "$release_dir/CuaDriver.app"
+            fi
+            cp "$download_dir/$skills" "$release_dir/$skills"
+            mkdir -p "$release_dir/skills-extracted"
+            tar -xzf "$release_dir/$skills" -C "$release_dir/skills-extracted"
+            binary_sha="$(shasum -a 256 "$release_dir/binary/cua-driver" | cut -d' ' -f1)"
+            printf '{\n  "schemaVersion": 1,\n  "product": "cua-driver-rs",\n  "version": "%s",\n  "binaryVersion": "%s",\n  "source": "github-release",\n  "binarySha256": "%s"\n}\n' \
+              "$version" "$version" "$binary_sha" > "$release_dir/release-manifest.json"
+            rm -rf "$download_dir"
+            "$release_dir/binary/cua-driver" --version
+          done
+          echo "drivers_root=$drivers_root" >> "$GITHUB_OUTPUT"
+
+      - name: Retrieve authorized task pack
+        id: task_pack
+        if: ${{ contains(inputs.tasks, 'CDB-') }}
+        env:
+          GH_TOKEN: ${{ secrets.CDB_TASK_PACK_GH_TOKEN }}
+          TASK_PACK_REPOSITORY: ${{ vars.CDB_TASK_PACK_REPOSITORY }}
+          TASK_PACK_REF: ${{ vars.CDB_TASK_PACK_REF }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || { echo "CDB_TASK_PACK_GH_TOKEN is not configured" >&2; exit 1; }
+          test -n "$TASK_PACK_REPOSITORY" || { echo "CDB_TASK_PACK_REPOSITORY is not set" >&2; exit 1; }
+          test -n "$TASK_PACK_REF" || { echo "CDB_TASK_PACK_REF is not set" >&2; exit 1; }
+          source_dir="$RUNNER_TEMP/cua-driver-bench-task-pack-source"
+          tasks_root="$source_dir/tasks"
+          test ! -e "$source_dir"
+
+          # Authenticate through a one-off header. This never writes a
+          # credential helper or touches the runner user's keychain.
+          encoded="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$encoded"
+          export GIT_TERMINAL_PROMPT=0
+          git_authed() {
+            git -c credential.helper= \
+              -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $encoded" "$@"
+          }
+          git init --quiet "$source_dir"
+          git -C "$source_dir" remote add origin "https://github.com/${TASK_PACK_REPOSITORY}.git"
+          git -C "$source_dir" config core.sparseCheckout true
+          git -C "$source_dir" config core.sparseCheckoutCone false
+          sparse_paths=""
+          for task in ${BENCH_TASKS//,/ }; do
+            case "$task" in
+              CDB-*) lower="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
+                     sparse_paths="$sparse_paths/tasks/shared/$lower/"$'\n' ;;
+            esac
+          done
+          mkdir -p "$source_dir/.git/info"
+          printf '%s' "$sparse_paths" > "$source_dir/.git/info/sparse-checkout"
+          git_authed -C "$source_dir" fetch --quiet --depth=1 --filter=blob:none origin "$TASK_PACK_REF"
+          git_authed -C "$source_dir" checkout --quiet --detach FETCH_HEAD
+          for task in ${BENCH_TASKS//,/ }; do
+            case "$task" in
+              CDB-*)
+                lower="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
+                test -f "$tasks_root/shared/$lower/task.cuabench.json"
+                ;;
+            esac
+          done
+          echo "tasks_root=$tasks_root" >> "$GITHUB_OUTPUT"
+
+      - name: Run driver comparison
+        id: benchmark
+        if: ${{ inputs.suite == 'driver-comparison' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          DRIVERS_ROOT: ${{ steps.drivers.outputs.drivers_root }}
+          TASKS_ROOT: ${{ steps.task_pack.outputs.tasks_root }}
+        run: |
+          set -euo pipefail
+          test -n "$OPENAI_API_KEY" || { echo "OPENAI_API_KEY is not configured" >&2; exit 1; }
+          test -n "$OPENAI_BASE_URL" || { echo "OPENAI_BASE_URL is not set" >&2; exit 1; }
+          run_dir="$RUNNER_TEMP/cua-driver-bench-results"
+          codex_home="$RUNNER_TEMP/cdb-codex-home"
+          test ! -e "$run_dir"
+          mkdir -p "$codex_home"
+          {
+            echo 'model_provider = "cdb-ci"'
+            echo
+            echo '[model_providers."cdb-ci"]'
+            echo 'name = "CDB gateway"'
+            printf 'base_url = "%s"\n' "$OPENAI_BASE_URL"
+            echo 'env_key = "OPENAI_API_KEY"'
+            echo 'wire_api = "responses"'
+          } > "$codex_home/config.toml"
+          echo "run_dir=$run_dir" >> "$GITHUB_OUTPUT"
+
+          task_arguments=()
+          for task in ${BENCH_TASKS//,/ }; do
+            task_arguments+=(--task "$task")
+          done
+          release_arguments=(--baseline "$BENCH_DRIVER_VERSION")
+          if [[ -n "$BENCH_CANDIDATE_VERSION" ]]; then
+            release_arguments+=(--candidate "$BENCH_CANDIDATE_VERSION")
+          fi
+
+          uv run --project libs/cua-bench-runtime --frozen --python 3.12 \
+            python benchmarks/cua-driver-bench/automated-eval/cli.py compare \
+            --model "$BENCH_MODEL" \
+            --reasoning-effort high \
+            --codex-home "$codex_home" \
+            --tasks-root "$TASKS_ROOT" \
+            --drivers-root "$DRIVERS_ROOT" \
+            --output "$run_dir" \
+            "${release_arguments[@]}" \
+            "${task_arguments[@]}"
+
+      - name: Run macOS head-to-head
+        id: head_to_head
+        if: ${{ inputs.suite == 'macos-head-to-head' }}
+        env:
+          DRIVERS_ROOT: ${{ steps.drivers.outputs.drivers_root }}
+        run: |
+          set -euo pipefail
+          harness="benchmarks/cua-driver-bench/automated-eval/macos_bench"
+          test -f "$harness/run_pilot.py" \
+            || { echo "$harness is not present in this checkout" >&2; exit 1; }
+          run_dir="$RUNNER_TEMP/cua-driver-bench-results"
+          build_dir="$RUNNER_TEMP/cua-driver-bench-build"
+          test ! -e "$run_dir"
+          echo "run_dir=$run_dir" >> "$GITHUB_OUTPUT"
+          "$harness/swift/build.sh" "$build_dir"
+          release_dir="$DRIVERS_ROOT/$BENCH_DRIVER_VERSION"
+          IFS=',' read -r -a arm_list <<< "$BENCH_ARMS"
+          IFS=',' read -r -a task_list <<< "$BENCH_TASKS"
+          uv run --project libs/cua-bench-runtime --frozen --python 3.12 \
+            python "$harness/run_pilot.py" \
+            --out "$run_dir" \
+            --build-dir "$build_dir" \
+            --arms "${arm_list[@]}" \
+            --tasks "${task_list[@]}" \
+            --runs "$BENCH_RUNS" \
+            --model "$BENCH_MODEL" \
+            --cua-app "$release_dir/CuaDriver.app" \
+            --cua-skills "$release_dir/skills-extracted"
+
+      - name: Remove authorized task pack
+        if: ${{ always() }}
+        run: rm -rf "$RUNNER_TEMP/cua-driver-bench-task-pack-source"
+
+      - name: Remove private trial inputs
+        if: ${{ always() }}
+        env:
+          RUN_DIR: ${{ steps.benchmark.outputs.run_dir || steps.head_to_head.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RUN_DIR" || ! -d "$RUN_DIR" ]]; then
+            exit 0
+          fi
+          find "$RUN_DIR" -type d -path '*/trials/*/inputs' -prune -exec rm -rf -- {} +
+          find "$RUN_DIR" -type f -path '*/trials/*/inputs.manifest.json' -delete
+          if find "$RUN_DIR" \
+            \( -type d -path '*/trials/*/inputs' \
+            -o -type f -path '*/trials/*/inputs.manifest.json' \) \
+            -print -quit | grep -q .; then
+            echo "Private trial inputs remain in the result bundle." >&2
+            exit 1
+          fi
+
+      - name: Publish report to S3
+        id: publish
+        if: ${{ inputs.publish_report && inputs.suite == 'driver-comparison' && vars.CDB_REPORT_S3_BUCKET != '' && steps.benchmark.outputs.run_dir != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CDB_REPORT_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CDB_REPORT_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.CDB_REPORT_AWS_REGION }}
+          AWS_S3_BUCKET: ${{ vars.CDB_REPORT_S3_BUCKET }}
+          AWS_S3_REPORT_PREFIX: ${{ vars.CDB_REPORT_S3_PREFIX || 'cua-driver-bench' }}
+          RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "::warning::AWS secrets are not configured; skipping S3 publish."
+            exit 0
+          fi
+          uv run --project libs/cua-bench-runtime --frozen --python 3.12 \
+            python benchmarks/cua-driver-bench/automated-eval/cli.py publish --run-dir "$RUN_DIR" \
+            | tee "$RUNNER_TEMP/cua-driver-bench-publish.log"
+          report_url="$(sed -n 's/^REPORT_URL=//p' "$RUNNER_TEMP/cua-driver-bench-publish.log" | tail -n 1)"
+          echo "report_url=$report_url" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Actions artifact
+        id: artifact
+        if: ${{ always() && (steps.benchmark.outputs.run_dir != '' || steps.head_to_head.outputs.run_dir != '') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cua-driver-bench-${{ github.run_id }}
+          path: ${{ steps.benchmark.outputs.run_dir || steps.head_to_head.outputs.run_dir }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Write summary
+        if: ${{ always() }}
+        env:
+          RUNNER_LABEL: ${{ inputs.runner_label }}
+          BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome == 'skipped' && steps.head_to_head.outcome || steps.benchmark.outcome }}
+          REPORT_URL: ${{ steps.publish.outputs.report_url }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
+        run: |
+          {
+            echo "# Cua Driver Benchmark"
+            echo
+            printf 'Suite: `%s`\n\n' "$BENCH_SUITE"
+            printf 'Runner: `%s`\n\n' "$RUNNER_LABEL"
+            printf 'Driver release: `%s`\n\n' "$BENCH_DRIVER_VERSION"
+            if [[ -n "$BENCH_CANDIDATE_VERSION" ]]; then
+              printf 'Candidate release: `%s`\n\n' "$BENCH_CANDIDATE_VERSION"
+            fi
+            printf 'Tasks: `%s`\n\n' "$BENCH_TASKS"
+            if [[ "$BENCH_SUITE" == "macos-head-to-head" ]]; then
+              printf 'Arms: `%s`, runs per task and arm: `%s`\n\n' "$BENCH_ARMS" "$BENCH_RUNS"
+            fi
+            printf 'Benchmark: `%s`\n\n' "${BENCHMARK_OUTCOME:-not run}"
+            if [[ -n "$REPORT_URL" ]]; then
+              printf 'Report URL: %s\n\n' "$REPORT_URL"
+            fi
+            if [[ "$ARTIFACT_OUTCOME" == "success" ]]; then
+              printf 'GitHub artifact: `cua-driver-bench-%s`\n' "$GITHUB_RUN_ID"
+            else
+              printf 'GitHub artifact upload: `%s`\n' "${ARTIFACT_OUTCOME:-not run}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

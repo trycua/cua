@@ -1,0 +1,17 @@
+{
+  "id": "MB-09",
+  "title": "Reorder a native list by drag and drop",
+  "group": "P",
+  "category": "precision",
+  "ability": "list_drag_drop",
+  "dimension_tags": [
+    "drag",
+    "native_ax"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "listdrag"
+  ]
+}

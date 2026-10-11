@@ -1,0 +1,20 @@
+{
+  "id": "MB-02",
+  "title": "Right-click 4 dots on a custom-drawn board and choose the stated menu action",
+  "group": "AF",
+  "category": "precision",
+  "ability": "canvas_right_click",
+  "dimension_tags": [
+    "pixel_click",
+    "context_menu",
+    "no_ax"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "canvasmenu"
+  ],
+  "status": "dropped",
+  "dropped_note": "not run (dropped 6 Oct: unpublished original; reconstruction can't confirm or refute the claim)"
+}

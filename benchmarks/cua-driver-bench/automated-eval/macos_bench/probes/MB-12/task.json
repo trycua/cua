@@ -1,0 +1,20 @@
+{
+  "id": "MB-12",
+  "title": "Fill a form in a background app while another app stays frontmost and the pointer stays put",
+  "group": "P",
+  "category": "web_forms",
+  "ability": "background_operation",
+  "dimension_tags": [
+    "background",
+    "disturbance_in_pass"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "forms"
+  ],
+  "sentinel_in_pass": true,
+  "status": "dropped",
+  "dropped_note": "not run (dropped 6 Oct: live validation failed; see validation/mb12_live.json)"
+}

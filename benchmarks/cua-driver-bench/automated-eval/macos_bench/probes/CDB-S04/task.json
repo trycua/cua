@@ -1,0 +1,14 @@
+{
+  "id": "CDB-S04",
+  "title": "Task cdb-s04 of the private CDB task pack",
+  "group": "CDB",
+  "category": "multi_app",
+  "kind": "cdb",
+  "ability": "coding_and_gui_workflow",
+  "pack_task": "shared/cdb-s04",
+  "coding_tools": true,
+  "dimension_tags": ["multi_app", "coding_harness"],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45
+}

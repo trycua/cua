@@ -1,0 +1,98 @@
+{
+  "ok": false,
+  "runs": [
+    {
+      "mode": "clean",
+      "seed": 779991,
+      "lab_alive_before_eval": true,
+      "evaluation": {
+        "passed": false,
+        "score": 0.901,
+        "checks": {
+          "category": true,
+          "customer_name": true,
+          "front_unchanged": false,
+          "integrity": true,
+          "no_leaked_input": true,
+          "pointer_still": true,
+          "priority": true,
+          "sentinel_available": true,
+          "submitted_once": true,
+          "ui_events": true
+        },
+        "diagnostics": {
+          "hid_events": {
+            "detail": "",
+            "value": {
+              "down": 0,
+              "key": 0,
+              "move": 0,
+              "scroll": 0
+            }
+          },
+          "pointer_deviation_episodes": {
+            "detail": "",
+            "value": 0
+          }
+        }
+      },
+      "notes": [
+        "set_value 'Customer name': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"confirmed\", \"evidence\": [{\"kind\": \"value_readback\"}], \"route\": \"accessib",
+        "set_value 'Category': {\"_raw\": \"set_value failed: AXPopUpButton [3] '' has no AX children and target is 'BenchLab' (not Safari) \\u2014 no fallback available.\\n\", ",
+        "popup value after set_value is 'Hardware'; falling back to press + pick (opens the menu)",
+        "click 'Category': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"unverifiable\", \"route\": \"accessibility\", \"summary\": \"\\u2705 Performed AX",
+        "picked 'Marketing'",
+        "click 'Low': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"unverifiable\", \"route\": \"accessibility\", \"summary\": \"\\u2705 Performed AX",
+        "click 'Submit': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"unverifiable\", \"route\": \"accessibility\", \"summary\": \"\\u2705 Performed AX"
+      ],
+      "dir": "(temporary directory in the VM)"
+    },
+    {
+      "mode": "noisy",
+      "seed": 871671,
+      "lab_alive_before_eval": true,
+      "evaluation": {
+        "passed": false,
+        "score": 0.901,
+        "checks": {
+          "category": true,
+          "customer_name": true,
+          "front_unchanged": false,
+          "integrity": true,
+          "no_leaked_input": true,
+          "pointer_still": true,
+          "priority": true,
+          "sentinel_available": true,
+          "submitted_once": true,
+          "ui_events": true
+        },
+        "diagnostics": {
+          "hid_events": {
+            "detail": "",
+            "value": {
+              "down": 0,
+              "key": 0,
+              "move": 0,
+              "scroll": 0
+            }
+          },
+          "pointer_deviation_episodes": {
+            "detail": "",
+            "value": 0
+          }
+        }
+      },
+      "notes": [
+        "set_value 'Customer name': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"confirmed\", \"evidence\": [{\"kind\": \"value_readback\"}], \"route\": \"accessib",
+        "set_value 'Category': {\"_raw\": \"set_value failed: AXPopUpButton [3] '' has no AX children and target is 'BenchLab' (not Safari) \\u2014 no fallback available.\\n\", ",
+        "popup value after set_value is 'Hardware'; falling back to press + pick (opens the menu)",
+        "click 'Category': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"unverifiable\", \"route\": \"accessibility\", \"summary\": \"\\u2705 Performed AX",
+        "picked 'Marketing'",
+        "click 'Medium': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"unverifiable\", \"route\": \"accessibility\", \"summary\": \"\\u2705 Performed AX",
+        "click 'Submit': {\"delivery\": {\"mode\": \"background\"}, \"effect\": \"unverifiable\", \"route\": \"accessibility\", \"summary\": \"\\u2705 Performed AX"
+      ],
+      "dir": "(temporary directory in the VM)"
+    }
+  ],
+  "summary": "Dropped 6 Oct 2026. A model-free background actor (Cua Driver 0.34.0 background AX actions only, no pointer, no focus change) fills the three fields and submits: every task check passes (customer_name, category, priority, submitted_once, ui_events, integrity), the pointer does not move and no input leaks, but BenchSentinel resigns key focus for about 2 s while the Category popup menu is open (key_loss=1), so front_unchanged fails. set_value on the popup is refused (the popup has no accessibility children until its menu opens). A run that cannot be clean cannot validate the check, so MB-12 is dropped rather than changed after the fact."
+}

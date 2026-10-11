@@ -1,0 +1,97 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.synthetic.lifecycle-echo",
+  "version": "1.0.0",
+  "title": "Transform a synthetic nonce",
+  "authors": [
+    {
+      "name": "Cua AI"
+    }
+  ],
+  "provenance": {
+    "origin": "original",
+    "sources_consulted": [
+      {
+        "title": "Cua Driver Bench Phase 2 runtime contract",
+        "purpose": "Repository-owned lifecycle requirements"
+      }
+    ],
+    "third_party_material": false,
+    "notes": "Original headless conformance fixture. It does not model a customer or desktop task."
+  },
+  "instructions": "Read the synthetic input and write its nonce in reverse order to output.json.",
+  "variants": [
+    {
+      "id": "fixture.alpha",
+      "fixture_artifacts": [
+        {
+          "path": "fixture.json",
+          "sha256": "be3ccfcadc9fe373157fcc001217b8b0d21841a45459be223ae2720f1b76b100"
+        }
+      ],
+      "parameters": {
+        "nonce": "quartz-17"
+      }
+    }
+  ],
+  "required_capabilities": [],
+  "observation_surfaces": [
+    "process",
+    "filesystem"
+  ],
+  "network_policy": {
+    "setup": {"mode": "deny"},
+    "agent": {"mode": "deny"},
+    "evaluation": {"mode": "deny"},
+    "cleanup": {"mode": "deny"}
+  },
+  "limits": {
+    "agent_seconds": 10,
+    "evaluator_seconds": 10
+  },
+  "side_effects": {
+    "allowed": [
+      {
+        "scope": "trial.artifacts.output",
+        "description": "Write the requested output artifact."
+      }
+    ],
+    "forbidden": [
+      {
+        "scope": "trial.inputs",
+        "description": "Modify captured trial inputs."
+      }
+    ]
+  },
+  "evaluator": {
+    "entrypoint": "evaluator/check.py",
+    "inputs": [
+      {
+        "path": "evaluator/check.py",
+        "sha256": "91ce30308f90a33aaa80920cedac0c5cca890d1ab864d40a12d17fe20500bb3e"
+      }
+    ],
+    "staging": "agent-visible",
+    "oracle": {
+      "required": false,
+      "staging": "none"
+    }
+  },
+  "reset": {
+    "entrypoint": "reset/reset-workspace.txt",
+    "verification": {
+      "entrypoint": "reset/verify-workspace.txt",
+      "timeout_seconds": 5
+    },
+    "failure_fixtures": [
+      {
+        "id": "reset.cleanup-marker-missing",
+        "artifact": {
+          "path": "reset-failure.json",
+          "sha256": "7134fa9e014e694d11b54bcd5ab5d80b8ee2c6fec7ee588d6c520e69a5c71c76"
+        },
+        "expected_failure": "cleanup verification detects a missing marker"
+      }
+    ]
+  }
+}

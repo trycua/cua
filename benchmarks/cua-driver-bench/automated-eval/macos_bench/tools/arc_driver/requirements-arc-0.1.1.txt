@@ -1,0 +1,135 @@
+# arc-cua 0.1.1 (github.com/shhivv/arc-cua tag v0.1.1, commit cd9b5a3bbdeb4682160ad998675723f71dab0804), PyPI wheel
+# checked identical to the tag's src/arc_cua; dependencies from that tag's uv.lock (uv export --frozen --no-dev --extra macos
+# --no-emit-project). Install with --require-hashes --only-binary :all: --no-deps (Amendment 9, A9.2).
+arc-cua==0.1.1 \
+    --hash=sha256:5c74f4fc7a11ac9335f86d4be48d847230b5d8757d510dd9563caaf65723670b
+anyio==4.15.1 \
+    --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101 \
+    --hash=sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94
+    # via httpx
+certifi==2026.7.22 \
+    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
+    --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
+    # via
+    #   httpcore
+    #   httpx
+h11==0.16.0 \
+    --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
+    --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
+    # via httpcore
+h2==4.4.1 \
+    --hash=sha256:0e25f1462b23c9cb82d9eb02e28bc706dac2a68cb457c6a0d74d63c8a2a5d0e6 \
+    --hash=sha256:4e866ffb1a869ae14dd9b5e6beb5c24a13da0495ad72b65925ded182521c1516
+    # via httpx
+hpack==4.2.0 \
+    --hash=sha256:0895cfa3b5531fc65fe439c05eb65144f123bf7a394fcaa56aa423548d8e45c0 \
+    --hash=sha256:858ac0b02280fa582b5080d68db0899c62a80375e0e5413a74970c5e518b6986
+    # via h2
+httpcore==1.0.9 \
+    --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
+    --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
+    # via httpx
+httpx==0.28.1 \
+    --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
+    --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
+    # via arc-cua
+hyperframe==6.1.0 \
+    --hash=sha256:b03380493a519fce58ea5af42e4a42317bf9bd425596f7a0835ffce80f1a42e5 \
+    --hash=sha256:f630908a00854a7adeabd6382b43923a4c4cd4b821fcb527e6ab9e15382a3b08
+    # via h2
+idna==3.20 \
+    --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
+    --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+    # via
+    #   anyio
+    #   httpx
+pyobjc-core==12.2.2 \
+    --hash=sha256:122e6ad302a2abf5d4d4adb0156db751600ddf2768441696cba17b31323085e7 \
+    --hash=sha256:2062e8ad30a310441cd022544a897553408bebeaa7820d5edba3c96fd7fd693b \
+    --hash=sha256:2c7ef3d2f865b4b3ebb14ec3556f7a3e8abb6d130c67275cd9daa08dbd6e4e4e \
+    --hash=sha256:3772b406edb3ff78171530a17cda1c4a7817f87b87ded0d8715b3fa664df16db \
+    --hash=sha256:3906452339cd06a3bb07df103c2511d4cb0f7a22d8771c0b802eba15d9a642b6 \
+    --hash=sha256:59a77038ebe0ab1240f61c341e7fb67b8674f2b4cd41bc71a6472511a12b50f7 \
+    --hash=sha256:89acc6bc13aaa6e3f52b0ce652ede7e201edb6bf062741b246b0c5a44582f25f \
+    --hash=sha256:950bd2d9c74634398c4e3d24ef2f213d4e23d705083697464fa67afedc53c1ad
+    # via
+    #   pyobjc-framework-applicationservices
+    #   pyobjc-framework-cocoa
+    #   pyobjc-framework-coreml
+    #   pyobjc-framework-coretext
+    #   pyobjc-framework-quartz
+    #   pyobjc-framework-vision
+pyobjc-framework-applicationservices==12.2.2 \
+    --hash=sha256:0bcc09531d5854598fd74706d999e4ae3b7c503204d318910d02eba30e8eecef \
+    --hash=sha256:1af01a271b85eae2a327e93cf3ec46de0199a1a933594f78d4c2b9b9c2240e5e \
+    --hash=sha256:3b5693a377480cf127caa1c8c835b8620896971029c545d99d01aa31a2c38159 \
+    --hash=sha256:3f9dde6d8e8fb8ebd79ac6e84212c1d294eba48fa2d4c467a29614c3ca5ef2f8 \
+    --hash=sha256:4188a79f2774778dd5f2bcfb49b856d08dd824862f072924be40274b5a5cad95 \
+    --hash=sha256:5506bd6b5268a97fcb79b5b021f6cbbaaf5cdff3ec87094d8870268d8cf096ed \
+    --hash=sha256:93ba63aad6607f369c1b38bf91306731da6306fdde5eb67afa407b3f8a87dda7 \
+    --hash=sha256:fc861e14f78e7370e982202b21db8bcb562dc14cd4098e557a17961d3411de45
+    # via arc-cua
+pyobjc-framework-cocoa==12.2.2 \
+    --hash=sha256:0e8ace0d44a00d281281a723d17fcd05eea7544a38a6a512e1fd018ddb7aece2 \
+    --hash=sha256:600b1723184ca094931330e79355274949965460e23de38628d601b5a967baf9 \
+    --hash=sha256:875f2aad73963faa81a6b36ae674fd494a4658d6d999e1075e0e2aca3d2391df \
+    --hash=sha256:889d7bbd4ba2d4941078bfbbfb882138e51dbead27df006abfe0f2e0d49b5b2e \
+    --hash=sha256:8fe5b2e79c9530f667b4e58a87a3a15ea62f86a5d19eec405517ecbd4f454868 \
+    --hash=sha256:c96c0ef69a71afbbb0e6a7d594b455c5fe47d62e0db376ee7a2b4b828c16ace9 \
+    --hash=sha256:de69c5933750f3a4599ed962eccd92b6a71914c7e4318dacc7895738a8ae60d7 \
+    --hash=sha256:e106f395531e67694376b0f1184612cbeea3ec8b9bf56b55ef41d026171d2a2d
+    # via
+    #   arc-cua
+    #   pyobjc-framework-applicationservices
+    #   pyobjc-framework-coreml
+    #   pyobjc-framework-coretext
+    #   pyobjc-framework-quartz
+    #   pyobjc-framework-vision
+pyobjc-framework-coreml==12.2.2 \
+    --hash=sha256:20dba373eac775cb487d28a92d02e78903d464367d67dd69aa17543515234183 \
+    --hash=sha256:3e6abe134634adbcc0c1e843826e42df86e63beb3bc7e8e4a914e93179ae1e75 \
+    --hash=sha256:47b635a2ccc1c2b365b3e0d5a7ff1c5b03c351a9f350418a2d458dad00114429 \
+    --hash=sha256:5971bdf03ed6002ab6e913ac8003077172d8423cc13206246f343518d1515e10 \
+    --hash=sha256:70ae22934f2432677bbbcee04a21db2b0301056cd8390e61101fb59e1d374174 \
+    --hash=sha256:7b263a80158d4380b208ffb8cbf3b276ed4daf3753723dbbd7e561a25ee2048b \
+    --hash=sha256:94c129d9c1955eafc6783683ccaa08590f4cd7ef229515c8a28324032351871b \
+    --hash=sha256:b3711abe3380c3343d57dfa490578ef3c87ca0cdc8a403d81bc35e750ef48d49
+    # via pyobjc-framework-vision
+pyobjc-framework-coretext==12.2.2 \
+    --hash=sha256:1324d91305022b1de03a12cf82de2b42c87dafe9b12cde6237253658a8637139 \
+    --hash=sha256:1dc50de18346c4d6c89a51df066f03beea81e3557e3090ddc2a7a59395332fd8 \
+    --hash=sha256:295d1037494630527acc24d116b0301ab5cf5e918952f49f7bf4f76ebae24d0c \
+    --hash=sha256:64ddc02303217028e32e22c7cc00b5112d84e9d9a67c37d00c2e54f9172284ab \
+    --hash=sha256:a69611de569d92776e6391ca25492a5bbb4a05ba744006349e377a4fc5f7c8a5 \
+    --hash=sha256:b585f0db77280930cb32e71cf8d27f5203d8c0f42a65fba690294530ab6e1aa6 \
+    --hash=sha256:dbd0f288a859e359ee8e7ccf45bc2c489f38ae1087c21468b61d700433e0c91b \
+    --hash=sha256:f1ad871d761bad9a0d461cceeeff7375a39f4d181c2a206dada6fc05307fec12
+    # via pyobjc-framework-applicationservices
+pyobjc-framework-quartz==12.2.2 \
+    --hash=sha256:0ec9751904ef975bf0789d760dc4fadcb400edc4ffe4a736eb54971968babe5c \
+    --hash=sha256:1f7f3d9010e38f03ea1fa266664c10ea349cd7492bd603b403584f49d713dbed \
+    --hash=sha256:63f6f0f3233dcf650aac1374781e78961b0b17b33e3351953bacf8bd0c430593 \
+    --hash=sha256:7f668979d0c7320bf8f7ed6e030da578f93ab0f5dd619b295ec735cd8d5faa34 \
+    --hash=sha256:810f97b210cfd93704d240860286dfd6df09f9f1c52525fc5c2166723aea3f9e \
+    --hash=sha256:8f58c589b5a76ba98f186b1f3b19fb1c8b730e82351f81fb62e6194f64a71622 \
+    --hash=sha256:cee63b891c2b6b7ccf98f233175411529f3e80286f58438793b3634af79858f1 \
+    --hash=sha256:ebf8167ca2096cf3a05199decfa517be0df4c56048f49cf132bd6b1a6ab9c086
+    # via
+    #   arc-cua
+    #   pyobjc-framework-applicationservices
+    #   pyobjc-framework-coretext
+    #   pyobjc-framework-vision
+pyobjc-framework-vision==12.2.2 \
+    --hash=sha256:1fcb99d44ef4df33a7582467e0cd059515f1137ccecb3648ac8a59272851506a \
+    --hash=sha256:306e536e12d3565e53649818e3324e801fbb1696ea75ba751852dffbacba8b14 \
+    --hash=sha256:60b61390c250640b0dbc1b88861bb80edf6dfa699e90b91a5b4bfd37d4a71b99 \
+    --hash=sha256:66eab9ecdc741f4ee72cc287c5ffccfe6f81fcdd8544bec98e5cc6c50b901865 \
+    --hash=sha256:6dd4c8a804a89585ae170f0b5eb5265538d75fc76092e9f33a67386304d19aed \
+    --hash=sha256:a6bf78e8dca145c6a78fd8d5f925b6da54649a60a1464b81ff405bca4a08406b \
+    --hash=sha256:bd02315e62b16397f5fbcd0dcc23744bdf86c9ce5ff94970a2befbf14a8c2ea7 \
+    --hash=sha256:c323455ddabc5fab868c00797fedd5e338688054c776cd6a7801d36f045e9d26
+    # via arc-cua
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
+    --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
+    # via anyio

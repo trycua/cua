@@ -440,6 +440,7 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
         }
         (Mode, OnboardingAction::ModeChosen { mode }) => {
             n.mode = Some(*mode);
+            n.launch_at_login = *mode == OnboardingMode::Host;
             n.step = Done;
         }
         (_, OnboardingAction::DriveChecked { os, status }) => {
@@ -1478,6 +1479,42 @@ mod tests {
                 .then(|| "Turn on Cua Volume in File System Extensions.".into()),
             settings_url: (state == "needs_approval")
                 .then(|| "x-apple.systempreferences:ext".into()),
+        }
+    }
+
+    #[test]
+    fn launch_at_login_defaults_to_the_chosen_mode() {
+        for installer_mode in [
+            None,
+            Some(OnboardingMode::Client),
+            Some(OnboardingMode::Host),
+        ] {
+            for mode in [OnboardingMode::Client, OnboardingMode::Host] {
+                let mut s = initial(installer_mode, None);
+                for action in [
+                    OnboardingAction::Start,
+                    OnboardingAction::SigninDone,
+                    OnboardingAction::AgentsDone { configured: vec![] },
+                    OnboardingAction::PresentationDone,
+                    OnboardingAction::ModeChosen { mode },
+                ] {
+                    s = reduce(&s, &action);
+                }
+                assert_eq!(s.step, OnboardingStep::Done);
+                let expected = mode == OnboardingMode::Host;
+                assert_eq!(s.launch_at_login, expected);
+                let checkbox = view(&s).launch_at_login.unwrap();
+                assert_eq!(checkbox.checked, expected);
+                assert_eq!(checkbox.note, crate::login_item::NOTE_WITHOUT_VOLUME);
+                s = reduce(
+                    &s,
+                    &OnboardingAction::LaunchAtLoginToggled { on: !expected },
+                );
+                assert_eq!(view(&s).launch_at_login.unwrap().checked, !expected);
+                s = reduce(&s, &OnboardingAction::Back);
+                s = reduce(&s, &OnboardingAction::ModeChosen { mode });
+                assert_eq!(s.launch_at_login, expected);
+            }
         }
     }
 

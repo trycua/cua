@@ -78,9 +78,9 @@ fn target_above_front_in(windows: &[crate::windows::WindowInfo], target: i32, fr
 /// lifts its parent window). Re-activating the already-active front app with
 /// all its windows restores the order without moving key status; the
 /// target's menu stays open.
-fn restore_front_if_raised(target: i32, front: i32) {
+fn restore_front_if_raised(target: i32, front: i32) -> bool {
     if crate::apps::frontmost_pid() != Some(front) || !target_above_front(target, front) {
-        return;
+        return false;
     }
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     let restored = unsafe {
@@ -95,6 +95,7 @@ fn restore_front_if_raised(target: i32, front: i32) {
         restored,
         "restored the user's window above a background target"
     );
+    true
 }
 
 /// How long the order stays watched after a guarded action ends. A target
@@ -102,6 +103,7 @@ fn restore_front_if_raised(target: i32, front: i32) {
 /// banner, a sheet, or a menu that a renderer process opens later).
 const ORDER_WATCH: Duration = Duration::from_millis(2500);
 const ORDER_POLL: Duration = Duration::from_millis(20);
+const MAX_RESTORES_PER_WATCH: u32 = 3;
 
 /// Keep restoring the user's window above `target` for a short while after
 /// the action. One watcher per target; a later action extends it.
@@ -121,18 +123,26 @@ fn watch_order_after_action(target: i32, front: i32) {
     }
     let spawned = std::thread::Builder::new()
         .name("cua-order-watch".into())
-        .spawn(move || loop {
-            std::thread::sleep(ORDER_POLL);
-            restore_front_if_raised(target, front);
-            let mut map = watching
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if map
-                .get(&target)
-                .is_none_or(|until| Instant::now() >= *until)
-            {
-                map.remove(&target);
-                return;
+        .spawn(move || {
+            // Some apps re-raise right after each restore (a Chromium popup
+            // that stays open); cap the restores so the user's app is not
+            // re-activated in a loop.
+            let mut restores = 0;
+            loop {
+                std::thread::sleep(ORDER_POLL);
+                if restores < MAX_RESTORES_PER_WATCH && restore_front_if_raised(target, front) {
+                    restores += 1;
+                }
+                let mut map = watching
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if map
+                    .get(&target)
+                    .is_none_or(|until| Instant::now() >= *until)
+                {
+                    map.remove(&target);
+                    return;
+                }
             }
         });
     if spawned.is_err() {

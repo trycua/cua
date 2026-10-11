@@ -4950,19 +4950,16 @@ class DriverOptions:
     """
     Options for a same-process Cua Driver SDK runtime.
 """
-    def __init__(self, *, claude_code_compatibility:bool, agent_cursor_enabled:bool = False):
+    def __init__(self, *, claude_code_compatibility:bool):
         self.claude_code_compatibility = claude_code_compatibility
-        self.agent_cursor_enabled = agent_cursor_enabled
 
 
 
 
     def __str__(self):
-        return "DriverOptions(claude_code_compatibility={}, agent_cursor_enabled={})".format(self.claude_code_compatibility, self.agent_cursor_enabled)
+        return "DriverOptions(claude_code_compatibility={})".format(self.claude_code_compatibility)
     def __eq__(self, other):
         if self.claude_code_compatibility != other.claude_code_compatibility:
-            return False
-        if self.agent_cursor_enabled != other.agent_cursor_enabled:
             return False
         return True
 
@@ -4971,18 +4968,15 @@ class _UniffiFfiConverterTypeDriverOptions(_UniffiConverterRustBuffer):
     def read(buf):
         return DriverOptions(
             claude_code_compatibility=_UniffiFfiConverterBoolean.read(buf),
-            agent_cursor_enabled=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterBoolean.check_lower(value.claude_code_compatibility)
-        _UniffiFfiConverterBoolean.check_lower(value.agent_cursor_enabled)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterBoolean.write(value.claude_code_compatibility, buf)
-        _UniffiFfiConverterBoolean.write(value.agent_cursor_enabled, buf)
 
 @dataclass
 class DriverServiceHeader:

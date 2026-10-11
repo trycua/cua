@@ -59,7 +59,9 @@ childProcess.spawnSync = (command, args, options) => {
     const output = args[args.indexOf("--out-dir") + 1];
     mkdirSync(output, { recursive: true });
     writeFileSync(join(output, "cua_driver_sdk.py"), 'def _uniffi_future_dropped_callback(handle):\r\n    eventloop.call_soon(_uniffi_cancel_task, task)  \r\n');
-    writeFileSync(join(output, "cua_driver_contract.py"), "# contract  \r\n");
+    writeFileSync(join(output, "cua_driver_contract.py"),
+      Array(5).fill("effect:typing.Optional[CursorEffectSetting]\r\n").join("") +
+      Array(2).fill("        if value == CursorEffectSetting.ON:\r\n").join(""));
   }
   return { status: 0 };
 };

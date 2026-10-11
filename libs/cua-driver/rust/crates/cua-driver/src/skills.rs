@@ -627,9 +627,6 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
     // unlike `std::os::windows::fs::symlink_dir`. Shell out to cmd's
     // `mklink /J` — the canonical way to create a junction from a
     // standard user token.
-    // Agent paths use portable `/` separators, which mklink parses as
-    // switches. Rebuild the components with native separators; unlike
-    // canonicalize, this also works for the link that does not exist yet.
     let target: PathBuf = target.components().collect();
     let link: PathBuf = link.components().collect();
     let status = std::process::Command::new("cmd")

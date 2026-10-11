@@ -1,0 +1,137 @@
+{
+  "repo": "trycua/cua-driver-bench (private)",
+  "branch": "bench/v2-40",
+  "revision": "02258fa1d26f889dd0109c057d082f61912c2187",
+  "scheme": "sha256 tree digest, cdb_adapter.tree_sha256",
+  "kit": "d23c61edca11c3c03bec78555315299bde155e6831e4ed27b281aef8ac07cc34",
+  "tasks": {
+    "DS-01": {
+      "pack_task": "v2/ds01-flour-order-lookup",
+      "tree_sha256": "f156554016d8f6ebc7f26c550c2fd10b84fa7d834aa5b953f882bd175ea0d38c"
+    },
+    "DS-02": {
+      "pack_task": "v2/ds02-rowing-dues-format",
+      "tree_sha256": "af75183a4090377d9b4f82d87c5b31146651b4176cc98523750c37890658b416"
+    },
+    "DS-03": {
+      "pack_task": "v2/ds03-choir-roster-split",
+      "tree_sha256": "13f534fcaae274411a593ec2ccdd2635252ae3cd5ba01e7145280f830e9ad519"
+    },
+    "DS-04": {
+      "pack_task": "v2/ds04-lichen-guide-headings",
+      "tree_sha256": "ed654786af873ad811b9feca78e72ebab1b5fc5f76a92ced3e049a32814c6409"
+    },
+    "DS-05": {
+      "pack_task": "v2/ds05-festival-program-notes",
+      "tree_sha256": "71676ce274ac32f1c817426d4acedb2bfc8db654d0ce92693a6e577034b3203f"
+    },
+    "DS-06": {
+      "pack_task": "v2/ds06-beekeepers-deck",
+      "tree_sha256": "0073a2ce8f60f71826e55f3a0559146111749cc773f55ffbea0c44bac89825d3"
+    },
+    "DS-07": {
+      "pack_task": "v2/ds07-plant-swap-flyer",
+      "tree_sha256": "a79780e14e72ccc936dfa3238e7e3ab432e2c079431250ee9d5d08d9d48adfc7"
+    },
+    "IR-05": {
+      "pack_task": "v2/ir05-pass-renewal-notifications",
+      "tree_sha256": "38ed9daf960470d74ed854dbfd1ab1e7fffd0d02a785be8bce5c5516b93f6065"
+    },
+    "IR-06": {
+      "pack_task": "v2/ir06-club-profile-leave-guard",
+      "tree_sha256": "e5853d91aa0a2b7d2dc0b3b21df7439af54281f85f7e4db67fd94ca11ba312a6"
+    },
+    "IR-07": {
+      "pack_task": "v2/ir07-csv-keep-format",
+      "tree_sha256": "7b9b23e4b9b695b2e7a1abce029aa648caa361e769bd9faf6fb932317cc2a9af"
+    },
+    "MA-01": {
+      "pack_task": "v2/ma01-parts-requests-to-sheet",
+      "tree_sha256": "36a582cf6b8d5ae5633f809c6dcfbc690367246ff05b28561c6540f84121cc36"
+    },
+    "MA-02": {
+      "pack_task": "v2/ma02-member-corrections",
+      "tree_sha256": "b2af9da748646c8de20847ea2b0fc6831f3b549a06cc4c966c1162e6cbf01a5e"
+    },
+    "MA-03": {
+      "pack_task": "v2/ma03-plot-renewal-letter",
+      "tree_sha256": "edd6c155efd4336f7e8a6ae87a1eb8170b03fa4b57ca5070c38546035b571084"
+    },
+    "MA-04": {
+      "pack_task": "v2/ma04-shift-summary-note",
+      "tree_sha256": "ab157b6323fa26109a24b0070ed131d1a53d9fec8ccad8a9c5962dc6f9da2aef"
+    },
+    "NA-01": {
+      "pack_task": "v2/na01-theatre-calendar",
+      "tree_sha256": "20e3297d66550f8f32309677e21361b1c01dd9bb156b934072eee2286c4e8382"
+    },
+    "NA-02": {
+      "pack_task": "v2/na02-lido-recurring",
+      "tree_sha256": "7a9eb0a02370e395d4c9af050f8c4e5b0f846129d77d567ff3e4f6c3faaf1071"
+    },
+    "NA-03": {
+      "pack_task": "v2/na03-seed-packet-tags",
+      "tree_sha256": "7713564833f5e202b7101c2e2648dbe30c63fd566a17ec284bec92a2b7cdba3b"
+    },
+    "NA-04": {
+      "pack_task": "v2/na04-committee-get-info",
+      "tree_sha256": "fa9569518865801df5d6efd4110118bc9930636813673f84fb0496a5247efe42"
+    },
+    "NA-05": {
+      "pack_task": "v2/na05-fridge-rota-reminders",
+      "tree_sha256": "63fd6757843ebda80091fe322b1f3e5c3c5e2eff73081abb7e0526d82edebe5b"
+    },
+    "NA-06": {
+      "pack_task": "v2/na06-tasting-panel-notes",
+      "tree_sha256": "d8138150bcf7e709683444c53d2e0bbf3137852e83a2569012c18d86cd138f3d"
+    },
+    "NA-07": {
+      "pack_task": "v2/na07-poster-export-preview",
+      "tree_sha256": "49f5c0a7028c5435ec326616238782141d90171fb590279434b1ad8e47a7083f"
+    },
+    "PR-01": {
+      "pack_task": "v2/pr01-kanban-drag",
+      "tree_sha256": "c85c24e8a4dcd922afaf34a66b1b74da448061d0fa97b4db3ffe87275e5f9452"
+    },
+    "PR-02": {
+      "pack_task": "v2/pr02-hall-seating-canvas",
+      "tree_sha256": "ce80f5729aab02397d09806a471d7fd017b2f949c29fb4b6b2eff8b35ac8253e"
+    },
+    "PR-03": {
+      "pack_task": "v2/pr03-chart-hover-readout",
+      "tree_sha256": "40f44028da365169dd36c4e8f359cf300e31bcee8216d0f81cb414b8f7f311e9"
+    },
+    "WF-01": {
+      "pack_task": "v2/wf01-workshop-booking",
+      "tree_sha256": "e0081751a415a1b6a598c6652d42fe61712e14dc2528c5f28d33d67e53d5a49c"
+    },
+    "WF-02": {
+      "pack_task": "v2/wf02-library-settings",
+      "tree_sha256": "b5e878d6cb3c1776d713bd2ffeea4cd4da87a4d1d976995532a2cdf836eff967"
+    },
+    "WF-03": {
+      "pack_task": "v2/wf03-volunteer-directory",
+      "tree_sha256": "b1d0689e6a46e39960d1de812d2753cd74fef3748de0566a0a93184184ae0ed6"
+    },
+    "WF-04": {
+      "pack_task": "v2/wf04-seed-delivery-address",
+      "tree_sha256": "a85033a140cc306ef68fe5c8dd7ffd300d1edb71792ca6ff576f8da28feb582a"
+    },
+    "WF-05": {
+      "pack_task": "v2/wf05-parks-survey",
+      "tree_sha256": "0fb988a4b48b5f8751c999d59e11807bc528828c0b5889f989e345a997b29a6f"
+    },
+    "WF-06": {
+      "pack_task": "v2/wf06-newsletter-editor",
+      "tree_sha256": "0ad44a83051b82fd82ad43554b37f8c8dd90a623ab898984d3cf0c711d1855fc"
+    },
+    "WF-07": {
+      "pack_task": "v2/wf07-access-matrix",
+      "tree_sha256": "77043203e9c17b559436eae137573c386894fe389839689326ceb255097b9733"
+    },
+    "WF-08": {
+      "pack_task": "v2/wf08-greenhouse-alert-rules",
+      "tree_sha256": "59626df9d870c4d472cad584a2d3a17a250e6932a787538accf0a5ee19824d1e"
+    }
+  }
+}

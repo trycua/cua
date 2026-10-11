@@ -1293,6 +1293,91 @@ The background run goes first, then the foreground run, in the same VM, with not
 
 **A17.3 outcome (11 Oct 2026, 09:09Z).** 300 final trials, 0 infrastructure exclusions; seats 1, then 7, then 4 through the watchdog; the token was deleted with sync and \`cdb-v2\` was stopped. Background completion: Cua Driver 21/50, Codex 17/50, helper 6/50. Foreground success: 40/50, 30/50 and 16/50. Trials with a focus steal in the background: 2, 6 and 20; swallowed user keystrokes: 55, 503 and 439. The report is \`research/cua-driver-bench/2026-10-11_bench-v2-rerun-report.md\`; follow-ups are CUA-1341 and CUA-1342.
 
+## Amendment 18 (11 Oct 2026, before any trial of the new tasks): Bench v2 grows to 42 tasks (CUA-1201)
+
+Written and committed before the first trial of any task it adds, smoke runs included. The owner approved the direction on 10 and 11 Oct 2026 ("keep going and merge what u need to"; Linear CUA-1201, milestone "Bench v2 (GUI-only, categories)"). It changes no definition of A14 to A17, no earlier trial, row or result, and none of the ten A14.6 tasks.
+
+### A18.1 Why
+
+* **Too few tasks per category.** With ten tasks and n = 5, the A17.3 rerun could only report per-category differences as directional, and Web apps & forms had no task at all.
+* **Too narrow.** Seven of the ten tasks run in BenchLab or in the pack's own Electron apps. Two common kinds of desktop work were not measured: macOS's own apps, and office documents.
+
+### A18.2 Two new categories
+
+| Category id | Name | What it asks of the agent |
+|---|---|---|
+| `native_apps` | Native macOS apps | Do the work in macOS's own apps (Calendar, Reminders, Notes, Finder, Preview) and their windows, sheets and panels |
+| `documents` | Documents & spreadsheets | Edit and save documents, spreadsheets and slides so the saved file is right |
+
+The four A14.3 categories keep their meaning. Every task still has exactly one category. Reports list the six categories in this order: multi_app, web_forms, native_apps, documents, precision, interruptions.
+
+### A18.3 The new tasks
+
+Thirty-two tasks, written from scratch on 11 Oct 2026 for this amendment, in the private pack under `tasks/v2/` (branch `bench/v2-40`, revision `02258fa1d26f`; per-task tree digests and the kit's digest in `v2-42-taskset.json`, committed with this amendment). Their ids are opaque runner selectors here, as for the CDB tasks; the briefs, fixtures and checkers stay private.
+
+| Category | New tasks | With the A14.6 tasks | Apps used by the new tasks |
+|---|---|---|---|
+| multi_app | MA-01 to MA-04 | 7 | Chrome with a local web app, LibreOffice Calc and Writer, TextEdit |
+| web_forms | WF-01 to WF-08 | 8 | Chrome with local web apps |
+| native_apps | NA-01 to NA-07 | 7 | Calendar, Reminders, Notes, Finder, Preview |
+| documents | DS-01 to DS-07 | 7 | LibreOffice Calc, Writer and Impress, TextEdit |
+| precision | PR-01 to PR-03 | 6 | Chrome (pointer drags on a board and a canvas, hover-only chart readouts) |
+| interruptions | IR-05 to IR-07 | 7 | Chrome's own notification-permission prompt and "Leave site?" dialog; LibreOffice's Text Import and keep-format dialogs |
+
+* **Total:** 42 tasks: the ten A14.6 tasks unchanged, then the 32 new ones (`bench_v2.V2_42_TASKS`, schedule order grouped by category). `run_bench.py run --bench-v2 --task-set v2-42` selects them; `--task-set v2` (the default) is the A14.6 list, so earlier runs reproduce.
+* **The new interruptions are real app UI**, not simulations: Chrome's permission prompt and its beforeunload dialog, and LibreOffice's dialogs. Each IR task reports the same `interruption` diagnostic as A14.5 (shown, exercised, handled, completed), and `passed` needs both safe handling and the task. Their briefs end with the A14.5 sentence.
+* **Web tasks** run against small apps served on 127.0.0.1 inside the VM by a Python server that ships with the pack; no live site is used. Each app saves its state and an event log in the workspace, and the checker reads those.
+* **Native-app tasks** reset and read Calendar, Reminders and Notes through JavaScript for Automation, run by the harness as the bench user before the agent (reset) and after it (the descriptor's `semantics.export` step, adopted from the held-out draft). The checker reads only the exported files. Finder tasks read the files, Finder tags, comments and locks; the Preview task reads the image file.
+* **Checkers** are deterministic and state-based, with `passed` (every check) and a partial `score` (progress checks passed, halved when a preservation check fails). An untouched start fails with score 0.
+
+### A18.4 Provenance
+
+* Every new task was written from scratch for this amendment by Cua (agent-authored, reviewed). Each task's `PROVENANCE.md` states the date, the author and that it is original.
+* No task, text, fixture, checker or asset of another benchmark (OSWorld, WindowsAgentArena, WebArena, VisualWebArena, Mind2Web, WorkArena, AndroidWorld, tau-bench, GDPval, Terminal-Bench, SkillsBench, ALE, Hunch Bench, Mac Agent Bench, macOSWorld or others) or of any customer corpus was opened, adapted, paraphrased or structurally mirrored. The authors had read Cua's 10 Oct task provenance audit, which names some public and held-out tasks in one line each; they avoided those task shapes on purpose.
+* All fixtures are synthetic: invented people, organisations, places and numbers; no copyrighted asset. Real country and city names appear only as address data in WF-04.
+* The pack's `docs/provenance-policy.md` now records these rules and the public framing of the 10 Oct audit. Similarity review against public benchmarks stays a release gate before any task text is published.
+
+### A18.5 Validation before any scored trial
+
+1. **Checker tests on the workstation** (no app window opened): for every task, an untouched state fails with score 0, a solved state passes with score 1, and at least two near-misses fail. Web tasks also replay a reference solution with real input events in a headless Chrome against the task's own server (solved passes, untouched fails). LibreOffice tasks round-trip their solved and untouched documents through a headless LibreOffice and check the verdict does not change.
+2. **No-model round in the VM** (`cdb-v2-40`, a clone of `cdb-v2`): every task's reset and reset verification, the export step and the evaluator through the evaluator user, on the untouched state; for the native-app tasks also a scripted solution applied straight to the app's data (not through the GUI), which must pass.
+3. **The A19.6 review**, done on 11 Oct 2026 before any trial: every new brief, checker, app and test was read for ambiguous briefs, checkers that accept a wrong state or reject a right one, advantages to a setup, first-run traps and originality. Fixes made: WF-06 (pressed state on the editor's Bold and Italic buttons), NA-01 (title matching), NA-02 (end-date parsing), NA-03 (brief wording), NA-06 (deleted notes ignored), PR-03 (the brief says exact figures appear only on hover), DS-01 (the rate formula must use the row's own code), DS-02 (a test), DS-05 (typographic apostrophes accepted), IR-06 (a `leave_guard_activated` diagnostic). Three choices are left to the owner (A18.9).
+4. **Smoke v2n1** (validation only, never analysed): every new task once with one setup. Registered in A18.7 before its first trial.
+
+A task whose validation shows a defect is fixed before any scored trial, and the fix is logged under A18.7.
+
+### A18.6 Harness changes for this amendment
+
+* `bench_v2.py`: the two categories; `V2_NEW_TASKS`, `V2_42_TASKS` and `TASK_SETS`.
+* `run_bench.py`: `--task-set` (default `v2`), recorded in the manifest's `bench_v2` block.
+* `cdb_adapter.py`: native apps in a launch descriptor declare exact `process_names`, quit by exact name between trials in the disposable VM only, and are allowed for the Codex host loop; the optional `semantics.export` step runs as the bench user before the evaluator; a v2 task's own diagnostics (such as `interruption`) reach the trial row.
+* `probes/<id>/task.json` for the 32 new tasks: opaque stubs (`kind: cdb`, `pack_task: v2/...`, category).
+* `v2-42-taskset.json`: the pack revision and the tree digests of the 32 tasks and of `_kit`.
+* Tests: the set and its balance in `tests/test_bench_v2.py`; native apps, the export step and diagnostics in `tests/test_cdb_adapter.py`.
+* VM: `cdb-v2-40` is `cdb-v2` plus the new pack tasks, TextEdit preferences (no restored windows), the first-run screens of Calendar, Reminders, Notes and Preview dismissed, and Terminal's Automation consent for Calendar, Reminders, Notes and Finder (the harness runs from Terminal). Nothing else changes.
+
+### A18.7 Runs
+
+| Id | Condition | Tasks | Arms | Driver | Written (UTC) |
+|---|---|---|---|---|---|
+| v2n1f | foreground | the 32 new tasks, 1 run each (`--smoke --bench-v2 --task-set v2-new --condition foreground --phase1-runs 1 --phase2-runs 0`) | AX (`cc-cua-driver-script`) | the build present in `cdb-v2-40` (cloned from `cdb-v2`), recorded in the outcome | 2026-10-11T14:00Z |
+| v2n1b | background | PR-01, PR-02, PR-03 and the native-app tasks, 1 run each, if the slot allows | AX | the same | 2026-10-11T14:00Z |
+
+Smoke rows are validation only: they check that every task starts, can be solved through the GUI and is graded as intended, and are never pooled or analysed. A failure caused by the task (setup, window, brief or checker) is fixed and logged here before any scored trial; a failure of the agent is only recorded.
+
+No scored run is registered here. The full run of the 42 tasks (conditions, setups, runs per task, seats and stop rule) gets its own dated line before its first trial, on the owner's go.
+
+### A18.8 The held-out set
+
+Unchanged and not opened. Its re-seal (CUA-1284) waits for CUA-1200 and CUA-1281 to CUA-1283 to close, as that issue says. The new visible tasks use some of the same apps as the held-out tasks (Chrome, LibreOffice, Finder, Preview, Notes, Reminders, TextEdit) for different work; the held-out set stays independent at the task level, not the app level.
+
+### A18.9 Left for the owner's judgement
+
+1. **WF-07:** a column's "select all" toggle sits in the column heading; a heading click that toggles the whole column may surprise a careful user. Kept as written.
+2. **NA-07:** the checker does not require `poster-draft.png` to keep its full size (Preview may save a resize into the original). Kept lenient.
+3. **IR-06:** leaving a page with unsaved edits fails the trial even if the agent re-enters everything afterwards (A14.5's "do not throw away any work"). Kept strict.
+4. **Runs per task for the full run.** 42 tasks x 3 setups x 2 conditions x 5 runs is 1,260 trials (about four times A17.3). Three runs per task gives 756.
+
 ## Amendment 19 (11 Oct 2026, before the next Bench v2 trial): checker review fixes, and Bench v2 stays macOS-only
 
 Written and committed before any trial that uses the changes below, smoke runs included. The owner approved the review and its fixes on 11 Oct 2026 (Linear CUA-1346). A18 is reserved for the task set of Stream V2-40 (CUA-1201); A20 was registered first and is unaffected.

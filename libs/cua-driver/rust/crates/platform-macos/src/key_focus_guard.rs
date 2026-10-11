@@ -98,6 +98,51 @@ fn restore_front_if_raised(target: i32, front: i32) -> bool {
     true
 }
 
+/// Whether WindowServer's front process is the background target: it
+/// activated itself (`activateIgnoringOtherApps:`) in answer to the action,
+/// such as Chrome focusing its omnibox on cmd+L or GnuCash opening a register
+/// on a double-click. No client can stop an app from activating itself.
+fn target_self_activated(front_process: Option<i32>, target: i32, front: i32) -> bool {
+    target != front && front_process == Some(target)
+}
+
+/// Undo a background target's self-activation: re-activate the user's app
+/// and hand key focus back to its window. Reads WindowServer's front process
+/// directly; `NSWorkspace` only learns of the activation once the daemon's run
+/// loop processes the notice, which took about a second in Bench v2 CDB-G04.
+fn revert_self_activation(target: i32, front: i32) -> bool {
+    if !target_self_activated(skylight::front_process_pid(), target, front) {
+        return false;
+    }
+    let started = Instant::now();
+    // Make the user's key window frontmost and key again, the way the
+    // foreground tools front an exact window (a user-generated front request
+    // plus the make-key records). `NSRunningApplication.activate` from the
+    // daemon is only a request under cooperative activation and can be
+    // ignored, so it is the fallback.
+    let restored = skylight::key_window_of_pid(front)
+        .is_some_and(|wid| skylight::make_exact_window_key(front, wid))
+        && skylight::front_process_pid() == Some(front);
+    if !restored {
+        use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+        unsafe {
+            if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(front)
+            {
+                app.activateWithOptions(NSApplicationActivationOptions(0));
+            }
+        }
+    }
+    REVERTED.fetch_add(1, Ordering::Relaxed);
+    tracing::debug!(
+        target,
+        front,
+        restored,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "reverted a background target's self-activation"
+    );
+    true
+}
+
 /// How long the order stays watched after a guarded action ends. A target
 /// can raise a window a moment after the call that caused it returns (a
 /// banner, a sheet, or a menu that a renderer process opens later).
@@ -105,18 +150,36 @@ const ORDER_WATCH: Duration = Duration::from_millis(2500);
 const ORDER_POLL: Duration = Duration::from_millis(20);
 const MAX_RESTORES_PER_WATCH: u32 = 3;
 
-/// Keep restoring the user's window above `target` for a short while after
-/// the action. One watcher per target; a later action extends it.
-fn watch_order_after_action(target: i32, front: i32) {
-    static WATCHING: OnceLock<Mutex<HashMap<i32, Instant>>> = OnceLock::new();
+/// One target's watch after a guarded action.
+#[derive(Clone, Copy)]
+struct Watch {
+    until: Instant,
+    front: i32,
+    /// Also restore the window order (off when the user had put the target
+    /// above their window before the action).
+    order: bool,
+    /// [`crate::window_change_detector::intentional_epoch`] when armed.
+    epoch: u64,
+}
+
+/// Keep restoring the user's window above `target`, and undoing the target's
+/// self-activation, for a short while after the action. One watcher per
+/// target; a later action extends it.
+fn watch_order_after_action(target: i32, front: i32, order: bool) {
+    static WATCHING: OnceLock<Mutex<HashMap<i32, Watch>>> = OnceLock::new();
     let watching = WATCHING.get_or_init(|| Mutex::new(HashMap::new()));
-    let until = Instant::now() + ORDER_WATCH;
+    let watch = Watch {
+        until: Instant::now() + ORDER_WATCH,
+        front,
+        order,
+        epoch: crate::window_change_detector::intentional_epoch(),
+    };
     {
         let mut map = watching
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let running = map.contains_key(&target);
-        map.insert(target, until);
+        map.insert(target, watch);
         if running {
             return;
         }
@@ -128,9 +191,27 @@ fn watch_order_after_action(target: i32, front: i32) {
             // that stays open); cap the restores so the user's app is not
             // re-activated in a loop.
             let mut restores = 0;
+            let mut reverts = 0;
             loop {
                 std::thread::sleep(ORDER_POLL);
-                if restores < MAX_RESTORES_PER_WATCH && restore_front_if_raised(target, front) {
+                let current = watching
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&target)
+                    .copied();
+                let Some(current) = current else { return };
+                // An activation the driver asked for since (bring_to_front,
+                // foreground delivery) is not reverted.
+                if reverts < MAX_RESTORES_PER_WATCH
+                    && current.epoch == crate::window_change_detector::intentional_epoch()
+                    && revert_self_activation(target, current.front)
+                {
+                    reverts += 1;
+                }
+                if current.order
+                    && restores < MAX_RESTORES_PER_WATCH
+                    && restore_front_if_raised(target, current.front)
+                {
                     restores += 1;
                 }
                 let mut map = watching
@@ -138,7 +219,7 @@ fn watch_order_after_action(target: i32, front: i32) {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if map
                     .get(&target)
-                    .is_none_or(|until| Instant::now() >= *until)
+                    .is_none_or(|watch| Instant::now() >= watch.until)
                 {
                     map.remove(&target);
                     return;
@@ -252,6 +333,7 @@ static UNVERIFIED_FRONT: AtomicI32 = AtomicI32::new(0);
 static RELEASED: AtomicU64 = AtomicU64::new(0);
 static MISSED: AtomicU64 = AtomicU64::new(0);
 static RESTORED: AtomicU64 = AtomicU64::new(0);
+static REVERTED: AtomicU64 = AtomicU64::new(0);
 
 /// Counters since the daemon started.
 pub fn stats() -> Stats {
@@ -273,10 +355,11 @@ pub struct Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
+        revert_self_activation(self.pid, self.front);
         if !self.above_before {
             restore_front_if_raised(self.pid, self.front);
-            watch_order_after_action(self.pid, self.front);
         }
+        watch_order_after_action(self.pid, self.front, !self.above_before);
         let mut st = lock();
         if let Some((leases, until)) = st.guarded.get_mut(&self.pid) {
             *leases = leases.saturating_sub(1);
@@ -601,6 +684,19 @@ mod tests {
             on_current_space: None,
             space_ids: None,
         }
+    }
+
+    #[test]
+    fn only_the_targets_own_activation_is_reverted() {
+        // The target is WindowServer's front process: it activated itself.
+        assert!(super::target_self_activated(Some(7), 7, OWN));
+        // The user's app is still in front, or a third app took it (not ours
+        // to undo), or nothing is known.
+        assert!(!super::target_self_activated(Some(OWN), 7, OWN));
+        assert!(!super::target_self_activated(Some(9), 7, OWN));
+        assert!(!super::target_self_activated(None, 7, OWN));
+        // A target that is the user's app is never reverted.
+        assert!(!super::target_self_activated(Some(7), 7, 7));
     }
 
     #[test]

@@ -548,6 +548,24 @@ pub fn key_focus_pid() -> Option<pid_t> {
     Some(pid)
 }
 
+/// The pid of the process WindowServer has frontmost now. Unlike
+/// `NSWorkspace.frontmostApplication`, this does not wait for the caller's
+/// AppKit run loop to process an activation notice, so it sees a background
+/// app's self-activation at once.
+pub fn front_process_pid() -> Option<pid_t> {
+    let get_front = get_front_process_fn()?;
+    let to_pid = get_process_pid_fn()?;
+    let mut psn = [0u8; 8];
+    if unsafe { get_front(psn.as_mut_ptr() as *mut c_void) } != 0 || psn == [0u8; 8] {
+        return None;
+    }
+    let mut pid: pid_t = 0;
+    if unsafe { to_pid(psn.as_ptr() as *const c_void, &mut pid) } != 0 || pid <= 0 {
+        return None;
+    }
+    Some(pid)
+}
+
 /// Whether the key-focus theft SPIs resolve on this system.
 pub fn key_focus_theft_available() -> bool {
     steal_key_focus_fn().is_some()

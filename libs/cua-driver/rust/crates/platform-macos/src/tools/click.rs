@@ -1363,9 +1363,10 @@ impl Tool for ClickTool {
 
             let changes = super::finish_window_observation(snapshot).await;
 
-            let button_label = match button_str.as_str() {
-                "right" => "right-click",
-                "middle" => "middle-click",
+            let button_label = match (button_str.as_str(), count) {
+                ("right", _) => "right-click",
+                ("middle", _) => "middle-click",
+                (_, 2) => "double-click",
                 _ => "click",
             };
             match result {

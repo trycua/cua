@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
 """Minimal MCP adapter around Claude Desktop's ``app-cu-helper`` (arm ``cc-claude-cu-helper``, Amendment 11):
 "Claude Desktop 2.31226.0 computer-use helper via a minimal adapter".
 

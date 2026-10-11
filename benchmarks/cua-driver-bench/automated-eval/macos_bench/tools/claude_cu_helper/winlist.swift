@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // winlist: print the on-screen windows as JSON, for the cc-claude-cu-helper adapter (Amendment 11).
 // Public CoreGraphics API only (CGWindowListCopyWindowInfo); no Accessibility, no private symbols, no input.
 // Window titles need Screen Recording for the responsible process; without it "title" is empty.

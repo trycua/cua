@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
 """Pre-registered analysis of the Claude computer-use arms (PREREGISTRATION.md, Amendment 11), written before their
 first trial.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // cu-disclaim: start Claude Desktop's app-cu-helper as its own responsible process (arm cc-claude-cu-helper,
 // Amendment 11).
 //

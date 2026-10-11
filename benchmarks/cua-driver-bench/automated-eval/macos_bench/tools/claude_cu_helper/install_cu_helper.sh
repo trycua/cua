@@ -1,4 +1,6 @@
 #!/bin/zsh
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
 # Amendment 11: install the pieces of arm cc-claude-cu-helper ("Claude Desktop 2.31226.0 computer-use helper via a
 # minimal adapter"). VM ONLY: run it in the disposable bench VM clone made for this arm, never on a Mac anyone uses.
 #

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
 """Unit tests for arm cc-claude-cu-helper (Amendment 11, "Claude Desktop 2.31226.0 computer-use helper via a minimal
 adapter"): arm registration, MCP config, argv, pins, the adapter's MCP surface, coordinate mapping, the helper
 JSON-RPC client and the preflight probe, all against stand-ins. Nothing from Claude Desktop is run or read here,

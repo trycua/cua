@@ -41,7 +41,7 @@ DEFAULT_CLAUDE_ARMS = ("cc-cua-driver", "cc-codex-cu", "cc-cua-driver-main")
 CODEX_FALLBACK_ARMS = ("codex-native-cu", "codex-cua-driver")
 ARM_ALIASES = {"codex-cua-driver": "cua-driver-mcp"}  # name used by the pilot code paths
 # Amendment 20 (CUA-1347): Codex CLI + gpt-6-astra driving Codex computer use natively (codex_native.py).
-NATIVE_CODEX_ARMS = ("cx-codex-cu", "cx-cua-driver")  # cx-cua-driver: Amendment 23
+NATIVE_CODEX_ARMS = ("cx-codex-cu", "cx-cua-driver", "cx-claude-cu-helper")  # the last two: Amendment 23
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS
 
 CODEX_APP_RESOURCES = Path("/Applications/ChatGPT.app/Contents/Resources")

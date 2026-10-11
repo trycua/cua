@@ -1585,7 +1585,7 @@ The A17.3 rerun (v2rr-ba) is re-expressed under A22 over the criteria it measure
 
 (Columns count background trials with that disturbance; n/m = not measured in that run.) All ten of Cua Driver's pointer movements are on the hover tasks MB-10 and MB-11 (CUA-1342).
 
-## Amendment 23 (11 Oct 2026, before the next full Bench v2 run): GPT-6.1 Sol, Codex CLI as a second harness, and the Claude helper made public
+## Amendment 23 (11 Oct 2026, before the next full Bench v2 run): Codex CLI as a second harness for all three tools (model TBD: GPT-6.1 Sol if accessible, else gpt-6-astra), and the Claude helper made public
 
 Written and committed before any trial it governs. Three decisions of the owner on 11 Oct 2026. Nothing else of A14 to A22 changes.
 
@@ -1595,18 +1595,18 @@ The owner asked for **GPT-6.1 Sol** for the Codex-CLI setups. **Model: TBD: GPT-
 
 ### A23.2 Codex CLI as a second harness
 
-So that agent harness and model are not confounded with the tool layer, the tools that can run under both harnesses do:
+So that agent harness and model are not confounded with the tool layer, every tool runs under both harnesses (the full 2 x 3 matrix):
 
 | Harness and model | Setups |
 |---|---|
 | Claude Code, Claude Sonnet 5.5 (as before) | Cua Driver (`cc-cua-driver-script`); Codex Computer-Use (Sky) (`cc-codex-cu`); Claude Computer-Use (Desktop helper) (`cc-claude-cu-helper`) |
-| Codex CLI (`codex app-server`, A20), the A23.1 model | Cua Driver (**new** `cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`) |
+| Codex CLI (`codex app-server`, A20), the A23.1 model | Cua Driver (**new** `cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`); Claude Computer-Use (Desktop helper) (**new** `cx-claude-cu-helper`) |
 
 `cx-cua-driver` runs the same Cua Driver build, daemon and MCP entry as `cc-cua-driver-script` (main at the run's pinned commit, run_script on), registered as server `cua` with all its tools, and the same system prompt text as that arm (the shared prompt plus its run_script addendum) as Codex `developer_instructions`. It has no skill files: without a shell or file tool Codex cannot read a skill, so the Cua Driver skill is not offered (Sky's Codex setups have none either); the server's own instructions remain. Everything else is as in A20.1 to A20.3 (GUI-only route mapping, turns, budgets, no cost figure). Labels: "Cua Driver, driven by Claude Code" / "…, driven by Codex CLI + <model>", and the same suffixes for Codex Computer-Use and the helper.
 
-The Claude helper stays Claude-only: it is Claude Desktop's own tool. Driving it from Codex CLI is technically possible (it is an MCP adapter), but it would put a non-Anthropic model on an internal Anthropic interface; that is proposed to the owner, not added.
+**The Claude helper under Codex CLI (owner, 11 Oct 2026, the full 2 x 3 matrix).** `cx-claude-cu-helper` exposes Cua's minimal helper adapter to Codex CLI exactly as Claude Code gets it: the same MCP entry, adapter, launcher, offered actions and pins as `cc-claude-cu-helper` (server `claude-cu-helper`), the shared system prompt, no skill. Its label carries the A23.3 caveat: "Claude Computer-Use (Desktop helper), driven by Codex CLI + <model> (Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure)". It puts a non-Anthropic model on an internal Anthropic interface; the report says so next to its numbers.
 
-**Run size, 42 tasks x 5 setups x 2 conditions:** 3 runs per task is 1,260 trials (about 27 h at A17.3's ~77 s per trial); 5 runs is 2,100 (about 45 h). The full run's own dated line fixes the count before its first trial.
+**Run size, 45 tasks x 6 setups x 2 conditions on one VM:** 3 runs per task is 1,620 trials (about 36 h); 5 runs is 2,700 (about 60 h). The full run's own dated line fixes the task list and run count before its first trial.
 
 ### A23.3 The Claude helper is public
 
@@ -1616,7 +1616,7 @@ The Claude Computer-Use (Desktop helper) setup and its numbers are no longer int
 
 | Id | Condition | Tasks | Arms | Runs | Written (UTC) |
 |---|---|---|---|---|---|
-| v2cx-s4b, v2cx-s4f | background, then foreground | IR-01, MB-10, CDB-G04 | `cx-codex-cu`, `cx-cua-driver` | 1 per task, arm and condition (12 trials) | 2026-10-11T16:00Z |
+| v2cx-s4b, v2cx-s4f | background, then foreground | IR-01, MB-10, CDB-G04 | `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper` | 1 per task, arm and condition (18 trials) | 2026-10-11T16:00Z; helper arm added before it ran |
 
 It runs with the A23.1 model before the full run (gpt-6-astra unless GPT-6.1 Sol has become accessible and its switch line is registered); if the model changes afterwards, it runs again.
 

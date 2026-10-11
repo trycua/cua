@@ -37,6 +37,7 @@ ARM_LABELS = {
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
     "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI",  # Amendment 20; the rows' model is appended
     "cx-cua-driver": "Cua Driver, driven by Codex CLI",  # Amendment 23; the rows' model is appended
+    "cx-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Codex CLI",  # Amendment 23
     "cc-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Claude Code",
 }
 

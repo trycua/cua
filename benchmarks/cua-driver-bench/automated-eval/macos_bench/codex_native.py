@@ -48,11 +48,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 ARM = "cx-codex-cu"
-ARMS = (ARM, "cx-cua-driver")  # cx-cua-driver: Amendment 23, Cua Driver's MCP server under the same Codex host
+# cx-cua-driver and cx-claude-cu-helper: Amendment 23, Cua Driver's MCP server and Cua's helper adapter under the
+# same Codex host
+ARMS = (ARM, "cx-cua-driver", "cx-claude-cu-helper")
 SERVER = "cua_repl"  # the server name of the unified-computer-use plugin
-SERVER_OF = {"cx-codex-cu": SERVER, "cx-cua-driver": "cua"}
+SERVER_OF = {"cx-codex-cu": SERVER, "cx-cua-driver": "cua", "cx-claude-cu-helper": "claude-cu-helper"}
 # The Claude Code arm whose MCP config (and, for Cua Driver, whose daemon, build and system prompt) the Codex arm uses.
-SOURCE_ARM = {"cx-codex-cu": "cc-codex-cu", "cx-cua-driver": "cc-cua-driver-script"}
+SOURCE_ARM = {
+    "cx-codex-cu": "cc-codex-cu",
+    "cx-cua-driver": "cc-cua-driver-script",
+    "cx-claude-cu-helper": "cc-claude-cu-helper",
+}
 ENABLED_TOOLS = (
     "js",
     "js_reset",
@@ -74,6 +80,9 @@ CLOSED_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 LABELS = {
     "cx-codex-cu": f"Codex Computer-Use (Sky), driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
     "cx-cua-driver": f"Cua Driver, driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
+    "cx-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Codex CLI + "
+    f"{MODEL_DISPLAY.get(MODEL, MODEL)} (Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an "
+    "internal interface, not an Anthropic-supported procedure)",
 }
 LABEL = LABELS[ARM]
 

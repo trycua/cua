@@ -275,6 +275,19 @@ impl Default for MacOsBrowserPlatform {
     }
 }
 
+/// Bring `previous_pid` back to the front when `browser_pid` is in front.
+/// Leaves things alone when some other app took the front in the meantime.
+fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bool {
+    let (Ok(previous), Ok(browser)) = (i32::try_from(previous_pid), i32::try_from(browser_pid))
+    else {
+        return false;
+    };
+    if previous == browser || crate::apps::frontmost_pid() != Some(browser) {
+        return false;
+    }
+    crate::apps::activate_pid(previous)
+}
+
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
@@ -772,6 +785,27 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
     }
 
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        // Measured on Chrome 154 (no driver input involved): Chrome activates
+        // itself ~50 ms after any new DevTools client connects, to show its
+        // "Allow remote debugging?" sheet. Turning the per-instance setting on
+        // also activates it: its New Tab action does, and its address bar
+        // only navigates on real keystrokes.
+        Some(
+            "Chrome brings itself to the front to show its \"Allow remote debugging?\" prompt \
+             for every new DevTools connection, and turning remote debugging on needs Chrome in \
+             front",
+        )
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        crate::apps::frontmost_pid().map(i64::from)
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        restore_front_app_if_browser_front(previous_pid, browser_pid)
+    }
+
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
         if action.session.is_empty()
             || action.cdp_target_id.is_empty()
@@ -1249,13 +1283,20 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 "the approved browser window is outside the macOS window-id range",
             )
         })?;
-        run_committed_consent_cleanup(
+        // Turning remote debugging back off reopens Chrome's setup page,
+        // which brings Chrome to the front; hand the front back afterwards.
+        let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        let result = run_committed_consent_cleanup(
             CONSENT_CLEANUP_PASSES,
             || super::consent_ui::dismiss(pid, window_id),
             || super::setup_ui::disable(pid, window_id, descriptor),
             || visible_consent_surfaces(pid),
             || std::thread::sleep(Duration::from_millis(100)),
-        )
+        );
+        if let Some(previous) = previous_front {
+            restore_front_app_if_browser_front(i64::from(previous), request.pid);
+        }
+        result
     }
 
     async fn abort_existing_profile_setup(
@@ -1673,6 +1714,22 @@ mod tests {
             state.position.is_none(),
             "an inactive tab must not animate or move its visible cursor"
         );
+    }
+
+    #[test]
+    fn existing_profile_attach_declares_its_foreground_limitation() {
+        let platform = MacOsBrowserPlatform::default();
+        let limitation = platform
+            .existing_profile_attach_background_limitation()
+            .expect("macOS Chrome attachment brings Chrome forward");
+        assert!(limitation.contains("Allow remote debugging?"));
+    }
+
+    #[test]
+    fn front_restore_never_targets_the_browser_or_an_invalid_pid() {
+        assert!(!restore_front_app_if_browser_front(42, 42));
+        assert!(!restore_front_app_if_browser_front(i64::MAX, 42));
+        assert!(!restore_front_app_if_browser_front(42, i64::MIN));
     }
 
     #[test]

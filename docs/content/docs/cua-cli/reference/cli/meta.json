@@ -19,6 +19,7 @@
     "cloud",
     "host",
     "devices",
+    "team",
     "teleport",
     "volume",
     "keyvault",

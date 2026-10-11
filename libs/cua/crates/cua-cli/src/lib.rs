@@ -52,6 +52,7 @@ mod shell;
 mod skills;
 #[doc(hidden)]
 pub mod stream_probe;
+mod team_cmd;
 mod telemetry_cmd;
 pub mod teleport;
 pub mod teleport_session;
@@ -230,6 +231,19 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
+    /// Teams: share machines with every member and their agents. Owners
+    /// and admins invite (email or link), approve member devices, add
+    /// machines and read the audit log.
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua team create AIGIS
+  cua team invite AIGIS dillon@example.com
+  cua team add-machine AIGIS local:build-box
+  cua team approve AIGIS dev_0123456789abcdef01234567
+  cua team audit AIGIS"
+    )]
+    Team(team_cmd::TeamCmd),
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
     #[command(subcommand)]
     Teleport(teleport::TeleportCmd),
@@ -1665,6 +1679,25 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Devices(cmd) => {
             return devices_cmd::run(cmd, &util::cua_home(), json, out).await;
         }
+        // Adding a machine is sharing the Space with the team: the same
+        // path as `cua spaces share <space> team:<id>` (attach, confirm).
+        Command::Team(team_cmd::TeamCmd::AddMachine { team, space, yes }) => {
+            let auth = devices_cmd::device_auth(&host::relay_url(None, &util::cua_home()))?;
+            let id = team_cmd::resolve_team(&auth, &team).await?;
+            let share = Cli {
+                command: Command::Spaces(host::SpacesCmd::Share {
+                    space,
+                    who: format!("team:{id}"),
+                    role: "editor".into(),
+                    yes,
+                }),
+                ..cli
+            };
+            return Box::pin(run(share, out)).await;
+        }
+        Command::Team(cmd) => {
+            return team_cmd::run(cmd, &util::cua_home(), json, out).await;
+        }
         // A machine that provides Spaces over its direct address: kept in
         // this cua home's registry, which the daemon reads too.
         Command::Spaces(cmd @ host::SpacesCmd::Add { host: true, .. }) => {
@@ -2052,6 +2085,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Spaces(_)
         | Command::Cloud(_)
         | Command::Devices(_)
+        | Command::Team(_)
         | Command::Fleet(_)
         | Command::Teleport(_)
         | Command::Cache(_)

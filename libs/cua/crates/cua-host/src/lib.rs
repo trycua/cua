@@ -43,6 +43,7 @@ pub mod relay;
 pub mod service;
 #[cfg(test)]
 mod setup_tests;
+pub mod team;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
@@ -65,6 +66,10 @@ pub use relay::{
     relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
+pub use team::{
+    NewTeamInvite, Team, TeamAuditEvent, TeamDevice, TeamInvite, TeamList, TeamMachine, TeamMember,
+    TeamRole, team_code_from_link,
+};
 
 /// The default display name of this device: the macOS Computer Name, else
 /// the host name without a `.local` / `.localdomain` suffix.

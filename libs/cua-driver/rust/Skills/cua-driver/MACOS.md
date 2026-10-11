@@ -114,7 +114,7 @@ is safe even for apps that normally foreground on media-load
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
 | Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
-| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; check `hover_delivered` (AX alternate UI or an Electron page). If false, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovers when `hover_delivered` is false |
+| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
@@ -329,8 +329,8 @@ pointer. Pointer-move and enter events posted to a background app reach
 the app but never its tracking areas, so most hover-only controls and all
 native tooltips cannot be revealed in the background. A window-targeted
 `move_cursor` on a background app tries the two routes that leave the
-real pointer, focus and z-order alone, and reports `hover_delivered` and
-`route`:
+real pointer, focus and z-order alone. Its result says whether it hovered
+and how:
 
 - `ax_alternate_ui`: the element under the point (or an ancestor) lists
   `showalternateui`, as sidebar section headers in Finder, Mail, Music and

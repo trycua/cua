@@ -29,7 +29,7 @@ fn def() -> &'static ToolDef {
             x/y are window screenshot pixels (as for click) and only the agent cursor moves \
             there; in a background app it also hovers through a route that leaves the real \
             pointer alone where one exists (AXShowAlternateUI on the element under the point, \
-            or an Electron page) and reports hover_delivered. Without a target, moves only the \
+            or an Electron page) and says so. Without a target, moves only the \
             agent cursor overlay, in screen points. Other macOS hover and tooltips follow the \
             real pointer, so most background apps see no hover. With scope=desktop, moves the real OS pointer in \
             native get_desktop_state screenshot coordinates.".into(),
@@ -207,9 +207,9 @@ impl MoveCursorTool {
                 "window_id": wid,
                 "screen_point": [screen_x, screen_y],
                 "hover_delivered": true,
-                "route": "ax_alternate_ui",
+                "hover_route": "ax_alternate_ui",
                 "alternate_ui_visible": reveal.visible,
-                "effect": "applied"
+                "effect": if reveal.visible == Some(true) { "confirmed" } else { "unverifiable" }
             }));
         }
         if tokio::task::spawn_blocking(move || crate::browser::ElectronJs::is_electron(pid))
@@ -230,8 +230,8 @@ impl MoveCursorTool {
                         "window_id": wid,
                         "screen_point": [screen_x, screen_y],
                         "hover_delivered": true,
-                        "route": "electron_input",
-                        "effect": "delivered"
+                        "hover_route": "electron_input",
+                        "effect": "unverifiable"
                     }));
                 }
             }

@@ -1620,6 +1620,22 @@ The Claude Computer-Use (Desktop helper) setup and its numbers are no longer int
 
 It runs with `gpt-6.1-sol` (A23.1) before the full run.
 
+## Amendment 24 (11 Oct 2026, before the next full Bench v2 run): 3 runs per task, and MB-11 in the foreground only
+
+Written and committed before any trial it governs. Two decisions of the owner on 11 Oct 2026. Nothing else changes.
+
+### A24.1 Runs per task
+
+The full Bench v2 run uses **3 runs per task, setup and condition** (A18.9 item 4). No second phase is added. Seeds and the schedule follow A14.6 and A16.3.
+
+### A24.2 MB-11 runs in the foreground condition only
+
+MB-11 (read a native tooltip) is dropped from the background condition: macOS shows a tooltip only for the active app, so no setup can complete it there (A19.5 item 4). It runs in the foreground condition as before. `bench_v2.FOREGROUND_ONLY` and `tasks_for_condition` apply this to every background run from now on. The background-condition tables cover 44 tasks; the report says so. Earlier runs are unchanged as registered.
+
+### A24.3 Size of the full run
+
+45 tasks in the foreground condition plus 44 in the background condition, times 6 setups (A23) and 3 runs: **1,602 trials**, about 34 h at A17.3's ~77 s per trial, on one VM.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

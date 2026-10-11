@@ -2313,6 +2313,7 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     if unknown:
         raise SystemExit(f"unknown tasks {unknown}; known {sorted(tasks)}")
     if bench_v2:
+        selected = v2.tasks_for_condition(selected, getattr(args, "condition", "foreground"))  # A24
         problems = v2.validate_tasks({t: task_spec(tasks[t]) for t in tasks}, selected)
         if problems:
             raise SystemExit("bench v2: " + "; ".join(problems))

@@ -426,5 +426,15 @@ class MultiplayerTest(unittest.TestCase):
         out = v2.multiplayer_score({**self.CLEAN, "keystrokes_leaked": 4}, True, True, "background")
         self.assertIs(out["criteria"]["typing"], False)
 
+
+class ForegroundOnlyTest(unittest.TestCase):
+    """Amendment 24: MB-11 runs in the foreground condition only."""
+
+    def test_background_drops_mb11(self) -> None:
+        ids = ["MB-10", "MB-11", "IR-01"]
+        self.assertEqual(v2.tasks_for_condition(ids, "background"), ["MB-10", "IR-01"])
+        self.assertEqual(v2.tasks_for_condition(ids, "foreground"), ids)
+        self.assertEqual(v2.tasks_for_condition(ids, None), ids)
+
 if __name__ == "__main__":
     unittest.main()

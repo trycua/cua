@@ -66,6 +66,18 @@ V2_NEW_TASKS: tuple[str, ...] = (
 )  # fmt: skip
 V2_45_TASKS: tuple[str, ...] = V2_TASKS + V2_NEW_TASKS
 V2_42_TASKS = V2_45_TASKS  # kept name: the set registered by A18 grew to 45 with the off-Space tasks before any trial
+# Amendment 24 (owner, 11 Oct 2026): tasks that run in the foreground condition only. macOS shows a tooltip only for
+# the active app, so no setup can complete MB-11 in the background condition.
+FOREGROUND_ONLY: dict[str, str] = {"MB-11": "macOS shows tooltips only for the active app"}
+
+
+def tasks_for_condition(task_ids: list[str], condition: str | None) -> list[str]:
+    """The registered task list for one condition: the background condition leaves out FOREGROUND_ONLY tasks."""
+    if condition != "background":
+        return list(task_ids)
+    return [t for t in task_ids if t not in FOREGROUND_ONLY]
+
+
 TASK_SETS: dict[str, tuple[str, ...]] = {"v2": V2_TASKS, "v2-45": V2_45_TASKS, "v2-new": V2_NEW_TASKS, "v2-os": ("OS-01", "OS-02", "OS-03")}
 # v1 tasks that are not in v2, and why (the S/G split is dropped).
 NOT_IN_V2: dict[str, str] = {

@@ -83,8 +83,11 @@ frontmost is true'`). Mutating it is not.
 **Corollary: the AXMenuBar rule.** Do not manually drive a background
 application's `AXMenuBarItem`: the visible macOS menu bar belongs to the
 frontmost app, and command items may be disabled otherwise. Use `invoke_menu`
-for a known application-menu path. It owns the necessary temporary activation,
-resolves every AX level live, and restores the prior app on a best-effort basis. Prefer an in-window
+for a known application-menu path. With the app in the background it resolves
+the whole path without opening a menu and never activates the app; if macOS
+keeps the item unavailable to a background app it refuses with
+`background_unavailable` (then, if the user allows it, `bring_to_front` first).
+With the app already in front it resolves every AX level live. Prefer an in-window
 element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
 menu bars” below.

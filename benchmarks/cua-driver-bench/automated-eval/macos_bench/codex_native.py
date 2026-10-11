@@ -60,16 +60,20 @@ ENABLED_TOOLS = (
 CODEX_CLI = Path(
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 )
-# Amendment 23 (owner, 11 Oct 2026): GPT-6.1 Sol, slug `gpt-6.1-sol` in the bundled Codex catalog, at its catalog
-# default effort (`low`), as the Claude arms use Claude's default. A20's smoke used gpt-6-astra (medium).
-MODEL = os.environ.get("CDB_CODEX_MODEL") or "gpt-6.1-sol"
-EFFORT = os.environ.get("CDB_CODEX_EFFORT") or "low"
+# Amendment 23: the owner asked for GPT-6.1 Sol (`gpt-6.1-sol`, catalog default effort `low`), which the gateway does
+# not serve yet. Until it does, the model is gpt-6-astra at its catalog default effort (`medium`); the model and effort
+# are recorded in every row and named in the setup's label. Each value is the model's catalog default, as the Claude
+# arms use Claude's default.
+MODEL_DEFAULT_EFFORT = {"gpt-6-astra": "medium", "gpt-6.1-sol": "low"}
+MODEL_DISPLAY = {"gpt-6-astra": "GPT-6 Astra", "gpt-6.1-sol": "GPT-6.1 Sol"}
+MODEL = os.environ.get("CDB_CODEX_MODEL") or "gpt-6-astra"
+EFFORT = os.environ.get("CDB_CODEX_EFFORT") or MODEL_DEFAULT_EFFORT.get(MODEL, "medium")
 GATEWAY_ENV = "CDB_CODEX_GATEWAY"
 DEFAULT_GATEWAY = "http://127.0.0.1:4000/v1"
 CLOSED_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 LABELS = {
-    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6.1 Sol",
-    "cx-cua-driver": "Cua Driver, driven by Codex CLI + GPT-6.1 Sol",
+    "cx-codex-cu": f"Codex Computer-Use (Sky), driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
+    "cx-cua-driver": f"Cua Driver, driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
 }
 LABEL = LABELS[ARM]
 

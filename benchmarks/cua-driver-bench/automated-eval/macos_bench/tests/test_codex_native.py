@@ -122,7 +122,8 @@ class CuaDriverUnderCodexTest(unittest.TestCase):
     def test_registry(self) -> None:
         self.assertEqual(cxn.SOURCE_ARM["cx-cua-driver"], "cc-cua-driver-script")
         self.assertIn("cx-cua-driver", arms.ALL_ARMS)
-        self.assertEqual(cxn.MODEL, "gpt-6.1-sol")
+        self.assertEqual(cxn.MODEL, "gpt-6-astra")  # until gpt-6.1-sol is served (A23.1)
+        self.assertEqual(cxn.EFFORT, "medium")
 
     def test_translator_names_the_cua_server(self) -> None:
         out = cxn.Translator("cua").feed("thread/started", {"thread": {"id": "t"}})

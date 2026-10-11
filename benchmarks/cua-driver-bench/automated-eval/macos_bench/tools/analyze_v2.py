@@ -35,8 +35,8 @@ ARM_LABELS = {
     "cc-cua-driver-script": "Cua Driver, driven by Claude Code",  # suffix from Amendment 23
     "cc-codex-cu": "Codex Computer-Use (Sky), driven by Claude Code",  # suffix from Amendment 20
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
-    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6.1 Sol",  # Amendment 20, model from A23
-    "cx-cua-driver": "Cua Driver, driven by Codex CLI + GPT-6.1 Sol",  # Amendment 23
+    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI",  # Amendment 20; the rows' model is appended
+    "cx-cua-driver": "Cua Driver, driven by Codex CLI",  # Amendment 23; the rows' model is appended
     "cc-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Claude Code",
 }
 
@@ -184,7 +184,9 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
         report["arms"][key] = {
             "arm": arm,
             "condition": condition,
-            "label": ARM_LABELS.get(arm, f"{arm} (internal baseline)") + f" [{condition}]",
+            "label": ARM_LABELS.get(arm, f"{arm} (internal baseline)")
+            + (f" + {', '.join(sorted({str(r.get('model')) for r in arm_rows}))}" if arm.startswith("cx-") else "")
+            + f" [{condition}]",
             "overall": summarize(arm_rows),
             "by_category": cats,
             "interruptions": interruptions(arm_rows),

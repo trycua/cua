@@ -28,6 +28,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::auto::QemuPackageManager;
 use crate::error::{Result, VmmError};
 use crate::exec::{GuestExec, SshExec};
 use crate::host;
@@ -271,8 +272,10 @@ impl QemuRuntime {
         }
         Err(VmmError::missing(
             name,
-            "install QEMU (macOS: `brew install qemu`; Debian/Ubuntu: `apt install qemu-system qemu-utils`; \
-             Fedora: `dnf install qemu-kvm qemu-img`) or enable allow_install to let cua provision it",
+            format!(
+                "install QEMU (macOS: `brew install qemu`; {}) or enable allow_install to let cua provision it",
+                QemuPackageManager::linux_hint()
+            ),
         ))
     }
 
@@ -339,7 +342,10 @@ impl QemuRuntime {
         let fw = firmware::find_uefi(arch, &bin).ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                "install edk2 (Homebrew qemu ships it; Debian: `apt install qemu-efi-aarch64 ovmf`)",
+                format!(
+                    "install edk2 (Homebrew qemu ships it; {})",
+                    QemuPackageManager::linux_hint()
+                ),
             )
         })?;
         match fw.vars_template {
@@ -892,45 +898,13 @@ pub async fn install_qemu() -> Result<()> {
             host::run(brew, &["install", "qemu"]).await?;
         }
         host::HostOs::Linux => {
-            if let Some(apt) = host::which("apt-get") {
-                let apt = apt.display().to_string();
-                tracing::info!("installing QEMU with apt (sudo -n)");
-                host::run(
-                    "sudo",
-                    &[
-                        "-n",
-                        &apt,
-                        "install",
-                        "-y",
-                        "qemu-system-x86",
-                        "qemu-system-arm",
-                        "qemu-utils",
-                        "qemu-efi-aarch64",
-                        "ovmf",
-                    ],
-                )
-                .await?;
-            } else if let Some(dnf) = host::which("dnf") {
-                let dnf = dnf.display().to_string();
-                host::run(
-                    "sudo",
-                    &[
-                        "-n",
-                        &dnf,
-                        "install",
-                        "-y",
-                        "qemu-kvm",
-                        "qemu-img",
-                        "edk2-ovmf",
-                        "edk2-aarch64",
-                    ],
-                )
-                .await?;
-            } else {
-                return Err(VmmError::missing(
-                    "QEMU",
-                    "no supported package manager found (apt-get/dnf)",
-                ));
+            let (manager, program) = QemuPackageManager::detect().ok_or_else(|| {
+                VmmError::missing("QEMU", "no supported package manager found (apt-get/dnf)")
+            })?;
+            let program = program.display().to_string();
+            tracing::info!("installing QEMU with {manager:?} (sudo -n)");
+            for args in manager.commands(&program) {
+                host::run("sudo", &args).await?;
             }
         }
         host::HostOs::Windows => {
@@ -1558,6 +1532,18 @@ mod tests {
                 .resolve_with_credentials("ghcr.io/me/x:1", Arch::host(), None)
                 .await
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn missing_qemu_hints_show_the_install_plan() {
+        assert_eq!(
+            QemuPackageManager::linux_hint(),
+            format!(
+                "Debian/Ubuntu: `{}`; Fedora: `{}`",
+                QemuPackageManager::Apt.render(),
+                QemuPackageManager::Dnf.render()
+            )
         );
     }
 }

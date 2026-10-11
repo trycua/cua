@@ -9,10 +9,14 @@ under [Registration record](#registration-record); this summary adds no rule.
 
 The protocol was committed before the first trial, and every change since then
 is a dated amendment committed before the trials it covers. The full text is
-`benchmarks/cua-driver-bench/automated-eval/macos_bench/PREREGISTRATION.md` at
-these commits of `trycua/cua` (branch `bench/macos-head-to-head`). Times are the
-commit times in UTC; GitHub's push history for that branch is the independent
-record of when each one became public.
+`PREREGISTRATION.md` at the commits below, on the harness's working branch
+`bench/macos-head-to-head`. That branch now lives in a private Cua repository;
+each registration commit is tagged there (`cdb-prereg/*`). The commits and the
+pre-registration text are verifiable on request: ask Cua for the commit objects,
+and check the hashes and commit times below against them. Times are the commit
+times in UTC. Until 11 Oct 2026 the branch was also public on `trycua/cua`, so
+GitHub's push history there is an independent record for the commits listed up
+to that date.
 
 | Commit | Time (UTC) | What it registered |
 | --- | --- | --- |

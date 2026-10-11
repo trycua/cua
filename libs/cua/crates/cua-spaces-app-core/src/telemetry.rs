@@ -497,9 +497,9 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                 vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                // The cause the app reads from the error's text (Local
-                // Network, Apple's VM limit, disk) is more specific than
-                // the shell's enum case, which is often `Runtime` or none.
+                // The shell's enum case is often `Runtime` or none: the
+                // cause the app reads from the text (Local Network, Apple's
+                // VM limit, disk) says more.
                 let variant = crate::spaces::creating::failure_variant(
                     error,
                     Some(&p.phase),
@@ -1174,7 +1174,7 @@ mod tests {
             TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
                 if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
-        // A cause the app reads from the text wins over the shell's generic case.
+        // A cause the app reads from the text replaces the shell's generic case.
         for (error, shell, want) in [
             (
                 "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
@@ -1187,6 +1187,12 @@ mod tests {
                 "VmLimit",
             ),
             ("something else at /Users/alice", "Runtime", "Runtime"),
+            // A specific case from the shell stays.
+            (
+                "cua-spacesd timed out",
+                "SpacesdNotAvailable",
+                "SpacesdNotAvailable",
+            ),
         ] {
             let failed = creates(
                 &st,

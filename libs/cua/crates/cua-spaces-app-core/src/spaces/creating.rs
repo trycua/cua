@@ -799,15 +799,15 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     }
 }
 
-/// The error enum case name a failed create records in telemetry: the
-/// known cause read from its text ([`failure_cause`]) when there is one,
-/// since the shell's own case is often a generic one (`Runtime`, `Other`),
-/// else what the shell sent.
+/// The error enum case name a failed create records in telemetry: what
+/// the shell sent, unless that is none or a generic case (`Runtime`,
+/// `Other`, as most are) and the text names a known cause
+/// ([`failure_cause`]).
 pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
-    match failure_cause(raw, phase, gpu) {
-        Some(cause) => cause.variant(),
-        None => shell,
+    if !matches!(shell.trim(), "" | "Runtime" | "Other") {
+        return shell;
     }
+    failure_cause(raw, phase, gpu).map_or(shell, |c| c.variant())
 }
 
 /// [`failure_text`] for a create on one of your machines named `host_name`:

@@ -4144,16 +4144,18 @@ pub(crate) struct RemappedKeycode<'a> {
 impl Drop for RemappedKeycode<'_> {
     fn drop(&mut self) {
         // Best-effort restore: re-install the original keysyms for this keycode
-        // and flush. Errors are swallowed deliberately — Drop must not panic in
-        // the daemon, and the worst case of a failed restore is a single spare
-        // keycode left mapped (it was unused to begin with), never a crash.
+        // and wait for the server to apply them. Xorg drops a request that is
+        // the last one before the connection closes, so a flush alone leaks the
+        // spare keycode. Errors are swallowed deliberately — Drop must not panic
+        // in the daemon, and the worst case of a failed restore is a single
+        // spare keycode left mapped (it was unused to begin with), never a crash.
         let _ = self.conn.change_keyboard_mapping(
             1,
             self.keycode,
             self.keysyms_per_keycode,
             &self.original_keysyms,
         );
-        let _ = self.conn.flush();
+        let _ = self.conn.get_input_focus().map(|cookie| cookie.reply());
     }
 }
 

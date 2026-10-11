@@ -1406,7 +1406,7 @@
    "read_only": true
   },
   {
-   "description": "Move a cursor to (x, y). In window scope (default), moves only the agent cursor overlay. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.",
+   "description": "Move a cursor to (x, y). With target {kind: \"window\", pid, window_id}, x/y are window screenshot pixels (as for click) and only the agent cursor moves there. Without a target, moves only the agent cursor overlay, in screen points. Neither sends input: macOS apps track hover and show tooltips from the real pointer, so a background app sees no hover. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1462,7 +1462,7 @@
       "type": "object"
      },
      "x": {
-      "description": "Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels.",
+      "description": "Destination X. Window target: window screenshot pixels. No target: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels.",
       "type": "number"
      },
      "y": {

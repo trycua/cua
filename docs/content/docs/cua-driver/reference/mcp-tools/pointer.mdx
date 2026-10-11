@@ -229,14 +229,14 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Move a cursor to (x, y). In window scope (default), moves only the agent cursor overlay. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.
+Move a cursor to (x, y). With target &#123;kind: "window", pid, window_id&#125;, x/y are window screenshot pixels (as for click) and only the agent cursor moves there. Without a target, moves only the agent cursor overlay, in screen points. Neither sends input: macOS apps track hover and show tooltips from the real pointer, so a background app sees no hover. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.
 
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="move_cursor--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "window" (default) moves only the agent cursor overlay; "desktop" moves the real OS pointer. |
-| <span id="move_cursor--macos--x"></span>`x` | `number` | required | Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels. |
+| <span id="move_cursor--macos--x"></span>`x` | `number` | required | Destination X. Window target: window screenshot pixels. No target: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels. |
 
 </Tab>
 <Tab value="Linux">

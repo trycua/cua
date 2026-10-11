@@ -1,0 +1,31 @@
+:root { color-scheme: light; font: 15px/1.45 system-ui, sans-serif; color: #172033; background: #f4f6fa; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { padding: 24px 32px 16px; color: white; background: #24344d; }
+.eyebrow { margin: 0; color: #b9cae5; font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+h1 { margin: 3px 0 0; font-size: 28px; }
+h2 { margin-top: 0; }
+main { display: grid; gap: 18px; padding: 24px 32px; }
+.panel { padding: 20px; border: 1px solid #d8deea; border-radius: 10px; background: white; box-shadow: 0 2px 8px #24344d12; }
+.items { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.item { width: 100%; padding: 14px; border: 1px solid #d6dce7; border-radius: 8px; background: #fbfcff; text-align: left; }
+button.item { cursor: pointer; }
+button.item:hover, button.item:focus-visible { border-color: #396fba; outline: 2px solid #93b9eb; }
+.item strong { display: block; }
+.meta { color: #5d687b; font-size: 13px; }
+.detail { white-space: pre-wrap; }
+form { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; }
+label { display: grid; gap: 5px; font-weight: 650; }
+label.wide, .actions { grid-column: 1 / -1; }
+input, textarea, select, button { font: inherit; }
+input, textarea, select { width: 100%; padding: 9px; border: 1px solid #aeb8c9; border-radius: 6px; }
+textarea { min-height: 74px; resize: vertical; }
+.actions { display: flex; gap: 10px; }
+button { padding: 9px 14px; border: 1px solid #2f66ad; border-radius: 6px; color: white; background: #326dbb; cursor: pointer; }
+button.secondary { color: #26344a; border-color: #aeb8c9; background: white; }
+button.danger { border-color: #a73a42; background: #b64149; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+.protected { border-left: 5px solid #c48b27; }
+#status { position: sticky; bottom: 0; min-height: 42px; margin: 0; padding: 11px 32px; border-top: 1px solid #d8deea; background: #fff; }
+#status.error { color: #9f252e; font-weight: 700; }
+@media (max-width: 720px) { form { grid-template-columns: 1fr; } header, main, #status { padding-left: 18px; padding-right: 18px; } }

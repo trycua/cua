@@ -22,14 +22,19 @@ concurrency:
 jobs:
   harness:
     name: Harness tests (no GUI, no model)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The harness is macOS-only (sw_vers, AppKit apps); BenchLab targets macOS 26.
+    runs-on: macos-26
+    timeout-minutes: 20
     steps:
       - name: Check out Cua
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Build BenchLab and BenchSentinel
+        working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench
+        run: swift/build.sh "$RUNNER_TEMP/bench-build"
 
       - name: Run harness, checker and sentinel tests
         working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench

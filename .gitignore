@@ -226,3 +226,5 @@ docs/scripts/check-mdx-links.py
 # Cua Driver Bench: raw run output stays out of git
 benchmarks/cua-driver-bench/**/runs/
 benchmarks/cua-driver-bench/**/results/
+# The bench task pack keeps its tasks in tasks/shared/ (the "shared" rule above would hide them)
+!benchmarks/cua-driver-bench/taskpack/tasks/shared/

@@ -31,6 +31,12 @@ panels, a new folder from a save panel, confirm dialogs), and two long chains of
 and Chrome were used in tuning; these tasks use them for different work. Everything is free or open source; no
 asset with a restrictive licence, nothing derived from Amazon or Unity material.
 
+Provenance (added 11 Oct 2026 from the 10 Oct task provenance audit, before this amendment takes effect): the HO
+tasks share app and operation types with OSWorld, macOSWorld and Mac Agent Bench, most of all HO-09 (standard Calc
+operations that OSWorld also covers as separate tasks) and HO-06 (moving a note between folders in Obsidian). All
+their text, fixtures and checkers are original. This sentence edits only this draft; the sealed pack and its
+digests in `SEAL.json` are unchanged.
+
 Each task has, as the CDB tasks do: a brief, a reset with a verification of the reset state, a launch
 descriptor, a deterministic state-based evaluator with `passed` (every check) and a partial `score`, and a
 reference solution. The partial score is the share of the task's progress checks that pass, halved when a

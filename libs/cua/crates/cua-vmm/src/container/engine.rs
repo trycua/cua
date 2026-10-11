@@ -125,6 +125,103 @@ fn well_known_sockets() -> Vec<PathBuf> {
     v
 }
 
+/// Docker Desktop's engine pipe on Windows (the docker CLI's `default`
+/// context).
+#[cfg(windows)]
+const WINDOWS_ENGINE_PIPE: &str = r"\\.\pipe\docker_engine";
+
+/// How to get a container engine on this host, for "no engine found".
+pub fn install_hint() -> &'static str {
+    match std::env::consts::OS {
+        "linux" => {
+            "install Docker Engine (`curl -fsSL https://get.docker.com | sh`, then \
+             `sudo systemctl enable --now docker`) or Podman (`systemctl --user enable --now \
+             podman.socket`)"
+        }
+        "macos" => {
+            "install one (`brew install colima docker && colima start`, Docker Desktop or \
+             OrbStack), or set `runtime.linux` to `auto` to use the built-in Linux runtime"
+        }
+        "windows" => {
+            "install Docker Desktop (https://docs.docker.com/desktop/setup/install/windows-install/) \
+             and start it"
+        }
+        _ => "install Docker or Podman and start it",
+    }
+}
+
+/// How to start the engine `kind`, for "the engine does not answer".
+pub fn start_hint(kind: &EngineKind) -> &'static str {
+    match kind {
+        EngineKind::Colima { .. } => "start it with `colima start`",
+        EngineKind::DockerDesktop => "open Docker Desktop and wait until it says it is running",
+        EngineKind::OrbStack => "start it with `orb start`",
+        EngineKind::Podman if cfg!(target_os = "linux") => {
+            "start it with `systemctl --user start podman.socket`"
+        }
+        EngineKind::Podman => "start it with `podman machine start`",
+        EngineKind::NativeLinux => "start it with `sudo systemctl start docker`",
+        EngineKind::Unknown if cfg!(target_os = "linux") => {
+            "start it (`sudo systemctl start docker`, or `systemctl --user start podman.socket`)"
+        }
+        EngineKind::Unknown => "start your container engine",
+    }
+}
+
+/// How to get access to `socket`, for "permission denied".
+pub fn permission_hint(socket: &str) -> String {
+    if cfg!(target_os = "linux") {
+        format!(
+            "permission denied on {socket}: add yourself to the `docker` group \
+             (`sudo usermod -aG docker $USER`, then log out and back in), or use rootless \
+             Docker or Podman"
+        )
+    } else {
+        format!("permission denied on {socket}: check that your user may use the engine's socket")
+    }
+}
+
+/// What a connect to a Unix engine socket found before speaking HTTP.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SocketCheck {
+    /// Something accepted the connection.
+    Accepting,
+    /// The socket file is gone (or dangling): no engine is installed or running.
+    Missing,
+    /// Nothing listens on it: the engine is installed but not running.
+    NotListening,
+    /// This user may not connect.
+    PermissionDenied,
+    /// Any other error (kept as text).
+    Other(String),
+}
+
+/// Connects to the Unix socket behind `uri` (`unix:///path` or a path)
+/// without speaking HTTP, so "not running" and "permission denied" are
+/// told apart before the ping. `None` for other URIs (tcp, npipe).
+pub fn check_socket(uri: &str) -> Option<SocketCheck> {
+    #[cfg(unix)]
+    {
+        let path = uri
+            .strip_prefix("unix://")
+            .or_else(|| uri.starts_with('/').then_some(uri))?;
+        Some(match std::os::unix::net::UnixStream::connect(path) {
+            Ok(_) => SocketCheck::Accepting,
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::PermissionDenied => SocketCheck::PermissionDenied,
+                std::io::ErrorKind::NotFound => SocketCheck::Missing,
+                std::io::ErrorKind::ConnectionRefused => SocketCheck::NotListening,
+                _ => SocketCheck::Other(e.to_string()),
+            },
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = uri;
+        None
+    }
+}
+
 /// Find the engine endpoint the way the docker CLI would.
 pub fn discover() -> Option<EngineEndpoint> {
     if let Ok(h) = std::env::var("DOCKER_HOST")
@@ -140,15 +237,29 @@ pub fn discover() -> Option<EngineEndpoint> {
         .map(PathBuf::from)
         .unwrap_or_else(|| host::home_dir().join(".docker"));
     let env_ctx = std::env::var("DOCKER_CONTEXT").ok();
+    // A context whose socket is gone is an engine that is installed but
+    // stopped (Docker Desktop quit): used only when no other socket is up,
+    // so the create can say to start it rather than to install one.
+    let mut stopped_context = None;
     if let Some((name, h)) = context_endpoint(&docker_dir, env_ctx.as_deref()) {
         let path = h.trim_start_matches("unix://");
+        let endpoint = EngineEndpoint {
+            kind: classify(&h),
+            uri: h.clone(),
+            source: format!("context:{name}"),
+        };
         if !h.starts_with("unix://") || Path::new(path).exists() {
-            return Some(EngineEndpoint {
-                kind: classify(&h),
-                uri: h,
-                source: format!("context:{name}"),
-            });
+            return Some(endpoint);
         }
+        stopped_context = Some(endpoint);
+    }
+    #[cfg(windows)]
+    if Path::new(WINDOWS_ENGINE_PIPE).exists() {
+        return Some(EngineEndpoint {
+            uri: "npipe:////./pipe/docker_engine".into(),
+            source: "socket".into(),
+            kind: EngineKind::DockerDesktop,
+        });
     }
     well_known_sockets()
         .into_iter()
@@ -161,6 +272,7 @@ pub fn discover() -> Option<EngineEndpoint> {
                 source: "socket".into(),
             }
         })
+        .or(stopped_context)
 }
 
 #[cfg(test)]
@@ -192,6 +304,39 @@ mod tests {
         assert_eq!(
             classify("unix:///run/user/1000/podman/podman.sock"),
             EngineKind::Podman
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_socket_tells_not_running_from_missing_and_up() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("docker.sock");
+        let uri = format!("unix://{}", path.display());
+        assert_eq!(check_socket(&uri), Some(SocketCheck::Missing));
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert_eq!(check_socket(&uri), Some(SocketCheck::Accepting));
+        // The engine stopped and left its socket file behind.
+        drop(listener);
+        assert_eq!(check_socket(&uri), Some(SocketCheck::NotListening));
+        assert_eq!(check_socket("tcp://127.0.0.1:2375"), None);
+    }
+
+    #[test]
+    fn hints_name_this_hosts_commands() {
+        if cfg!(target_os = "linux") {
+            assert!(install_hint().contains("get.docker.com"));
+            assert!(start_hint(&EngineKind::NativeLinux).contains("systemctl start docker"));
+            assert!(permission_hint("unix:///var/run/docker.sock").contains("usermod -aG docker"));
+        }
+        if cfg!(target_os = "macos") {
+            assert!(install_hint().contains("colima"));
+        }
+        assert!(
+            start_hint(&EngineKind::Colima {
+                profile: "default".into()
+            })
+            .contains("colima start")
         );
     }
 

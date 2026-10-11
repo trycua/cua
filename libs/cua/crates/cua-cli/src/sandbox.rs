@@ -1355,6 +1355,12 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
     }
 }
 
+/// Appended when `--on cloud` has no Cua cloud account: Spaces run on
+/// compute you bring, so point at the ways that need no Cua cloud.
+const BYO_COMPUTE_HINT: &str = "Cua Spaces run on computers you bring: this one (`--on local`), \
+     a machine you add (run `cua host setup --profile spare` on it, then `--on host:<machine>`), \
+     or your own cloud account (`cua cloud connect aws|gcp|modal`, then `--on aws`)";
+
 /// What a failed create kept: the sandbox ref, its cloud claim (pool and
 /// namespace) when it has one, and how to delete it.
 fn kept_message(i: &SandboxInfo) -> String {
@@ -1545,12 +1551,17 @@ async fn create(
     let sb = created
         .map_err(|e| match e {
             // The cloud came from a default: say how to sign in or go back.
-            CuaError::ProviderNotConfigured(m) => CuaError::ProviderNotConfigured(
-                match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
+            CuaError::ProviderNotConfigured(m) => CuaError::ProviderNotConfigured({
+                let m = match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
                     Some(hint) => format!("{m}; {hint}"),
                     None => m,
-                },
-            ),
+                };
+                if on == On::Cloud {
+                    format!("{m}. {BYO_COMPUTE_HINT}")
+                } else {
+                    m
+                }
+            }),
             other => other,
         })
         .map_err(|e| on_backend(e, &label))?;

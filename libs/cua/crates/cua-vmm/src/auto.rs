@@ -490,11 +490,7 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
             }
             Err(VmmError::missing(
                 "a container engine",
-                format!(
-                    "{}. Install Docker (or Colima), or set `runtime.linux` to `auto` to use \
-                     the built-in Linux runtime on a Mac",
-                    c.detail
-                ),
+                format!("{}; {}", c.detail, engine_install_hint()),
             ))
         }
         ImageKind::Vm => match req.os {
@@ -550,6 +546,18 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                 Err(VmmError::missing("QEMU", q.missing.join(", ")))
             }
         },
+    }
+}
+
+/// How to get a container engine here.
+fn engine_install_hint() -> &'static str {
+    #[cfg(feature = "container")]
+    {
+        crate::container::engine::install_hint()
+    }
+    #[cfg(not(feature = "container"))]
+    {
+        "install Docker or Podman and start it"
     }
 }
 

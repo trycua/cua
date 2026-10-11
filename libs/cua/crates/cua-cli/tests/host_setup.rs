@@ -245,3 +245,55 @@ async fn remote_is_documented_and_conflicts_with_direct() {
     );
     assert!(!h.cua_home().join("host").exists());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pair_registers_with_the_code_and_never_signs_in() {
+    let oidc = issuer(None).await;
+    let relay = FakeHttp::start(|r| {
+        assert_eq!(
+            (r.method.as_str(), r.path.as_str()),
+            ("POST", "/v1/machines")
+        );
+        assert_eq!(r.headers["authorization"], "Bearer cpc_K7QM4XPB2RHD");
+        let body: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        (
+            201,
+            json!({"machine": {"id": body["id"], "owner": {"id": "ada"}}, "machine_token": "machine-token-1"}),
+        )
+    })
+    .await;
+    let h = home(&oidc, &relay);
+    // A pasted link works as well as the typed code (any case).
+    let o = setup(&h, &["--pair", "https://spaces.cua.ai/add/k7qm-4xpb-2rhd"]).await;
+    assert_eq!(o.code, 2, "{o:?}");
+    assert!(o.stderr.contains("host setup failed at download:"), "{o:?}");
+    assert!(!o.stderr.contains("Sign in"), "{o:?}");
+    assert_eq!(
+        std::fs::read_to_string(h.cua_home().join("host/machine-token"))
+            .unwrap()
+            .trim(),
+        "machine-token-1"
+    );
+    assert!(oidc.requests().is_empty(), "no sign-in with a pairing code");
+    assert_eq!(relay.requests().len(), 1);
+    no_account_state(&h);
+
+    // A malformed code stops before anything is registered.
+    let o = setup(&h, &["--pair", "not-a-code"]).await;
+    assert_ne!(o.code, 0, "{o:?}");
+    assert!(o.stderr.contains("is not a pairing code"), "{o:?}");
+    assert_eq!(relay.requests().len(), 1);
+
+    let o = h
+        .run(&[
+            "host",
+            "setup",
+            "--pair",
+            "K7QM4XPB2RHD",
+            "--direct",
+            "127.0.0.1:3211",
+        ])
+        .await;
+    assert_eq!(o.code, 2, "{o:?}");
+    assert!(o.stderr.contains("cannot be used with"), "{o:?}");
+}

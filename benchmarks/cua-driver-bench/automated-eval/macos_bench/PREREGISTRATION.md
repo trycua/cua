@@ -1282,6 +1282,15 @@ trycua/cua PR #4955 (CUA-1309); the concept and the options measured are in `res
 
 Registered here by its own dated line before its first trial, on the main commit that contains #4955, built once in the VM: both conditions, the three headline setups and the ten A14.6 tasks at 3 + 2 runs, as A16.3. The A16.3 rows stay superseded.
 
+**Registration (11 Oct 2026, 02:50Z, before the first trial).** PR #4955 merged as `984e5f9c5` on main and was built once in `cdb-v2` (AX binary `8d5dc83f23e7`, A binary `3657e899b14f`, skill tree `7f1c0fd0f22c`); pins updated.
+
+| Id | Condition | Tasks | Arms | Runs | Seat, stop rule |
+|---|---|---|---|---|---|
+| v2rr-ba | background | the ten A14.6 tasks in schedule order | AX (`cc-cua-driver-script`), B (`cc-codex-cu`, 26.930), `cc-claude-cu-helper` | 3 + 2 per task and arm, 5 per task per condition | cswap seat 1 first; the seat watchdog switches at 0.94 (5h or 7d), on rejection, or when the access token expires within 30 min; access tokens only |
+| v2rr-fo | foreground | the same | the same | the same | the same |
+
+The background run goes first, then the foreground run, in the same VM, with nothing else running in the VM. Everything else is as in A16.3. The report states the CDB-G04 limit of A17.2.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

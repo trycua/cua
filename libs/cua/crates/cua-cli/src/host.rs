@@ -1354,8 +1354,20 @@ pub async fn run_host(
             revoke,
             relay,
         } => {
+            // Only the stored `cua auth login` session: making a code is
+            // no reason to start a sign-in for "this machine".
             pair_codes(
-                home, tokens, device, relay, team, name, expires, list, revoke, json, out,
+                home,
+                &SessionTokens,
+                device,
+                relay,
+                team,
+                name,
+                expires,
+                list,
+                revoke,
+                json,
+                out,
             )
             .await
             .map_err(host_err)?;

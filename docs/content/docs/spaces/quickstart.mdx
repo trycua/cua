@@ -14,7 +14,7 @@ locally, and register it as your first Space.
   later.
 - Docker, for the local Space.
 
-For CLI-managed local Linux Spaces, use Docker (with gVisor `runsc` for
+For CLI-managed local Linux Spaces, use Docker (gVisor `runsc`, when installed, adds
 isolation) or QEMU. QEMU needs read/write access to `/dev/kvm` for hardware
 acceleration of same-architecture guests. The managed runtime is macOS-only.
 
@@ -35,8 +35,8 @@ acceleration of same-architecture guests. The managed runtime is macOS-only.
 
 In a terminal it first shows a checklist: the `cua` CLI, the Cua Spaces app
 (macOS only, selected by default there), the cua-driver MCP and skill for your
-agents, and hosting this machine. Linux and Windows install the CLI only,
-not the Spaces app. Then it signs you in and offers to set up your AI coding agents.
+agents, and hosting this machine. On Linux and Windows the Spaces app is skipped.
+Then it signs you in and offers to set up your AI coding agents.
 Flags: `--select ITEMS`, `--only ITEMS`, `--cli-only`, `--app-only`,
 `--mode host|client`, `--version X`, `--no-onboarding`, `--dry-run`, `--yes`
 (`-Select`, `-CliOnly`, ... on Windows). GUI installers are on

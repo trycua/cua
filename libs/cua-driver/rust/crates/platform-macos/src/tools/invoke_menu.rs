@@ -678,7 +678,12 @@ impl Tool for InvokeMenuTool {
                     .build()
                     .expect("invoke_menu record is valid"),
                 ),
-                Ok(Err(error)) => background_unavailable(error),
+                // Only a disabled item is a background limit; a missing or
+                // ambiguous path is the same refusal as in the foreground.
+                Ok(Err(error)) if error.contains("while the app is in the background") => {
+                    background_unavailable(error)
+                }
+                Ok(Err(error)) => refusal(error),
                 Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
             };
         }

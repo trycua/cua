@@ -34,6 +34,7 @@ CLAUDE_ARMS = (
     "cc-cua-driver-main",
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",  # Amendment 6
+    "cc-claude-cu-helper",  # Amendment 11: Claude Desktop 2.31226.0 computer-use helper via a minimal adapter
 )
 # cc-cua-driver-main: Amendment 3; cc-cua-driver-main-skill: Amendment 4. The default arm set of run_bench.py
 # stays the three arms of Amendment 3, so a run without --arms is unchanged.
@@ -42,7 +43,11 @@ DEFAULT_CLAUDE_ARMS = ("cc-cua-driver", "cc-codex-cu", "cc-cua-driver-main")
 CODEX_FALLBACK_ARMS = ("codex-native-cu", "codex-cua-driver")
 ARM_ALIASES = {"codex-cua-driver": "cua-driver-mcp"}  # name used by the pilot code paths
 # Amendment 20 (CUA-1347): Codex CLI + gpt-6-astra driving Codex computer use natively (codex_native.py).
-NATIVE_CODEX_ARMS = ("cx-codex-cu",)
+NATIVE_CODEX_ARMS = (
+    "cx-codex-cu",
+    "cx-cua-driver",
+    "cx-claude-cu-helper",
+)  # the last two: Amendment 23
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS
 
 CODEX_APP_RESOURCES = Path("/Applications/ChatGPT.app/Contents/Resources")

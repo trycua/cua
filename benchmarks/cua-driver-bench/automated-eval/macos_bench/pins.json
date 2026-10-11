@@ -63,11 +63,63 @@
     "_service_executable_sha256": "fa5b5d685f550af82902cff1a345db558a1da3eb526cf78cd4659fa0dcde01a5",
     "_signature": "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2), notarized"
   },
+  "claude_cu_helper": {
+    "_note": "Amendment 11: arm cc-claude-cu-helper, \"Claude Desktop 2.31226.0 computer-use helper via a minimal adapter\". Claude Desktop 2.31226.0 downloaded and unpacked in a clone of the bench VM only (never launched, never moved to /Applications). The helper is used unmodified in place; tools/claude_cu_helper/install_cu_helper.sh checks the archive and helper hashes and the signature. The helper's Accessibility grant was given in System Settings (Privacy & Security > Accessibility > +), through the VM's UI. Public copy: adapter_sha256 is the published cu_helper_mcp.py with its licence header (the registered runs used the same adapter without it, d3f7797bee7b).",
+    "desktop_version": "2.31226.0",
+    "desktop_zip_url": "https://downloads.claude.ai/releases/darwin/universal/2.31226.0/Claude-eb794d1033f2a59c2cd89aa29ed1f8b5de12aa73.zip",
+    "desktop_zip_bytes": 383954641,
+    "desktop_zip_sha256": "bd38f1051a14cabd893c7422e106ad6318e8785f19472c8064eafa64ce235820",
+    "helper_sha256": "7bd631e8b5ae36941ac551c474055e2eff32163db6684628eac5cfcabcb3dc14",
+    "helper_signature": "Developer ID Application: Anthropic PBC (Q6L2SF6YDW), identifier app-cu-helper",
+    "adapter_sha256": "ed0da1fc5d00da2d8a3f8a43e3b18df9a41150e97a41632107eb8f82bcd058eb",
+    "winlist_sha256": "d150737bd4a3f7995a2abe7a615b951da8189236da7e3cb969e0de670d9614d4",
+    "launcher_sha256": "c9dd836899692149e0a7d2bf144aa5f1180b359661016fddd267140c77e0057f",
+    "actions": [
+      "click",
+      "right_click",
+      "type",
+      "key",
+      "scroll",
+      "drag",
+      "hover"
+    ],
+    "tools": [
+      "app_click",
+      "app_drag",
+      "app_hover",
+      "app_key",
+      "app_list_windows",
+      "app_screenshot",
+      "app_scroll",
+      "app_type"
+    ],
+    "probe_required": [
+      "skylight",
+      "axTrusted"
+    ],
+    "helper_methods": [
+      "probe",
+      "dispatchRaw",
+      "wakeChromiumCompositor",
+      "bringWindowToActiveSpace",
+      "keyWindowSpoof"
+    ],
+    "dispatch_kinds": [
+      "click",
+      "rclick",
+      "mclick",
+      "drag",
+      "scroll",
+      "hover",
+      "key",
+      "type"
+    ]
+  },
   "codex_native": {
-    "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6-astra at its catalog default effort (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",
+    "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6.1-sol (Amendment 23) at its catalog default effort (low); A20's smoke used gpt-6-astra (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",
     "codex_cli_version": "codex-cli 0.160.0",
     "codex_cli_sha256": "6b582e8813ce7e8ed4c52814ee5cf230dba647bf2292df747a4003f2657ef201",
-    "model": "gpt-6-astra",
-    "effort": "medium"
+    "model": "gpt-6.1-sol",
+    "effort": "low"
   }
 }

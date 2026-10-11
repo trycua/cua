@@ -51,8 +51,21 @@ from pathlib import Path
 from typing import Any, Callable
 
 ARM = "cx-codex-cu"
-ARMS = (ARM,)
+# cx-cua-driver and cx-claude-cu-helper: Amendment 23, Cua Driver's MCP server and Cua's helper adapter under the
+# same Codex host
+ARMS = (ARM, "cx-cua-driver", "cx-claude-cu-helper")
 SERVER = "cua_repl"  # the server name of the unified-computer-use plugin
+SERVER_OF = {
+    "cx-codex-cu": SERVER,
+    "cx-cua-driver": "cua",
+    "cx-claude-cu-helper": "claude-cu-helper",
+}
+# The Claude Code arm whose MCP config (and, for Cua Driver, whose daemon, build and system prompt) the Codex arm uses.
+SOURCE_ARM = {
+    "cx-codex-cu": "cc-codex-cu",
+    "cx-cua-driver": "cc-cua-driver-script",
+    "cx-claude-cu-helper": "cc-claude-cu-helper",
+}
 ENABLED_TOOLS = (
     "js",
     "js_reset",
@@ -60,12 +73,26 @@ ENABLED_TOOLS = (
 CODEX_CLI = Path(
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 )
-MODEL = "gpt-6-astra"
-EFFORT = "medium"  # gpt-6-astra's default_reasoning_level in the Codex model catalog; Claude arms use their default
+# Amendment 23: GPT-6.1 Sol (`gpt-6.1-sol`, served through the gateway), at its catalog default effort
+# (`low`), as the Claude arms use Claude's default. A20's smoke used gpt-6-astra (`medium`). The model and effort are
+# recorded in every row and named in the setup's label.
+MODEL_DEFAULT_EFFORT = {"gpt-6-astra": "medium", "gpt-6.1-sol": "low"}
+MODEL_DISPLAY = {"gpt-6-astra": "GPT-6 Astra", "gpt-6.1-sol": "GPT-6.1 Sol"}
+MODEL = (
+    os.environ.get("CDB_CODEX_MODEL") or "gpt-6.1-sol"
+)  # A23.1: served through the gateway since 11 Oct
+EFFORT = os.environ.get("CDB_CODEX_EFFORT") or MODEL_DEFAULT_EFFORT.get(MODEL, "medium")
 GATEWAY_ENV = "CDB_CODEX_GATEWAY"
 DEFAULT_GATEWAY = "http://127.0.0.1:4000/v1"
 CLOSED_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
-LABEL = "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6 Astra"
+LABELS = {
+    "cx-codex-cu": f"Codex Computer-Use (Sky), driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
+    "cx-cua-driver": f"Cua Driver, driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
+    "cx-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Codex CLI + "
+    f"{MODEL_DISPLAY.get(MODEL, MODEL)} (Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an "
+    "internal interface, not an Anthropic-supported procedure)",
+}
+LABEL = LABELS[ARM]
 
 # Features of this Codex build that would give the agent a non-GUI route or a second agent. Off for every trial.
 DISABLED_FEATURES = (
@@ -113,7 +140,7 @@ def gateway() -> str:
     return os.environ.get(GATEWAY_ENV) or DEFAULT_GATEWAY
 
 
-def server_entry(mcp_json: Path) -> dict[str, Any]:
+def server_entry(mcp_json: Path, arm: str = ARM) -> dict[str, Any]:
     """The single server of arm B's MCP config (written by tools/make_codex_cu_mcp.py from the plugin)."""
     data = json.loads(mcp_json.read_text("utf-8"))
     servers = data.get("mcpServers") or {}
@@ -121,7 +148,7 @@ def server_entry(mcp_json: Path) -> dict[str, Any]:
         raise ValueError(f"{mcp_json}: expected exactly one MCP server, found {sorted(servers)}")
     entry = next(iter(servers.values()))
     env = dict(entry.get("env") or {})
-    if env.get("CUA_REPL_ENABLED_SURFACES") != "computer":
+    if SERVER_OF[arm] == SERVER and env.get("CUA_REPL_ENABLED_SURFACES") != "computer":
         raise ValueError(
             f"{mcp_json}: CUA_REPL_ENABLED_SURFACES must be 'computer', got {env.get('CUA_REPL_ENABLED_SURFACES')!r}"
         )
@@ -129,8 +156,14 @@ def server_entry(mcp_json: Path) -> dict[str, Any]:
 
 
 def config_toml(
-    entry: dict[str, Any], model: str, effort: str, instructions: str, codex_home: Path
+    entry: dict[str, Any],
+    model: str,
+    effort: str,
+    instructions: str,
+    codex_home: Path,
+    arm: str = ARM,
 ) -> str:
+    server = SERVER_OF[arm]
     env = dict(
         entry["env"]
     )  # unchanged from arm B: Sky's service and pipe live under the user's own home
@@ -156,28 +189,33 @@ def config_toml(
         "stream_max_retries = 2",
         "stream_idle_timeout_ms = 120000",
         "",
-        f"[mcp_servers.{SERVER}]",
+        f"[mcp_servers.{server}]",
         f"command = {_q(entry['command'])}",
         f"args = [{', '.join(_q(a) for a in entry['args'])}]",
         "startup_timeout_sec = 120",
         'default_tools_approval_mode = "approve"',
-        f"enabled_tools = [{', '.join(_q(t) for t in ENABLED_TOOLS)}]",
+        *(
+            [f"enabled_tools = [{', '.join(_q(t) for t in ENABLED_TOOLS)}]"]
+            if server == SERVER
+            else []
+        ),
         "",
-        f"[mcp_servers.{SERVER}.env]",
+        f"[mcp_servers.{server}.env]",
         *[f"{key} = {_q(str(value))}" for key, value in sorted(env.items())],
     ]
     return "\n".join(lines) + "\n"
 
 
 def render_home(
-    home: Path, mcp_json: Path, model: str, effort: str, instructions: str
+    home: Path, mcp_json: Path, model: str, effort: str, instructions: str, arm: str = ARM
 ) -> dict[str, str]:
     """Write a fresh CODEX_HOME for one trial; return the closed environment for `codex exec`."""
     codex_home = home / ".codex"
     codex_home.mkdir(parents=True, exist_ok=True)
     (home / "tmp").mkdir(exist_ok=True)
     (codex_home / "config.toml").write_text(
-        config_toml(server_entry(mcp_json), model, effort, instructions, codex_home), "utf-8"
+        config_toml(server_entry(mcp_json, arm), model, effort, instructions, codex_home, arm),
+        "utf-8",
     )
     return {
         # HOME stays the user's, as for the Claude-driven arms (Sky's native pipe is found from it); only Codex's
@@ -209,7 +247,8 @@ class Translator:
     result), so `bench_v2.GuiOnlyGuard`, `bench_v2.scan_events` and `claude_events.summarize` read this arm the
     same way as the Claude arms."""
 
-    def __init__(self) -> None:
+    def __init__(self, server: str = SERVER) -> None:
+        self.server = server
         self.final_text = ""
         self.errors: list[str] = []
         self.usage = {
@@ -242,8 +281,10 @@ class Translator:
                     "type": "system",
                     "subtype": "init",
                     "codex_thread": (params.get("thread") or {}).get("id"),
-                    "tools": [f"mcp__{SERVER}__{t}" for t in ENABLED_TOOLS],
-                    "mcp_servers": [{"name": SERVER, "status": "connected"}],
+                    "tools": [f"mcp__{SERVER}__{t}" for t in ENABLED_TOOLS]
+                    if self.server == SERVER
+                    else [],
+                    "mcp_servers": [{"name": self.server, "status": "connected"}],
                 }
             )
         elif method == "thread/tokenUsage/updated":
@@ -350,6 +391,7 @@ def run_codex(
     elicitation_path: Path | None = None,
     abort: Any = None,
     answer: Callable[[str, set[str]], dict[str, Any]] | None = None,
+    server: str = SERVER,
 ) -> dict[str, Any]:
     """Run one trial through `codex app-server` in its own process group: initialize, start a thread in ``cwd``,
     start one turn with ``prompt``, answer server requests, and stop at turn/completed, the wall-time limit, the
@@ -361,7 +403,7 @@ def run_codex(
         answer = claude_driver.answer_elicitation
     allowed = {a.strip().lower() for a in (allowed_apps or set())}
     started = time.monotonic()
-    translator = Translator()
+    translator = Translator(server)
     done = threading.Event()
     responses: dict[int, dict[str, Any]] = {}
     got = threading.Condition()

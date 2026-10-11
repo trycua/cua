@@ -237,13 +237,14 @@ if (!app.requestSingleInstanceLock()) {
   // The page's New Space wizard; Settings (the page's own route, without reloading it).
   const newSpace = () => tellMain("spaces.newRequested", { on: null });
   const openSettings = () => tellMain("settings.openRequested");
+  const gettingStarted = () => tellMain("checklist.openRequested");
 
   app.on("second-instance", showMain);
 
   app.whenReady().then(async () => {
     migrateSwiftApp();
     initTheme();
-    installMenu({ newSpace, settings: openSettings });
+    installMenu({ newSpace, settings: openSettings, gettingStarted });
     handleViewerKeyboard();
     if (process.platform !== "darwin") handleOverlayDim();
     const { webRoot } = handleAppProtocol();

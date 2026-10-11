@@ -205,6 +205,7 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::api_used("sandbox.connect", Outcome::Ok, Some(s), d).unwrap());
     v.push(events::spaces_feature_used("teleport_drop").unwrap());
     v.push(events::onboarding_step("signed_in", Outcome::Ok).unwrap());
+    v.push(events::onboarding_step("checklist_share", Outcome::Ok).unwrap());
     v.push(events::app_launched(Some(true)));
     v.push(events::app_launched(None));
     v.push(events::sign_in_failed("timeout"));

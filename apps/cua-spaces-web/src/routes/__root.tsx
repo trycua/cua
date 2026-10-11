@@ -6,6 +6,7 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge";
 
+import { ChecklistTracker } from "@/components/getting-started";
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { Sidebar } from "@/components/shell/sidebar";
@@ -68,6 +69,7 @@ function RootLayout() {
         </main>
       </div>
       <CommandPalette />
+      <ChecklistTracker />
       <NewSpace />
       <SpaceSheets />
     </div>

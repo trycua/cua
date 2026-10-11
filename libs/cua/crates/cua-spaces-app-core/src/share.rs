@@ -190,8 +190,22 @@ pub fn validate_who(who: &str) -> Result<String, String> {
     if w.is_empty() {
         return Err("Enter an email or account ID.".into());
     }
-    if ["team:", "org:", "group:"].iter().any(|p| w.starts_with(p)) {
-        return Err("Share with people, one at a time.".into());
+    if let Some(team) = w.strip_prefix("team:") {
+        // A team (`team:<id>` as `cua team ls` or the Teams page shows it):
+        // every member gets the Space, from a device an admin approved.
+        let ok = team.starts_with("team-")
+            && team.len() <= 64
+            && team
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        return if ok {
+            Ok(format!("team:{team}"))
+        } else {
+            Err("Enter a team as team:<id>, as `cua team ls` shows it.".into())
+        };
+    }
+    if ["org:", "group:"].iter().any(|p| w.starts_with(p)) {
+        return Err("Share with people, or with a team as team:<id>.".into());
     }
     if w.len() > 254 || w.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err("Enter an email or account ID.".into());
@@ -213,6 +227,15 @@ pub fn validate_who(who: &str) -> Result<String, String> {
 
 fn role_of(role: &str) -> &'static str {
     if role == "editor" { "editor" } else { "viewer" }
+}
+
+/// A team always gets full use (teams have no view-only members).
+fn role_for(who: &str, role: &str) -> &'static str {
+    if who.starts_with("team:") {
+        "editor"
+    } else {
+        role_of(role)
+    }
 }
 
 /// The roles, in menu order.
@@ -259,11 +282,8 @@ pub fn share_reduce(
             if let Ok(who) = validate_who(&s.who) {
                 s.busy = true;
                 s.error = None;
-                s.request = Some(ShareRequest::Share {
-                    space,
-                    who,
-                    role: role_of(&s.role).into(),
-                });
+                let role = role_for(&who, &s.role).into();
+                s.request = Some(ShareRequest::Share { space, who, role });
             }
         }
         ShareSheetAction::ChangeRole { who, role } if !s.busy && can_act(input) => {
@@ -318,7 +338,7 @@ pub fn share_view(input: &ShareInput, state: &ShareSheetState) -> ShareSheetView
             .iter()
             .map(|e| ShareRowView {
                 who: e.who.clone(),
-                role: role_of(&e.role).into(),
+                role: role_for(&e.who, &e.role).into(),
                 connected: e.connected,
             })
             .collect(),
@@ -416,7 +436,24 @@ mod tests {
         assert!(!s.busy);
         assert_eq!(
             validate_who("team:design").unwrap_err(),
-            "Share with people, one at a time."
+            "Enter a team as team:<id>, as `cua team ls` shows it."
+        );
+        assert_eq!(validate_who(" team:team-0a1b ").unwrap(), "team:team-0a1b");
+        // A team is always shared for full use.
+        let s = share_reduce(
+            &i,
+            &share_initial(),
+            &ShareSheetAction::SetWho {
+                who: "team:team-0a1b".into(),
+            },
+        );
+        assert_eq!(
+            share_reduce(&i, &s, &ShareSheetAction::Submit).request,
+            Some(ShareRequest::Share {
+                space: "local:studio".into(),
+                who: "team:team-0a1b".into(),
+                role: "editor".into()
+            })
         );
     }
 

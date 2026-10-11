@@ -78,6 +78,11 @@ struct State_ {
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
     /// requests go to (the longest matching prefix wins).
     tunnels: BTreeMap<String, Vec<(String, String)>>,
+    /// Teams (a simplified model of the relay's: membership, machines,
+    /// invite codes, device approvals and an audit of kinds).
+    teams: BTreeMap<String, crate::team::Team>,
+    /// invite code → (team, role, email)
+    team_codes: BTreeMap<String, (String, crate::team::TeamRole, Option<String>)>,
 }
 
 impl State_ {
@@ -302,6 +307,7 @@ async fn register(
         // registration here has nothing to vouch for either way; default to
         // confirmed, matching behavior before S5 added the field.
         confirmed: true,
+        team: None,
         meta: body["meta"]
             .as_object()
             .map(|o| {
@@ -939,6 +945,20 @@ impl FakeRelay {
                 axum::routing::patch(device_rename).delete(device_revoke),
             )
             .route("/v1/audit", get(audit))
+            .route("/v1/teams", get(team_list).post(team_create))
+            .route("/v1/teams/join", post(team_join))
+            .route("/v1/teams/{id}", get(team_get))
+            .route("/v1/teams/{id}/invites", post(team_invite))
+            .route("/v1/teams/{id}/machines", post(team_add_machine))
+            .route(
+                "/v1/teams/{id}/machines/{machine}",
+                axum::routing::delete(team_remove_machine),
+            )
+            .route(
+                "/v1/teams/{id}/devices/{device}/approve",
+                post(team_approve),
+            )
+            .route("/v1/teams/{id}/audit", get(team_audit))
             .fallback(proxied)
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -1105,4 +1125,338 @@ impl FakeRelay {
             .get(id)
             .map(|r| r.token.clone())
     }
+}
+
+// ---- teams (simplified) ----
+
+type TeamResult = Result<(Identity, Option<String>), Response>;
+
+#[allow(clippy::result_large_err)]
+fn team_caller(st: &State_, headers: &HeaderMap) -> TeamResult {
+    let who = account_of(st, headers)?;
+    st.gate(headers)?;
+    let device = st.device_of(headers, &who);
+    Ok((who, device))
+}
+
+fn team_for(team: &crate::team::Team, who: &Identity) -> crate::team::Team {
+    let mut t = team.clone();
+    if let Some(m) = t.members.iter().find(|m| m.account == who.id) {
+        t.role = m.role;
+    }
+    if !t.role.manages() {
+        t.invites.clear();
+        t.devices.retain(|d| d.account == who.id);
+    }
+    t
+}
+
+async fn team_list(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let teams: Vec<_> = st
+        .teams
+        .values()
+        .filter(|t| t.members.iter().any(|m| m.account == who.id))
+        .map(|t| team_for(t, &who))
+        .collect();
+    Json(serde_json::json!({ "teams": teams, "invites": [] })).into_response()
+}
+
+async fn team_create(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, device) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let id = format!("team-{:016x}", rand::random::<u64>());
+    let mut t = crate::team::Team {
+        id: id.clone(),
+        name: body["name"].as_str().unwrap_or_default().to_string(),
+        role: crate::team::TeamRole::Owner,
+        members: vec![crate::team::TeamMember {
+            account: who.id.clone(),
+            email: who.email.clone(),
+            role: crate::team::TeamRole::Owner,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    if let Some(d) = device {
+        t.devices.push(crate::team::TeamDevice {
+            account: who.id.clone(),
+            device: d,
+            state: "approved".into(),
+            decided_by: Some("auto".into()),
+            ..Default::default()
+        });
+    }
+    st.audit.push((
+        id.clone(),
+        serde_json::json!({"kind": "team_created", "actor": who.id}),
+    ));
+    st.teams.insert(id, t.clone());
+    (StatusCode::CREATED, Json(t)).into_response()
+}
+
+async fn team_get(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match st
+        .teams
+        .get(&id)
+        .filter(|t| t.members.iter().any(|m| m.account == who.id))
+    {
+        Some(t) => Json(team_for(t, &who)).into_response(),
+        None => err(StatusCode::NOT_FOUND, "no such team"),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn require_team_manager<'a>(
+    st: &'a mut State_,
+    id: &str,
+    who: &Identity,
+) -> Result<&'a mut crate::team::Team, Response> {
+    let t = st
+        .teams
+        .get_mut(id)
+        .filter(|t| t.members.iter().any(|m| m.account == who.id))
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+    let role = t
+        .members
+        .iter()
+        .find(|m| m.account == who.id)
+        .map(|m| m.role)
+        .unwrap_or_default();
+    if !role.manages() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "only the team's owner or an admin can do this",
+        ));
+    }
+    Ok(t)
+}
+
+async fn team_invite(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let url = st.public_url.clone();
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let role: crate::team::TeamRole =
+        serde_json::from_value(body["role"].clone()).unwrap_or_default();
+    let email = body["email"].as_str().map(str::to_lowercase);
+    let invite = crate::team::TeamInvite {
+        id: format!("inv_{:08x}", rand::random::<u32>()),
+        email: email.clone(),
+        role,
+        expires_at: now_secs() + 86_400,
+        uses_left: if email.is_some() { 1 } else { 25 },
+    };
+    t.invites.push(invite.clone());
+    let code = format!("{id}.{:016x}", rand::random::<u64>());
+    st.team_codes
+        .insert(code.clone(), (id.clone(), role, email));
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "invite_created", "actor": who.id}),
+    ));
+    (
+        StatusCode::CREATED,
+        Json(crate::team::NewTeamInvite {
+            invite,
+            link: format!("{url}/join/team/{code}"),
+            code,
+        }),
+    )
+        .into_response()
+}
+
+async fn team_join(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, device) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let code = body["code"].as_str().unwrap_or_default().to_string();
+    let Some((id, role, email)) = st.team_codes.get(&code).cloned() else {
+        return err(StatusCode::FORBIDDEN, "this invite is not valid");
+    };
+    if email.is_some() && email != who.email.as_ref().map(|e| e.to_lowercase()) {
+        return err(StatusCode::FORBIDDEN, "this invite is for another email");
+    }
+    let Some(t) = st.teams.get_mut(&id) else {
+        return err(StatusCode::NOT_FOUND, "no such team");
+    };
+    if !t.members.iter().any(|m| m.account == who.id) {
+        t.members.push(crate::team::TeamMember {
+            account: who.id.clone(),
+            email: who.email.clone(),
+            role,
+            ..Default::default()
+        });
+        if let Some(d) = &device {
+            t.devices.push(crate::team::TeamDevice {
+                account: who.id.clone(),
+                email: who.email.clone(),
+                device: d.clone(),
+                state: "pending".into(),
+                ..Default::default()
+            });
+        }
+    }
+    let mut view = team_for(t, &who);
+    view.this_device = device.map(|_| "pending".to_string());
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "member_joined", "actor": who.id}),
+    ));
+    Json(view).into_response()
+}
+
+async fn team_add_machine(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let machine = body["machine"].as_str().unwrap_or_default().to_string();
+    let Some(record) = st.machines.get(&machine).map(|r| r.machine.clone()) else {
+        return err(StatusCode::NOT_FOUND, "no such machine");
+    };
+    if record.owner.id != who.id {
+        return err(StatusCode::FORBIDDEN, "add a machine you own");
+    }
+    let macos = body["os"].as_str() == Some("macos")
+        || record.meta.get("cua.space.os").map(String::as_str) == Some("macos");
+    if macos {
+        return err(
+            StatusCode::FORBIDDEN,
+            "macOS Spaces (uVisor-backed or any other virtual macOS) cannot be shared with a team: macOS licensing allows one user per macOS copy",
+        );
+    }
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    if !t.machines.iter().any(|m| m.id == machine) {
+        t.machines.push(crate::team::TeamMachine {
+            id: machine.clone(),
+            name: record.name.clone(),
+            owner: who.email.clone().unwrap_or(who.id.clone()),
+            online: false,
+        });
+    }
+    let view = team_for(t, &who);
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "machine_added", "machine": machine}),
+    ));
+    Json(view).into_response()
+}
+
+async fn team_remove_machine(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path((id, machine)): Path<(String, String)>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let before = t.machines.len();
+    t.machines.retain(|m| m.id != machine);
+    if t.machines.len() == before {
+        return err(StatusCode::NOT_FOUND, "that machine is not in the team");
+    }
+    let view = team_for(t, &who);
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "machine_removed", "machine": machine}),
+    ));
+    Json(view).into_response()
+}
+
+async fn team_approve(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path((id, device)): Path<(String, String)>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let Some(d) = t.devices.iter_mut().find(|d| d.device == device) else {
+        return err(StatusCode::NOT_FOUND, "no request from that device");
+    };
+    d.state = "approved".into();
+    d.decided_by = who.email.clone();
+    let d = d.clone();
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "device_approved", "subject": device}),
+    ));
+    Json(d).into_response()
+}
+
+async fn team_audit(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if let Err(r) = require_team_manager(&mut st, &id, &who) {
+        return r;
+    }
+    let events: Vec<_> = st
+        .audit
+        .iter()
+        .filter(|(k, _)| k == &id)
+        .map(|(_, e)| {
+            let mut e = e.clone();
+            e["ts"] = now_secs().into();
+            e
+        })
+        .collect();
+    Json(serde_json::json!({ "events": events })).into_response()
 }

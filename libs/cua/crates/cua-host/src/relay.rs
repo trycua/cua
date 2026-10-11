@@ -181,6 +181,10 @@ pub struct Machine {
     /// never retroactively flagged "new".
     #[serde(default = "confirmed_default")]
     pub confirmed: bool,
+    /// The team the caller reaches this machine through (`team-…`), when
+    /// it is a team machine and not shared with the caller directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
 }
 
 fn confirmed_default() -> bool {
@@ -409,7 +413,7 @@ const REGISTER_RETRY_BASE: Duration = Duration::from_millis(5);
 #[derive(Clone, Debug)]
 pub struct RelayClient {
     base: String,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     device_session: Option<String>,
 }
 
@@ -446,11 +450,11 @@ impl RelayClient {
         format!("{}/m/{id}", self.base)
     }
 
-    fn url(&self, path: &str) -> String {
+    pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
 
-    async fn send<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn send<T: serde::de::DeserializeOwned>(
         &self,
         req: reqwest::RequestBuilder,
         bearer: &str,

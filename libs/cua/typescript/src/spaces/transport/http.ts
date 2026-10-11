@@ -78,22 +78,28 @@ export class McpHttpTransport implements Transport {
         ? undefined
         : setTimeout(() => controller.abort(), options.timeoutSeconds * 1000)
     const onAbort = () => controller.abort()
-    options.signal?.addEventListener("abort", onAbort, { once: true })
+    if (options.signal?.aborted) onAbort()
+    else options.signal?.addEventListener("abort", onAbort, { once: true })
     let response
+    let text
     try {
-      response = await this.doFetch(this.endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(message),
-        signal: controller.signal,
-      })
-    } catch (cause) {
-      throw new TransportError(`${message.method}: the daemon at ${this.endpoint} did not answer (${String(cause)})`)
+      try {
+        response = await this.doFetch(this.endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(message),
+          signal: controller.signal,
+        })
+      } catch (cause) {
+        throw new TransportError(`${message.method}: the daemon at ${this.endpoint} did not answer (${String(cause)})`)
+      }
+      // Receiving headers does not complete the reply: keep cancellation live
+      // until the body is consumed, and retain the body reader's error semantics.
+      text = await response.text()
     } finally {
       if (timer) clearTimeout(timer)
       options.signal?.removeEventListener("abort", onAbort)
     }
-    const text = await response.text()
     if (response.status === 404 && this.session) {
       // The daemon forgot the session (it restarted): make the next call
       // initialize again.

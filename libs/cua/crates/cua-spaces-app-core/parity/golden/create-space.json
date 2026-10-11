@@ -2175,7 +2175,7 @@
         "mode": "ambient",
         "names": [
           "10.0.0.5:3211",
-          "Demo"
+          "demo"
         ],
         "notice": null,
         "selectedId": "direct:10.0.0.5:3211"
@@ -2191,10 +2191,10 @@
         ],
         "mode": "ambient",
         "names": [
-          "Demo",
+          "demo",
           "10.0.0.5:3211"
         ],
-        "notice": "Switching to Demo",
+        "notice": "Switching to demo",
         "selectedId": "local:demo"
       },
       "roster": "select"
@@ -2208,10 +2208,10 @@
         ],
         "mode": "switcher",
         "names": [
-          "Demo",
+          "demo",
           "10.0.0.5:3211"
         ],
-        "notice": "Switching to Demo",
+        "notice": "Switching to demo",
         "selectedId": "local:demo"
       },
       "roster": "expand"
@@ -2225,10 +2225,10 @@
         ],
         "mode": "switcher",
         "names": [
-          "Demo",
+          "demo",
           "10.0.0.5:3211"
         ],
-        "notice": "Switching to Demo",
+        "notice": "Switching to demo",
         "selectedId": "local:demo"
       },
       "roster": "focus-move"
@@ -2242,10 +2242,10 @@
         ],
         "mode": "switcher",
         "names": [
-          "Demo",
+          "demo",
           "10.0.0.5:3211"
         ],
-        "notice": "Switching to Demo",
+        "notice": "Switching to demo",
         "selectedId": "local:demo"
       },
       "roster": "focus-move"
@@ -2259,10 +2259,10 @@
         ],
         "mode": "ambient",
         "names": [
-          "Demo",
+          "demo",
           "10.0.0.5:3211"
         ],
-        "notice": "Switching to Demo",
+        "notice": "Switching to demo",
         "selectedId": "local:demo"
       },
       "roster": "collapse"
@@ -2271,7 +2271,7 @@
       "frame": {
         "emptyText": null,
         "sections": [
-          "This Mac: Demo (selected)",
+          "This Mac: demo (selected)",
           "Connected: 10.0.0.5:3211 (dim)"
         ],
         "selectedId": "local:demo",
@@ -2283,7 +2283,7 @@
       "frame": {
         "emptyText": null,
         "sections": [
-          "This Mac: Demo (selected)"
+          "This Mac: demo (selected)"
         ],
         "selectedId": "local:demo",
         "thisMachine": null
@@ -2302,7 +2302,7 @@
         ],
         "previewText": "Loading the desktop…",
         "showSections": true,
-        "title": "Demo"
+        "title": "demo"
       }
     },
     {

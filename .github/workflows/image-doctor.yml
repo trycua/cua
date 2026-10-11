@@ -35,8 +35,8 @@ name: "Image doctor"
 # vars.CUA_ARM64_KVM_RUNNER (a self-hosted Graviton metal label).
 #
 # Tiers: callers gate each tier on its own by calling this once per tier
-# (cd-image-linux.yml doctor-post: name linux-slim-post / linux-full-post;
-# nightly-image-doctor.yml runs 24.04 and 24.04-slim). The doctor enforces
+# (cd-image-linux.yml doctor-post: name linux-slim-post / linux-full-post).
+# The doctor enforces
 # each tier's own claims (/etc/cua-image/manifest.json `tier`, `apps`,
 # `tools`).
 #

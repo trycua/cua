@@ -18,6 +18,9 @@ public protocol CloudToolRunning: AnyObject, Sendable {
     func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any
 }
 
+/// A tool's JSON answer, handed across `withTimeout`.
+private struct CloudStatusAnswer: @unchecked Sendable { let value: Any }
+
 extension LiveSpacesBackend: CloudToolRunning {
     public func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
         try await agentsTool(tool, args)
@@ -96,10 +99,18 @@ public final class CloudModel {
     public var view: AppCloudConnectView { appCloudConnectView(input: input, state: state) }
 
     /// Reads `cloud_status` again (a missing daemon or tool leaves none).
+    /// Bounded, as New Space waits for it: a daemon that does not answer in
+    /// time leaves what was read before.
     public func refresh() async {
         guard let tools else { return }
-        status = try? await tools.cloudTool("cloud_status", [:])
+        switch await withTimeout(seconds: Self.refreshSeconds, { CloudStatusAnswer(value: try await tools.cloudTool("cloud_status", [:])) }) {
+        case .success(let answer): status = answer.value
+        case .failure(let error): if !(error is TimeoutError) { status = nil }
+        }
     }
+
+    /// How long `refresh` waits for `cloud_status`.
+    static let refreshSeconds: Double = 10
 
     /// Opens the sheet on a fresh state.
     public func open() {

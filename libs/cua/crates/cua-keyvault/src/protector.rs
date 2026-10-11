@@ -12,10 +12,15 @@
 //! |-----------|----------------|------------|
 //! | `macos-keychain` | a random 256-bit key in a macOS keychain item whose ACL trusts only the Cua binary that created it | yes, while the user is logged in |
 //! | `windows-credential` | Windows Credential Manager (DPAPI, user scope) | yes |
+//! | `linux-secret-service` | the desktop's Secret Service (GNOME Keyring, KWallet), in the login collection | yes, while the keyring is unlocked |
 //! | `passphrase` | Argon2id over the user's passphrase | no |
 //! | `recovery` | a 160-bit random recovery key shown once | no |
 //!
-//! Linux has no OS protector yet: [`os_protector`] returns a typed
+//! None of the OS protectors is what keeps a stranger out: they keep the
+//! vault key off the disk, and the broker's checks on who asks and the user
+//! presence prompt (Touch ID, Windows Hello, the desktop's password prompt)
+//! decide what moves. On a platform with no OS key store (a Linux desktop
+//! without a Secret Service) [`os_protector`] returns a typed
 //! [`Error::Unsupported`] and the vault needs a passphrase.
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +37,8 @@ pub enum ProtectorKind {
     MacosKeychain,
     /// A KEK in Windows Credential Manager.
     WindowsCredential,
+    /// A KEK in the desktop's Secret Service (the login keyring).
+    LinuxSecretService,
     /// Argon2id over a passphrase.
     Passphrase,
     /// A random recovery key shown to the user once.
@@ -44,7 +51,9 @@ impl ProtectorKind {
     pub fn unattended(self) -> bool {
         matches!(
             self,
-            ProtectorKind::MacosKeychain | ProtectorKind::WindowsCredential
+            ProtectorKind::MacosKeychain
+                | ProtectorKind::WindowsCredential
+                | ProtectorKind::LinuxSecretService
         )
     }
 }
@@ -63,7 +72,8 @@ pub struct ProtectorRecord {
     /// Argon2id parameters (`passphrase`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kdf: Option<KdfParams>,
-    /// Keychain service name (`macos-keychain`, `windows-credential`).
+    /// Keychain service name (`macos-keychain`, `windows-credential`,
+    /// `linux-secret-service`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
     /// Keychain account name.
@@ -330,7 +340,7 @@ pub fn require_signed_os_protector(signing: &crate::caller::Signing) -> Result<(
     }
 }
 
-/// The keychain item service the macOS and Windows protectors use.
+/// The keychain item service the OS protectors use.
 pub const OS_SECRET_SERVICE: &str = "Cua Keyvault";
 
 /// The OS protector for this platform, or a typed [`Error::Unsupported`].
@@ -348,14 +358,163 @@ pub fn os_protector(keychain_path: Option<std::path::PathBuf>) -> Result<Box<dyn
         let _ = keychain_path;
         Ok(Box::new(windows::CredentialProtector))
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = keychain_path;
+        Ok(Box::new(linux::SecretServiceProtector))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = keychain_path;
         Err(Error::Unsupported(
-            "no OS-bound key protector on this platform yet (Secret Service and TPM2 are planned); \
+            "no OS-bound key protector on this platform; \
              create the vault with a passphrase: `cua keyvault init --passphrase`"
                 .into(),
         ))
+    }
+}
+
+/// Whether the desktop's Secret Service is there to hold the vault key, or
+/// why not (the broker offers the OS protector only when it is).
+#[cfg(target_os = "linux")]
+pub fn secret_service_available() -> std::result::Result<(), String> {
+    linux::available()
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::collections::HashMap;
+
+    use secret_service::EncryptionType;
+    use secret_service::blocking::SecretService;
+
+    use super::*;
+
+    /// The desktop's Secret Service (org.freedesktop.secrets: GNOME Keyring,
+    /// KWallet) holds the KEK as a secret in the login collection, which the
+    /// session unlocks at login. Unlike a macOS keychain item it has no
+    /// per-application ACL: any program of the same user on the session bus
+    /// can read it, so the vault key is off the disk but not guarded from the
+    /// user's other programs. What guards the vault is the broker's check on
+    /// who asks and the polkit prompt before access widens.
+    pub struct SecretServiceProtector;
+
+    const LABEL: &str = "Cua Keyvault";
+    const CONTENT_TYPE: &str = "application/octet-stream";
+
+    fn attributes(account: &str) -> HashMap<&str, &str> {
+        HashMap::from([("service", OS_SECRET_SERVICE), ("account", account)])
+    }
+
+    fn os(what: &str, e: impl std::fmt::Display) -> Error {
+        Error::Os(format!("{what}: {e}"))
+    }
+
+    /// Whether the session bus has a Secret Service to hold the key (it is
+    /// connected to, nothing is read or written), or why not.
+    pub fn available() -> std::result::Result<(), String> {
+        apart(|| {
+            SecretService::connect(EncryptionType::Dh)
+                .map(|_| ())
+                .map_err(|e| os("connect to the Secret Service", e))
+        })
+        .map_err(|e| format!("this desktop has no Secret Service to keep the vault key in ({e})"))
+    }
+
+    /// Runs `f` on a thread of its own: the Secret Service client blocks on the
+    /// session bus (and on the keyring's own unlock prompt), and the broker
+    /// calls a protector from async code.
+    fn apart<T: Send>(f: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+        if crate::host_effects_forbidden() {
+            return Err(Error::HostEffectsRefused(
+                "the desktop keyring is never used in tests".into(),
+            ));
+        }
+        std::thread::scope(|s| {
+            s.spawn(f)
+                .join()
+                .unwrap_or_else(|_| Err(Error::Os("the Secret Service client panicked".into())))
+        })
+    }
+
+    fn store(account: &str, kek: &[u8]) -> Result<()> {
+        let ss = SecretService::connect(EncryptionType::Dh)
+            .map_err(|e| os("connect to the Secret Service", e))?;
+        let collection = ss
+            .get_default_collection()
+            .map_err(|e| os("open the login keyring", e))?;
+        collection
+            .unlock()
+            .map_err(|e| os("unlock the login keyring", e))?;
+        collection
+            .create_item(LABEL, attributes(account), kek, true, CONTENT_TYPE)
+            .map_err(|e| os("store the vault key in the keyring", e))?;
+        Ok(())
+    }
+
+    fn load(account: &str) -> Result<Zeroizing<Vec<u8>>> {
+        let ss = SecretService::connect(EncryptionType::Dh)
+            .map_err(|e| os("connect to the Secret Service", e))?;
+        let found = ss
+            .search_items(attributes(account))
+            .map_err(|e| os("search the keyring", e))?;
+        let item = found
+            .unlocked
+            .into_iter()
+            .next()
+            .or_else(|| found.locked.into_iter().next())
+            .ok_or_else(|| Error::Os("the vault key is not in the keyring".into()))?;
+        item.unlock()
+            .map_err(|e| os("unlock the keyring item", e))?;
+        item.get_secret()
+            .map(Zeroizing::new)
+            .map_err(|e| os("read the vault key from the keyring", e))
+    }
+
+    fn delete(account: &str) -> Result<()> {
+        let ss = SecretService::connect(EncryptionType::Dh)
+            .map_err(|e| os("connect to the Secret Service", e))?;
+        let found = ss
+            .search_items(attributes(account))
+            .map_err(|e| os("search the keyring", e))?;
+        for item in found.unlocked.into_iter().chain(found.locked) {
+            let _ = item.delete();
+        }
+        Ok(())
+    }
+
+    impl Protector for SecretServiceProtector {
+        fn kind(&self) -> ProtectorKind {
+            ProtectorKind::LinuxSecretService
+        }
+
+        fn enroll(&self, vault_id: &str, vmk: &SecretKey) -> Result<ProtectorRecord> {
+            let kek = SecretKey::generate()?;
+            apart(|| store(vault_id, kek.expose()))?;
+            let mut rec = wrap_for(
+                ProtectorKind::LinuxSecretService,
+                "Desktop keyring",
+                vault_id,
+                &kek,
+                vmk,
+            )?;
+            rec.service = Some(OS_SECRET_SERVICE.into());
+            rec.account = Some(vault_id.into());
+            Ok(rec)
+        }
+
+        fn unwrap(&self, vault_id: &str, record: &ProtectorRecord) -> Result<SecretKey> {
+            let account = record.account.as_deref().unwrap_or(vault_id);
+            let raw = apart(|| load(account))?;
+            unwrap_for(&SecretKey::from_bytes(&raw)?, vault_id, record)
+        }
+
+        fn remove(&self, record: &ProtectorRecord) -> Result<()> {
+            if let Some(account) = record.account.as_deref() {
+                apart(|| delete(account))?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -454,10 +613,41 @@ mod tests {
         assert!(other.unwrap("vault-a", &rec).is_err());
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     #[test]
-    fn linux_has_a_typed_unsupported_os_protector() {
+    fn other_systems_have_a_typed_unsupported_os_protector() {
         assert!(matches!(os_protector(None), Err(Error::Unsupported(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_desktop_keyring_is_never_used_in_tests() {
+        // Enrolling would write the vault key into the real login keyring.
+        let vmk = SecretKey::generate().unwrap();
+        let p = os_protector(None).unwrap();
+        assert_eq!(p.kind(), ProtectorKind::LinuxSecretService);
+        assert!(matches!(
+            p.enroll("vault-a", &vmk),
+            Err(Error::HostEffectsRefused(_))
+        ));
+    }
+
+    #[test]
+    fn every_os_protector_is_unattended_and_the_secrets_are_not() {
+        for k in [
+            ProtectorKind::MacosKeychain,
+            ProtectorKind::WindowsCredential,
+            ProtectorKind::LinuxSecretService,
+        ] {
+            assert!(k.unattended(), "{k:?}");
+        }
+        assert!(!ProtectorKind::Passphrase.unattended() && !ProtectorKind::Recovery.unattended());
+        let wire = serde_json::to_string(&ProtectorKind::LinuxSecretService).unwrap();
+        assert_eq!(wire, "\"linux-secret-service\"");
+        assert_eq!(
+            serde_json::from_str::<ProtectorKind>(&wire).unwrap(),
+            ProtectorKind::LinuxSecretService
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ import CuaSDK
 import CuaSpacesFFI
 import SwiftUI
 
-/// The Settings window: General (the core's settings page), Devices,
+/// The Settings window: General (the core's settings page), Agents (provider keys), Devices,
 /// Experiments and About (with the updater).
 struct SettingsScene: View {
     @Bindable var model: AppModel
@@ -15,6 +15,9 @@ struct SettingsScene: View {
             SettingsView(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
+            AgentKeysSettingsView(keys: model.agentKeys)
+                .tabItem { Label("Agents", systemImage: "key") }
+                .tag(SettingsTab.agents)
             DevicesSettingsView(devices: model.devices)
                 .tabItem { Label(model.devices.view.labels.title, systemImage: "laptopcomputer.and.iphone") }
                 .tag(SettingsTab.devices)

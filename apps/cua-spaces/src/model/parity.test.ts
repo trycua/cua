@@ -242,11 +242,13 @@ describe('app core parity flows (webview)', () => {
       'drive-storage',
       'notifications',
       'about',
+      'agent-keys',
       'your-cloud',
       'telemetry-funnel',
       'launch-at-login',
       'experiments',
       'placement-picker',
+      'machines',
     ]);
   });
 

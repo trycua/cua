@@ -73,6 +73,70 @@ run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Supp
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
 
+## New UI (preview)
+
+Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) adds
+File, "Open New UI (preview)" (⇧⌘U) and a "New UI" toolbar button. They open
+`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`): a `WKWebView`
+with the shared React UI (`apps/cua-spaces-web`) in a window without a title
+bar. The notch, the menu bar extra, Touch ID, the updater and video stay
+native; a Space's desktop opens in its native window.
+
+- Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
+  or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at
+  `cua-spaces://app/`. Without it the window shows how to add it.
+- Debug: `CUA_WEBUI_DEV=1` loads the dev server at `http://localhost:5174`
+  (release builds ignore it). `CUA_SPACES_START_VIEW=webui` opens the window at launch.
+  `CUA_SPACES_WEBUI_CAPTURE=<dir>` (debug) saves each route, light and dark,
+  from `WKWebView.takeSnapshot` with a `report.json` of the bridge mode per page, then
+  quits ([docs/webui/](docs/webui/)). Window captures from outside the app miss
+  the web content, which draws in another process.
+- The page gets `--titlebar-left-inset` (about 78px; 0 in full screen),
+  `--titlebar-height` and `window.cuaHost` at document start. The window shows
+  after the first page loads, over the theme's background (the page can set
+  it with `window.setBackgroundColor`).
+
+The bridge is the `cua` script message handler (`WebUIBridge.swift`):
+`window.webkit.messageHandlers.cua.postMessage({id, method, args})` resolves
+with `{id, ok: true, result}` or `{id, ok: false, error: {code, message}}`
+(`code`: `unimplemented`, `bad_args`, `not_found`, `cancelled`,
+`native_only`, `forbidden`, `unsupported`, `failed`). `app.info` lists the
+methods. Native events arrive as `cua:event` window events (`spaces.changed`,
+`machines.changed`, `keyvault.changed`, `session.changed`, `settings.changed`,
+`agents.changed`, `spaces.createProgress`, `spaces.newRequested`,
+`settings.openRequested`). Results are the
+core's records as the SwiftUI views get them (camelCase fields; enums as the
+case name, or `{type, ...}` with a payload). `keyvault.get` also carries the
+broker's redacted `overview` (items without `blob`) for the web vault list.
+`spaces.cancelCreate`, `host.status`, `keyvault.approve`, `keyvault.deny`,
+`keyvault.revokeGrant` and the seven `agents.*` methods use the web bridge's
+operation names and arguments,
+the same as the Electron router's channels
+(`apps/cua-spaces-web/src/bridge/coverage.ts` lists every operation per host).
+The web side of this contract is `apps/cua-spaces-web/src/bridge/webkit-protocol.ts`
+and `adapters/webkit.ts`. The `agents.*` methods answer from `PersistentModel`
+(persistent agents, pause and resume), `AgentRunsModel` (a Space's runs), the
+daemon's `agent_events` tool and the Settings "AI agents" rows; without the
+daemon they fail with `unsupported`. `machines.list` carries `host` (the
+`host.status` record) for the "This machine" panel, and `settings.get` carries
+`updateChannel` (null with no updater), set with
+`settings.choose {row: "update-channel"}`. The other pages (New Space's
+address form and clouds, Teleport and Share, Cua Volume, Settings,
+Notifications, usage events, a Space's detail and This machine) are routed
+under the web bridge's operation names in `WebUIBridge+Pages.swift`, each to
+the view model or service its native screen uses. New Space runs in the
+page: `spaces.createOptions` is the env the native sheet opens with
+(`AppModel.newSpaceEnv`) and `spaces.create` runs its create
+(`AppModel.runCreate`). While the `web_ui` experiment is on, every New Space
+item (⌘N, the menu bar, the toolbar, a machine's "New Space on…") opens the
+New UI window's wizard (`spaces.newRequested`); the native sheet is the
+fallback when it is off. The app menu's Settings command (⌘,) opens the New UI's
+Settings (`settings.openRequested`) while its window is the key window (or, with no key
+window, the frontmost one), even when its web view has no focus; with any other window
+in front it opens the native Settings scene (`WebUIWindowController.openSettings`).
+Keyvault unlocks use the native
+prompt and the daemon's Touch ID; a passphrase never crosses the bridge.
+
 ## Keyvault identity
 
 The broker checks the calling process's code signature. Production policy
@@ -101,6 +165,89 @@ team `YCK386LBJ7`, identifier in `CUA_IDENTIFIERS`, hardened runtime.
   offers a passphrase (twice at setup) instead of Touch ID. Add a debug
   `cua` to the `dev-keyvault.sh` arguments to use `cua keyvault` as well.
   Release daemons and release libraries ignore both variables.
+
+## Keychain
+
+The saved sign-in (`cua auth login`, shared by the app, its `cua` daemon
+and the `cua` CLI) is a generic password in the login keychain: service
+`run.cua.ai`, account `cua-cli`, plus `cua-cli.<name>` for named secrets
+such as the device key (`cua-auth`). Only Cua-signed builds use the
+keychain; ad hoc and unsigned builds keep it in `~/.cua/credentials.json`.
+
+**The launch never waits on it.** The window (or New UI's) opens first,
+on stand-ins for the live services (`Models/AppStartup.swift`). Then, off
+the main thread:
+
+1. The bundled `cua auth keychain` reads every Cua item with keychain
+   prompts turned off (`SecKeychainSetUserInteractionAllowed(false)`,
+   process-wide, which is why it runs in a `cua` of its own). Readable,
+   none, or a file store: go on.
+2. Not readable without a prompt: the window says "Allow Keychain access".
+   Nothing asks until the user clicks Allow access, which runs
+   `cua auth keychain --prompt`. While macOS shows its prompt, the window
+   says "Waiting for Keychain access…" and, after 25 s, offers Try again
+   (which stops the open prompt and asks again) and Sign in again
+   (`--forget`, after a confirmation: removes the saved sign-in without
+   reading it, and any other Cua item this build cannot read). A launch at
+   login shows the same state when the window is opened; it never prompts
+   on its own.
+   Whatever the prompt step ends with (allowed, closed, killed, failed), a
+   fresh check without a prompt decides: still not readable goes back to
+   "Allow Keychain access" with "macOS didn't give access. Click Allow
+   access to ask again." Try again stops the open check (SIGTERM, then
+   SIGKILL after 2 s) before it asks again. Once waiting 25 s, a prompt that
+   is no longer on screen (no SecurityAgent window wider than 100 pt) is
+   reported: "The macOS password prompt was closed or is hidden."
+3. Then "Starting Cua…": `cua daemon start` (up to 30 s, plus a retry) and
+   the SDK, which hand their services to the stand-ins. After 75 s it says
+   what is stuck: "Cua is waiting for Keychain access" (back to Allow
+   access) or "Cua's background service didn't start", whose Try again
+   restarts the daemon (stop, then kill this bundle's daemon still starting
+   or not answering) and starts again.
+
+**No other read may prompt.** The app sets `CUA_KEYCHAIN_NONINTERACTIVE=1`
+for itself and the daemon it starts (cua-auth turns keychain prompts off
+around each of its keychain calls then): a read that would need a prompt
+fails at once as "needs access", so the in-process SDK and the daemon start
+signed out instead of hanging, and the window asks. Only the clicked
+`cua auth keychain --prompt` runs without it. A `cua` run from a terminal
+stays interactive.
+
+New UI shows the same states and words through the bridge (`startup.get`,
+`startup.act`, `startup.changed`; `WebHost/WebUIBridge+Startup.swift` and
+`apps/cua-spaces-web/src/bridge/ops/startup.ts`). Fixture runs show each
+state with `CUA_SPACES_STARTUP=needs-keychain|needs-keychain-locked|waiting|denied|starting`.
+
+**Why other Cua builds don't ask again.** The item uses the legacy
+(file-based) keychain's access list, not the data protection keychain.
+Each trusted application entry records that executable's designated
+requirement, and a Developer ID build's is its identifier plus the team
+(`identifier "com.trycua.spaces.macos" and anchor apple generic and ...
+certificate leaf[subject.OU] = YCK386LBJ7`; `cua` is `com.trycua.cua`),
+which every later dev, RC or release build meets. A Cua-signed writer also
+gets the partition `teamid:YCK386LBJ7`, which every Cua build has. A writer
+lists itself, the other executables of its bundle (`Contents/MacOS/*`) and,
+for a `cua` outside a bundle, those of `/Applications/Cua Spaces.app`.
+`scripts/build-release.sh` signs every executable with the one identity and
+a fixed identifier, and fails when a designated requirement is a cdhash or
+lacks the identifier and team.
+
+The data protection keychain with a `keychain-access-groups` entitlement
+(`YCK386LBJ7.com.trycua.cua`) was rejected: a Developer ID app needs a
+provisioning profile for that entitlement, and the standalone `cua` CLI (a
+bare executable, also used over SSH) can't carry one, so the CLI and the
+app could no longer share the session.
+
+**Moving from an ad hoc build's item.** An ad hoc build's entries are its
+cdhash, and an item written before the Cua access list (no comment) trusts
+only its creator. Items carry a comment: `cua-acl/v3` from a Cua-signed
+writer, `cua-acl/v2` from an unsigned one. A Cua-signed process recreates
+(deletes and writes again, with the Cua list) every item it has just read
+that is not `v3`, and every item it writes. So the first Developer ID
+build to read an older item asks once, from the visible "Allow Keychain
+access" state, and no Cua build asks after that. If the item cannot be
+deleted it is left as is; a failed rewrite falls back to the default list,
+so the sign-in is never lost.
 
 ## Which app is primary
 
@@ -218,6 +365,11 @@ one on its own: land it with the app change that uses it.
    reuse a bundle version; `CFBundleVersion` carries the run number).
 6. Rotating the key: ship a release signed by the old key whose Info.plist
    has the new `SUPublicEDKey` first, then switch the secret.
+7. The move to the Electron app (off): for one release,
+   `make-appcast.sh --electron` makes the item the Electron app's disk image
+   (same bundle id, team and key; the workflow does it when the
+   `CUA_SPACES_SPARKLE_ELECTRON_VERSION` variable names that version). See
+   `apps/cua-spaces-desktop/docs/sparkle-cutover.md`.
 
 An ad hoc build has the release layout and flags but no team, so it is never
 first party to the Keyvault and cannot be notarized.

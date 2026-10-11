@@ -409,7 +409,8 @@
       "bump-minor-pre-major": true,
       "version-file": "VERSION",
       "additional-paths": [
-        "libs/cua"
+        "libs/cua",
+        "apps/cua-spaces-web"
       ],
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
@@ -417,6 +418,11 @@
           "type": "xml",
           "path": "Support/Info.plist",
           "xpath": "//dict/key[text()='CFBundleShortVersionString']/following-sibling::string[1]"
+        },
+        {
+          "type": "json",
+          "path": "/apps/cua-spaces-desktop/package.json",
+          "jsonpath": "$.version"
         },
         {
           "type": "json",

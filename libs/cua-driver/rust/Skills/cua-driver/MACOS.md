@@ -109,6 +109,7 @@ is safe even for apps that normally foreground on media-load
 | Enumerate an app's windows            | `list_windows({pid})`: or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
 | Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
+| Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
 | Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
@@ -287,14 +288,24 @@ permission prompt the agent loop shouldn't be burning on app launch.
 
 The pixel click is routed through SkyLight's per-pid event path
 (`SLEventPostToPid`), not the system HID stream. The dispatch recipe
-is the backgrounded "noraise" sequence: focus-without-raise
-SLPS event records followed by an off-screen user-activation primer
-and the real click. The target app becomes AppKit-active for event
-routing but its window does **not** rise to the front of the
-z-stack, and macOS's "switch to Space with windows for app" follow
-is suppressed. Full mechanics in
-`Sources/CuaDriverCore/Input/MouseInput.swift` (`clickViaAuthSignedPost`)
-and the companion `FocusWithoutRaise.swift`.
+is the backgrounded "noraise" sequence: a focus-without-raise
+SLPS event record to the target window, followed by an off-screen
+user-activation primer and the real click. The target window becomes
+AppKit-key for event routing, but it does **not** rise to the front of
+the z-stack, macOS's "switch to Space with windows for app" follow is
+suppressed, and the user's front window keeps key status, so their
+typing keeps landing there.
+
+### Menus opened in the background keep the user's keyboard
+
+A popup button, a `<select>`, or a context menu opened in a background
+app takes key focus from the user's front window for as long as the menu
+is open (AppKit's menu tracking steals it). While a background action
+runs, Cua Driver watches for that and hands key focus straight back, so
+the user's window never loses it. The menu stays open and its items are
+chosen with `click` on the `AXMenuItem` (or in one call with
+`set_value` on the popup). Keyboard navigation of such a menu with
+`press_key` is not the route; pick the item by element.
 
 ### `delivery_mode` on the pointer family (macOS)
 

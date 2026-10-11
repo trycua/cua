@@ -88,26 +88,17 @@ pub fn scene_for_os(os: SpaceOs) -> ThumbnailScene {
     }
 }
 
-/// "brave-otter" to "Brave Otter"; a `host:port` stays as it is.
+/// The name as the user typed it, trimmed: "qa-gui-linux-local" stays
+/// "qa-gui-linux-local", so it matches what they typed and what `cua spaces
+/// ls` prints. (It used to title-case dashed names, which made a typed name
+/// unrecognisable.)
 pub fn display_name(name: &str) -> String {
-    let words: Vec<&str> = name.split(['-', '_']).filter(|w| !w.is_empty()).collect();
-    if words.is_empty() {
-        return name.to_string();
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        name.to_string()
+    } else {
+        trimmed.to_string()
     }
-    if words.len() == 1 && (name.contains('.') || name.contains(':')) {
-        return name.to_string();
-    }
-    words
-        .iter()
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                Some(first) => first.to_uppercase().chain(c).collect(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<String>>()
-        .join(" ")
 }
 
 fn is_container_hostname(name: &str) -> bool {
@@ -295,12 +286,20 @@ fn power_of_row(row: &SpaceRow) -> Option<SpacePower> {
     })
 }
 
-/// "Suspended" or "Off": what an off Space is called, by how it turned
-/// off.
-pub fn off_label(control: PowerControl) -> &'static str {
+/// What an off Space is called: "Stopped", however it turned off, so the
+/// header, the Details and every host say one word. How it is off
+/// (suspended in memory, or shut down) is [`off_hint`].
+pub fn off_label(_control: PowerControl) -> &'static str {
+    "Stopped"
+}
+
+/// How a stopped Space is off, for the Status fact's tooltip.
+pub fn off_hint(control: PowerControl) -> &'static str {
     match control {
-        PowerControl::Suspend => "Suspended",
-        PowerControl::Stop => "Off",
+        PowerControl::Suspend => {
+            "Suspended in memory: it picks up where it left off when you start it."
+        }
+        PowerControl::Stop => "Shut down: its disk is kept, anything unsaved was lost.",
     }
 }
 
@@ -449,6 +448,14 @@ mod tests {
     }
 
     #[test]
+    fn a_typed_name_keeps_its_dashes() {
+        assert_eq!(display_name("brave-otter"), "brave-otter");
+        assert_eq!(display_name("  qa-gui-linux-local "), "qa-gui-linux-local");
+        assert_eq!(display_name("gamma-4 Mac Studio"), "gamma-4 Mac Studio");
+        assert_eq!(display_name("studio.local:7400"), "studio.local:7400");
+    }
+
+    #[test]
     fn unknown_os_stays_neutral_across_the_roster_and_details() {
         let space = row_to_space(
             &SpaceRow {
@@ -503,7 +510,7 @@ mod tests {
     #[test]
     fn maps_a_reachable_cloud_row() {
         let s = row_to_space(&row(), 1_000);
-        assert_eq!(s.name, "Brave Otter");
+        assert_eq!(s.name, "brave-otter");
         assert_eq!(s.status, SpaceStatus::Running);
         assert_eq!(s.fleet_id.as_deref(), Some("cua-spaces-abc"));
         assert_eq!(s.detail, "cua-spaces-abc");
@@ -552,7 +559,7 @@ mod tests {
             },
             0,
         );
-        assert_eq!(hex.name, "Demo Box");
+        assert_eq!(hex.name, "demo-box");
         assert_eq!(hex.detail, "This Mac");
     }
 

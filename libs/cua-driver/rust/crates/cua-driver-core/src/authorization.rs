@@ -892,7 +892,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
-        | "run_actions"
+        | "run_steps"
         | "run_script"
         | "invoke_menu"
         | "launch_app"
@@ -1130,6 +1130,7 @@ pub fn authorize_tool_call_with_context(
     args: &Value,
     context: &crate::session_authorization::EffectiveAuthorizationContext,
 ) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
+    let tool = crate::tool::renamed_tool(tool).unwrap_or(tool);
     enforce_hard_invariants(tool, args)?;
     if context.is_expired() {
         return Err(crate::policy::AuthorizationError::Denied(

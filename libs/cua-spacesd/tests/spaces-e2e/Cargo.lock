@@ -1943,6 +1943,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "core-foundation 0.10.1",
  "cua-home",
  "keyring 3.6.3",
  "rand 0.9.5",
@@ -1954,6 +1955,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
  "url",
 ]
 
@@ -2267,6 +2269,7 @@ dependencies = [
  "keyring 3.6.3",
  "libc",
  "ring",
+ "secret-service",
  "security-framework 3.7.0",
  "security-framework-sys",
  "serde",
@@ -2275,6 +2278,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
@@ -2450,6 +2454,7 @@ dependencies = [
  "bytes",
  "chrono",
  "cua-agents",
+ "cua-auth",
  "cua-fleet",
  "cua-home",
  "cua-host",
@@ -2737,6 +2742,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "windows 0.58.0",
  "zeroize",
 ]
 

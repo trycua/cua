@@ -42,6 +42,10 @@ public final class LiveStreamSession: ObservableObject {
     @Published public private(set) var windows: [StreamWindow] = []
     @Published public private(set) var source: StreamSource = .desktop
     @Published public private(set) var title: String = ""
+    /// True while a stream that dropped opens again by itself (its Space or
+    /// the local `cua daemon` went away), until its first frame. The status
+    /// says `.connecting` meanwhile, never `.failed`, unless every try fails.
+    @Published public private(set) var isReconnecting = false
     /// True while the PiP window holds this session.
     @Published public var isPoppedOut = false
 
@@ -91,6 +95,10 @@ public final class LiveStreamSession: ObservableObject {
     /// it does on the desktop stream. Reset by a source switch or a stop.
     @Published public private(set) var activatesOnInput = false
     @Published public private(set) var lastFrameDimensions: CGSize = .zero
+    /// When the newest frame arrived from the SDK (`ProcessInfo.systemUptime`,
+    /// s; 0 before the first): the video bench times arrival to presented.
+    /// Not published: it changes every frame and no view draws it.
+    public private(set) var lastFrameReceivedAt: TimeInterval = 0
 
     // MARK: - Internals
 
@@ -123,6 +131,16 @@ public final class LiveStreamSession: ObservableObject {
     /// The open in flight, so a second `start()` joins it instead of opening
     /// a second transport on the same Space.
     private var opening: Task<Void, Never>?
+    /// The reopen of a stream that dropped, while it runs.
+    private var reconnecting: Task<Void, Never>?
+    /// Why the last open failed, while reconnecting (the status stays
+    /// `.connecting` between tries).
+    private var lastOpenFailure: String?
+    /// The wait before each reopen of a stream that dropped; after the last
+    /// try fails, the stream fails (Try again). About half a minute in all:
+    /// the app's supervisor starts a daemon that died again within seconds.
+    var reconnectDelays: [Duration] = [.milliseconds(500), .seconds(1), .seconds(2),
+                                       .seconds(4), .seconds(8), .seconds(15)]
 
     /// Whether this session's frames are actually on screen, and how many of
     /// them have been presented rather than merely decoded.
@@ -161,6 +179,7 @@ public final class LiveStreamSession: ObservableObject {
     /// Switch sources without disturbing anything the new source does not need.
     public func select(_ newSource: StreamSource) async {
         guard newSource != source || status == .idle else { return }
+        cancelReconnect()
         await teardownTransport()
         if newSource != source { activatesOnInput = false }
         source = newSource
@@ -171,6 +190,8 @@ public final class LiveStreamSession: ObservableObject {
     /// Opens the current source. A start while one is in flight joins it;
     /// a start while streaming does nothing.
     public func start() async {
+        // A stream that dropped is already opening again.
+        if reconnecting != nil { return }
         if let opening {
             await opening.value
             return
@@ -181,6 +202,7 @@ public final class LiveStreamSession: ObservableObject {
     }
 
     public func stop() async {
+        cancelReconnect()
         await teardownTransport()
         activatesOnInput = false
         status = .idle
@@ -204,6 +226,52 @@ public final class LiveStreamSession: ObservableObject {
         opening = task
         await task.value
         if self.generation == generation { opening = nil }
+    }
+
+    /// The stream dropped while it was up: open it again, backing off, with
+    /// `isReconnecting` set and the status `.connecting`; `.failed` only
+    /// when every try fails.
+    private func transportLost(_ why: String) {
+        guard reconnecting == nil else { return }
+        guard !reconnectDelays.isEmpty else {
+            status = .failed(why)
+            return
+        }
+        isReconnecting = true
+        status = .connecting
+        frame = nil
+        reconnecting = Task { @MainActor [weak self] in
+            await self?.reconnect(after: why)
+        }
+    }
+
+    private func reconnect(after lost: String) async {
+        var why = lost
+        for delay in reconnectDelays {
+            await teardownTransport()
+            status = .connecting
+            try? await Task.sleep(for: delay)
+            if Task.isCancelled { return }
+            lastOpenFailure = nil
+            await begin()
+            if Task.isCancelled { return }
+            if media != nil, status == .streaming {
+                // Open again; `isReconnecting` lasts until its first frame.
+                reconnecting = nil
+                return
+            }
+            why = lastOpenFailure ?? why
+        }
+        reconnecting = nil
+        isReconnecting = false
+        status = .failed(why)
+    }
+
+    private func cancelReconnect() {
+        reconnecting?.cancel()
+        reconnecting = nil
+        isReconnecting = false
+        lastOpenFailure = nil
     }
 
     private func teardownTransport() async {
@@ -311,7 +379,12 @@ public final class LiveStreamSession: ObservableObject {
         } catch {
             relay.detach()
             guard self.generation == generation else { return }
-            status = .failed("\(error)")
+            if isReconnecting {
+                // The reopen loop tries again (or fails with this).
+                lastOpenFailure = "\(error)"
+            } else {
+                status = .failed("\(error)")
+            }
         }
     }
 
@@ -356,9 +429,14 @@ public final class LiveStreamSession: ObservableObject {
         case "error":
             status = .failed("stream \(body["code"] ?? "error"): \(body["message"] ?? "")")
         case "closed":
-            if status == .streaming || status == .connecting {
-                status = .failed("connection closed \(body["reason"] ?? "")")
+            // The transport dropped under a stream that was up (the Space or
+            // the local daemon went away): it opens again by itself.
+            let up: Bool
+            switch status {
+            case .streaming, .connecting, .suspended: up = true
+            case .idle, .failed: up = false
             }
+            if up { transportLost("connection closed \(body["reason"] ?? "")") }
         default:
             break
         }
@@ -500,6 +578,7 @@ public final class LiveStreamSession: ObservableObject {
     private var cursorSend: Task<Void, Never>?
 
     private func ingest(_ buffer: CVPixelBuffer, descriptor: VideoFrameDescriptor, skipped: Int = 0) {
+        lastFrameReceivedAt = descriptor.receivedAt
         frame = buffer
         // Every assignment to a `@Published` property re-renders each view
         // observing the session, equal or not: set only what changed, so a
@@ -516,6 +595,7 @@ public final class LiveStreamSession: ObservableObject {
         let failures = decoder?.decodeFailureCount ?? decodeFailureCount
         if decodeFailureCount != failures { decodeFailureCount = failures }
         if status != .streaming { status = .streaming }
+        if isReconnecting { isReconnecting = false }
     }
 
     private func requestKeyframeThrottled(force: Bool = false) {
@@ -532,8 +612,11 @@ public final class LiveStreamSession: ObservableObject {
     /// `StreamGeometry` (the session never invents one, which keeps the
     /// single-scale rule true across the in-app view and the PiP window).
     /// Desktop and window sources take the same `interactive_input` batches.
+    /// On a Linux or Windows guest ⌘ chords go as Control chords
+    /// (`SpaceStreamSourceProviding.commandAsControl`), whichever view sent them.
     public func send(_ events: [InteractiveInputEvent]) {
-        let batch = events.filter(\.isDispatchable)
+        let mapped = provider.commandAsControl ? InputEncoder.commandAsControl(events) : events
+        let batch = mapped.filter(\.isDispatchable)
         guard !batch.isEmpty, let media, let sessionID else { return }
         guard let text = try? interactiveInputText(
             session: sessionID, firstSequence: nextInputSequence, events: batch) else { return }

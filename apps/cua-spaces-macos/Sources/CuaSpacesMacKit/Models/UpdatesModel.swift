@@ -232,6 +232,21 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate,
 
     public nonisolated func standardUserDriverRequestsVersionDisplayer() -> (any SUVersionDisplay)? { self }
 
+    // MARK: - Sparkle's alerts in front
+
+    /// "You're up to date!" and the other alerts are modal: brought to the
+    /// front, so one never waits unseen behind the New UI's window (or
+    /// another app's) while the About pane says "Checking…".
+    public nonisolated func standardUserDriverWillShowModalAlert() {
+        MainActor.assumeIsolated { Self.bringAlertsForward() }
+    }
+
+    /// Activates the app: the modal alert that follows becomes the key
+    /// window, in front of every other.
+    static func bringAlertsForward() {
+        NSApp.activate()
+    }
+
     /// "0.2.0-staging.6 is now available; you have 0.2.0-staging.5" (the
     /// appcast item already carries the full version).
     public nonisolated func formatUpdateVersion(
@@ -373,16 +388,19 @@ public final class UpdatesModel {
     }
 
     /// The pane, from the core.
-    public var view: AppAboutView {
+    public var view: AppAboutView { appAboutView(input: input) }
+
+    /// What the pane is built from: the app, and the updater's state.
+    public var input: AppAboutInput {
         _ = revision
-        return appAboutView(input: AppAboutInput(
+        return AppAboutInput(
             platform: "macos", version: info.version, build: info.build, os: info.os,
             updater: updater != nil,
             autoCheck: updater?.automaticallyChecks ?? false,
             autoInstall: updater?.automaticallyInstalls ?? false,
             channel: channel,
             lastCheck: updater?.lastCheck.map(Self.dateText),
-            checking: !(updater?.canCheck ?? true)))
+            checking: !(updater?.canCheck ?? true))
     }
 
     static func dateText(_ date: Date) -> String {

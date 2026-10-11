@@ -69,6 +69,8 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
     /// What `checkEnrolled` answers.
     public var enrolledNow = false
     public var failApprove: String?
+    /// `snapshot` fails with this (a device the relay has not enrolled).
+    public var failSnapshot: String?
 
     public init(snapshot: DevicesSnapshot? = nil) {
         current = snapshot ?? FixtureDevices.sample(now: UInt64(Date().timeIntervalSince1970))
@@ -112,7 +114,10 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
             ])
     }
 
-    public func snapshot() async throws -> DevicesSnapshot { current }
+    public func snapshot() async throws -> DevicesSnapshot {
+        if let failSnapshot { throw CuaError.PermissionDenied(message: failSnapshot) }
+        return current
+    }
 
     public func enroll() async throws -> DeviceEnrollment {
         calls.append("enroll")
@@ -211,8 +216,10 @@ public final class DevicesModel {
     let presence: PresenceChecking
     /// The relay's answer, once read.
     public private(set) var snapshot: DevicesSnapshot?
+    /// When `snapshot` was read.
+    public private(set) var refreshedAt: Date?
     /// The code this Mac shows while it waits for approval.
-    public private(set) var pendingCode: String?
+    public internal(set) var pendingCode: String?
     public private(set) var error: String?
     public private(set) var busy = false
     /// The enroll sheet, while it shows, and where.
@@ -311,6 +318,25 @@ public final class DevicesModel {
     // MARK: - Refresh
 
     /// Reads the relay; announces devices newly asking for approval.
+    /// Reads the relay again when the last answer is older than `maxAge`
+    /// seconds: the Machines page shows who is connected now, not at
+    /// sign-in.
+    public func refreshIfStale(maxAge: TimeInterval = 30) async {
+        if let at = refreshedAt, clock().timeIntervalSince(at) < maxAge { return }
+        await refresh()
+    }
+
+    /// Whether the relay saw each of the account's machines connected, by
+    /// machine id, at the last read.
+    public var relayOnline: [String: Bool] {
+        Dictionary((snapshot?.machines ?? []).map { ($0.id, $0.online) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Each device's state (`enrolled`, `pending`, `expired`, `revoked`), by id.
+    public var deviceStates: [String: String] {
+        Dictionary((snapshot?.devices ?? []).map { ($0.id, $0.state) }, uniquingKeysWith: { a, _ in a })
+    }
+
     public func refresh() async {
         guard signedIn, let devices else {
             snapshot = nil
@@ -318,6 +344,7 @@ public final class DevicesModel {
         }
         do {
             snapshot = try await devices.snapshot()
+            refreshedAt = clock()
             error = nil
         } catch {
             self.error = LiveSpacesBackend.words(error)

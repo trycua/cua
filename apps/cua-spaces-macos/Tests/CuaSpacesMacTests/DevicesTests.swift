@@ -35,6 +35,26 @@ struct DevicesTests {
         #expect(!m.view.labels.signedOut.isEmpty)
     }
 
+    /// The Machines page reads who the relay sees connected now: a host
+    /// that rejoined after the last read shows online once the answer is
+    /// older than half a minute.
+    @Test func relayPresenceIsReadAgainOnceStale() async {
+        let fixture = FixtureDevices(snapshot: FixtureDevices.sample(now: Self.now))
+        let m = model(fixture)
+        var now = TimeInterval(Self.now)
+        m.clock = { Date(timeIntervalSince1970: now) }
+        await m.refreshIfStale()
+        #expect(m.relayOnline == ["m1": true, "m2": false])
+        #expect(m.deviceStates["dev_work"] == "pending")
+        fixture.current.machines[1].online = true
+        now += 10
+        await m.refreshIfStale()
+        #expect(m.relayOnline["m2"] == false, "a fresh answer is kept")
+        now += 30
+        await m.refreshIfStale()
+        #expect(m.relayOnline["m2"] == true)
+    }
+
     @Test func aDeviceAskingIsAnnouncedOnceAndOpensTheSheet() async {
         let m = model()
         var announced: [String] = []

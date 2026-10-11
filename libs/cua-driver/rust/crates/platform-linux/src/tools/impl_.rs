@@ -555,9 +555,11 @@ impl Tool for ListWindowsTool {
                 higher values are closer to the front; null means stacking order is unavailable \
                 and callers must not infer one). To select a frontmost candidate, take the maximum \
                 integer z_index; if every value is null, use an explicit fallback instead of \
-                relying on array order.".into(),
+                relying on array order. Filter with `app` or `pid`: an unfiltered call lists \
+                every window on the host.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Only list windows owned by this process ID."},
+                "app":{"type":"string","description":cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION},
                 "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
@@ -577,6 +579,11 @@ impl Tool for ListWindowsTool {
         windows.retain(|window| window.pid.is_none_or(crate::proc_fs::is_process_live));
         if on_screen_only {
             windows.retain(|window| window.is_on_screen);
+        }
+        if let Some(filter) = args.opt_str("app") {
+            windows.retain(|window| {
+                cua_driver_core::tool_args::app_filter_matches(&filter, &window.app_name, None)
+            });
         }
         if crate::wayland::is_wayland() {
             crate::wayland::remember_observed_window_origins(&windows);

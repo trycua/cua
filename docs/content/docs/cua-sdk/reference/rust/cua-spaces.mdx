@@ -2144,8 +2144,12 @@ pub fn cap_output(text: &str) -> String
 pub fn outcome_json(out: ToolOutcome) -> Result<Value>
 
 // mod files
+/// Proves this process can read `path` ...
+pub async fn check_host_readable(path: &Path) -> Result<()>
 /// Normalizes a `send_file` target to a ...
 pub fn downloads_subdir(target: Option<&str>, home: Option<&str>) -> Result<String>
+/// The macOS privacy-protected location ...
+pub fn protected_folder(path: &Path, home: Option<&Path>) -> Option<&'static str>
 
 // mod fleet_runtime
 /// `resolve` with the image evidence ...
@@ -2309,6 +2313,8 @@ pub const MAX_OUTPUT_CHARS: usize = 16_000;
 // mod files
 /// Chunk used when the driver does not say.
 pub const DEFAULT_SEND_CHUNK: usize = _;
+/// How long opening a host file or folder ...
+pub const HOST_OPEN_TIMEOUT: Duration = _;
 /// Largest chunk sent to ...
 pub const MAX_SEND_CHUNK: usize = _;
 
@@ -2322,6 +2328,8 @@ pub const MIN_BOTS: usize = 2;
 pub const CALLER_METADATA: &str = "x-cua-host-caller";
 /// The spacesd feature a host reports ...
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+/// `HostLimit::resource` of a host the ...
+pub const STOPPED_SHARING: &str = "sharing";
 
 // mod presence
 /// Roster heartbeat interval the SDK asks ...

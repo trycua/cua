@@ -111,13 +111,39 @@ public final class PersistentModel {
     public var agentCount: Int { (agentsInput["agents"] as? [Any])?.count ?? 0 }
 
     public func loadAgents() async {
-        guard let r = try? await call("persistent_agent_list") else { return }
-        agentsInput["agents"] = r.arr("agents").map { a in
+        _ = try? await listAgents()
+    }
+
+    /// Reads the agents again and answers them (`PersistentAgentInput`
+    /// records); a failed read throws and leaves the list as it was.
+    @discardableResult
+    func listAgents() async throws -> [[String: Any]] {
+        let r = try await call("persistent_agent_list")
+        let agents = r.arr("agents").map { a in
             ["name": a["name"] ?? "", "harness": a["harness"] ?? "", "space": a["space"] ?? "",
              "paused": a["paused"] ?? false, "spaceState": a["space_state"] ?? "running",
              "runId": a["run_id"] ?? NSNull(), "savedMs": a["saved_ms"] ?? 0,
              "lastError": a["last_error"] ?? NSNull()] as [String: Any]
         }
+        agentsInput["agents"] = agents
+        return agents
+    }
+
+    /// The daemon's tools answer here (no daemon: the agents can't be read).
+    var canCallTools: Bool { tools != nil }
+
+    /// One of the daemon's tools, its answer as is (the web UI's Volume,
+    /// Storage and Notifications read the same tools this model runs).
+    func daemonTool(_ tool: String, _ args: [String: Any] = [:]) async throws -> Any {
+        guard let tools else { throw AgentsToolError(message: "This needs the cua daemon") }
+        return try await tools.agentsTool(tool, args)
+    }
+
+    /// One run's events after `cursor`: the `agent_events` tool's answer as is.
+    func runEvents(space: String, runId: String, cursor: UInt64, max: UInt32?) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "run_id": runId, "cursor": cursor]
+        if let max { args["max"] = max }
+        return try await call("agent_events", args)
     }
 
     private func loadDetail(_ name: String) async throws {

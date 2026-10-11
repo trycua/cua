@@ -86,7 +86,9 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": null,
       "wizard": {
@@ -210,7 +212,9 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -335,7 +339,9 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -465,7 +471,9 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -581,7 +589,9 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -697,7 +707,9 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": "Volume",
       "wizard": {
@@ -818,7 +830,9 @@
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": null,
       "wizard": {
@@ -938,7 +952,9 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": null,
       "wizard": {
@@ -1052,7 +1068,9 @@
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
-        "- experiment:sharing-note note: Share a Space with other Cua accounts."
+        "- experiment:sharing-note note: Share a Space with other Cua accounts.",
+        "- experiment:web_ui toggle: New UI (preview) {On|*Off}",
+        "- experiment:web_ui-note note: Try the new Spaces window, built on the shared web UI."
       ],
       "volumePage": null,
       "wizard": {

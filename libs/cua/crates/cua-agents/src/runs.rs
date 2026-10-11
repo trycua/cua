@@ -317,6 +317,34 @@ pub fn valid_home_name(name: &str) -> bool {
         })
 }
 
+/// Whether [`Agents::start`] must look for a credential in the guest: not
+/// when the caller passed one of the harness's keys, nor with a custom
+/// endpoint (a proxy may need none).
+fn needs_probe(h: &Harness, opts: &RunOptions) -> bool {
+    opts.endpoint.is_none()
+        && !h
+            .keys
+            .iter()
+            .any(|k| opts.env.get(*k).is_some_and(|v| !v.is_empty()))
+}
+
+/// Decides on the guest probe's output ([`Harness::auth_probe`]; `None`
+/// when it could not run): refused when no credential was found and cua
+/// knows every source, a note when it does not, nothing otherwise.
+fn credential_check(h: &Harness, probe: Option<&str>) -> Result<Option<String>> {
+    if probe.map(str::trim) != Some(harness::PROBE_NONE) {
+        return Ok(None);
+    }
+    if h.logins.is_some() {
+        return Err(Error::NoCredential(h.missing_credential()));
+    }
+    Ok(Some(format!(
+        "no provider key reached this run; unless {} is configured inside the Space it fails with \"Authentication required\": {}",
+        h.name,
+        h.auth_hint()
+    )))
+}
+
 fn valid_env_name(k: &str) -> Result<()> {
     if k.is_empty()
         || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -785,6 +813,15 @@ impl Agents {
             None => format!("{rdir}/work"),
         });
         let mut notes = vec![];
+        // A run without a credential fails with "Authentication required"
+        // only after the install; refuse it before anything is installed.
+        if needs_probe(h, &opts) {
+            // A probe that cannot run decides nothing.
+            let probe = self.sh(&h.auth_probe(), Duration::from_secs(30)).await.ok();
+            if let Some(note) = credential_check(h, probe.as_deref())? {
+                notes.push(note);
+            }
+        }
         // The run directory is private to the guest user. With a repo, the
         // clone creates the working directory.
         let mk_cwd = if opts.repo.is_some() {
@@ -922,6 +959,7 @@ impl Agents {
             "exitWhenIdle": opts.exit_when_idle,
             "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
             "authMethod": h.auth_method,
+            "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
         });
@@ -1321,6 +1359,96 @@ pub fn summarize(run_id: &str, status: RunStatus, evs: &[AgentEvent]) -> RunResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn probe(h: &Harness, home: &std::path::Path, env: &[(&str, &str)]) -> String {
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(h.auth_probe())
+            .env_clear()
+            .env("HOME", home)
+            .env("PATH", "/usr/bin:/bin")
+            .envs(env.iter().copied())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn a_run_without_a_credential_is_refused_before_the_install() {
+        let claude = harness::harness("claude-code").unwrap();
+        let codex = harness::harness("openai-codex").unwrap();
+        let home = std::env::temp_dir().join(format!("cua-auth-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        // Nothing: refused, naming the keys and how they reach a run.
+        let p = probe(claude, &home, &[]);
+        if p == "login" {
+            // A host Keychain sign-in (macOS) answers the probe; covered below.
+        } else {
+            assert_eq!(p, harness::PROBE_NONE);
+            let e = credential_check(claude, Some(&p)).unwrap_err().to_string();
+            assert!(
+                e.contains("ANTHROPIC_API_KEY") && e.contains("env_from_host"),
+                "{e}"
+            );
+            assert!(
+                e.contains("Authentication required") && e.contains("`claude`"),
+                "{e}"
+            );
+            assert!(
+                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Agents"),
+                "{e}"
+            );
+        }
+        let p = probe(codex, &home, &[]);
+        assert_eq!(p, harness::PROBE_NONE);
+        let e = credential_check(codex, Some(&p)).unwrap_err().to_string();
+        assert!(
+            e.contains("OPENAI_API_KEY") && e.contains("--env-from-host"),
+            "{e}"
+        );
+        assert!(
+            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Agents"),
+            "{e}"
+        );
+        // A key in the guest environment, or a sign-in file: allowed.
+        assert_eq!(
+            probe(codex, &home, &[("CODEX_API_KEY", "k")]),
+            "env:CODEX_API_KEY"
+        );
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
+        assert_eq!(probe(codex, &home, &[]), "login");
+        assert_eq!(credential_check(codex, Some("login")).unwrap(), None);
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(home.join(".claude/.credentials.json"), "{}").unwrap();
+        assert_eq!(probe(claude, &home, &[]), "login");
+        let _ = std::fs::remove_dir_all(&home);
+        // A probe that could not run decides nothing.
+        assert_eq!(credential_check(codex, None).unwrap(), None);
+        // A harness configurable through its own files: a note, not a refusal.
+        let goose = harness::harness("goose").unwrap();
+        let note = credential_check(goose, Some("none")).unwrap().unwrap();
+        assert!(note.contains("OPENAI_API_KEY"), "{note}");
+    }
+
+    #[test]
+    fn a_passed_key_or_an_endpoint_skips_the_probe() {
+        let h = harness::harness("claude-code").unwrap();
+        assert!(needs_probe(h, &RunOptions::default()));
+        let mut o = RunOptions::default();
+        o.env.insert("ANTHROPIC_API_KEY".into(), "k".into());
+        assert!(!needs_probe(h, &o));
+        o.env.insert("ANTHROPIC_API_KEY".into(), String::new());
+        assert!(needs_probe(h, &o));
+        let o = RunOptions {
+            endpoint: Some(Endpoint {
+                base_url: "http://proxy".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!needs_probe(h, &o));
+    }
 
     /// Every MCP session of one run names the run, so the guest draws one
     /// cursor for it (cua-spacesd `/mcp` keys the driver session by it).

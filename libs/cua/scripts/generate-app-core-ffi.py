@@ -50,6 +50,7 @@ TYPES = [
     ("driver_preview.rs", "driver_preview", ["PreviewSegment", "PreviewWindow", "DriverPreview", "DriverFrame"]),
     ("drive_mount_preview.rs", "drive_mount_preview", ["DriveMountPreview", "DriveMountFrame"]),
     ("about.rs", "about", ["UpdateChannel", "AboutInput", "AboutLinkId", "AboutLink", "AboutUpdates", "AboutView", "LaunchInput", "LaunchPlan", "DaemonCheck", "RefreshReport"]),
+    ("agent_keys.rs", "agent_keys", ["AgentKeyInput", "AgentKeysInput", "AgentKeyRow", "AgentKeysView", "AgentKeyFormInput", "AgentKeyFormView", "AgentKeyConfirm"]),
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),

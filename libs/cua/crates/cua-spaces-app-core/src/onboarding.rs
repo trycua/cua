@@ -193,6 +193,12 @@ pub struct OnboardingState {
     /// while Cua Volume is on. Off until the shell says otherwise.
     #[serde(default)]
     pub experiments: Experiments,
+    /// The run's start was counted (`onboarding_shown`, Welcome shown):
+    /// when Welcome showed on a machine whose usage notice was already
+    /// shown, else when Welcome was left. Once per run, however often
+    /// Welcome shows again (Back).
+    #[serde(default)]
+    pub run_counted: bool,
 }
 
 fn ticked() -> bool {
@@ -305,6 +311,10 @@ pub enum OnboardingAction {
         /// The setting.
         telemetry: TelemetryInput,
     },
+    /// Welcome is on screen (each time it shows; after `telemetry-loaded`).
+    /// On a machine that already showed the usage notice, with usage data
+    /// on, the run's start counts now rather than when Welcome is left.
+    WelcomeShown,
     /// Welcome's "Share anonymous usage data" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
@@ -347,6 +357,7 @@ pub fn initial(
         launch_at_login: true,
         telemetry: None,
         experiments: Experiments::default(),
+        run_counted: false,
     }
 }
 
@@ -409,7 +420,15 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
     use OnboardingStep::*;
     let mut n = s.clone();
     match (s.step, a) {
-        (Welcome, OnboardingAction::Start) => n.step = Signin,
+        (Welcome, OnboardingAction::Start) => {
+            n.step = Signin;
+            n.run_counted = true;
+        }
+        (Welcome, OnboardingAction::WelcomeShown) => {
+            if s.shares_usage() && s.telemetry.as_ref().is_some_and(|t| t.notice_shown) {
+                n.run_counted = true;
+            }
+        }
         (_, OnboardingAction::CliInstalled { target }) => n.cli_target = target.clone(),
         (Presentation, OnboardingAction::PresentationPicked { menu_bar }) => n.menu_bar = *menu_bar,
         (Presentation, OnboardingAction::PresentationDone) => n.step = next(s, Presentation),
@@ -1050,8 +1069,22 @@ pub fn installed_at_text(target: &str) -> String {
     format!("Installed at {target}")
 }
 
-/// The flow as drawn.
+/// The flow as drawn, in a Mac's words.
 pub fn view(s: &OnboardingState) -> OnboardingView {
+    view_on(s, SpaceOs::Macos)
+}
+
+/// Where the app stays once the window closes: the menu bar on a Mac, the
+/// tray elsewhere.
+pub fn done_lede(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Macos => "Cua Spaces is in your menu bar.",
+        _ => "Cua Spaces is in your system tray.",
+    }
+}
+
+/// [`view`] in the words of the system the app runs on (`os`).
+pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
     use crate::spaces::sidebar::Fact;
     use OnboardingStep::*;
     let (title, lede, primary) = match s.step {
@@ -1091,11 +1124,7 @@ pub fn view(s: &OnboardingState) -> OnboardingView {
             "You can change this later.",
             "Continue",
         ),
-        Done => (
-            "You're all set",
-            "Cua Spaces is in your menu bar.",
-            "Start using Cua Spaces",
-        ),
+        Done => ("You're all set", done_lede(os), "Start using Cua Spaces"),
     };
     let summary = if s.step == Done {
         let mut facts = vec![
@@ -1258,6 +1287,24 @@ mod tests {
                 },
             },
         )
+    }
+
+    /// The last page says where the app stays: the menu bar on a Mac, the
+    /// tray on Windows and Linux.
+    #[test]
+    fn done_names_the_menu_bar_only_on_a_mac() {
+        let done = OnboardingState {
+            step: OnboardingStep::Done,
+            ..initial(None, None)
+        };
+        assert_eq!(view(&done).lede, "Cua Spaces is in your menu bar.");
+        assert_eq!(view_on(&done, SpaceOs::Macos), view(&done));
+        for os in [SpaceOs::Windows, SpaceOs::Linux] {
+            assert_eq!(
+                view_on(&done, os).lede,
+                "Cua Spaces is in your system tray."
+            );
+        }
     }
 
     /// Cua Volume off (the default): no Volume page, dot, Done line or

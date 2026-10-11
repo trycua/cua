@@ -61,6 +61,11 @@ core-foundation = "0.10"
 # `ux::icon`: an app bundle's Finder icon as PNG (NSWorkspace).
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSGraphicsContext", "NSRunningApplication", "libc"] }
 
+# Windows Hello (`UserConsentVerifier`) as the gate on sensitive exports and
+# on what the Keyvault lets through.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Foundation", "Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

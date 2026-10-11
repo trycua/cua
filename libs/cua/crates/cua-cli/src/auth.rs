@@ -269,6 +269,20 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     Ok(0)
 }
 
+/// `cua auth keychain [--prompt | --forget]`: one JSON line, the
+/// [`cua_auth::KeychainCheck`] of the store (`--forget`: after removing the
+/// stored session, which reads nothing). Always exit 0 when it ran.
+pub fn keychain(prompt: bool, forget: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+    let store = Store::from_env();
+    let check = if forget {
+        store.forget_keychain().map_err(auth_err)?
+    } else {
+        store.check_keychain(prompt)
+    };
+    line(out, serde_json::to_string(&check).unwrap_or_default());
+    Ok(0)
+}
+
 /// `cua auth whoami`: the active Fleet identity, verified with a read-only
 /// namespace listing.
 pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {

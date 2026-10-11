@@ -186,6 +186,42 @@
      "usage": "cua auth status [OPTIONS]"
     },
     {
+     "abstract": "Whether this cua can read the Cua items in the macOS keychain without a prompt (JSON; for the Spaces app, which asks before it starts anything that reads the session). A Cua-signed cua gives every item it reads the Cua access list, so later Cua builds read it without a prompt",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Let macOS ask for access (its keychain prompt) where needed",
+       "hidden": false,
+       "name": "prompt",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Remove the stored session without reading it (to sign in again)",
+       "hidden": false,
+       "name": "forget",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": true,
+     "hidden_aliases": [],
+     "name": "keychain",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua auth keychain [OPTIONS]"
+    },
+    {
      "abstract": "The active Fleet identity, verified against Fleet",
      "after_help": "Examples:\n  cua auth whoami",
      "aliases": [],
@@ -1424,6 +1460,102 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua agent harnesses [OPTIONS]"
+    },
+    {
+     "abstract": "The provider keys agents get, kept in the Keychain by the Cua daemon (Cua Spaces → Settings → Agents). Values are read from stdin and never printed",
+     "after_help": "Examples:\n  cua agent keys\n  cua agent keys set anthropic\n  cua agent keys rm OPENAI_API_KEY",
+     "aliases": [],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "keys",
+     "options": [],
+     "subcommand_optional": true,
+     "subcommands": [
+      {
+       "abstract": "List the saved keys (never their values)",
+       "after_help": "Examples:\n  cua agent keys ls\n  cua --json agent keys ls",
+       "aliases": [],
+       "arguments": [],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "ls",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent keys ls [OPTIONS]"
+      },
+      {
+       "abstract": "Add or replace a key, read from stdin. PROVIDER: anthropic, openai or other (with --env). Pipe the key in (`pbpaste | cua agent keys set anthropic`); a terminal is refused so the key isn't echoed",
+       "after_help": "Examples:\n  cua agent keys set anthropic\n  cua agent keys set other --env GEMINI_API_KEY",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "name": "PROVIDER",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "set",
+       "options": [
+        {
+         "aliases": [],
+         "default_value": null,
+         "env": null,
+         "help": "The variable an Other key is given to runs as",
+         "hidden": false,
+         "is_optional": true,
+         "multiple_values": false,
+         "name": "env",
+         "possible_values": [],
+         "repeatable": false,
+         "short_name": null,
+         "takes_value": true,
+         "type": "string",
+         "value_name": "ENV"
+        }
+       ],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent keys set [OPTIONS] <PROVIDER>"
+      },
+      {
+       "abstract": "Remove the key a run gets as ENV",
+       "after_help": "Examples:\n  cua agent keys rm ANTHROPIC_API_KEY",
+       "aliases": [],
+       "arguments": [
+        {
+         "default_value": null,
+         "help": "",
+         "hidden": false,
+         "is_optional": false,
+         "name": "ENV",
+         "possible_values": [],
+         "repeatable": false,
+         "type": "string"
+        }
+       ],
+       "flags": [],
+       "hidden": false,
+       "hidden_aliases": [],
+       "name": "rm",
+       "options": [],
+       "subcommand_optional": false,
+       "subcommands": [],
+       "usage": "cua agent keys rm [OPTIONS] <ENV>"
+      }
+     ],
+     "usage": "cua agent keys [OPTIONS] [COMMAND]"
     },
     {
      "abstract": "Create a persistent agent: a named harness whose memory lives in the Cua Volume (agents/NAME/) and outlives its Space",

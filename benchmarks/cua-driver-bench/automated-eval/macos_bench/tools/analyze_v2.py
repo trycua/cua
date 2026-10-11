@@ -33,8 +33,9 @@ from analyze import wilson_interval  # noqa: E402
 # Public names (bench naming of 10 Oct); every other arm is an internal baseline.
 ARM_LABELS = {
     "cc-cua-driver-script": "Cua Driver",
-    "cc-codex-cu": "Codex Computer-Use (Sky)",
+    "cc-codex-cu": "Codex Computer-Use (Sky), driven by Claude Code",  # suffix from Amendment 20
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
+    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6 Astra",  # Amendment 20
     "cc-claude-cu-helper": "Claude Computer-Use (Desktop helper)",
 }
 

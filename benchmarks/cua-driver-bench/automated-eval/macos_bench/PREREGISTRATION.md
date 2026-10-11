@@ -1293,6 +1293,60 @@ The background run goes first, then the foreground run, in the same VM, with not
 
 **A17.3 outcome (11 Oct 2026, 09:09Z).** 300 final trials, 0 infrastructure exclusions; seats 1, then 7, then 4 through the watchdog; the token was deleted with sync and \`cdb-v2\` was stopped. Background completion: Cua Driver 21/50, Codex 17/50, helper 6/50. Foreground success: 40/50, 30/50 and 16/50. Trials with a focus steal in the background: 2, 6 and 20; swallowed user keystrokes: 55, 503 and 439. The report is \`research/cua-driver-bench/2026-10-11_bench-v2-rerun-report.md\`; follow-ups are CUA-1341 and CUA-1342.
 
+## Amendment 20 (11 Oct 2026, before any trial of the setup): Codex Computer-Use (Sky) driven by OpenAI's own agent and model
+
+Written and committed before any trial of arm `cx-codex-cu`, including its smoke. The owner approved it on 11 Oct 2026 (CUA-1347). Until now every headline setup was driven by Claude (Sonnet 5.5 in Claude Code). This amendment adds a setup in which Codex Computer-Use (Sky) is driven by OpenAI's own agent and model, so the comparison is not only "Claude driving everyone". **Scope: Bench v2 stays macOS-only for now** (owner's decision, 11 Oct 2026). No definition of A14 to A17 changes, and no existing arm changes.
+
+### A20.1 The setup
+
+| | Arm B (`cc-codex-cu`, unchanged) | New: `cx-codex-cu` |
+|---|---|---|
+| Public label | Codex Computer-Use (Sky), driven by Claude Code | Codex Computer-Use (Sky), driven by Codex CLI + GPT-6 Astra |
+| Agent | Claude Code (`claude -p`) | the Codex agent bundled in the ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`, codex-cli 0.160.0 in ChatGPT 26.930.51102, Developer ID OpenAI OpCo, LLC), run as `codex app-server` |
+| Model | claude-sonnet-5-5, default effort | gpt-6-astra, its Codex-catalog default effort (`medium`); the highest-priority model in the catalog on 11 Oct 2026 |
+| Computer-use layer | the `cua_repl` entry of the `unified-computer-use` plugin, unchanged except `CUA_REPL_ENABLED_SURFACES=computer` | the same entry, copied from the same arm B config file, registered under the plugin's own server name `cua_repl` with the plugin's model-facing tools `js` and `js_reset` |
+| Skill | none | none (the server's own instructions only, as for arm B) |
+| System prompt | the shared `SYSTEM_PROMPT` | the same text, as Codex `developer_instructions` |
+| Task prompt | brief, plus the A15 background paragraph in the background condition | identical |
+| App approvals | the host accepts `Allow Computer Use to use "<App>"?` only for the apps the task names | identical (`claude_driver.answer_elicitation`) |
+| Budget | 360 s, 45 turns | 360 s, 45 turns (A20.3) |
+
+**Why `codex app-server`.** Codex Computer-Use asks the host to approve every app through an MCP elicitation. `codex exec` declines elicitations without asking the client (tested 11 Oct 2026, with approval policy `never`, and `--approve-for-me` cancels them), so the setup could not open any app. `codex app-server` is the JSON-RPC protocol the Codex app itself uses; with approval policy `on-request` it forwards each elicitation to the client (`mcpServer/elicitation/request`), and the harness answers it exactly as for arm B. The code is `codex_native.py`; pins are in `pins.json` `codex_native` (the CLI's version and SHA-256), checked at preflight.
+
+**Model route.** The model is reached through an OpenAI-compatible LiteLLM gateway on the owner's machine, forwarded into the VM as a local port for the run only. No API key or token is placed in the VM. The setup uses no Claude seat.
+
+### A20.2 GUI-only (A14.2) for this setup
+
+- Off for every trial: the shell and unified exec, apps, browser use (all three), image generation, multi-agent (both versions), goals, view_image, plugins, tool suggestions and skill search. The sandbox is read-only.
+- Not switchable in this Codex build, so watched: `apply_patch` (a file edit) and the collaboration (sub-agent) tools. App-server reports every tool call as a thread item. The harness translates the items into the event shape the GUI-only guard already reads: a command execution counts as `Bash`, a file change as `Edit`, a web search as `WebSearch`, a sub-agent call as `Agent`, and any other non-GUI item (for example `imageView`, `imageGeneration`, `dynamicToolCall`) as `Task`. Each is a forbidden built-in, so it ends the trial as a violation, as for every setup. MCP calls keep their name and input (`mcp__cua_repl__js`), so the A14.2 code-pattern scan applies to them exactly as to arm B.
+- gpt-6-astra runs in Codex "code mode": it calls tools from a JavaScript `exec` cell, a V8 isolate with no file system, process or network access. The nested `cua_repl` calls are reported and scanned one by one.
+- Any other approval request (commands, file changes, permissions, user input) is answered with an error and recorded in `elicitations.jsonl`.
+
+### A20.3 Metrics for this setup
+
+- **Turns** are the model's sampling requests (one `thread/tokenUsage/updated` notification each), the counterpart of Claude Code's assistant turns. The 45-turn cap ends the trial when the 45th response was not the final one; the row is `max_turns`, as for the other setups.
+- **Tokens** are reported (input, cached input, output). **Cost is not reported** for this setup: there is no pinned list price for gpt-6-astra through the subscription gateway. Cost tables show it as "n/a".
+- A gateway or usage-limit error is classified with the same rules as for the Claude setups (rate limit, overload, auth: retried, then excluded) and logged.
+- Background score, background completion, the GUI-only guard, checkers and task order are unchanged.
+
+### A20.4 How it is reported
+
+- It is its own row, labelled as in A20.1. When both Codex rows appear, arm B is labelled "Codex Computer-Use (Sky), driven by Claude Code"; the Cua Driver and Claude helper rows are driven by Claude Sonnet 5.5, and the report says so.
+- Arm B against `cx-codex-cu` is the same tool layer with a different agent and model. It answers "does OpenAI's own agent and model get more out of Codex Computer-Use than Claude does", not a question about tool layers. A difference between `cx-codex-cu` and Cua Driver confounds tool layer, agent and model, and the report says so wherever the two are compared.
+- The terms question of section 10 applies here too: this setup uses OpenAI's software as shipped, and nobody has reviewed OpenAI's terms on publishing benchmark results.
+
+### A20.5 Smoke (validation only, never analysed)
+
+| Id | Condition | Tasks | Arm | Runs | Written (UTC) |
+|---|---|---|---|---|---|
+| v2cx-s1 | background, then foreground | IR-01, MB-10, CDB-G04 | `cx-codex-cu` | 1 per task and condition (6 trials) | 2026-10-11T12:30Z |
+
+In a clone of `cdb-v2` (main `984e5f9c5`, ChatGPT 26.930.51102). **What it checks:** the preflight (pins, gateway, `cua_repl` tools, a trivial app-server turn) passes; elicitations reach the host and are answered; the GUI-only guard sees the setup's tool calls; the sentinel, evaluators and row fields work; nothing is left running after a trial. A plumbing failure is fixed and re-checked, each round logged here before it runs. The smoke never enters any table.
+
+### A20.6 The full run
+
+`cx-codex-cu` joins the next full Bench v2 run, the one registered after the task set of A18 (CUA-1201) lands, in both conditions and with the same schedule rules as the other setups, and then the held-out run (CUA-1285). No full run of this setup happens before then.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

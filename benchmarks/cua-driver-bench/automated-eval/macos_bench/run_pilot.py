@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Local macOS pilot: Codex built-in computer use vs Cua Driver, same model.
 
 Diagnostic and non-certifying. Runs on the host Mac (no VM), so it is gated on

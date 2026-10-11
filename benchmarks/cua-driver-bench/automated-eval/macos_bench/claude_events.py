@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Metrics from a Claude Code `--output-format stream-json --verbose` log.
 
 The runner stores each stdout line as ``<epoch_ms>\\t<json>`` (a bare JSON line is accepted

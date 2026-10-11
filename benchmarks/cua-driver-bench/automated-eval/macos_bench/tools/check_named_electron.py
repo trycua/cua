@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Amendment 4 check (A4.2), no model call: start one CDB task's apps the way the runner does and show how
 each Electron app appears to the system, to Cua Driver and to Codex computer use.
 

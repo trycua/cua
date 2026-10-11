@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Post-hoc analyses of the tool calls in a run (labelled post-hoc in the report; not pre-registered).
 
 failed   every failed MCP call: tool, input, error text, what followed, whether a retry of the same tool worked

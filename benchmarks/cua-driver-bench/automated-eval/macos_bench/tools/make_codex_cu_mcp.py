@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Write the arm B MCP config for Claude Code from OpenAI's shipped plugin file.
 
 The server entry is the `cua_repl` entry of the newest `unified-computer-use` plugin in the Codex plugin cache,

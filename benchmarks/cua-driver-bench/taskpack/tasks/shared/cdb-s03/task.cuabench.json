@@ -102,11 +102,11 @@
         },
         {
           "path": "apps/ledger-lantern-mail/package.json",
-          "sha256": "6c135552d0054b315652f13c2f4ea2e605f53280268e5fdae7f9534a002db0f9"
+          "sha256": "278704dd0704cf6cee7301af5ce7e7cb4a9f0e5a802dfc7b4ce420c0541d7af5"
         },
         {
           "path": "apps/ledger-lantern-mail/package-lock.json",
-          "sha256": "45e4895de2b08e21168447ef0b88af88a95493a1bbbdd966a2bf6ec10cdbeea3"
+          "sha256": "f2238692f558cdcef175d01e107eddc73e852a3d7fe9cd9716ca5b475ae43b01"
         },
         {
           "path": "apps/ledger-lantern-mail/renderer/index.html",

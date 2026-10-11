@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Run a task of the CDB task pack in this runner.
 
 The public task set's pack tasks live in ../../taskpack (MIT; see its README and each task's PROVENANCE.md).

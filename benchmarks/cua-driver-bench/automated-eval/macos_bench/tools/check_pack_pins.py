@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Check that pins.json `cdb_pack.tree_sha256` matches the task pack in this repository.
 
     tools/check_pack_pins.py [--write]

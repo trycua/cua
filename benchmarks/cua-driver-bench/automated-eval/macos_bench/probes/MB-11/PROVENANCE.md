@@ -16,4 +16,4 @@ log.
   tasks with public desktop, web and terminal benchmarks (OSWorld, OSWorld 2.0
   from its paper, WindowsAgentArena, macOSWorld, Mac Agent Bench, Hunch Bench,
   Terminal-Bench and others) and found no near-copy or structural copy.
-* **Licence:** MIT, under the repository [LICENSE](../../../../../../LICENSE.md).
+* **Licence:** FSL-1.1-MIT, under the benchmark's [LICENSE](../../../../LICENSE).

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 # Build BenchSentinel.app and BenchLab.app into <outdir> and sign them ad hoc.
 # Usage: build.sh <outdir>
 set -euo pipefail

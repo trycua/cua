@@ -220,6 +220,21 @@ through a dated amendment committed before its first trial. See
 
 ## Licence
 
-MIT, under the repository [LICENSE](../../LICENSE.md). The task pack was first
-written in Cua's private benchmark repository and is relicensed under MIT here;
-see [`taskpack/README.md`](taskpack/README.md) and its third-party notices.
+Cua Driver Bench is source-available under the
+[Functional Source License, Version 1.1, MIT Future License](https://fsl.software)
+(FSL-1.1-MIT), the same licence as Cua Spaces; see [`LICENSE`](LICENSE). It
+covers the harness, the task set, the method documents and any results
+published here, and replaces the repository's root MIT License for this
+directory.
+
+You may use, copy, modify and run the benchmark for any purpose, including
+commercial ones such as evaluating your own product, except a Competing Use:
+offering it, or something substantially similar, to others as a commercial
+product or service. For that you need a commercial licence from Cua; see
+[COMMERCIAL.md](../../COMMERCIAL.md). Each release becomes available under MIT
+two years after it is published.
+
+Versions published before this change, at commits `bf94fd5c7` (#4973) and
+`ebc0b3d7d` (#4978), were released under MIT and stay MIT for anyone who has
+them. Third-party software the task apps install keeps its own licence; see
+[`taskpack/THIRD_PARTY_NOTICES.md`](taskpack/THIRD_PARTY_NOTICES.md).

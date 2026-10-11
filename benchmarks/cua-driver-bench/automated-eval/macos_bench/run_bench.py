@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Claude Code computer-use benchmark runner: same model, same harness, two MCP tool layers.
 
     run_bench.py preflight  --run-id NAME [--build-dir DIR]

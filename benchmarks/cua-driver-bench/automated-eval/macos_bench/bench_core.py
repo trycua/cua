@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Pure logic for the Claude Code benchmark runner: schedule, quota gate, spend ledger, backoff,
 wall-clock cutoff and round bookkeeping. No GUI, no model calls, so it is unit-tested.
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Print the live state of a benchmark run: heartbeat, flags, last results, pauses.
 python3 watch_bench.py [RUN_ID] [-f]    (-f repeats every 30 s)"""
 

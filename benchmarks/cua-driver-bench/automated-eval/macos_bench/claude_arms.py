@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Claude Code arms: one identical `claude -p` invocation, only the MCP server (and, for arm A, the
 skill) differs.
 

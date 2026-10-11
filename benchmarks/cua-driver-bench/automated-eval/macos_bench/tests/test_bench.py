@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Unit tests for the Claude Code benchmark runner logic: schedule, blocks, quota gate, ledger,
 backoff, cutoff, stream-json parsing, failure classification, argv and environment scrubbing.
 No GUI and no model calls."""

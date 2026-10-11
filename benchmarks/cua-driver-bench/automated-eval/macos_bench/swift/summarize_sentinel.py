@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Summarize a BenchSentinel JSONL log over its armed window.
 
 The armed window runs from the first {"ev":"armed"} line to the next

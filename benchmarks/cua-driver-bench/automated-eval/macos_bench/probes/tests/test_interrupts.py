@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """IR-01..IR-04 evaluators (Amendment 14) on synthetic logs shaped like BenchLabInterrupts.swift writes."""
 
 from __future__ import annotations

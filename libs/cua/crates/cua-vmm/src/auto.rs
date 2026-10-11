@@ -129,6 +129,64 @@ impl DoctorReport {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QemuPackageManager {
+    Apt,
+    Dnf,
+}
+
+impl QemuPackageManager {
+    pub fn detect() -> Option<(Self, PathBuf)> {
+        [Self::Apt, Self::Dnf]
+            .into_iter()
+            .find_map(|manager| host::which(manager.program()).map(|path| (manager, path)))
+    }
+
+    fn program(self) -> &'static str {
+        match self {
+            Self::Apt => "apt-get",
+            Self::Dnf => "dnf",
+        }
+    }
+
+    fn packages(self) -> &'static [&'static str] {
+        match self {
+            Self::Apt => &[
+                "qemu-system-x86",
+                "qemu-system-arm",
+                "qemu-utils",
+                "qemu-efi-aarch64",
+                "ovmf",
+            ],
+            Self::Dnf => &["qemu-kvm", "qemu-img", "edk2-ovmf", "edk2-aarch64"],
+        }
+    }
+
+    pub fn commands(self, program: &str) -> Vec<Vec<&str>> {
+        let install = [&["-n", program, "install", "-y"], self.packages()].concat();
+        match self {
+            Self::Apt => vec![vec!["-n", program, "update"], install],
+            Self::Dnf => vec![install],
+        }
+    }
+
+    pub fn render(self) -> String {
+        self.commands(self.program())
+            .iter()
+            .map(|args| format!("sudo {}", args.join(" ")))
+            .collect::<Vec<_>>()
+            .join(" && ")
+    }
+
+    pub fn linux_hint() -> String {
+        format!(
+            "Debian/Ubuntu: `{}`; Fedora: `{}`",
+            Self::Apt.render(),
+            Self::Dnf.render()
+        )
+    }
+}
+
 /// Inspect the host. Read-only: never installs or starts anything.
 pub async fn doctor() -> DoctorReport {
     let host_os = HostOs::current();
@@ -185,18 +243,13 @@ pub async fn doctor() -> DoctorReport {
             .missing
             .push(format!("qemu-system-{native} / qemu-img"));
         let step = match host_os {
-            HostOs::Macos if host::which("brew").is_some() => Some("brew install qemu"),
-            HostOs::Linux if host::which("apt-get").is_some() => {
-                Some("sudo apt-get install qemu-system qemu-utils")
-            }
-            HostOs::Linux if host::which("dnf").is_some() => {
-                Some("sudo dnf install qemu-kvm qemu-img")
-            }
+            HostOs::Macos if host::which("brew").is_some() => Some("brew install qemu".into()),
+            HostOs::Linux => QemuPackageManager::detect().map(|(manager, _)| manager.render()),
             _ => None,
         };
         if let Some(s) = step {
             qemu_status.provisionable = true;
-            qemu_status.provisioning.push(s.to_string());
+            qemu_status.provisioning.push(s);
         }
     }
 
@@ -614,5 +667,74 @@ mod tests {
         let json = serde_json::to_value(&r).unwrap();
         assert_eq!(json["backends"].as_array().unwrap().len(), 4);
         eprintln!("{}", serde_json::to_string_pretty(&r).unwrap());
+    }
+
+    #[test]
+    fn apt_qemu_plan_refreshes_before_install() {
+        let commands = QemuPackageManager::Apt.commands("/usr/bin/apt-get");
+        assert_eq!(
+            commands,
+            [
+                vec!["-n", "/usr/bin/apt-get", "update"],
+                vec![
+                    "-n",
+                    "/usr/bin/apt-get",
+                    "install",
+                    "-y",
+                    "qemu-system-x86",
+                    "qemu-system-arm",
+                    "qemu-utils",
+                    "qemu-efi-aarch64",
+                    "ovmf",
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn apt_qemu_plan_render_matches_command_arguments() {
+        assert_eq!(
+            QemuPackageManager::Apt.render(),
+            "sudo -n apt-get update && sudo -n apt-get install -y qemu-system-x86 \
+             qemu-system-arm qemu-utils qemu-efi-aarch64 ovmf"
+        );
+    }
+
+    #[test]
+    fn dnf_qemu_plan_render_matches_command_arguments() {
+        assert_eq!(
+            QemuPackageManager::Dnf.commands("dnf"),
+            [vec![
+                "-n",
+                "dnf",
+                "install",
+                "-y",
+                "qemu-kvm",
+                "qemu-img",
+                "edk2-ovmf",
+                "edk2-aarch64",
+            ]]
+        );
+        assert_eq!(
+            QemuPackageManager::Dnf.render(),
+            "sudo -n dnf install -y qemu-kvm qemu-img edk2-ovmf edk2-aarch64"
+        );
+    }
+
+    #[test]
+    fn qemu_plan_preserves_both_guest_architectures() {
+        let apt = QemuPackageManager::Apt.render();
+        let dnf = QemuPackageManager::Dnf.render();
+        for package in [
+            "qemu-system-x86",
+            "ovmf",
+            "qemu-system-arm",
+            "qemu-efi-aarch64",
+        ] {
+            assert!(apt.contains(package), "{package}");
+        }
+        for package in ["qemu-kvm", "edk2-ovmf", "edk2-aarch64"] {
+            assert!(dnf.contains(package), "{package}");
+        }
     }
 }

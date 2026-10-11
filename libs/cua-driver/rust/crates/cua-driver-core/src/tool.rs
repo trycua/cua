@@ -253,10 +253,35 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
 /// validation, so a batch step accepts what a direct call accepts. `Err` is a
 /// refusal detail for an alias that cannot be translated.
 pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if cfg!(target_os = "linux") && tool_name == "set_value" {
+        if let Some(value @ Value::Number(_)) = args.get_mut("value") {
+            *value = Value::String(value.to_string());
+        }
+    }
     normalize_zoom_args(tool_name, args);
     normalize_key_args(tool_name, args);
     normalize_menu_args(tool_name, args);
-    normalize_scroll_args(tool_name, args)
+    normalize_scroll_args(tool_name, args)?;
+    normalize_set_config_args(tool_name, args)
+}
+
+/// `{key, value}` is unadvertised; rewrite it before the closed schema rejects `key`.
+fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    let Some(object) = args.as_object_mut().filter(|_| tool_name == "set_config") else {
+        return Ok(());
+    };
+    match (object.remove("key"), object.remove("value")) {
+        (None, None) => Ok(()),
+        (Some(Value::String(key)), Some(value))
+            if !key.starts_with('_') && !matches!(key.as_str(), "key" | "value" | "session") =>
+        {
+            object.insert(key, value);
+            Ok(())
+        }
+        (Some(Value::String(key)), Some(_)) => Err(format!("key '{key}' is reserved")),
+        (Some(_), _) => Err("key requires an exact value".into()),
+        (None, Some(_)) => Err("value requires an exact key".into()),
+    }
 }
 
 /// `invoke_menu` takes `path` as a list of labels. Models also send
@@ -591,8 +616,6 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
-    // Reuse the portable contract's exact tagged-union schema while retaining
-    // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
         if let Some(portable_properties) = portable
             .input_schema
@@ -1865,6 +1888,33 @@ impl ToolRegistry {
             );
         }
 
+        if resolved_name == "set_config" && args.get("capture_scope").is_some() {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
+        }
+        if let Some(key) = [
+            crate::script_tool::DISABLE_CONFIG_KEY,
+            crate::script_tool::LEGACY_CONFIG_KEY,
+        ]
+        .into_iter()
+        .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
+        }
+
         if let Some(detail) = unknown_argument {
             return protected_refusal(
                 "invalid_arguments",
@@ -2972,20 +3022,6 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
-            return Err(
-                ToolResult::error(
-                    "config key 'capture_scope' is retired; select a window or desktop target on each action",
-                )
-                .with_structured(serde_json::json!({
-                    "code": "config_key_retired",
-                    "key": "capture_scope",
-                    "replacement": "action.target",
-                })),
-            );
-        }
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
@@ -3012,25 +3048,8 @@ impl ToolRegistry {
         }
 
         let mut exact = serde_json::Map::new();
-        if let Some(key) = args.get("key").and_then(Value::as_str) {
-            if matches!(key, "key" | "value" | "session" | "_session_id")
-                || !properties.contains_key(key)
-            {
-                return Err(protected_scope_refusal(&format!(
-                    "set_config key '{key}' is not present in the concrete tool schema"
-                )));
-            }
-            let value = args
-                .get("value")
-                .ok_or_else(|| protected_scope_refusal("set_config key requires an exact value"))?;
-            exact.insert(key.to_owned(), value.clone());
-        } else if args.get("value").is_some() {
-            return Err(protected_scope_refusal(
-                "set_config value requires an exact key",
-            ));
-        }
         for (key, value) in object {
-            if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
+            if key == "session" || key.starts_with('_') {
                 continue;
             }
             exact.insert(key.clone(), value.clone());
@@ -5570,10 +5589,23 @@ resources:
                     "value": true,
                     "session": "config"
                 }),
-                context,
+                context.clone(),
             )
             .await;
         assert_eq!(unknown.is_error, Some(true));
+        for key in ["disable_run_script", "experimental_script"] {
+            for args in [
+                serde_json::json!({"key": key, "value": true}),
+                serde_json::json!({key: true}),
+            ] {
+                let refused = registry
+                    .invoke_with_context("set_config", args.clone(), context.clone())
+                    .await;
+                let structured = refused.structured_content.unwrap();
+                assert_eq!(structured["code"], "config_key_operator_only", "{args}");
+                assert_eq!(structured["key"], key, "{args}");
+            }
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
@@ -7125,6 +7157,75 @@ mod argument_shape_tests {
         let mut click = json!({"dy": 4});
         normalize_argument_aliases("click", &mut click).unwrap();
         assert_eq!(click, json!({"dy": 4}));
+    }
+
+    #[test]
+    fn set_config_key_value_alias_matches_the_direct_field_for_every_key() {
+        for key in [
+            "capture_mode",
+            "max_image_dimension",
+            "experimental_pip",
+            "experimental_pip_geometry",
+            "cursor.motion",
+            "cursor.motion.style",
+            "cursor.motion.timing",
+            "cursor.motion.effects.trail",
+            "cursor.motion.effects.glow",
+            "cursor.motion.effects.magnet",
+            "cursor.motion.effects.ripple",
+            "cursor.motion.effects.squish",
+        ] {
+            let mut aliased = json!({"key": key, "value": "default"});
+            normalize_argument_aliases("set_config", &mut aliased).unwrap();
+            assert_eq!(aliased, json!({key: "default"}), "{key}");
+        }
+        let mut bare_key = json!({"key": "capture_mode"});
+        let error = normalize_argument_aliases("set_config", &mut bare_key).unwrap_err();
+        assert!(error.contains("exact value"), "{error}");
+        let mut bare_value = json!({"value": 1});
+        let error = normalize_argument_aliases("set_config", &mut bare_value).unwrap_err();
+        assert!(error.contains("exact key"), "{error}");
+
+        let mut unknown = json!({"key": "not_a_key", "value": 1});
+        normalize_argument_aliases("set_config", &mut unknown).unwrap();
+        let def = ToolDef {
+            name: "set_config".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"max_image_dimension": {"type": "integer"}},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let detail = unknown_argument(&def, &unknown).unwrap();
+        assert!(detail.contains("not_a_key"), "{detail}");
+        let mut retired = json!({"key": "capture_scope", "value": "desktop"});
+        normalize_argument_aliases("set_config", &mut retired).unwrap();
+        assert_eq!(retired, json!({"capture_scope": "desktop"}));
+    }
+
+    #[test]
+    fn set_config_alias_refuses_reserved_keys_before_authorization() {
+        for key in [
+            "_session_id",
+            "_transport_session_id",
+            "_public_session_label",
+            "_other",
+            "key",
+            "value",
+            "session",
+        ] {
+            let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
+            let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
+            assert_eq!(error, format!("key '{key}' is reserved"));
+            let object = args.as_object().unwrap();
+            assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
+            assert!(object.get(key).is_none(), "{key} was written: {args}");
+        }
     }
 
     #[test]

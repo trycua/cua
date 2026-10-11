@@ -85,40 +85,30 @@ Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.mot
 | --- | --- | --- | --- |
 | <span id="set_config--macos--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
 | <span id="set_config--macos--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |
-| <span id="set_config--macos--key"></span>`key` | `string` |  | Name of a single config field to write (&#123;key, value&#125; shape, matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. Equivalent to passing the field directly. |
-| <span id="set_config--macos--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
 
 </Tab>
 <Tab value="Linux">
 
 Update cua-driver-rs configuration. capture_mode / max_image_dimension take effect immediately.
 
-Two input shapes (both accepted, matching Windows/Swift):
-- **&#123;key, value&#125;** (preferred): `{"key": "max_image_dimension", "value": 800}`; single leaf write.
-- **Legacy per-field**: `{"capture_mode": "som", "max_image_dimension": 0}`.
+Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimension": 0}`.
 
 The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today: see issue #1729).
 
-`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` save the default cursor motion for sessions started afterwards.
+`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 
 **Linux parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_config--linux--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | Legacy per-field shape. Default capture mode for get_window_state. ("som"/"screenshot" still decode as deprecated aliases.). |
+| <span id="set_config--linux--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | Default capture mode for get_window_state. ("som"/"screenshot" still decode as deprecated aliases.). |
 | <span id="set_config--linux--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental PiP preview window (applies next restart; Linux backend stubbed). |
 | <span id="set_config--linux--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form. |
-| <span id="set_config--linux--key"></span>`key` | `string` |  | Name of a single config field to write (&#123;key, value&#125; shape). Pair with `value`. |
-| <span id="set_config--linux--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit). |
 
 </Tab>
 <Tab value="Windows">
 
-Write a setting into the persistent driver config. Values take effect immediately.
-
-Two input shapes:
-- **Swift-compatible** (preferred): `{"key": "max_image_dimension", "value": 1568}`; single dotted-path leaf write.
-- **Legacy per-field** (Rust-only): `{"max_image_dimension": 0}`; bulk write of named fields.
+Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.
 
 Known keys:
 - `capture_mode` (string: `vision` | `ax` | `som`); DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.
@@ -126,7 +116,7 @@ Known keys:
 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart: Windows backend stubbed today, see issue #1729)
 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
 
-- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>`: saved default cursor motion for sessions started afterwards (see the cursor docs).
+- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -135,10 +125,8 @@ Returns the full updated config in the same shape as `get_config`.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_config--windows--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | DEPRECATED and ignored: get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. ("som"/"screenshot" still decode as deprecated aliases.). |
-| <span id="set_config--windows--experimental_pip"></span>`experimental_pip` | `boolean` |  | Legacy per-field shape. Enables PiP preview (applies next restart). |
-| <span id="set_config--windows--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | Legacy per-field shape. PiP window size + optional position. |
-| <span id="set_config--windows--key"></span>`key` | `string` |  | Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`. |
-| <span id="set_config--windows--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Legacy per-field shape. |
+| <span id="set_config--windows--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enables PiP preview (applies next restart). |
+| <span id="set_config--windows--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position. |
 
 </Tab>
 </Tabs>
@@ -147,16 +135,16 @@ Returns the full updated config in the same shape as `get_config`.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_config--cursor-motion"></span>`cursor.motion` | `any` |  | Pass null (or `default`) to clear every saved cursor motion default. |
-| <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `boolean` |  | Saved default for the `glow` cursor effect. Unset follows the style. |
-| <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `boolean` |  | Saved default for the `magnet` cursor effect. Unset follows the style. |
-| <span id="set_config--cursor-motion-effects-ripple"></span>`cursor.motion.effects.ripple` | `boolean` |  | Saved default for the `ripple` cursor effect. Unset follows the style. |
-| <span id="set_config--cursor-motion-effects-squish"></span>`cursor.motion.effects.squish` | `boolean` |  | Saved default for the `squish` cursor effect. Unset follows the style. |
-| <span id="set_config--cursor-motion-effects-trail"></span>`cursor.motion.effects.trail` | `boolean` |  | Saved default for the `trail` cursor effect. Unset follows the style. |
+| <span id="set_config--cursor-motion"></span>`cursor.motion` | `"default"` |  | Pass `default` to clear every saved cursor motion default. |
+| <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `"on" \| "off" \| "default"` |  | Saved default for the `glow` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
+| <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `"on" \| "off" \| "default"` |  | Saved default for the `magnet` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
+| <span id="set_config--cursor-motion-effects-ripple"></span>`cursor.motion.effects.ripple` | `"on" \| "off" \| "default"` |  | Saved default for the `ripple` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
+| <span id="set_config--cursor-motion-effects-squish"></span>`cursor.motion.effects.squish` | `"on" \| "off" \| "default"` |  | Saved default for the `squish` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
+| <span id="set_config--cursor-motion-effects-trail"></span>`cursor.motion.effects.trail` | `"on" \| "off" \| "default"` |  | Saved default for the `trail` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-style"></span>`cursor.motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Saved default cursor motion style for new sessions. Overridden by start_session cursor_motion and set_agent_cursor_motion; reduced motion always wins. Built-in default: signature_arc. |
 | <span id="set_config--cursor-motion-timing"></span>`cursor.motion.timing` | `"native" \| "fitts" \| "fixed"` |  | Saved default cursor move timing for new sessions. |
+| <span id="set_config--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
 | <span id="set_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="set_config--value"></span>`value` | `any` |  | New value for `key`. JSON type depends on the key. |
 
 ## `check_permissions`
 

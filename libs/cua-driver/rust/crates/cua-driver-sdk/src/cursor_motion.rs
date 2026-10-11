@@ -9,7 +9,8 @@
 
 use cua_cursor_motion as cm;
 use cua_driver_contract::{
-    CursorMotionEffects, CursorMotionEffectsOutput, CursorMotionStyle, CursorMotionTiming,
+    CursorEffectSetting, CursorMotionEffects, CursorMotionEffectsOutput, CursorMotionStyle,
+    CursorMotionTiming,
 };
 use std::sync::Arc;
 
@@ -33,12 +34,13 @@ fn timing_in(timing: CursorMotionTiming) -> cm::MotionTiming {
 }
 
 fn overrides_in(e: CursorMotionEffects) -> cm::MotionEffects {
+    let flag = |setting: Option<CursorEffectSetting>| setting.and_then(|s| s.override_value());
     cm::MotionEffects {
-        trail: e.trail,
-        glow: e.glow,
-        magnet: e.magnet,
-        ripple: e.ripple,
-        squish: e.squish,
+        trail: flag(e.trail),
+        glow: flag(e.glow),
+        magnet: flag(e.magnet),
+        ripple: flag(e.ripple),
+        squish: flag(e.squish),
     }
 }
 

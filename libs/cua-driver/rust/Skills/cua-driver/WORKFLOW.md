@@ -79,7 +79,7 @@ Keep `delivery_mode:"background"` as the default for window input. The route may
 
 ## Batch known actions
 
-`run_steps` is the default way to act. When the next action or actions are decided, send them as one `run_steps` call with `observe:true` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
+`run_steps` is the default way to act. When the next action or actions are decided, send them as one `run_steps` call with `observe:{}` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
 
 ```bash
 cua-driver run_steps '{"session":"run-1","steps":[
@@ -87,7 +87,7 @@ cua-driver run_steps '{"session":"run-1","steps":[
   {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:15","value":"Lovelace"}},
   {"tool":"click","args":{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:21"}},
   {"tool":"press_key","args":{"pid":844,"key":"return"}}
- ],"delay_ms":100,"observe":true}'
+ ],"delay_ms":100,"observe":{}}'
 ```
 
 - `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `move_cursor` (`press` and `type` are accepted for `press_key` and `type_text`, `triple_click` is a click with `count:3`, and a key name such as `down` as the tool is a `press_key`); `args` are exactly that tool's arguments. Observation tools do not run inside a batch: a read between actions is skipped (it could not change the later steps), a `get_window_state` as the last step is the observation (merged with `observe`), and a trailing `zoom` runs after it. Run `describe run_steps` and `describe <tool>` for schemas. Up to 64 steps. `delivery_mode` on `run_steps` is the default for steps that set none.

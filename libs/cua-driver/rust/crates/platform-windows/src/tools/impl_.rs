@@ -8778,16 +8778,8 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
-            // Description ported from Swift `SetConfigTool.swift`.  Windows
-            // accepts BOTH Swift's `{key, value}` dotted-path shape AND a
-            // legacy per-field shape; documented as intentional.
             description: "Write a setting into the persistent driver config. Values take \
-                effect immediately.\n\n\
-                Two input shapes:\n\
-                - **Swift-compatible** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 1568}` \
-                  — single dotted-path leaf write.\n\
-                - **Legacy per-field** (Rust-only): `{\"max_image_dimension\": 0}` \
-                  — bulk write of named fields.\n\n\
+                effect immediately. Pass each setting as its own field.\n\n\
                 Known keys:\n\
                 - `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; \
                   `get_window_state` always returns both the UIA tree and a screenshot. Still \
@@ -8795,23 +8787,19 @@ impl Tool for SetConfigTool {
                 - `max_image_dimension` (integer)\n\
                 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
                 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
-                - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` — saved default cursor motion for sessions started afterwards (see the cursor docs).\n\n\
+                - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
-                "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
-                "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
-                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
-                "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
-                "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
+                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
+                "experimental_pip":{"type":"boolean","description":"Enables PiP preview (applies next restart)."},
+                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position."}
             },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
+        if args.get("capture_scope").is_some() {
             return ToolResult::error(
                 "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
@@ -8827,61 +8815,6 @@ impl Tool for SetConfigTool {
         };
         let mut cfg = self.state.config.write().unwrap();
         let mut applied = !motion_keys.is_empty();
-        // Swift-compatible {key, value} shape.
-        if let (Some(key), Some(val)) =
-            (args.get("key").and_then(|v| v.as_str()), args.get("value"))
-        {
-            match key {
-                "capture_mode" => match val.as_str() {
-                    Some(s) => {
-                        cfg.capture_mode = s.to_owned();
-                        if let Err(e) = pip_preview::write_config_key("capture_mode", Value::String(s.to_owned())) {
-                            tracing::warn!("set_config: failed to persist capture_mode: {e}");
-                        }
-                        applied = true;
-                    }
-                    None    => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "max_image_dimension" => match val.as_u64() {
-                    Some(n) => {
-                        cfg.max_image_dimension = n as u32;
-                        if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(n)) {
-                            tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
-                        }
-                        applied = true;
-                    }
-                    None    => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
-                },
-                "experimental_pip" => match val.as_bool() {
-                    Some(b) => {
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
-                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
-                        }
-                        applied = true;
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
-                },
-                "experimental_pip_geometry" => match val.as_str() {
-                    Some(s) => {
-                        if pip_preview::PipGeometry::parse(s).is_none() {
-                            return ToolResult::error(format!(
-                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
-                            ));
-                        }
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
-                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
-                        }
-                        applied = true;
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
-                },
-                other if motion_keys.iter().any(|written| written == other) => {}
-                other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry, cursor.motion.style, cursor.motion.timing, cursor.motion.effects.<name>."
-                )),
-            }
-        }
-        // Legacy per-field shape.
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
             cfg.capture_mode = mode.to_owned();
             if let Err(e) =
@@ -8925,9 +8858,7 @@ impl Tool for SetConfigTool {
             applied = true;
         }
         if !applied {
-            return ToolResult::error(
-                "Missing required string field `key` (or a known legacy per-field).",
-            );
+            return ToolResult::error("set_config did not contain a known field.");
         }
         // Emit the same pretty-JSON payload as `get_config` (matches Swift's
         // `set_config` return shape — both tools echo the full config after).

@@ -40,11 +40,15 @@ const DELIVERY_MODE_DESCRIPTION: &str = "Window-scoped drag on macOS supports on
      gesture, then restore the prior frontmost app. The default \"background\" is refused with \
      background_unavailable because macOS has no background drag route. Desktop scope ignores this field.";
 
-const BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable on macOS: a drag is \
-     delivered as real pointer events to the frontmost window, so it cannot run without fronting \
-     the target. Nothing was sent. Retry with delivery_mode:\"foreground\" and window_id; the \
-     driver briefly fronts that window, moves the pointer along the path, and restores the prior \
-     frontmost app.";
+const BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable on macOS: \
+     WindowServer tracks a drag (including drag-and-drop) with the real pointer over the \
+     frontmost window, so it cannot run without fronting the target. Nothing was sent. First \
+     look for a route that is not a drag: a Move Up/Down button or menu item, a context-menu \
+     command, a keyboard shortcut on the selected item, or set_value on a slider. If the drag is \
+     the only route and the user allows the window to come forward, retry with \
+     delivery_mode:\"foreground\" and window_id: the driver briefly fronts that window, moves \
+     the pointer along the path and restores the prior frontmost app. Otherwise stop and report \
+     that the step needs the window in front.";
 
 fn background_drag_refusal() -> ToolResult {
     cua_driver_core::delivery::background_unavailable_result(

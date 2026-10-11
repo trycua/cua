@@ -135,7 +135,8 @@ pub struct PairingCodeRequest {
     /// Name for the machine (else the machine's own).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Team the machine is added for (recorded as its `cua.team`).
+    /// Team (`team-…`) the machine is added to; the caller must be its owner
+    /// or an admin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
     /// Lifetime in seconds (the relay clamps it to 60 s ..= 24 h; 30

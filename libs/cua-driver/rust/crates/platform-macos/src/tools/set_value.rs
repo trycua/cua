@@ -411,8 +411,10 @@ fn set_value_blocking(
             );
             // Some apps apply the write a moment later; give it a short
             // settle before calling it not applied.
+            let secure = unsafe { copy_string_attr(element, "AXSubrole") }.as_deref()
+                == Some("AXSecureTextField");
             for _ in 0..NOT_APPLIED_REREADS {
-                if !write_not_applied(verified, changed) {
+                if secure || !write_not_applied(verified, changed) {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -434,7 +436,9 @@ fn set_value_blocking(
                 detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
                 verified,
                 changed,
-                not_applied: write_not_applied(verified, changed),
+                // A secure text field reads back empty or masked, so its
+                // read-back proves nothing either way.
+                not_applied: !secure && write_not_applied(verified, changed),
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to

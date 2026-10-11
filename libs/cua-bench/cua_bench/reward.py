@@ -12,8 +12,9 @@ evaluator prefixes with the ``CUA_BENCH_RESULT`` marker:
 The JSON is limited to a top-level ``reward`` or ``score`` key. Arbitrary JSON
 an agent or tool happens to print (a model confidence ``score``, an OCR score,
 an API response) is ignored, so it can never be mistaken for the task reward.
-Evaluators produce the envelope with :func:`emit_result_envelope` and pass their
-raw ``evaluate`` result through :func:`coerce_reward` first.
+Report sites emit the envelope with :func:`emit_result_envelope`;
+:func:`coerce_reward` turns an ``evaluate`` result (a scalar, a list, or a
+``reward``/``score`` mapping) into the scalar it formats.
 When several envelopes are present the last one wins. When no envelope is
 present the legacy ``Evaluation result:`` text form is used. When neither is
 present a clear ``ValueError`` is raised instead of silently returning ``None``

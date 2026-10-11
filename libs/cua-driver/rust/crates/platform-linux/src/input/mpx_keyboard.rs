@@ -673,21 +673,22 @@ pub fn send_virtual_keyboard_text(
     // (e.g. an ASCII prefix, a character needing remap, then more ASCII)
     // would come out with all the in-map characters first, reordering the
     // typed text relative to what was asked for.
-    let mut guards = Vec::new();
-    let (steps, skipped) =
-        plan_text_with_fallback(
-            &keymap.mapping,
-            keymap.shift,
-            text,
-            |ch| match remap_spare_keycode(&keymap.conn, &keymap.mapping, keysym_for_char(ch)) {
-                Ok(guard) => {
-                    let keycode = guard.keycode;
-                    guards.push(guard);
-                    Some(keycode)
-                }
-                Err(_) => None,
-            },
-        );
+    let mut guards: Vec<RemappedKeycode<'_>> = Vec::new();
+    let (steps, skipped) = plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch| {
+        let keysym = keysym_for_char(ch);
+        if let Some(guard) = guards.iter().find(|guard| guard.keysym == keysym) {
+            return Some(guard.keycode);
+        }
+        let held: Vec<u8> = guards.iter().map(|guard| guard.keycode).collect();
+        match remap_spare_keycode(&keymap.conn, &keymap.mapping, keysym, &held) {
+            Ok(guard) => {
+                let keycode = guard.keycode;
+                guards.push(guard);
+                Some(keycode)
+            }
+            Err(_) => None,
+        }
+    });
     deliver(
         cursor_id,
         target_window,

@@ -3392,24 +3392,27 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     // in mpx_keyboard::plan_text_with_fallback for the background path.
     let mut remap_guards = Vec::new();
 
-    for ch in text.chars() {
+    for (typed, ch) in text.chars().enumerate() {
         // Resolve the keycode and whether Shift must be held — without it,
         // uppercase and shifted symbols would otherwise type their unshifted
         // form (e.g. "A" arriving as "a").
         let (keycode, needs_shift) =
             match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
                 Some(found) => found,
-                None => match keycode_for_keysym(
+                None => match text_keycode(
                     &conn,
                     &mapping,
+                    &mut remap_guards,
                     mpx_keyboard::keysym_for_char(ch),
                     &ch.to_string(),
                 ) {
-                    Ok((keycode, guard)) => {
-                        remap_guards.extend(guard);
-                        (keycode, false)
+                    Ok(keycode) => (keycode, false),
+                    Err(error) => {
+                        bail!(
+                            "typed {typed} of {} characters: {error:#}",
+                            text.chars().count()
+                        )
                     }
-                    Err(_) => continue,
                 },
             };
         let state = if needs_shift {
@@ -3485,16 +3488,18 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .unwrap_or(50);
     // Remap guards live until the function returns — see send_type_text_with_delay.
     let mut remap_guards = Vec::new();
-    for ch in text.chars() {
+    for (typed, ch) in text.chars().enumerate() {
         let cp = mpx_keyboard::keysym_for_char(ch);
         let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
             Some(found) => found,
-            None => match keycode_for_keysym(&conn, &mapping, cp, &ch.to_string()) {
-                Ok((keycode, guard)) => {
-                    remap_guards.extend(guard);
-                    (keycode, false)
+            None => match text_keycode(&conn, &mapping, &mut remap_guards, cp, &ch.to_string()) {
+                Ok(keycode) => (keycode, false),
+                Err(error) => {
+                    bail!(
+                        "typed {typed} of {} characters: {error:#}",
+                        text.chars().count()
+                    )
                 }
-                Err(_) => continue,
             },
         };
         if needs_shift {
@@ -4100,6 +4105,28 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 }
 
 #[cfg(test)]
+mod spare_keycode_tests {
+    use super::spare_keycode;
+    use x11rb::protocol::xproto::GetKeyboardMappingReply;
+
+    #[test]
+    fn spare_keycodes_skip_bound_and_held_keycodes() {
+        let per = 2usize;
+        let mut keysyms = vec![0u32; 4 * per];
+        keysyms[per..2 * per].copy_from_slice(&[0x61, 0x41]);
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: per as u8,
+            sequence: 0,
+            keysyms,
+        };
+        assert_eq!(spare_keycode(&mapping, &[]), Some(11));
+        assert_eq!(spare_keycode(&mapping, &[11]), Some(10));
+        assert_eq!(spare_keycode(&mapping, &[11, 10]), Some(8));
+        assert_eq!(spare_keycode(&mapping, &[11, 10, 8]), None);
+    }
+}
+
+#[cfg(test)]
 mod key_name_alias_tests {
     use super::key_name_to_keysym;
 
@@ -4137,6 +4164,7 @@ mod key_name_alias_tests {
 pub(crate) struct RemappedKeycode<'a> {
     conn: &'a RustConnection,
     keycode: u8,
+    keysym: u32,
     keysyms_per_keycode: u8,
     original_keysyms: Vec<u32>,
 }
@@ -4160,27 +4188,18 @@ impl Drop for RemappedKeycode<'_> {
 /// Temporarily bind `keysym` onto a spare (fully unused) keycode so it can be
 /// injected even when no existing keycode emits it. Returns a guard that
 /// restores the original mapping on drop. Errors only if the keymap has no free
-/// keycode left to borrow.
+/// keycode left to borrow outside `held`, the keycodes the caller still holds.
 fn remap_spare_keycode<'a>(
     conn: &'a RustConnection,
     mapping: &GetKeyboardMappingReply,
     keysym: u32,
+    held: &[u8],
 ) -> Result<RemappedKeycode<'a>> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
     }
-
-    // Find a keycode whose every keysym slot is NoSymbol (0) — i.e. completely
-    // unused — so borrowing it cannot clobber a real key. Scan high-to-low:
-    // high keycodes are far likelier to be free than the low, populated ones.
-    let spare = mapping
-        .keysyms
-        .chunks(per)
-        .enumerate()
-        .rev()
-        .find(|(_, syms)| syms.iter().all(|&s| s == 0))
-        .map(|(i, _)| (8 + i) as u8)
+    let spare = spare_keycode(mapping, held)
         .ok_or_else(|| anyhow!("no spare keycode available to remap keysym 0x{keysym:X}"))?;
 
     // Snapshot the original keysyms (all NoSymbol, but capture them so restore is
@@ -4197,9 +4216,29 @@ fn remap_spare_keycode<'a>(
     Ok(RemappedKeycode {
         conn,
         keycode: spare,
+        keysym,
         keysyms_per_keycode: per as u8,
         original_keysyms,
     })
+}
+
+/// Find a keycode outside `held` whose every keysym slot is NoSymbol (0) — i.e.
+/// completely unused — so borrowing it cannot clobber a real key. Scan
+/// high-to-low: high keycodes are far likelier to be free than the low,
+/// populated ones.
+fn spare_keycode(mapping: &GetKeyboardMappingReply, held: &[u8]) -> Option<u8> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per == 0 {
+        return None;
+    }
+    mapping
+        .keysyms
+        .chunks(per)
+        .enumerate()
+        .rev()
+        .map(|(i, syms)| ((8 + i) as u8, syms))
+        .find(|(keycode, syms)| syms.iter().all(|&s| s == 0) && !held.contains(keycode))
+        .map(|(keycode, _)| keycode)
 }
 
 /// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
@@ -4213,6 +4252,17 @@ fn keycode_for_keysym<'a>(
     keysym: u32,
     key: &str,
 ) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+    keycode_for_keysym_except(conn, mapping, keysym, key, &[])
+}
+
+/// [`keycode_for_keysym`] that never borrows one of the `held` keycodes.
+fn keycode_for_keysym_except<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    keysym: u32,
+    key: &str,
+    held: &[u8],
+) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per > 0 {
         for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
@@ -4223,11 +4273,36 @@ fn keycode_for_keysym<'a>(
     }
 
     // Not in the map — fall back to remapping a spare keycode.
-    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
+    let guard = remap_spare_keycode(conn, mapping, keysym, held).with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
     let keycode = guard.keycode;
     Ok((keycode, Some(guard)))
+}
+
+/// Keycode for `keysym` while typing one text. It reuses the text's own
+/// binding of the keysym, else borrows a spare keycode that no earlier
+/// character of the text holds: a client may still be translating that
+/// character, and rebinding its keycode would change what it reads. With every
+/// spare held, it rebinds the oldest one.
+fn text_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    guards: &mut Vec<RemappedKeycode<'a>>,
+    keysym: u32,
+    key: &str,
+) -> Result<u8> {
+    if let Some(guard) = guards.iter().find(|guard| guard.keysym == keysym) {
+        return Ok(guard.keycode);
+    }
+    let mut held: Vec<u8> = guards.iter().map(|guard| guard.keycode).collect();
+    if !held.is_empty() && spare_keycode(mapping, &held).is_none() {
+        guards.remove(0);
+        held.remove(0);
+    }
+    let (keycode, guard) = keycode_for_keysym_except(conn, mapping, keysym, key, &held)?;
+    guards.extend(guard);
+    Ok(keycode)
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {

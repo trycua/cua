@@ -24,6 +24,10 @@ class RelayUsageStore {
   private unsupported = false;
   private readAt = 0;
   private reading = false;
+  /** Bumped on every account change: an older read's answer is dropped. */
+  private generation = 0;
+  /** An account change came while a read was out: read again after it. */
+  private again = false;
   private listeners = new Set<() => void>();
   private stop: (() => void) | null = null;
 
@@ -44,11 +48,14 @@ class RelayUsageStore {
   snapshot = (): RelayUsage | null => this.usage;
 
   async read(): Promise<void> {
-    if (this.unsupported || this.reading) return;
+    if (this.unsupported) return;
+    if (this.reading) return;
     this.reading = true;
     this.readAt = Date.now();
+    const generation = this.generation;
     try {
-      this.set(await this.adapter.call("relay.usage", {}));
+      const usage = await this.adapter.call("relay.usage", {});
+      if (generation === this.generation) this.set(usage);
     } catch (e) {
       // Unsupported: never again. Anything else keeps the last answer.
       if (isUnsupported(e)) {
@@ -57,7 +64,20 @@ class RelayUsageStore {
       }
     } finally {
       this.reading = false;
+      if (this.again) {
+        this.again = false;
+        void this.read();
+      }
     }
+  }
+
+  /** The account changed (signed in, out, or another one): forget the
+   * last answer, then read for the current account. */
+  private accountChanged() {
+    this.generation += 1;
+    this.set(null);
+    if (this.reading) this.again = true;
+    else void this.read();
   }
 
   private set(usage: RelayUsage | null) {
@@ -74,8 +94,9 @@ class RelayUsageStore {
     const win = typeof window !== "undefined" ? window : null;
     win?.addEventListener("focus", onFocus);
     const unsubscribe = this.adapter.subscribe((e) => {
-      if (e.type === "session.signedOut") this.set(null);
-      else if (e.type === "session.signedIn") void this.read();
+      if (e.type === "session.signedOut" || e.type === "session.signedIn" || e.type === "session.changed") {
+        this.accountChanged();
+      }
     });
     this.stop = () => {
       clearInterval(timer);

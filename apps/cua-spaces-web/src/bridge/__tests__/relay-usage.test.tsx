@@ -78,6 +78,42 @@ describe("relay.usage", () => {
     expect(seen.usage).toBeNull();
   });
 
+  it("an account change drops an answer still in flight and reads for the new account", async () => {
+    const demo = createDemoAdapter({ latencyMs: 0 });
+    const listeners = new Set<(e: { type: string }) => void>();
+    let release: (v: RelayUsage | null) => void = () => {};
+    let n = 0;
+    const call = vi.fn((op: string, args: unknown) => {
+      if (op !== "relay.usage") return demo.call(op as never, args as never);
+      n += 1;
+      // The first read hangs until released; later ones answer at once.
+      if (n === 1) return new Promise<RelayUsage | null>((r) => (release = r));
+      return Promise.resolve({ ...demoRelayUsage(), plan: "pro" });
+    });
+    const adapter = {
+      ...demo,
+      call,
+      subscribe: (l: (e: { type: string }) => void) => {
+        listeners.add(l);
+        return () => listeners.delete(l);
+      },
+    } as unknown as DataAdapter;
+    const seen: { usage?: RelayUsage | null } = {};
+    render(
+      <BridgeProvider adapter={adapter} core={noCore}>
+        <Probe seen={seen} />
+      </BridgeProvider>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await act(async () => {
+      for (const l of listeners) l({ type: "session.changed" });
+      release({ ...demoRelayUsage(), plan: "free" });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    expect(n).toBe(2);
+    expect(seen.usage).toMatchObject({ plan: "pro" });
+  });
+
   it("a relay that meters nothing reads as nothing to show", async () => {
     const demo = createDemoAdapter({ latencyMs: 0 });
     demo.state.relayUsage = { ...demoRelayUsage(), metered: false };

@@ -1272,6 +1272,10 @@ trycua/cua PR #4955 (CUA-1309); the concept and the options measured are in `res
 
 **What it checks:** no window raised over the user window, no key loss and no swallowed keystroke in any trial. Background completion is reported against the A16 foreground results. A failure is fixed and re-checked, each round logged here before it runs. The PR merges after this check.
 
+**Round 1 outcome (v2s4b, 23:22Z–00:35Z, seat 4, 18 trials, 0 infrastructure).** IR-01 3/3 and MB-10 3/3 completed in the background: no raise, no key loss, no swallowed keys. IR-02 2/3: one raise, a moment after the call returned. CDB-G04 0/3: Rillwatch raised and stayed raised. CDB-G02 0/3 and CDB-G03 0/2 (one trial ran out of time) had focus steals from `invoke_menu`, which activated the app by design. Fixes, in PR #4955 head `646f8cc72`: `invoke_menu` no longer activates a background app (it invokes without opening menus, or refuses with `background_unavailable`), and the guard keeps restoring the user's window for 2.5 s after each action.
+
+**Round 2 (registered before it runs):** v2s4b2, the same tasks, arm and runs, on `646f8cc72`.
+
 ### A17.3 The rerun
 
 Registered here by its own dated line before its first trial, on the main commit that contains #4955, built once in the VM: both conditions, the three headline setups and the ten A14.6 tasks at 3 + 2 runs, as A16.3. The A16.3 rows stay superseded.

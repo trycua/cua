@@ -97,6 +97,52 @@ fn restore_front_if_raised(target: i32, front: i32) {
     );
 }
 
+/// How long the order stays watched after a guarded action ends. A target
+/// can raise a window a moment after the call that caused it returns (a
+/// banner, a sheet, or a menu that a renderer process opens later).
+const ORDER_WATCH: Duration = Duration::from_millis(2500);
+const ORDER_POLL: Duration = Duration::from_millis(20);
+
+/// Keep restoring the user's window above `target` for a short while after
+/// the action. One watcher per target; a later action extends it.
+fn watch_order_after_action(target: i32, front: i32) {
+    static WATCHING: OnceLock<Mutex<HashMap<i32, Instant>>> = OnceLock::new();
+    let watching = WATCHING.get_or_init(|| Mutex::new(HashMap::new()));
+    let until = Instant::now() + ORDER_WATCH;
+    {
+        let mut map = watching
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = map.contains_key(&target);
+        map.insert(target, until);
+        if running {
+            return;
+        }
+    }
+    let spawned = std::thread::Builder::new()
+        .name("cua-order-watch".into())
+        .spawn(move || loop {
+            std::thread::sleep(ORDER_POLL);
+            restore_front_if_raised(target, front);
+            let mut map = watching
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if map
+                .get(&target)
+                .is_none_or(|until| Instant::now() >= *until)
+            {
+                map.remove(&target);
+                return;
+            }
+        });
+    if spawned.is_err() {
+        watching
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&target);
+    }
+}
+
 /// Wait until `pid` shows a menu-level window, or `budget` runs out.
 fn wait_for_menu_window(pid: i32, budget: Duration) {
     let deadline = Instant::now() + budget;
@@ -219,6 +265,7 @@ impl Drop for Lease {
     fn drop(&mut self) {
         if !self.above_before {
             restore_front_if_raised(self.pid, self.front);
+            watch_order_after_action(self.pid, self.front);
         }
         let mut st = lock();
         if let Some((leases, until)) = st.guarded.get_mut(&self.pid) {

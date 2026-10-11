@@ -85,7 +85,7 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         .collect();
     assert_eq!(names.len(), tools.len(), "duplicate tool name");
     assert!(
-        names.contains("run_actions"),
+        names.contains("run_steps"),
         "runtime-only batch tool missing"
     );
     let platform = if cfg!(target_os = "macos") {
@@ -239,7 +239,7 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "browser_click",
         "browser_pointer",
         // The batch's default for its steps' own delivery_mode.
-        "run_actions",
+        "run_steps",
         // macOS set_value has no delivery ladder.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         "set_value",

@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use crate::assertion::{now_secs, write_private};
+use crate::assertion::{now_secs, remove_stale_temps, write_private};
 use crate::oidc::Identity;
 
 /// Prefix of machine tokens (tells them apart from static relay tokens and
@@ -183,6 +183,8 @@ pub struct Directory {
     path: Option<PathBuf>,
     records: Mutex<BTreeMap<String, MachineRecord>>,
     max_per_account: usize,
+    /// Whether the last write of the directory file succeeded.
+    writes_ok: std::sync::atomic::AtomicBool,
 }
 
 fn hash_token(token: &str) -> String {
@@ -241,11 +243,14 @@ impl Directory {
             path: None,
             records: Mutex::default(),
             max_per_account,
+            writes_ok: true.into(),
         }
     }
 
-    /// Loads (or starts) the directory persisted at `path`.
+    /// Loads (or starts) the directory persisted at `path`, first removing
+    /// temp files an interrupted write left behind.
     pub fn open(path: PathBuf, max_per_account: usize) -> std::io::Result<Self> {
+        remove_stale_temps(&path)?;
         let records = match std::fs::read(&path) {
             Ok(raw) => {
                 let list: Vec<MachineRecord> = serde_json::from_slice(&raw)
@@ -259,7 +264,14 @@ impl Directory {
             path: Some(path),
             records: Mutex::new(records),
             max_per_account,
+            writes_ok: true.into(),
         })
+    }
+
+    /// Whether the last write of the directory file succeeded (true until
+    /// one fails, and for an in-memory directory).
+    pub fn writes_ok(&self) -> bool {
+        self.writes_ok.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn persist(&self, records: &BTreeMap<String, MachineRecord>) -> Result<(), DirectoryError> {
@@ -272,7 +284,10 @@ impl Directory {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| DirectoryError::Storage(e.to_string()))?;
         }
-        write_private(path, &raw).map_err(|e| DirectoryError::Storage(e.to_string()))
+        let written = write_private(path, &raw);
+        self.writes_ok
+            .store(written.is_ok(), std::sync::atomic::Ordering::Relaxed);
+        written.map_err(|e| DirectoryError::Storage(e.to_string()))
     }
 
     /// Registers `id` for `who` (or rotates its token when `who` already

@@ -29,16 +29,18 @@ fn numeric_set_value_reaches_the_same_handler_directly_and_in_a_batch() {
         let direct = driver.recv();
         assert_eq!(direct["result"]["isError"], true, "{direct}");
         assert_eq!(direct["result"]["content"][0]["text"], expected, "{direct}");
-        driver.send(
-            &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
-                "name":"run_actions","arguments":{"steps":[{"tool":"set_value","args":arguments}]}
-            }}),
-        );
-        let batch = driver.recv();
-        let result = &batch["result"]["structuredContent"];
-        assert_ne!(result["code"], "invalid_batch", "{batch}");
-        assert_eq!(result["steps"][0]["phase"], "action", "{batch}");
-        assert_eq!(result["steps"][0]["message"], expected, "{batch}");
+        for batch_tool in ["run_steps", "run_actions"] {
+            driver.send(
+                &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+                    "name":batch_tool,"arguments":{"steps":[{"tool":"set_value","args":arguments}]}
+                }}),
+            );
+            let batch = driver.recv();
+            let result = &batch["result"]["structuredContent"];
+            assert_ne!(result["code"], "invalid_batch", "{batch}");
+            assert_eq!(result["steps"][0]["phase"], "action", "{batch}");
+            assert_eq!(result["steps"][0]["message"], expected, "{batch}");
+        }
     }
     for value in [Value::Null, json!(true), json!([]), json!({})] {
         driver.send(

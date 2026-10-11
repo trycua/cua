@@ -1992,6 +1992,7 @@ fn fixed_tool_name(tool_name: &str) -> String {
     if tool_name == "type_text_chars" {
         return "type_text".into();
     }
+    let tool_name = cua_driver_core::tool::renamed_tool(tool_name).unwrap_or(tool_name);
     if cua_driver_core::tool::default_capabilities_for(tool_name).is_empty() {
         "other".into()
     } else {

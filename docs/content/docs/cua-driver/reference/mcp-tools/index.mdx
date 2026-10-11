@@ -143,13 +143,14 @@ Set element values and read or write the clipboard. [Reference](/cua-driver/refe
 | <span id="clipboard_read"></span>[`clipboard_read`](/cua-driver/reference/mcp-tools/values-and-clipboard#clipboard_read) | List available system clipboard types and optionally return privacy-sensitive plain text. | macOS, Linux, Windows |
 | <span id="clipboard_write"></span>[`clipboard_write`](/cua-driver/reference/mcp-tools/values-and-clipboard#clipboard_write) | Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. | macOS, Linux, Windows |
 
-## Batch tool
+## Batch and script tools
 
-Run several action tools in one call. [Reference](/cua-driver/reference/mcp-tools/batch).
+Run several action tools, or a script that drives them, in one call. [Reference](/cua-driver/reference/mcp-tools/batch).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="run_actions"></span>[`run_actions`](/cua-driver/reference/mcp-tools/batch#run_actions) | The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. | macOS, Linux, Windows |
+| <span id="run_steps"></span>[`run_steps`](/cua-driver/reference/mcp-tools/batch#run_steps) | The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. | macOS, Linux, Windows |
+| <span id="run_script"></span>[`run_script`](/cua-driver/reference/mcp-tools/batch#run_script) | Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. | macOS, Linux, Windows |
 
 ## Page tools
 

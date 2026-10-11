@@ -1,4 +1,4 @@
-//! One test per run_actions failure class seen in bench run v036: the call
+//! One test per run_steps failure class seen in bench run v036: the call
 //! shapes models sent, and what the batch does with them now.
 
 use std::sync::{Arc, Mutex};
@@ -50,7 +50,7 @@ async fn string_scalars_in_step_args_are_coerced_before_validation() {
 #[tokio::test]
 async fn batch_level_pid_and_window_id_are_the_default_window() {
     let harness = Harness::new();
-    // The v036 shape: pid/window_id once (as strings) on run_actions itself.
+    // The v036 shape: pid/window_id once (as strings) on run_steps itself.
     let result = harness
         .run(json!({
             "pid": "37641",
@@ -153,7 +153,7 @@ fn a_failed_batch_keeps_the_step_report_readable() {
     // (~4 100 characters); the client cut it to "1. click ok: ... AXCh",
     // hiding why step 2 failed.
     let report =
-        "run_actions: step 2 of 2 failed\n1. click ok\n2. click ERROR (action): why".to_owned();
+        "run_steps: step 2 of 2 failed\n1. click ok\n2. click ERROR (action): why".to_owned();
     let mut content = vec![
         crate::protocol::Content::text(report.clone()),
         crate::protocol::Content::text("x".repeat(6_000)),
@@ -192,7 +192,7 @@ async fn a_failed_batch_with_a_long_read_stays_within_the_budget() {
 #[tokio::test]
 async fn batch_level_delivery_mode_is_the_steps_default() {
     let harness = Harness::new();
-    // v037c: `delivery_mode` on run_actions itself was refused.
+    // v037c: `delivery_mode` on run_steps itself was refused.
     let result = harness
         .run(
             json!({"pid": 7, "window_id": 3, "delivery_mode": "foreground", "steps": [
@@ -522,7 +522,7 @@ async fn a_stale_element_token_is_found_again_by_its_role_and_label() {
     );
     let result = registry
         .invoke(
-            super::super::RUN_ACTIONS_TOOL,
+            super::super::RUN_STEPS_TOOL,
             json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7, "element_token": "s0000002c:14"}}]}),
         )
         .await;
@@ -546,7 +546,7 @@ async fn a_stale_token_is_not_retried_when_its_label_is_ambiguous_or_unknown() {
     for token in ["s0000002d:3", "s0000002d:4", "s0000002d:99", "s0000777f:3"] {
         let result = registry
             .invoke(
-                super::super::RUN_ACTIONS_TOOL,
+                super::super::RUN_STEPS_TOOL,
                 json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7, "element_token": token}}]}),
             )
             .await;

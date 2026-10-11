@@ -121,7 +121,7 @@ impl Harness {
 
     async fn run(&self, args: Value) -> ToolResult {
         self.registry
-            .invoke_with_context(super::RUN_ACTIONS_TOOL, args, context(None))
+            .invoke_with_context(super::RUN_STEPS_TOOL, args, context(None))
             .await
     }
 }
@@ -223,7 +223,7 @@ async fn validates_every_step_before_running_any() {
     let harness = Harness::new();
     let cases = [
         (
-            json!({"tool": "run_actions", "args": {}}),
+            json!({"tool": "run_steps", "args": {}}),
             "cannot run in a batch",
         ),
         (
@@ -362,11 +362,11 @@ async fn every_step_runs_in_the_batch_session() {
 #[tokio::test]
 async fn each_step_is_held_to_the_capability_manifest() {
     let harness = Harness::new();
-    let manifest = "version: 2\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [run_actions, click]\n";
+    let manifest = "version: 2\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [run_steps, click]\n";
     let result = harness
         .registry
         .invoke_with_context(
-            super::RUN_ACTIONS_TOOL,
+            super::RUN_STEPS_TOOL,
             json!({"steps": [
                 {"tool": "click", "args": {"pid": 42}},
                 {"tool": "set_value", "args": {"pid": 42, "text": "secret"}},
@@ -394,7 +394,7 @@ async fn the_batch_itself_needs_the_manifest_to_allow_it() {
     let result = harness
         .registry
         .invoke_with_context(
-            super::RUN_ACTIONS_TOOL,
+            super::RUN_STEPS_TOOL,
             json!({"steps": [{"tool": "click", "args": {"pid": 42}}]}),
             context(Some(manifest)),
         )
@@ -408,7 +408,7 @@ async fn the_batch_is_advertised_with_its_schema() {
     let harness = Harness::new();
     let def = harness
         .registry
-        .get_def(super::RUN_ACTIONS_TOOL)
+        .get_def(super::RUN_STEPS_TOOL)
         .expect("registered");
     assert_eq!(def.input_schema["required"], json!(["steps"]));
     let listed: Vec<_> = def.input_schema["properties"]["steps"]["items"]["properties"]["tool"]
@@ -419,6 +419,63 @@ async fn the_batch_is_advertised_with_its_schema() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(listed, super::BATCHABLE_TOOLS);
+}
+
+#[tokio::test]
+async fn the_old_name_run_actions_still_runs_but_is_not_listed() {
+    let harness = Harness::new();
+    assert!(harness.registry.get_def("run_actions").is_none());
+    assert!(!harness
+        .registry
+        .tool_names()
+        .any(|name| name == "run_actions"));
+
+    let result = harness
+        .registry
+        .invoke_with_context(
+            "run_actions",
+            json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7}}]}),
+            context(None),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.hits("click"), 1);
+    let crate::protocol::Content::Text { text: note, .. } = result.content.last().unwrap() else {
+        panic!("last content block is not text");
+    };
+    assert!(
+        note.contains("`run_actions` is deprecated") && note.contains("`run_steps`"),
+        "{note}"
+    );
+    assert_eq!(note.lines().count(), 1);
+
+    // The new name carries no note.
+    let current = harness
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7}}]}))
+        .await;
+    assert!(!text(&current).contains("deprecated"), "{}", text(&current));
+}
+
+#[tokio::test]
+async fn a_manifest_that_allows_run_actions_allows_run_steps() {
+    let harness = Harness::new();
+    let manifest = "version: 2\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [run_actions, click]\n";
+    let result = harness
+        .registry
+        .invoke_with_context(
+            super::RUN_STEPS_TOOL,
+            json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7}}]}),
+            context(Some(manifest)),
+        )
+        .await;
+    // The batch itself is allowed: the refusal comes from its first step,
+    // whose pid the manifest does not declare.
+    let message = text(&result);
+    assert_eq!(
+        result.structured_content.unwrap()["failed_step"],
+        0,
+        "{message}"
+    );
 }
 
 #[tokio::test]

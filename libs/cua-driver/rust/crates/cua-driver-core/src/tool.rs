@@ -214,7 +214,7 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     if unknown.is_empty() {
         return None;
     }
-    // A direct action named by role/name: that targeting lives in run_actions.
+    // A direct action named by role/name: that targeting lives in run_steps.
     const NAME_TARGET: &[&str] = &["role", "name", "label", "app", "window", "nth"];
     let name_targeted = crate::batch_tools::BATCHABLE_TOOLS.contains(&def.name.as_str())
         && unknown.iter().all(|name| NAME_TARGET.contains(name));
@@ -234,8 +234,8 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     };
     let hint = if name_targeted {
         format!(
-            ". To target by role/name/app/window, send the same arguments as one run_actions \
-             step: run_actions {{\"steps\":[{{\"{}\": {{...}}}}]}}",
+            ". To target by role/name/app/window, send the same arguments as one run_steps \
+             step: run_steps {{\"steps\":[{{\"{}\": {{...}}}}]}}",
             def.name
         )
     } else {
@@ -249,7 +249,7 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
 }
 
 /// Rewrite argument spellings models guess into the advertised ones, before
-/// the closed schema is checked. Shared by dispatch and `run_actions` step
+/// the closed schema is checked. Shared by dispatch and `run_steps` step
 /// validation, so a batch step accepts what a direct call accepts. `Err` is a
 /// refusal detail for an alias that cannot be translated.
 pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
@@ -528,7 +528,7 @@ fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String
         (true, true) => {
             return Err(format!(
                 "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or \
-                 dy (or direction and amount), or use two scroll steps in run_actions."
+                 dy (or direction and amount), or use two scroll steps in run_steps."
             ))
         }
         (false, false) => {
@@ -628,6 +628,24 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
         }
     }
     schema
+}
+
+/// Tools renamed before 0.35.0, as (old name, new name). The old name still
+/// dispatches to the new tool, but it is not registered, so tools/list shows
+/// only the new name, and its result ends with a one-line deprecation note.
+/// To be removed in a future release.
+pub const RENAMED_TOOLS: &[(&str, &str)] = &[("run_actions", crate::batch_tools::RUN_STEPS_TOOL)];
+
+/// The current name of a renamed tool, or `None` when `name` is not an old name.
+pub fn renamed_tool(name: &str) -> Option<&'static str> {
+    RENAMED_TOOLS
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
+fn deprecated_name_note(old: &str, new: &str) -> String {
+    format!("Note: `{old}` is deprecated and will be removed in a future release; call `{new}` instead.")
 }
 
 /// Centralised tool name → capability tokens map. Lookup is by name so
@@ -793,7 +811,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "stop_recording" => &["recording.stop"],
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
-        "run_actions" => &["input.batch"],
+        "run_steps" => &["input.batch"],
         "run_script" => &["input.script"],
         "install_ffmpeg" => &["recording.install_dependency"],
         "install_extension" => &["extension.install"],
@@ -1327,23 +1345,26 @@ impl ToolRegistry {
         self.register_batch_tools();
     }
 
-    /// Register `run_actions`, which re-enters this registry for every step.
+    /// Register `run_steps`, which re-enters this registry for every step.
     /// Called from [`Self::register_session_tools`] so every platform that
     /// registers sessions gets it; [`Self::init_self_weak`] supplies the
     /// registry handle, as for `replay_trajectory`.
     fn register_batch_tools(&mut self) {
-        self.register(Box::new(crate::batch_tools::RunActionsTool::new(
+        self.register(Box::new(crate::batch_tools::RunStepsTool::new(
             self.replay_registry.clone(),
         )));
-        // Experimental and opt-in: only when the operator turned it on.
+        // On by default; the operator can turn it off (see script_tool).
         #[cfg(feature = "script")]
-        if crate::script_tool::enabled() {
-            self.register_script_tool();
+        match crate::script_tool::disabled_by() {
+            None => self.register_script_tool(),
+            Some(setting) => tracing::debug!("run_script not offered: turned off by {setting}"),
         }
+        #[cfg(not(feature = "script"))]
+        tracing::debug!("run_script not offered: built without the `script` engine feature");
     }
 
-    /// Register the experimental `run_script` tool, which, like
-    /// `run_actions`, re-enters this registry for every driver call.
+    /// Register the `run_script` tool, which, like
+    /// `run_steps`, re-enters this registry for every driver call.
     #[cfg(feature = "script")]
     pub fn register_script_tool(&mut self) {
         self.register(Box::new(crate::script_tool::RunScriptTool::new(
@@ -1642,6 +1663,7 @@ impl ToolRegistry {
         // fields carry registry-internal attestations and must not be
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
+        let original_name = name;
 
         if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
             return protected_refusal(
@@ -1666,7 +1688,7 @@ impl ToolRegistry {
                 eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                 "type_text"
             }
-            other => other,
+            other => renamed_tool(other).unwrap_or(other),
         };
 
         let Some(tool) = self.tools.get(resolved_name) else {
@@ -2161,7 +2183,7 @@ impl ToolRegistry {
                     | "stop_recording"
                     | "get_recording_state"
                     | "replay_trajectory"
-                    | "run_actions"
+                    | "run_steps"
                     | "run_script"
                     | "start_session"
                     | "end_session"
@@ -2383,6 +2405,13 @@ impl ToolRegistry {
                     timestamp_ms: now_ms(),
                 });
             }
+        }
+
+        if renamed_tool(original_name).is_some() {
+            result.content.push(Content::text(deprecated_name_note(
+                original_name,
+                resolved_name,
+            )));
         }
 
         result
@@ -6934,7 +6963,7 @@ mod argument_shape_tests {
     }
 
     #[test]
-    fn a_direct_action_named_by_role_points_to_run_actions() {
+    fn a_direct_action_named_by_role_points_to_run_steps() {
         let click = ToolDef {
             name: "click".into(),
             description: String::new(),
@@ -6946,9 +6975,9 @@ mod argument_shape_tests {
         };
         let detail =
             unknown_argument(&click, &json!({"pid": 1, "role": "button", "name": "OK"})).unwrap();
-        assert!(detail.contains("one run_actions step"), "{detail}");
+        assert!(detail.contains("one run_steps step"), "{detail}");
         let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
-        assert!(!other.contains("run_actions"), "{other}");
+        assert!(!other.contains("run_steps"), "{other}");
     }
 
     #[test]

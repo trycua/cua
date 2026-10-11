@@ -9,9 +9,10 @@ publish = false
 default = ["yaml", "rego", "script"]
 yaml = ["dep:regex"]
 rego = ["dep:regorus"]
-# Experimental `run_script` tool: an embedded QuickJS engine (rquickjs and
-# quickjs-ng, both MIT). Compiled in by default; the tool itself is only
-# registered when the operator opts in at runtime.
+# `run_script` tool: an embedded QuickJS engine (rquickjs and quickjs-ng,
+# both MIT). Compiled in by default on every platform, and the tool is
+# offered unless the operator turns it off at runtime. Without this feature
+# the tool is not offered at all.
 script = ["dep:rquickjs"]
 
 [dependencies]

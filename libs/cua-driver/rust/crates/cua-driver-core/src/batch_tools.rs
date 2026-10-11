@@ -1,4 +1,4 @@
-//! `run_actions`: run an ordered list of existing action tools in one call.
+//! `run_steps`: run an ordered list of existing action tools in one call.
 //!
 //! The tool owns no input logic. Every step is dispatched through the same
 //! [`ToolRegistry`] entry point a direct call uses, inside the batch's own
@@ -25,7 +25,7 @@ pub mod locate;
 use locate::{Check, ElementSpec, Locator, Window, WindowSpec};
 
 /// Public name of the batch tool.
-pub const RUN_ACTIONS_TOOL: &str = "run_actions";
+pub const RUN_STEPS_TOOL: &str = "run_steps";
 
 /// Action tools a batch may run. Observation tools are deliberately absent:
 /// the batch has exactly one optional observation, at the end.
@@ -141,11 +141,11 @@ const BATCH_WINDOW_KEYS: &[&str] = &["pid", "window_id", "app", "window"];
 /// How long a stale element target may take to be found again by its label.
 const REFIND_TIMEOUT: Duration = Duration::from_millis(1_500);
 
-pub struct RunActionsTool {
+pub struct RunStepsTool {
     registry: ReplayRegistrySlot,
 }
 
-impl RunActionsTool {
+impl RunStepsTool {
     pub fn new(registry: ReplayRegistrySlot) -> Self {
         Self { registry }
     }
@@ -154,10 +154,10 @@ impl RunActionsTool {
 static DEF: OnceLock<ToolDef> = OnceLock::new();
 
 #[async_trait]
-impl Tool for RunActionsTool {
+impl Tool for RunStepsTool {
     fn def(&self) -> &ToolDef {
         DEF.get_or_init(|| ToolDef {
-            name: RUN_ACTIONS_TOOL.into(),
+            name: RUN_STEPS_TOOL.into(),
             description: "The default way to act: run one or more action tools in ONE call, in \
                 order, stop at the first failure, and (with `observe`) get what changed in the \
                 same response. Use it whenever you know the next action(s) and would otherwise \
@@ -167,7 +167,7 @@ impl Tool for RunActionsTool {
                 Each step is `{tool, args}` where `tool` is one of click, double_click, \
                 right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor \
                 and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/\
-                `window`) on run_actions itself are the default window of every step that names \
+                `window`) on run_steps itself are the default window of every step that names \
                 none. Reads (get_window_state, zoom) do not run between steps: one there is \
                 skipped; a get_window_state last is the `observe`, a zoom last runs after it. \
                 Every step goes through the same session, permission and approval checks as a \
@@ -189,7 +189,7 @@ impl Tool for RunActionsTool {
                 since your last read of the window, plus a new snapshot_id. Without \
                 `observe` nothing is read. The batch uses one session: steps may \
                 omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
-                2000). At most 64 steps; `delivery_mode` on run_actions is the default for its steps.\n\n\
+                2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\n\
                 TARGET BY NAME (no earlier read needed, so one batch can cross screens): \
                 a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and \
                 its args may name the target instead of carrying a token: `role` (button, \
@@ -290,7 +290,7 @@ impl Tool for RunActionsTool {
             Some(registry) => registry,
             None => {
                 return ToolResult::error(
-                    "run_actions is not available: registry not initialised yet.",
+                    "run_steps is not available: registry not initialised yet.",
                 )
             }
         };
@@ -374,7 +374,7 @@ impl PlanError {
             None => String::new(),
         };
         ToolResult::error(format!(
-            "run_actions rejected before running anything: {location}{}",
+            "run_steps rejected before running anything: {location}{}",
             self.message
         ))
         .with_structured(json!({
@@ -709,9 +709,9 @@ impl Plan {
             "steps": reports,
         });
         let header = match failed_step {
-            None => format!("run_actions: {total}/{total} steps ok"),
+            None => format!("run_steps: {total}/{total} steps ok"),
             Some(index) => format!(
-                "run_actions: step {} of {total} failed; {} step(s) ran before it, {} not run",
+                "run_steps: step {} of {total} failed; {} step(s) ran before it, {} not run",
                 index + 1,
                 index,
                 total - executed
@@ -992,7 +992,7 @@ async fn run_step(
         } else if wants_foreground {
             foreground_hint = Some(format!(
                 " To run it, send the batch again from step {} with \"delivery_mode\":\"foreground\" \
-                 on this step, or set \"foreground_fallback\":true on run_actions (the window is \
+                 on this step, or set \"foreground_fallback\":true on run_steps (the window is \
                  activated and the pointer may move).",
                 index + 1
             ));
@@ -1880,7 +1880,7 @@ fn prepare_args(args: &mut Value, session: Option<&str>) -> Result<(), String> {
             "session `{own}` differs from the batch's session `{batch}`; a batch runs in one session"
         )),
         (Some(own), None) if own != "default" => Err(format!(
-            "session `{own}` differs from the batch's session; set `session` on run_actions itself"
+            "session `{own}` differs from the batch's session; set `session` on run_steps itself"
         )),
         (_, Some(batch)) => {
             object.insert("session".to_owned(), Value::String(batch.to_owned()));

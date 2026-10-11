@@ -1,10 +1,12 @@
-//! `run_script` (experimental): run a model-written JavaScript program that
-//! drives the computer through Cua Driver's own actions and reads.
+//! `run_script`: run a model-written JavaScript program that drives the
+//! computer through Cua Driver's own actions and reads.
 //!
-//! Off by default. It is registered only when the person running the driver
-//! opts in, with `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1` or
-//! `"experimental_script": true` in `~/.cua-driver/config.json`.
-//! `set_config` cannot write that key, so a model cannot turn it on.
+//! On by default wherever the engine is compiled in (the `script` feature,
+//! default on macOS, Windows and Linux). The person running the driver turns
+//! it off with `CUA_DRIVER_DISABLE_RUN_SCRIPT=1`, `CUA_DRIVER_EXPERIMENTAL_SCRIPT=0`,
+//! or `"disable_run_script": true` / `"experimental_script": false` in
+//! `~/.cua-driver/config.json`. `set_config` cannot write those keys, so a
+//! model cannot turn it on or off.
 //!
 //! The script runs in an embedded QuickJS engine ([`engine`]) on its own
 //! thread, with no filesystem, network, process or environment access. Its
@@ -42,10 +44,16 @@ mod engine;
 use engine::{FailureKind, HostCall, HostError, Limits};
 
 pub const RUN_SCRIPT_TOOL: &str = "run_script";
-/// Environment switch that registers the tool.
-pub const ENABLE_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_SCRIPT";
-/// `~/.cua-driver/config.json` key that registers the tool.
-pub const ENABLE_CONFIG_KEY: &str = "experimental_script";
+/// Environment switch that turns the tool off when set to `1`.
+pub const DISABLE_ENV: &str = "CUA_DRIVER_DISABLE_RUN_SCRIPT";
+/// `~/.cua-driver/config.json` key that turns the tool off when `true`.
+pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
+/// Legacy opt-in switch from when the tool was off by default. `0` still
+/// turns the tool off; `1` changes nothing.
+pub const LEGACY_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_SCRIPT";
+/// Legacy `~/.cua-driver/config.json` key. `false` turns the tool off;
+/// `true` changes nothing.
+pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 120_000;
@@ -71,8 +79,14 @@ const READ_TOOLS: &[&str] = &[
     "zoom",
 ];
 
-/// Whether the person running the driver opted in.
+/// Whether the tool is offered: yes, unless the person running the driver
+/// turned it off.
 pub fn enabled() -> bool {
+    disabled_by().is_none()
+}
+
+/// The setting that turned the tool off, if any.
+pub fn disabled_by() -> Option<String> {
     let config = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|home| {
@@ -80,22 +94,46 @@ pub fn enabled() -> bool {
                 .join(".cua-driver")
                 .join("config.json")
         });
-    enabled_from(std::env::var(ENABLE_ENV).ok().as_deref(), config.as_deref())
+    disabled_from(
+        std::env::var(DISABLE_ENV).ok().as_deref(),
+        std::env::var(LEGACY_ENV).ok().as_deref(),
+        config.as_deref(),
+    )
 }
 
-/// The environment variable wins; otherwise the config file decides.
-fn enabled_from(env: Option<&str>, config: Option<&std::path::Path>) -> bool {
-    if let Some(value) = env {
-        return matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
+/// Any opt-out wins; nothing turns the tool on that an opt-out turned off.
+fn disabled_from(
+    disable_env: Option<&str>,
+    legacy_env: Option<&str>,
+    config: Option<&std::path::Path>,
+) -> Option<String> {
+    let flag = |value: &str| -> Option<bool> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    };
+    if disable_env.and_then(flag) == Some(true) {
+        return Some(format!("{DISABLE_ENV}=1"));
     }
-    config
+    if legacy_env.and_then(flag) == Some(false) {
+        return Some(format!("{LEGACY_ENV}=0"));
+    }
+    let config_value = config
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|config| config.get(ENABLE_CONFIG_KEY).and_then(Value::as_bool))
-        .unwrap_or(false)
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())?;
+    if config_value
+        .get(DISABLE_CONFIG_KEY)
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return Some(format!("\"{DISABLE_CONFIG_KEY}\": true in config.json"));
+    }
+    if config_value.get(LEGACY_CONFIG_KEY).and_then(Value::as_bool) == Some(false) {
+        return Some(format!("\"{LEGACY_CONFIG_KEY}\": false in config.json"));
+    }
+    None
 }
 
 pub struct RunScriptTool {
@@ -125,10 +163,10 @@ impl Tool for RunScriptTool {
     fn def(&self) -> &ToolDef {
         DEF.get_or_init(|| ToolDef {
             name: RUN_SCRIPT_TOOL.into(),
-            description: "EXPERIMENTAL. Run a JavaScript program that drives apps through Cua \
-                Driver, in ONE call: loops, conditions, reads and checks between actions, and \
-                only the result comes back. Use it for a multi-step flow you can write down; \
-                use run_actions for a fixed list of steps.\n\n\
+            description: "Run a JavaScript program that drives apps through Cua Driver, in ONE \
+                call: loops, conditions, reads and checks between actions, and only the result \
+                comes back. Use it when the flow needs logic (a loop over rows, a branch on what \
+                the app shows, a retry); use run_steps for a fixed list of steps.\n\n\
                 The script is the body of an async function: use `await`, and `return` a JSON \
                 value. It runs in a sandbox with no filesystem, network, process, timers or \
                 environment; the only API is `cua`:\n\

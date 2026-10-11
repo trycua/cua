@@ -222,6 +222,20 @@ fn background_pixel_restore_pid(
     }
 }
 
+/// Poll until `pid` is the frontmost application or `budget` runs out.
+async fn wait_until_frontmost(pid: i32, budget: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if apps::frontmost_pid() == Some(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
@@ -230,7 +244,7 @@ fn def() -> &'static ToolDef {
             - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n\
             - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\
             \n\
-            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open (holding key focus) until dismissed; to choose an option use `set_value`.".into(),
+            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` is conditionally required — needed for window/element clicks
@@ -1146,6 +1160,34 @@ impl Tool for ClickTool {
                 }
             };
 
+            // A raw click can open a menu (a popup drawn without AX, a canvas
+            // context menu); keep the user's key focus if it does.
+            let _key_focus = if fg {
+                None
+            } else {
+                tokio::task::spawn_blocking(move || crate::key_focus_guard::protect(pid))
+                    .await
+                    .ok()
+                    .flatten()
+            };
+
+            // The user's key window, read before the click, so the restore
+            // below hands key status back to exactly that window.
+            let prior_key_wid = match prior_front {
+                Some(prior)
+                    if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
+                        && prior != pid =>
+                {
+                    tokio::task::spawn_blocking(move || {
+                        crate::input::skylight::key_window_of_pid(prior)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                }
+                _ => None,
+            };
+
             // Restore the Swift background-click prologue that was left
             // disconnected in the original Rust port. It makes an opaque
             // target AppKit-active without raising/restacking its window, which
@@ -1285,21 +1327,31 @@ impl Tool for ClickTool {
                 && prior_front != Some(pid)
             {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Some(previous_pid) = background_pixel_restore_pid(
+                let reactivated = if let Some(previous_pid) = background_pixel_restore_pid(
                     activation_policy,
                     prior_front,
                     pid,
                     apps::frontmost_pid(),
                 ) {
                     let _ = apps::activate_pid(previous_pid);
-                } else if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
-                    // The prior app is still frontmost, but the no-raise
-                    // recipe posted it a defocus record: hand its key window
-                    // focus back so the user's typing keeps landing there.
-                    if focus_without_raise && apps::frontmost_pid() == Some(previous_pid) {
+                    wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
+                    true
+                } else {
+                    false
+                };
+                // The prologue leaves the user's window key, but the click can
+                // still make the target self-activate, and re-activating the
+                // prior app does not by itself make its window key again.
+                // Post the focus record to the user's window in both cases so
+                // their typing keeps landing there.
+                if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
+                    if (focus_without_raise || reactivated)
+                        && apps::frontmost_pid() == Some(previous_pid)
+                    {
                         let _ = tokio::task::spawn_blocking(move || {
                             crate::input::skylight::restore_focus_after_without_raise(
                                 previous_pid,
+                                prior_key_wid,
                                 pid,
                                 wid,
                             )
@@ -1591,9 +1643,9 @@ fn perform_ax_click(
             if !options.is_empty() {
                 let opt_list = options.join(", ");
                 summary.push_str(
-                    "\n\n⚠️ This is a popup/select button. The native macOS menu closes \
-                     immediately when the window is in the background. Do NOT use click \
-                     again — instead, use:\n  set_value(pid, element_token, value)\n\
+                    "\n\nThis is a popup/select button; its menu is open. Choose an item \
+                     by clicking its AXMenuItem from a fresh get_window_state, or select \
+                     in one call with:\n  set_value(pid, element_token, value)\n\
                      Available options: [",
                 );
                 summary.push_str(&opt_list);

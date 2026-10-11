@@ -378,6 +378,17 @@ fn agent_instructions() -> String {
         )
     };
 
+    // Only point at run_script when this driver offers it.
+    #[cfg(feature = "script")]
+    let script_enabled = crate::script_tool::enabled();
+    #[cfg(not(feature = "script"))]
+    let script_enabled = false;
+    let script_line = if script_enabled {
+        " Loops, branches or retries: one `run_script` call (sandboxed JavaScript)."
+    } else {
+        ""
+    };
+
     format!(
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
@@ -385,7 +396,7 @@ Efficient loop:
 1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`. Unfiltered `list_windows`/`list_apps` list the whole host.
 2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`). Re-read with `since:"latest"` for only what changed. For just a picture, `include_accessibility_tree:false` (tokens stay valid).
 3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
-4. Act through `run_actions({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: it stops at the first failure and returns what changed, so no separate re-read.
+4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: it stops at the first failure and returns what changed, so no separate re-read.{script_line}
 5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
 Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages, clipboard tools for the clipboard. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
@@ -500,6 +511,10 @@ mod agent_instruction_tests {
             instructions.find("Read narrowly") < instructions.find("Act by `element_token`"),
             "the targeted read must precede acting"
         );
+        #[cfg(feature = "script")]
+        if crate::script_tool::enabled() {
+            assert!(instructions.contains("one `run_script` call"));
+        }
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"

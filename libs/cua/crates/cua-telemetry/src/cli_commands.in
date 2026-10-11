@@ -201,6 +201,7 @@
     "trajectory.serve",
     "trajectory.stop",
     "trajectory.view",
+    "usage",
     "viewer",
     "volume.approve",
     "volume.audit",

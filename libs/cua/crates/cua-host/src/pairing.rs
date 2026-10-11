@@ -55,6 +55,15 @@ pub fn normalize_pairing_code(input: &str) -> Option<String> {
     (out.len() == PAIRING_CODE_LEN).then_some(out)
 }
 
+/// The relay an add-machine link names (`…/add/<code>?relay=<url>`), if any.
+pub fn pairing_link_relay(input: &str) -> Option<String> {
+    let url = url::Url::parse(input.trim()).ok()?;
+    url.query_pairs()
+        .find(|(k, _)| k == "relay")
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 /// `XXXX-XXXX-XXXX` (input that is not a code is returned as is).
 pub fn display_pairing_code(code: &str) -> String {
     match normalize_pairing_code(code) {
@@ -212,8 +221,16 @@ impl RelayClient {
         Ok(list.codes)
     }
 
-    /// Revokes an unused pairing code.
+    /// Revokes an unused pairing code (`pc_…`).
     pub async fn revoke_pairing_code(&self, account_token: &str, id: &str) -> Result<()> {
+        let valid = id
+            .strip_prefix("pc_")
+            .is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric()));
+        if !valid {
+            return Err(Error::InvalidArgument(format!(
+                "{id:?} is not a pairing code id (pc_…; see `cua host pair --list`)"
+            )));
+        }
         let _: serde_json::Value = self
             .send_json::<(), _>(
                 reqwest::Method::DELETE,
@@ -246,7 +263,18 @@ mod tests {
         );
         assert_eq!(normalize_pairing_code("K7QM-4XPB-2RH"), None);
         assert_eq!(normalize_pairing_code("K7QM-4XPB-2RHU"), None);
-        assert!(PairingCodeToken::parse("nope").is_err());
+        match PairingCodeToken::parse("nope") {
+            Err(Error::InvalidArgument(m)) => assert!(m.contains("is not a pairing code"), "{m}"),
+            other => panic!("expected InvalidArgument, got {:?}", other.map(|t| t.0)),
+        }
+        assert_eq!(
+            pairing_link_relay(
+                "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
+            )
+            .as_deref(),
+            Some("https://r.example")
+        );
+        assert_eq!(pairing_link_relay("K7QM-4XPB-2RHD"), None);
         assert_eq!(display_pairing_code("k7qm4xpb2rhd"), "K7QM-4XPB-2RHD");
     }
 
@@ -268,6 +296,19 @@ mod tests {
             install_command("K7QM4XPB2RHD", "https://r.example", "windows"),
             "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair K7QM-4XPB-2RHD -Relay https://r.example"
         );
+    }
+
+    #[tokio::test]
+    async fn revoking_refuses_ids_that_are_not_code_ids() {
+        let client = RelayClient::new("http://127.0.0.1:9").unwrap();
+        for id in ["../machines/m_123", "pc_", "pc_a/b", "x"] {
+            match client.revoke_pairing_code("t", id).await {
+                Err(Error::InvalidArgument(m)) => {
+                    assert!(m.contains("not a pairing code id"), "{m}")
+                }
+                other => panic!("{id}: {other:?}"),
+            }
+        }
     }
 
     #[tokio::test]

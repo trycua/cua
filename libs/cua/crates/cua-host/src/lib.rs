@@ -60,7 +60,7 @@ pub use host::{
 pub use machine::machine_id;
 pub use pairing::{
     PairingCode, PairingCodeRequest, PairingCodeToken, add_machine_url, display_pairing_code,
-    install_command, normalize_pairing_code,
+    install_command, normalize_pairing_code, pairing_link_relay,
 };
 pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,

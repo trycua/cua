@@ -219,6 +219,7 @@ Describe 'install.ps1' {
     It '-Pair refuses codes and relays with shell characters' {
         { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM;calc' } } | Should -Throw '*not a pairing code*'
         { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://localhost.evil.example' } } | Should -Throw '*https*'
         { Invoke-Installer @{ DryRun = $true; Relay = 'https://relay.example.com' } } | Should -Throw '*goes with -Pair*'
     }
 

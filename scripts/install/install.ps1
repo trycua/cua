@@ -453,7 +453,7 @@ function Test-PairArgs {
     if ($Pair -and $Pair -notmatch '^[A-Za-z0-9-]+$') { Stop-Install "-Pair: '$Pair' is not a pairing code (like K7QM-4XPB-2RHD)" }
     if ($Relay) {
         if (-not $Pair) { Stop-Install '-Relay goes with -Pair' }
-        if ($Relay -notmatch '^(https://|http://localhost|http://127\.0\.0\.1)[A-Za-z0-9:/._%-]*$') { Stop-Install '-Relay must be a plain https:// URL' }
+        if ($Relay -notmatch '^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://(localhost|127\.0\.0\.1)(:[0-9]+)?)(/[A-Za-z0-9._%/-]*)?$') { Stop-Install '-Relay must be a plain https:// URL (plain http only for localhost)' }
     }
 }
 

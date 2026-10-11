@@ -201,12 +201,11 @@ parse_args() {
     if [ -n "$relay_url" ]; then
         [ -n "$pair_code" ] || die "--relay goes with --pair"
         case "$relay_url" in
-        https://* | http://localhost* | http://127.0.0.1*) ;;
-        *) die "--relay must be an https:// URL" ;;
-        esac
-        case "$relay_url" in
         *[!A-Za-z0-9:/._%-]*) die "--relay: '$relay_url' is not a plain URL" ;;
         esac
+        # https anywhere; plain http only to this machine (local relays).
+        printf '%s\n' "$relay_url" | grep -Eq '^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://(localhost|127\.0\.0\.1)(:[0-9]+)?)(/[A-Za-z0-9._%/-]*)?$' ||
+            die "--relay must be an https:// URL (plain http only for localhost)"
     fi
     case "$mode" in
     "" | host | client) ;;
@@ -933,6 +932,8 @@ next_steps() {
 }
 
 run_onboarding() {
+    # --pair: the code stands in for the account; nothing to sign in to.
+    [ -z "$pair_code" ] || return 0
     if [ "$want_cli" = 0 ] || [ "$onboarding" = 0 ] || [ "$dry_run" = 1 ]; then
         next_steps
         return

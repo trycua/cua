@@ -1263,12 +1263,18 @@ pub async fn run_host(
             max_spaces,
             allow_any_address,
         } => {
+            // A pasted add-machine link names its relay (`?relay=`) when the
+            // code came from another relay than the default.
+            let relay = relay.or_else(|| pair.as_deref().and_then(cua_host::pairing_link_relay));
             let mut opts = match direct {
                 Some(addr) => SetupOptions::direct(addr.parse().map_err(|_| {
                     CuaError::InvalidArgument(format!("--direct {addr:?} is not ip:port"))
                 })?),
                 None => SetupOptions::relay(relay.unwrap_or_else(cua_host::relay_url_from_env)),
             };
+            // The code is single use: install the driver first, so a failed
+            // download does not spend it.
+            opts.download_first = pair.is_some();
             opts.name = name;
             opts.allow = allow;
             opts.driver_bin = driver_bin;
@@ -1500,12 +1506,14 @@ async fn pair_codes(
     json: bool,
     out: &mut dyn Write,
 ) -> cua_host::Result<()> {
-    if !(1..=1440).contains(&expires) {
-        return Err(cua_host::Error::InvalidArgument(
-            "--expires is 1 to 1440 minutes".into(),
-        ));
-    }
-    let url = relay_url(relay, home);
+    let url = relay_url(relay.clone(), home);
+    // The device session is per relay: with --relay, this device's
+    // enrollment there.
+    let other = match relay {
+        Some(_) => crate::devices_cmd::device_auth(&url).ok(),
+        None => None,
+    };
+    let device = other.as_deref().or(device);
     let session = match device {
         Some(d) => d.try_session().await,
         None => None,
@@ -1542,6 +1550,11 @@ async fn pair_codes(
         }
         return Ok(());
     }
+    if !(1..=1440).contains(&expires) {
+        return Err(cua_host::Error::InvalidArgument(
+            "--expires is 1 to 1440 minutes".into(),
+        ));
+    }
     let minted = client
         .create_pairing_code(
             &token,
@@ -1552,7 +1565,11 @@ async fn pair_codes(
             },
         )
         .await?;
-    let code = minted.code.clone().unwrap_or_default();
+    let code = minted
+        .code
+        .clone()
+        .filter(|c| cua_host::normalize_pairing_code(c).is_some())
+        .ok_or_else(|| cua_host::Error::Relay("the relay returned no pairing code".into()))?;
     let link = cua_host::add_machine_url(&code, &url);
     let sh = cua_host::install_command(&code, &url, "linux");
     let ps = cua_host::install_command(&code, &url, "windows");

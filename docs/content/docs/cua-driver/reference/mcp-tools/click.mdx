@@ -120,4 +120,8 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="click--target"></span>`target` | `window target \| desktop target` |  | Exact capture/input target selected independently for each action. `display_id="primary"` is the portable desktop target in this release. Platforms that cannot address another display reject it explicitly rather than silently changing coordinate spaces. |
+| <span id="click--target"></span>`target` | `object` |  | Exact window (kind "window", with pid and window_id) or desktop (kind "desktop", with display_id). "primary" is the portable desktop target. |
+| <span id="click--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="click--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="click--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="click--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |

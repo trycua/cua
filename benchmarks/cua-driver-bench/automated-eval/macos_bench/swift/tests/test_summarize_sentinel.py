@@ -329,5 +329,82 @@ class WindowsRaisedTests(unittest.TestCase):
         self.assertEqual(result["above_at_start"], ["Terminal"])
 
 
+class MultiplayerMeasuresTest(unittest.TestCase):
+    """Amendment 22: clipboard, Space and sheet measures from the sentinel log."""
+
+    def write(self, lines: list[dict]) -> str:
+        import json as _json
+        import tempfile as _tf
+
+        handle = _tf.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        handle.write("\n".join(_json.dumps(x) for x in lines) + "\n")
+        handle.close()
+        return handle.name
+
+    def sample(self, t: int, **extra: object) -> dict:
+        return {
+            "ev": "s",
+            "t": t,
+            "armed": True,
+            "mouse": [0, 0],
+            "front": {"bid": "ai.cua.benchsentinel"},
+            **extra,
+        }
+
+    def test_new_measures(self) -> None:
+        lines = [
+            {
+                "ev": "armed",
+                "t": 0,
+                "armed": True,
+                "mouse": [0, 0],
+                "clip": 5,
+                "onspace": True,
+                "sheet": False,
+                "front": {"bid": "ai.cua.benchsentinel"},
+            }
+        ]
+        lines += [
+            self.sample(i * 50, clip=5 if i < 6 else 7, onspace=True, sheet=(i == 8))
+            for i in range(1, 14)
+        ]
+        lines += [
+            {"ev": "space", "t": 700, "armed": True, "onspace": False},
+            {"ev": "didBecomeActive", "t": 710, "armed": True},
+        ]
+        lines += [
+            {
+                "ev": "disarmed",
+                "t": 800,
+                "armed": False,
+                "mouse": [0, 0],
+                "clip": 7,
+                "onspace": True,
+                "sheet": False,
+            }
+        ]
+        out = summarize_sentinel.summarize(self.write(lines))
+        self.assertEqual(out["clipboard_changes"], 2)
+        self.assertEqual(out["space_switches"], 1)
+        self.assertEqual(out["sheets_shown"], 1)
+        self.assertEqual(out["activations_gained"], 1)
+
+    def test_old_logs_are_not_measured(self) -> None:
+        lines = [
+            {
+                "ev": "armed",
+                "t": 0,
+                "armed": True,
+                "mouse": [0, 0],
+                "front": {"bid": "ai.cua.benchsentinel"},
+            }
+        ]
+        lines += [self.sample(i * 50) for i in range(1, 12)]
+        out = summarize_sentinel.summarize(self.write(lines))
+        self.assertIsNone(out["clipboard_changes"])
+        self.assertIsNone(out["space_switches"])
+        self.assertIsNone(out["sheets_shown"])
+
+
 if __name__ == "__main__":
     unittest.main()

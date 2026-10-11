@@ -22,7 +22,9 @@ DEVIATION_PX = 10.0
 HID_KEYS = ("move", "down", "key", "scroll")
 # Amendment 15: overlay and indicator windows of the computer-use tools themselves (the agent cursor, the
 # "ChatGPT Computer Use" banner) are not raises. They are logged as metadata (`overlay_owners`) only.
-OVERLAY_OWNER_RE = re.compile(r"(?i)cua ?driver|chatgpt computer use|computer use|codex|claude")
+OVERLAY_OWNER_RE = re.compile(
+    r"(?i)cua ?driver|chatgpt computer use|computer use|codex|app-cu-helper|claude"
+)
 FRONT_EVENTS = ("s", "front", "armed", "disarmed")
 # Idle values only ever grow between samples unless a real event resets them.
 DROP_EPSILON_S = 1e-3
@@ -163,6 +165,7 @@ def summarize(log_path: str) -> dict[str, Any]:
 
     _windows_raised(window, result)
     _user_activity(window, result)
+    _multiplayer(window, body, result)
     result["pointer_max_deviation_px"] = round(result["pointer_max_deviation_px"], 2)
     result["front_changed_to"] = sorted(changed_to)
     result["available"] = result["samples"] >= 10
@@ -209,6 +212,34 @@ def _windows_raised(window: list[dict[str, Any]], result: dict[str, Any]) -> Non
     result["above_at_start"] = sorted(
         o for o in (measured[0].get("above") or []) if isinstance(o, str)
     )
+
+
+def _multiplayer(
+    window: list[dict[str, Any]], body: list[dict[str, Any]], result: dict[str, Any]
+) -> None:
+    """Amendment 22: the clipboard, Space and sheet measures, and activations of the user's app. Each is None
+    when the sentinel that wrote the log did not record it (logs from before A22)."""
+    samples = [ln for ln in window if ln.get("ev") in ("s", "armed", "disarmed")]
+    clips = [ln["clip"] for ln in samples if isinstance(ln.get("clip"), int)]
+    result["clipboard_changes"] = (clips[-1] - clips[0]) if len(clips) >= 2 else None
+    spaces = [ln for ln in samples if "onspace" in ln]
+    if spaces or any(ln.get("ev") == "space" for ln in body):
+        events = sum(1 for ln in body if ln.get("ev") == "space")
+        off = sum(
+            1 for a, b in zip(spaces, spaces[1:]) if a.get("onspace") and not b.get("onspace")
+        )
+        result["space_switches"] = (
+            events or off
+        )  # the notification when it fired, else the sampled transitions
+    else:
+        result["space_switches"] = None
+    sheets = [ln for ln in samples if "sheet" in ln]
+    result["sheets_shown"] = (
+        sum(1 for a, b in zip(sheets, sheets[1:]) if b.get("sheet") and not a.get("sheet"))
+        if sheets
+        else None
+    )
+    result["activations_gained"] = sum(1 for ln in body if ln.get("ev") == "didBecomeActive")
 
 
 def _user_activity(window: list[dict[str, Any]], result: dict[str, Any]) -> None:

@@ -96,10 +96,26 @@ def strip_mcp(name: str) -> tuple[str | None, str]:
     return None, name
 
 
+# Amendment 11: the cc-claude-cu-helper adapter (server "claude-cu-helper"), tools named like Claude's own
+# background computer-use tools.
+CU_HELPER_CLASSES = {
+    "app_list_windows": "observe",
+    "app_screenshot": "observe",
+    "app_click": "click",
+    "app_type": "type",
+    "app_key": "key",
+    "app_scroll": "scroll",
+    "app_drag": "drag",
+    "app_hover": "other",  # like Cua Driver's move_cursor
+}
+
+
 def tool_class(name: str, tool_input: dict[str, Any] | None = None) -> str:
     server, tool = strip_mcp(name)
     if server is None:
         return "builtin"
+    if server == "claude-cu-helper":
+        return CU_HELPER_CLASSES.get(tool, "other")
     if tool in CUA_CLASSES:
         return CUA_CLASSES[tool]
     if tool == "js":

@@ -12,6 +12,8 @@ invocation, isolation, schedule, gates and output. The method is in
 | `cc-cua-driver-script` | Cua Driver | Cua Driver built from the pinned main commit, MCP server `cua`, `run_script` on, the skill of that commit in the working directory, and a short `run_script` addendum in the system prompt |
 | `cc-codex-cu` | Codex Computer-Use (Sky) | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin as MCP server `codex-cu` (`js`, `js_reset`), no skill |
 | `cc-codex-cu-1007-browser` | Codex Computer-Use (Sky), app 26.1007 | The same launcher from app 26.1007 with the browser surface on |
+| `cc-claude-cu-helper` | Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure | Cua's adapter `tools/claude_cu_helper/cu_helper_mcp.py` as MCP server `claude-cu-helper` (`app_list_windows`, `app_screenshot` and the pinned input tools), no skill |
+| `cx-cua-driver`, `cx-codex-cu` | Cua Driver and Codex Computer-Use (Sky), driven by Codex CLI (Amendment 23) | Not Claude Code: the bundled Codex CLI as `codex app-server` (`codex_native.py`) with gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending), given the MCP entry and system prompt of `cc-cua-driver-script` or `cc-codex-cu` |
 | `cc-cua-driver`, `cc-cua-driver-main`, `cc-cua-driver-main-skill` | Internal baselines | Cua Driver 0.34.0 release; main with `run_script` off; main with the skill in the system prompt |
 
 Arms `codex-native-cu` and `codex-cua-driver` (`codex exec --json`, from

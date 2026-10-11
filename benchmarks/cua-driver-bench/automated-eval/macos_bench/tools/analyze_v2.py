@@ -35,10 +35,15 @@ from analyze import wilson_interval  # noqa: E402
 
 # Public setup names; any other arm is reported under its arm id.
 ARM_LABELS = {
-    "cc-cua-driver-script": "Cua Driver",
+    "cc-cua-driver-script": "Cua Driver, driven by Claude Code",  # suffix from Amendment 23
     "cc-codex-cu": "Codex Computer-Use (Sky), driven by Claude Code",  # suffix from Amendment 20
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
-    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6 Astra",  # Amendment 20
+    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI",  # Amendment 20; the rows' model is appended
+    "cx-cua-driver": "Cua Driver, driven by Codex CLI",  # Amendment 23; the rows' model is appended
+    "cc-claude-cu-helper": (
+        "Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal"
+        " adapter; an internal interface, not an Anthropic-supported procedure"
+    ),
 }
 
 
@@ -103,6 +108,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "gui_only_violations": sum(1 for g in gui if g.get("violation")),
         "background_condition": _bgc(rows),
+        "multiplayer": _mp(rows),
     }
 
 
@@ -124,6 +130,41 @@ def _bgc(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "user_window_held": sum(1 for i in items if i.get("user_window_held")),
         "user_input_disrupted": sum(1 for i in items if i.get("user_input_disrupted")),
         "overlay_owners": sorted({o for i in items for o in (i.get("overlay_owners") or [])}),
+    }
+
+
+def _mp_of(row: dict[str, Any]) -> dict[str, Any]:
+    """A22 score of a row: as recorded, or re-expressed (labelled "A22 rescored") for rows from before A22."""
+    if row.get("multiplayer"):
+        return row["multiplayer"]
+    measured = bool((row.get("background") or {}).get("measured"))
+    return v2.multiplayer_score(
+        row.get("disturbance") or {},
+        measured,
+        bool(row.get("passed")),
+        row.get("condition"),
+        rescore=True,
+    )
+
+
+def _mp(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Amendment 22: the headline background metric, and how many background trials broke each criterion."""
+    items = [_mp_of(r) for r in rows if r.get("condition") == "background"]
+    if not items:
+        return None
+    return {
+        "background_completion": _rate(
+            sum(1 for i in items if i.get("background_completion")), len(items)
+        ),
+        "rules": sorted({i["rule"] for i in items}),
+        "disturbed": {
+            k: sum(1 for i in items if i["criteria"].get(k) is False)
+            for k in v2.MULTIPLAYER_CRITERIA
+        },
+        "unmeasured": {
+            k: sum(1 for i in items if i["criteria"].get(k) is None)
+            for k in v2.MULTIPLAYER_CRITERIA
+        },
     }
 
 
@@ -164,7 +205,13 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
         report["arms"][key] = {
             "arm": arm,
             "condition": condition,
-            "label": ARM_LABELS.get(arm, f"{arm} (internal baseline)") + f" [{condition}]",
+            "label": ARM_LABELS.get(arm, f"{arm} (internal baseline)")
+            + (
+                f" + {', '.join(sorted({str(r.get('model')) for r in arm_rows}))}"
+                if arm.startswith("cx-")
+                else ""
+            )
+            + f" [{condition}]",
             "overall": summarize(arm_rows),
             "by_category": cats,
             "interruptions": interruptions(arm_rows),
@@ -179,6 +226,9 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def headline(s: dict[str, Any]) -> str:
     b = s["background"]
+    mp = (s.get("multiplayer") or {}).get("background_completion")
+    if mp:  # A22: the background condition leads with multi-player background completion
+        return f"{mp['k']}/{mp['n']} completed with the user undisturbed, {s['success']['k']}/{s['trials']} passed"
     bc = (s.get("background_condition") or {}).get("background_completion")
     if bc:  # A15.3: the background condition leads with background completion
         return f"{bc['k']}/{bc['n']} completed in the background, {s['success']['k']}/{s['trials']} passed, {b['focus_steals']} focus steals"
@@ -255,6 +305,37 @@ def markdown(report: dict[str, Any]) -> str:
         lines.append(
             f"| {a['label']} | {c['k']}/{c['n']} | {s['success']['k']}/{s['trials']} | {s['background']['focus_steals']} | "
             f"{bc['user_window_held']}/{s['trials']} | {bc['user_input_disrupted']} | {', '.join(bc['overlay_owners']) or 'none'} |"
+        )
+    cols = list(v2.MULTIPLAYER_CRITERIA)
+    lines += [
+        "",
+        "## Background completion with the user undisturbed (Amendment 22, headline)",
+        "",
+        "Completed = passed and none of the eight disturbances below happened. Each column counts the background "
+        'trials in which that disturbance happened. Rows marked "A22 rescored" come from runs before A22 and are scored on the criteria those runs measured (secondary figures).',
+        "",
+        "| Setup | Rule | Background completion | "
+        + " | ".join(v2.MULTIPLAYER_CRITERIA[c].capitalize() for c in cols)
+        + " |",
+        "|---|---|---|" + "---|" * len(cols),
+    ]
+    for arm, a in report["arms"].items():
+        mp = a["overall"].get("multiplayer")
+        if a["condition"] != "background" or not mp:
+            continue
+        c = mp["background_completion"]
+        n = mp["background_completion"]["n"]
+        cells = [
+            "not measured"
+            if mp["unmeasured"][k] == n
+            else f"{mp['disturbed'][k]}"
+            + (f" ({mp['unmeasured'][k]} not measured)" if mp["unmeasured"][k] else "")
+            for k in cols
+        ]
+        lines.append(
+            f"| {a['label']} | {', '.join(mp['rules'])} | {c['k']}/{c['n']} | "
+            + " | ".join(cells)
+            + " |"
         )
     viol = [(a["label"], v) for a in report["arms"].values() for v in a["violations"]]
     lines += ["", "## GUI-only violations", ""]

@@ -26,13 +26,16 @@ record of when each one became public.
 | `b74564efd4fc657567be6acf011dabbdbf72f43c` | 2026-10-11 02:45 | A17.3: the Bench v2 rerun, both conditions, registered before its first trial |
 | `69229a31c55f6693cbab20ac48287d2b17d42bac` | 2026-10-11 09:10 | A17.3 outcome |
 | `f7f65e4a281f685817ce71e29d1d9fd704684b27` | 2026-10-11 11:51 | Amendment 20: Codex Computer-Use (Sky) driven by the Codex CLI and `gpt-6-astra`, before any trial of that setup |
+| `91a758aa914a5a4a671eb338c173fecc81cbc760` | 2026-10-11 14:54 | Amendment 22: background completion means the user was undisturbed (multi-player rule), the headline from the next full run |
+| `c77413bbbd45eca33a34f722c197d35a51860900` | 2026-10-11 15:08 | Amendment 23: Codex CLI as a second harness (Cua Driver under Codex CLI), and the Claude helper setup made public |
+| `47fd21ff82d2ebfc732442872508673b46a828d6` | 2026-10-11 15:12 | A23.1: the Codex CLI model is GPT-6.1 Sol if accessible, else `gpt-6-astra` |
 
 Smoke runs (Amendments 14 to 17) validate the harness and are never analysed.
 Amendments 1 to 13 cover Bench v1, which used different tasks and tools; Bench
 v2 results are never pooled with them.
 
 **Coming next, each registered before its first trial:** a larger Bench v2 task
-set, the final full run with the Amendment 20 setup, and a run on a sealed
+set, the final full run with the Amendment 20 and 23 setups, and a run on a sealed
 held-out task set.
 
 **Why a summary rather than the full text here.** The full pre-registration
@@ -61,6 +64,9 @@ default effort, the same system prompt, `--strict-mcp-config`, ToolSearch on,
 and only the built-in tools `Skill`, `Read` (restricted to the skill directory)
 and `ToolSearch`, plus the setup's own computer-use MCP server. Each trial gets
 360 seconds and 45 turns. See [`automated-eval/macos_bench/RUNNER.md`](automated-eval/macos_bench/RUNNER.md).
+The Codex CLI setups of Amendment 23 run the Codex CLI bundled with the ChatGPT
+app as `codex app-server` instead, with the same prompts, limits, GUI-only guard
+and checkers.
 
 ## Setups
 
@@ -68,10 +74,13 @@ and `ToolSearch`, plus the setup's own computer-use MCP server. Each trial gets
 | --- | --- | --- |
 | Cua Driver | `cc-cua-driver-script` | Cua Driver built from a pinned main commit, with its skill and `run_script` on (the default from Cua Driver 0.35) |
 | Codex Computer-Use (Sky) | `cc-codex-cu` | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin, used unmodified except that the browser surface is off, through an MCP bridge. Claude chooses the actions. No skill ships with it. |
-| Codex Computer-Use (Sky), driven by Codex CLI + `gpt-6-astra` | registered (Amendment 20), not yet run | The same `cua_repl` tool layer, driven by OpenAI's own agent (the Codex CLI bundled with the ChatGPT app, run as `codex app-server`) and model (`gpt-6-astra`), with the same prompts, approvals, budget, GUI-only guard and checkers. It joins the next full run. Its harness code will be added here once its smoke checks pass. |
+| Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure | `cc-claude-cu-helper` | Claude Desktop 2.31226.0's `app-cu-helper`, used unmodified, behind Cua's minimal MCP adapter, which adds a window list and window screenshots. Claude Code only. |
+| Cua Driver, driven by Codex CLI | `cx-cua-driver` (Amendment 23, not yet run) | The `cc-cua-driver-script` build, daemon, MCP entry and system prompt, driven by the Codex CLI bundled with the ChatGPT app (`codex app-server`), without skill files. |
+| Codex Computer-Use (Sky), driven by Codex CLI | `cx-codex-cu` (Amendments 20 and 23, not yet run) | The same `cua_repl` tool layer, driven by OpenAI's own agent (the Codex CLI bundled with the ChatGPT app, run as `codex app-server`) and model, with the same prompts, approvals, budget, GUI-only guard and checkers. |
 
-The registered runs also included a third setup that is not part of this
-public release. Internal baselines (other Cua Driver builds) may be run; they
+The Codex CLI setups (Amendment 23) use gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending). The
+model is recorded in every row and named in the label; no numbers exist yet for
+these setups. Internal baselines (other Cua Driver builds) may be run; they
 are reported as baselines, never as headline setups.
 
 ## Tasks and categories
@@ -130,9 +139,19 @@ violation.
 **Success:** every required check of the task's checker passed, and there was no
 GUI-only violation. Checkers read app state and event logs; no model grades.
 
-**Background completion (primary metric of the background condition):** the
-trial passed, and the user window held focus and frontmost status the whole
-time:
+**Background completion, multi-player rule (Amendment 22; the primary metric
+of the background condition from the next full run):** the trial passed, and
+the user could have kept working at the same time, undisturbed: no loss of key
+focus, no window raised over the user window, the user's typing never lost or
+redirected, the real pointer never moved more than 1 px, the clipboard never
+changed, no Space or full-screen switch, no sheet or dialog on the user's app,
+and the user's app never deactivated or activated. BenchSentinel measures all
+eight; a criterion that was not measured counts as a disturbance. Each criterion
+is reported as its own column, overall and per category.
+
+**Background completion, Amendment 15 (the primary metric before Amendment 22,
+still reported):** the trial passed, and the user window held focus and
+frontmost status the whole time:
 
 * no focus steal (the frontmost app never changed away from it);
 * no loss of key status;
@@ -146,7 +165,7 @@ banner) is logged but not counted as a raise.
 **Secondary:** success regardless of focus; the number of focus steals; key
 loss; windows raised; simulated user keystrokes swallowed (ticks when the user
 window was not active and key); pointer movement over 10 px (recorded, not part
-of background completion); for the IR tasks, whether the interruption was
+of the Amendment 15 background completion); for the IR tasks, whether the interruption was
 shown, exercised, handled and the task completed; turns, equivalent cost and
 wall time per trial.
 
@@ -183,8 +202,12 @@ differences are directional only.
 * **An MCP bridge, not the vendor's agent.** In the Codex Computer-Use (Sky)
   setup driven by Claude Code, Claude chooses the actions through OpenAI's
   tool; it is not OpenAI's agent as shipped. The Amendment 20 setup addresses
-  that. Comparing it with Cua Driver changes the tool layer, the agent and the
-  model at once, and reports will say so.
+  that, and Amendment 23 runs Cua Driver under the same Codex CLI harness, so
+  each harness compares tool layers with its own agent and model.
+* **Open terms checks.** Driving Codex Computer-Use from Claude Code is
+  undocumented by OpenAI. Nobody has reviewed Anthropic's terms on driving
+  Claude Desktop's computer-use helper from a third-party adapter, or on
+  publishing its results.
 * **Simulated interruptions.** The IR prompts and overlays are drawn by
   BenchLab, not by macOS or Chrome.
 * **Small samples.** 5 runs per cell; a 5/5 has a Wilson 95% lower bound of

@@ -2462,8 +2462,6 @@ impl ExtensionStore {
         let inspected = match inspect_archive(&source.archive, entry, &staging_handle) {
             Ok(inspected) => inspected,
             Err(error) => {
-                // Windows refuses to delete a directory while a handle to it
-                // is open (os error 32), so close staging before removing it.
                 drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);

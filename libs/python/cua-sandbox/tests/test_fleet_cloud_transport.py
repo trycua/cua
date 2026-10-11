@@ -68,8 +68,9 @@ def test_registry_image_becomes_typed_template_request():
     assert vm_template.container_disk_image == "registry.example/workspace@sha256:abc"
     assert vm_template.cpu_cores == 4
     assert vm_template.memory == "8192Mi"
+    # Daemon-agnostic default: cua-spacesd is published as `env` (3211).
     assert [(service.name, service.target_port) for service in vm_template.services] == [
-        ("server", 8000),
+        ("env", 3211),
         ("port-3000", 3000),
     ]
 
@@ -77,17 +78,35 @@ def test_registry_image_becomes_typed_template_request():
 def test_default_linux_image_becomes_typed_template_request():
     request = FleetCloudTransport(image=Image.linux(), name="demo")._template_request()
 
-    assert request.spec.vm_template.container_disk_image == (
-        "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
-    )
+    # Unresolved (hermetic tests read no registry): the canonical ref as given.
+    assert request.spec.vm_template.container_disk_image == "ghcr.io/trycua/linux:24.04"
 
 
 def test_default_windows_image_becomes_typed_template_request():
     request = FleetCloudTransport(image=Image.windows(), name="demo")._template_request()
 
+    assert request.spec.vm_template.container_disk_image == "ghcr.io/trycua/windows:2022"
+
+
+def test_kubevirt_templates_run_the_resolved_disk_variant(monkeypatch):
+    """With a readable registry the template runs the pinned `-disk` variant."""
+    from types import SimpleNamespace
+
+    from cua_sandbox._sdk import native
+
+    n = native()
+    calls = []
+
+    def resolve_image(reference, backend, arch):
+        calls.append((reference, backend, arch))
+        return SimpleNamespace(pinned_ref="ghcr.io/trycua/windows@sha256:" + "a" * 64)
+
+    monkeypatch.setattr(n, "resolve_image", resolve_image)
+    request = FleetCloudTransport(image=Image.windows(), name="demo")._template_request()
     assert request.spec.vm_template.container_disk_image == (
-        "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
+        "ghcr.io/trycua/windows@sha256:" + "a" * 64
     )
+    assert calls == [("ghcr.io/trycua/windows:2022", "vm", "amd64")]
 
 
 def test_windows_image_boots_uefi():
@@ -251,7 +270,6 @@ async def test_fleet_client_lookup_uses_bounded_deterministic_claim_name():
         # Client Windows has no pinned containerDisk, so the cloud cannot serve it.
         Image.windows("11"),
         Image.windows("10"),
-        Image.from_registry("example:latest").apt_install("curl"),
     ],
 )
 def test_rejects_unsupported_images(image):
@@ -323,7 +341,7 @@ async def test_image_connect_reconciles_named_resources_without_namespace_calls(
     assert pool_request.spec.replicas == 1
     assert (template_request.namespace, template_request.name) == ("demo", "demo")
     assert claim_request.name == "demo-claim"
-    assert calls[-1] == ("wait_service_ready", bound, "server", 600.0)
+    assert calls[-1] == ("wait_service_ready", bound, "env", 600.0)
 
 
 @pytest.mark.asyncio
@@ -501,7 +519,7 @@ async def test_ambiguous_claim_creation_recovers_deterministic_claim(monkeypatch
         ("create_claim", "demo-claim"),
         ("get_claim", "demo"),
         ("wait_claim", "demo-claim"),
-        ("wait_service_ready", bound, "server", 600.0),
+        ("wait_service_ready", bound, "env", 600.0),
     ]
 
 
@@ -675,7 +693,7 @@ async def test_connect_without_image_uses_existing_pool_and_claim_by_name(monkey
         ("get_pool", "demo"),
         ("get_claim", pool),
         ("wait_claim", "claim"),
-        ("wait_service_ready", bound, "server", 600.0),
+        ("wait_service_ready", bound, "env", 600.0),
     ]
 
 
@@ -829,21 +847,17 @@ async def test_delete_sandbox_closes_sdk_when_claim_delete_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_forward_tunnel_uses_named_service_url():
-    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
-    transport._provisioned = True
-    transport._bound = Sandbox(
-        namespace="demo", claim="claim", name="sandbox", services=["port-3000"]
-    )
-
-    class Client:
-        def service_url(self, sandbox, service):
-            assert service == "port-3000"
-            return "https://run.cua.ai/api/svc/demo/sandbox-port-3000/"
-
-    transport._sdk = Client()
-    tunnel = await transport.forward_tunnel(3000)
-    assert tunnel.url == "https://run.cua.ai/api/svc/demo/sandbox-port-3000/"
+async def test_forward_tunnel_without_spacesd_is_a_loopback_gateway_proxy():
+    # A plain image (no `env` service): the SDK forwards through the gateway
+    # with a loopback proxy, so the caller gets a local URL, not a
+    # bearer-only gateway URL.
+    forward = _NativeForward("127.0.0.1:45200", "http://127.0.0.1:45200")
+    transport, calls = _env_transport_with(forward)
+    transport._bound = Sandbox(namespace="demo", claim="claim", name="sandbox", services=["mcp"])
+    tunnel = await transport.forward_tunnel(8765)
+    assert calls == [8765]
+    assert tunnel.url == "http://127.0.0.1:45200"
+    assert (tunnel.host, tunnel.port) == ("127.0.0.1", 45200)
 
 
 @pytest.mark.asyncio
@@ -900,7 +914,7 @@ async def test_existing_pool_claim_uses_distinct_pool_and_sandbox_names(monkeypa
         ("wait_pool", "cua-cli-wif-smoke"),
         ("create_claim", "wif-smoke-123", "cua-cli-wif-smoke"),
         ("wait_claim", "wif-smoke-123"),
-        ("wait_service_ready", "server"),
+        ("wait_service_ready", "env"),
     ]
 
 
@@ -949,3 +963,90 @@ async def test_existing_pool_claim_reconnect_and_delete_use_exact_claim_name(mon
         ("delete_claim", "wif-smoke-123"),
         ("close",),
     ]
+
+
+class _NativeForward:
+    """A native ``cua.PortForward`` stand-in."""
+
+    def __init__(self, local_addr=None, url=None):
+        self._local_addr = local_addr
+        self._url = url
+        self.closed = False
+
+    def local_addr(self):
+        return self._local_addr
+
+    def url(self):
+        return self._url
+
+    async def close(self):
+        self.closed = True
+
+
+def _env_transport_with(forward=None, error=None):
+    from cua_sandbox.transport.fleet import FleetTransport
+
+    transport = FleetCloudTransport(image=Image.from_registry("example:latest"), name="demo")
+    bound = Sandbox(namespace="demo", claim="claim", name="sandbox", services=["env", "port-3000"])
+    # What connect() does once the claim is bound.
+    FleetTransport.__init__(transport, sdk=None, bound=bound)
+    transport._provisioned = True
+    calls = []
+
+    class Handle:
+        async def forward(self, port):
+            calls.append(port)
+            if error is not None:
+                raise error
+            return forward
+
+    async def fleet_handle():
+        return Handle()
+
+    class Client:
+        def service_url(self, sandbox, service):
+            assert service == "port-3000"
+            return "https://run.cua.ai/api/svc/demo/sandbox-port-3000/"
+
+    transport._fleet_handle = fleet_handle
+    transport._sdk = Client()
+    return transport, calls
+
+
+@pytest.mark.asyncio
+async def test_forward_tunnel_prefers_the_spacesd_tunnel():
+    forward = _NativeForward("127.0.0.1:45123", "http://127.0.0.1:45123")
+    transport, calls = _env_transport_with(forward)
+    tunnel = await transport.forward_tunnel(3000)
+    assert calls == [3000]
+    assert (tunnel.host, tunnel.port, tunnel.sandbox_port) == ("127.0.0.1", 45123, 3000)
+    assert tunnel.url == "http://127.0.0.1:45123"
+    await transport.close_tunnel(tunnel)
+    assert forward.closed
+
+
+@pytest.mark.asyncio
+async def test_forward_tunnel_keeps_a_url_only_forward_from_an_older_daemon():
+    forward = _NativeForward(None, "https://gw.example/api/svc/demo/sandbox-port-3000")
+    transport, _ = _env_transport_with(forward)
+    tunnel = await transport.forward_tunnel(3000)
+    assert tunnel.url == "https://gw.example/api/svc/demo/sandbox-port-3000"
+
+
+@pytest.mark.asyncio
+async def test_forward_tunnel_surfaces_sdk_errors():
+    transport, calls = _env_transport_with(error=RuntimeError("unsupported: port 3000"))
+    with pytest.raises(RuntimeError, match="unsupported"):
+        await transport.forward_tunnel(3000)
+    assert calls == [3000]
+
+
+def test_registry_images_with_layers_are_accepted_for_a_remote_build():
+    # Layers on a registry image build remotely (the SDK refuses them with a
+    # "not deployed yet" error until Fleet's builder runs container recipes); local
+    # disks and snapshots stay local.
+    FleetCloudTransport._validate_image(Image.from_registry("example:latest").apt_install("curl"))
+    with pytest.raises(NotImplementedError, match="stay local"):
+        FleetCloudTransport._validate_image(
+            Image.from_registry("example:latest")._with(_disk_path="x")
+        )

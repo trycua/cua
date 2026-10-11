@@ -85,6 +85,7 @@ pub fn app_name() -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub fn app_bundle_path() -> String {
     format!("/Applications/{}.app", app_name())
 }

@@ -1,0 +1,83 @@
+---
+title: Set up local runtimes
+description: Which runtime runs a local sandbox, how to check and set up the host, and how to pick a kind or runtime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Local sandboxes run on this machine with no account. Local is the built-in
+default: omit `on=` (`local=` in cua-sandbox, `--on` in the CLI), or
+[change the default](/cua-sdk/guides/cloud#choose-where-sandboxes-run-by-default).
+The SDK picks the kind and runtime from the image and starts it itself.
+
+| Image | Runtime (`auto`) |
+| --- | --- |
+| Container image (any OCI rootfs, `Image.linux()`, `python:3.12-slim`) | `gvisor` when installed, else `runc`, on Docker or Podman |
+| Linux or Windows VM (`-disk` containerDisk, `kind="vm"`, qcow2, ISO) | `qemu`: KVM on Linux, HVF on macOS, WHPX on Windows, TCG otherwise |
+| macOS VM (`Image.macos()`) | `lume`, Apple silicon only (the SDK starts `lume serve`) |
+| Linux arm64 VM on Apple silicon without QEMU | `lume` |
+
+## Check and set up the host
+
+```bash test="cli-shape" id="cua-runtime-doctor"
+cua runtime doctor              # what this host can run (read-only)
+cua runtime setup --dry-run     # the install plan
+cua runtime setup               # install what is missing; or name qemu, lume, container
+```
+
+`cua doctor` checks the host, an image and a sandbox's guest in one report.
+
+<Callout type="warn">
+  Not supported locally: macOS containers, macOS images that are not Lume
+  images, and hosts with no container engine (install Colima or Docker
+  Engine). `Image.windows()` is amd64 and runs under slow TCG emulation on
+  Apple silicon.
+</Callout>
+
+## Pick a kind or runtime
+
+```bash test="cli-shape" id="cua-sb-create-linux"
+cua sb create linux --name dev                       # a gVisor container
+cua sb create linux --kind vm --name dev-vm          # its -disk variant under QEMU
+cua sb create linux --runtime runc --name dev-runc   # a container without gVisor
+cua sb create macos:tahoe --name mac                 # a Lume VM
+cua sb rm dev
+```
+
+`--runtime` takes `auto`, `gvisor` or `runc` for containers and `qemu` or
+`lume` for VMs; a runtime implies its kind. A combination that does not exist
+fails with `InvalidPlacement` and lists the valid values:
+
+```text output
+invalid placement: runtime qemu runs vm sandboxes, not container ones locally; valid runtime: auto, gvisor, runc
+```
+
+`pool:<name>` runs a cloud pool's
+template image locally (it needs cloud credentials to read the template):
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create pool:my-pool --name copy-of-my-pool
+```
+
+In code, pass `kind=` and `runtime=` (`Sandbox.create(image, kind="vm",
+runtime="qemu")`); cua-sandbox still accepts a `Runtime` object
+([runtime support](/cua-sdk/reference/runtime-support)).
+
+## What differs locally
+
+- The host's architecture; others run emulated and slowly.
+- Services and public URLs are served on loopback (public URLs by the cua
+  daemon, which the SDK starts).
+- [Sidecars](/cua-sdk/guides/sidecars) need `runtime="runc"` where gVisor would run.
+- Image layers build into your container engine before boot; VM images apply
+  them after boot through cua-spacesd.
+- A sandbox runs until you delete it; `keep_alive` and `cloud=` raise.
+- Images without cua-spacesd fall back to the runtime's agentless path (QMP,
+  VNC, SSH or ADB) where there is one.
+
+## Disk usage and cleanup
+
+Images share a cache budget and are evicted least recently used first; a pull
+that would leave under 5 GiB free fails with `InsufficientDisk`. `cua cache du`
+shows what images and sandboxes take. See
+[Disk usage and cleanup](/cua-sdk/guides/disk-usage).

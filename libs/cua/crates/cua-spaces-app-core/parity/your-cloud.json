@@ -1,0 +1,68 @@
+{
+  "name": "your-cloud",
+  "about": "Your cloud (with its experiment on): no cloud in the Run on menu while nothing is connected, the Connect a cloud sheet (the found provider, what each provider touches, a region and profile, Test that creates nothing, a failed then a passed test, Make default, Connect, and No cloud leaving an already-connected cloud as is), then the wizard with AWS connected (its label in the Run on menu, systems and kinds it cannot run greyed out with why, the machine, cost and lifetime on Resources, the create on aws) and a second cloud as its own entry.",
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": false,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": ["docker"],
+    "maxCpus": 8,
+    "hostArch": "arm64",
+    "storage": null,
+    "cloudPricing": null,
+    "clouds": [],
+    "experiments": { "yourCloud": true }
+  },
+  "sheet": {
+    "providers": [
+      { "name": "aws", "title": "AWS", "found": true, "source": "~/.aws profile default", "profile": "default", "region": "us-east-1" },
+      { "name": "gcp", "title": "Google Cloud", "found": true, "source": "gcloud account dillon@trycua.com", "region": "us-central1" },
+      { "name": "modal", "title": "Modal", "found": true, "source": "~/.modal.toml profile cuaai", "profile": "cuaai", "environment": "main", "connected": true, "label": "Modal · cua-byoc" }
+    ]
+  },
+  "clouds": {
+    "aws": {
+      "name": "aws", "title": "AWS", "label": "AWS · us-west-2", "isDefault": true, "ttlHours": 2,
+      "offers": [
+        { "image": "linux", "kind": "container", "supported": true, "machineType": "t4g.medium", "usdPerHour": 0.0368 },
+        { "image": "linux-slim", "kind": "container", "supported": true, "machineType": "t4g.small", "usdPerHour": 0.0184 },
+        { "image": "linux-vm", "kind": "vm", "supported": false, "reason": "VM Spaces need a nested-virtualization machine; not offered yet." },
+        { "image": "windows", "kind": "vm", "supported": false, "reason": "Windows on AWS is not offered yet." },
+        { "image": "macos", "kind": "vm", "supported": false, "reason": "macOS on AWS needs EC2 Mac (24 h minimum); not offered." }
+      ]
+    },
+    "modal": {
+      "name": "modal", "title": "Modal", "label": "Modal · cua-byoc", "ttlHours": 2,
+      "offers": [
+        { "image": "linux", "kind": "container", "supported": true, "machineType": "2 CPU, 4 GiB", "usdPerHour": 0.1 }
+      ]
+    }
+  },
+  "steps": [
+    { "step": "wizard, nothing connected" },
+    { "step": "your cloud cannot be picked", "wizard": { "type": "set-placement", "placement": "yours" } },
+    { "step": "sheet opens on the found provider", "sheet": null },
+    { "step": "gcp's touches: a VM and its own network, no firewall rules", "sheet": { "type": "select", "name": "gcp" } },
+    { "step": "modal's touches: sandboxes in the cua-sandboxes app", "sheet": { "type": "select", "name": "modal" } },
+    { "step": "no cloud: no fields, no touches, and Modal (already connected) is left as is", "sheet": { "type": "select", "name": "none" } },
+    { "step": "no cloud, done: ends the flow without touching or disconnecting Modal", "sheet": { "type": "connect" } },
+    { "step": "picking AWS resumes the normal flow", "sheet": { "type": "select", "name": "aws" } },
+    { "step": "a region", "sheet": { "type": "set-value", "text": "us-west-2" } },
+    { "step": "a profile", "sheet": { "type": "set-profile", "text": "cua-byoc-sandbox" } },
+    { "step": "test (creates nothing)", "sheet": { "type": "test" } },
+    { "step": "a failed check", "sheet": { "type": "tested", "ok": false, "account": "", "checks": [{ "name": "credentials", "ok": false, "detail": "the profile cua-byoc-sandbox has no credentials" }] } },
+    { "step": "test again", "sheet": { "type": "test" } },
+    { "step": "every check passes", "sheet": { "type": "tested", "ok": true, "account": "418638388952", "checks": [{ "name": "credentials", "ok": true, "detail": "account 418638388952" }, { "name": "permissions", "ok": true, "detail": "RunInstances (dry run) allowed" }] } },
+    { "step": "make default", "sheet": { "type": "set-make-default", "on": true } },
+    { "step": "connect", "sheet": { "type": "connect" } },
+    { "step": "connected", "sheet": { "type": "connected", "label": "AWS · us-west-2" } },
+    { "step": "wizard with AWS (the default)", "clouds": ["aws"], "defaultLocation": "yours", "wizard": { "type": "sync-default", "location": "yours" } },
+    { "step": "resources", "wizard": { "type": "next" } },
+    { "step": "options", "wizard": { "type": "next" } },
+    { "step": "summary", "wizard": { "type": "next" } },
+    { "step": "a second cloud", "clouds": ["aws", "modal"], "wizard": { "type": "back" } },
+    { "step": "create on Modal", "wizard": { "type": "choose-cloud", "cloud": "modal" } },
+    { "step": "this Mac again", "wizard": { "type": "set-placement", "placement": "local" } }
+  ]
+}

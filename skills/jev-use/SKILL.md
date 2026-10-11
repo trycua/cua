@@ -20,6 +20,10 @@ compact regions, bounded history, and candidate IDs with descriptions; the
 response contains only the selected ID, model identity, confidence, and
 probabilities. Invoke the Python interpreter and absolute chooser path directly
 without a shell.
+For native desktop applications, use `NativeAccessibilitySource` and
+`cua.jev_choice_request_v2`, which adds a per-candidate `source` (`page`, `ax`,
+or `visual`), compact value-free `elements`, and optional `progress` counted
+from the runner's own performed actions. Browser tasks keep sending v1.
 Prefer browser DOM and semantic evidence. The optional visual adapter consumes
 the public `cua.visual_regions_v1` result only when Driver advertises both
 `parse_visual_regions` and the capture-bound `click.capture_id` input.
@@ -63,6 +67,26 @@ extension artifact, or Driver implementation detail to the recipe.
   an unbound coordinate action.
 - Use semantic evidence as authority when it is available. A visual label does
   not prove editability or interactivity.
+
+## Native accessibility candidates
+
+- Build native candidates from one `get_window_state` call that returns the
+  tree and the screenshot together, so element tokens and `capture_id`
+  describe the same moment.
+- Map raw AX, UIA, and AT-SPI roles through the role-class table in
+  `native_roles.py` / `native_roles.ts`, keyed by Driver's `normalized_role`.
+  Do not normalize roles in Driver.
+- Offer only enabled, on-screen, labeled, native elements; exclude
+  `in_web_content` elements, window chrome, and labels equal to the value.
+- Derive candidate IDs from role class, label, and actionable-ancestor path,
+  never `element_index`. Cap at 24 action candidates plus `reobserve` and
+  `abstain`, and log how many were dropped.
+- Exclude delete, send, purchase, and close actions unless the task spec
+  allows that risk. Text comes only from task parameters.
+- A stale token or truncated tree leads to a reobserve, never to an
+  unbound coordinate action.
+- Verify completion through the task's independent oracle, such as the
+  harness task-state file, not the accessibility tree the model saw.
 
 ## Credentials and proof
 

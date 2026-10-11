@@ -1,0 +1,40 @@
+---
+title: Run a sandbox in GitHub Actions
+description: Start a Linux sandbox in a GitHub Actions job with the cua-sandbox action, run a command in it, keep a screenshot, and delete it.
+---
+
+The `cua-sandbox` action creates the sandbox, runs your steps, uploads logs,
+the doctor report and `screenshot.png` as an artifact, and always deletes the
+sandbox, even on cancel.
+
+```yaml title=".github/workflows/e2e.yml" test="config" id="gha-linux-sandbox"
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: trycua/cua/.github/actions/cua-sandbox@main
+        with:
+          image: linux
+          run: |
+            cua sb exec "$CUA_SANDBOX" uname -a
+            cua sb screenshot "$CUA_SANDBOX" -o "$CUA_SANDBOX_ARTIFACTS/desktop.png"
+```
+
+- `run` runs on the runner; `guest-run` runs inside the sandbox.
+- `cua-version` defaults to `source` (builds the CLI from the action's ref, hence the Rust step).
+- No Docker or KVM on the runner: set `on: cloud` and pass `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` from secrets in the step `env`.
+
+## The same steps locally
+
+```bash test="cli-shape" id="gha-local-steps"
+cua sb create linux --name ci --wait desktop
+cua sb exec ci uname -a
+cua sb screenshot ci -o desktop.png
+cua sb rm ci --force
+```
+
+## Next
+
+- [Test in CI with Cua sandboxes](/cua-sdk/guides/test-in-ci): every input and output, injecting the build under test, and `cua doctor` expectations.

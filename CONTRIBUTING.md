@@ -1,9 +1,11 @@
 # Contributing to Cua
 
-Thanks for contributing to Cua. The repository includes Python and TypeScript
-SDKs, a Rust desktop driver, Swift virtualization tools, container images, and
-public documentation. Start with the component that owns the behavior you want
-to change.
+Thanks for contributing to Cua. The repository includes the cua SDK and `cua`
+CLI (a Rust core with Python, TypeScript, Swift, and Kotlin bindings), the
+in-sandbox cua-spacesd, the Cua Spaces app, the cua-driver desktop driver,
+Python and TypeScript packages, Swift virtualization tools, container images,
+and public documentation. Start with the component that owns the behavior you
+want to change; [`Development.md`](Development.md) maps them.
 
 ## Choose Where Work Starts
 
@@ -81,6 +83,14 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 5. Run the formatters and linters owned by the changed component.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
 
+### Contributor License Agreement
+
+Before a pull request can be merged, its author must accept the
+[Contributor License Agreement](CLA.md) once. The **CI: CLA** check comments on
+your first pull request with instructions; reply with the sentence it gives you
+to sign. The agreement applies to your later contributions, and you keep
+ownership of your work. Maintainers and automation accounts are exempt.
+
 ### Agent-Assisted Contributions
 
 Agent-assisted pull requests are welcome and are held to the same standard as
@@ -110,7 +120,7 @@ Release Please prepares a separate release PR from changes since the previous
 Sandbox tag. While Sandbox is pre-1.0, breaking changes advance the minor version.
 
 The release PR updates `libs/python/cua-sandbox/VERSION`, the package and runtime
-versions, the root package version in `uv.lock`, the release manifest, and
+versions, the package entry in its `uv.lock`, the release manifest, and
 `CHANGELOG.md`. Maintainers review the version
 and changelog before merging. Publishing the resulting GitHub release triggers
 the PyPI workflow, which builds the exact tagged commit, not moving `main`.

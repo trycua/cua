@@ -39,8 +39,8 @@ class MockVM: VM {
         )
     }
 
-    override func stop() async throws {
+    override func stop(force: Bool, timeout: TimeInterval) async throws {
         mockIsRunning = false
-        try await super.stop()
+        try await super.stop(force: force, timeout: timeout)
     }
 }

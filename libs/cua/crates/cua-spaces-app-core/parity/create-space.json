@@ -1,0 +1,199 @@
+{
+  "name": "create-space",
+  "about": "New Space wizard (the cloud tile is coming soon and refuses a pick; every field, label and the image field with its suggestions, a custom image ref and Connect by address) to a local plan, then the roster picks the Space up and the window selects it.",
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": false,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": [
+      "docker"
+    ],
+    "maxCpus": 8
+  },
+  "wizard": [
+    {
+      "type": "choose-os",
+      "os": "windows"
+    },
+    {
+      "type": "choose-os",
+      "os": "linux"
+    },
+    {
+      "type": "set-placement",
+      "placement": "cloud"
+    },
+    {
+      "type": "set-placement",
+      "placement": "local"
+    },
+    {
+      "type": "toggle-advanced"
+    },
+    {
+      "type": "choose-kind",
+      "kind": "vm"
+    },
+    {
+      "type": "choose-kind",
+      "kind": "container"
+    },
+    {
+      "type": "set-runtime",
+      "runtime": "gvisor"
+    },
+    {
+      "type": "open-image-suggestions"
+    },
+    {
+      "type": "move-image-suggestion",
+      "delta": 1
+    },
+    {
+      "type": "move-image-suggestion",
+      "delta": -1
+    },
+    {
+      "type": "dismiss-image-suggestions"
+    },
+    {
+      "type": "set-image-text",
+      "text": "win"
+    },
+    {
+      "type": "move-image-suggestion",
+      "delta": 1
+    },
+    {
+      "type": "pick-image-suggestion"
+    },
+    {
+      "type": "set-image-text",
+      "text": "ghcr.io/Acme/desktop"
+    },
+    {
+      "type": "set-image-text",
+      "text": "ghcr.io/acme/desktop:1.2 x"
+    },
+    {
+      "type": "set-image-text",
+      "text": "ghcr.io/trycua/windows:2022-disk"
+    },
+    {
+      "type": "set-image-text",
+      "text": "ghcr.io/trycua/linux:24.04"
+    },
+    {
+      "type": "set-image-text",
+      "text": "ghcr.io/acme/desktop:1.2"
+    },
+    {
+      "type": "pick-image-suggestion"
+    },
+    {
+      "type": "show-address"
+    },
+    {
+      "type": "set-address",
+      "url": " 10.0.0.5:3211 "
+    },
+    {
+      "type": "set-token",
+      "token": " tok "
+    },
+    {
+      "type": "set-address-name",
+      "name": ""
+    },
+    {
+      "type": "hide-address"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-cpus",
+      "cpus": 4
+    },
+    {
+      "type": "set-memory",
+      "memoryGb": 8
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-name",
+      "name": "Bad Name"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-name",
+      "name": "demo"
+    },
+    {
+      "type": "set-open-when-ready",
+      "on": false
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "next"
+    }
+  ],
+  "createError": "connection refused",
+  "now": 1800000000000,
+  "rows": [
+    {
+      "id": "local:demo",
+      "name": "0123456789ab",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": [
+        "desktop_stream",
+        "window_stream"
+      ],
+      "addedAt": "2027-01-15T08:00:00Z",
+      "os": "linux",
+      "reachable": true
+    },
+    {
+      "id": "direct:10.0.0.5:3211",
+      "name": "10.0.0.5:3211",
+      "provider": "direct",
+      "spacesdVersion": "0.4.0",
+      "features": [],
+      "reachable": false,
+      "error": "timed out"
+    }
+  ],
+  "roster": [
+    {
+      "type": "select",
+      "id": "local:demo",
+      "now": 1800000060000
+    },
+    {
+      "type": "expand"
+    },
+    {
+      "type": "focus-move",
+      "delta": 1
+    },
+    {
+      "type": "focus-move",
+      "delta": 1
+    },
+    {
+      "type": "collapse"
+    }
+  ],
+  "query": "dem"
+}

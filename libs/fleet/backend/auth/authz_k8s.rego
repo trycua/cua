@@ -332,6 +332,58 @@ is_write_method {
 	input.method == "DELETE"
 }
 
+# ── Tenant Secrets ──────────────────────────────────────────────────────────
+#
+# api/v1/namespaces/{ns}/secrets (POST) and .../secrets/<tenant secret> (DELETE)
+#
+# The Secret kinds a tenant may write, one name prefix each:
+#   * cua-claim-*: the SDK's per-claim secret. It names it in
+#     OSGymSandboxClaim spec.secretRef, and the pool-operator delivers its
+#     keys into the bound sandbox (the cua-env-driver token at
+#     /run/cua/env-token; osgym/pool-operator/claim_secrets.py).
+#   * cua-registry-*: a tenant's own registry pull credentials, a
+#     kubernetes.io/dockerconfigjson Secret the SDK names in
+#     vmTemplate.imagePullSecret (pool_admission.rego admits that pairing for
+#     any image). "Update" is delete + create.
+# A reviewed product decision, not observed traffic. Write-only by design: no
+# GET, LIST, WATCH, PUT or PATCH on any Secret, so a tenant cannot read back
+# even its own Secrets, and cannot touch any Secret outside these prefixes
+# (the ECR pull secret, the OIDC credentials, the operator's
+# osgym-claim-secrets-* delivery Secrets). A POST names its object in the
+# body, so the per-kind name, type and payload checks for creation live in
+# tenant_secret_admission.rego, a conjunct on this surface. Capsule scopes the
+# caller to their own namespaces, as everywhere else here.
+#
+# Adding a kind: add its pattern here and in tenant_secret_admission.rego
+# (tenant_secret_admission_test.rego checks the two sets agree).
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-claim-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "secrets")
+	count(parts) == 5
+	input.method == "POST"
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "secrets")
+	count(parts) == 6
+	is_tenant_secret_name(parts[5])
+	input.method == "DELETE"
+}
+
+is_tenant_secret_name(name) {
+	count(name) <= 253
+	regex.match(tenant_secret_name_pattern[_], name)
+}
+
 # ── Pod metrics ─────────────────────────────────────────────────────────────
 #
 # apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods — the CPU/memory numbers

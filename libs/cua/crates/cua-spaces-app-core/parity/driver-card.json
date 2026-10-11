@@ -1,0 +1,23 @@
+{
+  "times": [0, 600, 950, 1200, 1500, 1750, 2000, 2600, 3150, 3500, 4350, 4799],
+  "summaries": [
+    {
+      "agent": "claude-code",
+      "name": "Claude Code",
+      "outcomes": [
+        {"agents": ["claude-code"], "target": "skill", "item": "cua-driver", "change": "created", "detail": ""},
+        {"agents": ["claude-code"], "target": "mcp", "item": "cua-driver", "change": "created", "detail": ""}
+      ]
+    },
+    {
+      "agent": "codex",
+      "name": "Codex",
+      "outcomes": [
+        {"agents": ["codex"], "target": "skill", "item": "cua-spaces", "change": "unchanged", "detail": ""},
+        {"agents": ["codex"], "target": "mcp", "item": "cua", "change": "updated", "detail": ""},
+        {"agents": ["codex"], "target": "skill", "item": "cua-driver", "change": "created", "detail": ""},
+        {"agents": ["codex"], "target": "mcp", "item": "cua-driver", "change": "failed", "detail": "config.toml is not valid TOML"}
+      ]
+    }
+  ]
+}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+import release_attribution
+
 from release_attribution import (
     CommitRecord,
     ReleaseError,
@@ -407,3 +409,50 @@ def test_coauthor_trailer_parsing_is_case_insensitive_and_multiline():
                 )
             ]
         )
+
+
+class PagedCompareGitHub(release_attribution.GitHubClient):
+    """Serves a 300-commit pull request: the commits endpoint stops at 250."""
+
+    def __init__(self, total: int = 300, reported_total: int | None = None):
+        super().__init__("token", "https://api.example")
+        self.total = total
+        self.reported_total = total if reported_total is None else reported_total
+        self.paths: list[str] = []
+
+    def get(self, path: str):
+        self.paths.append(path)
+        if "/pulls/" in path:
+            raise AssertionError("a pull request past 250 commits must not use /pulls/N/commits")
+        page = int(path.rsplit("page=", 1)[1])
+        start = (page - 1) * 100
+        end = min(start + 100, self.total)
+        return {
+            "total_commits": self.reported_total,
+            "commits": [{"sha": f"{index:040x}"} for index in range(start, end)],
+        }
+
+
+def large_pull(commits: int = 300):
+    return {"number": 19, "commits": commits, "base": {"ref": "main"}, "head": {"sha": "f" * 40}}
+
+
+def test_pull_request_past_the_commits_endpoint_cap_pages_the_compare_api():
+    client = PagedCompareGitHub()
+    commits = client.all_pull_commits("trycua/cua-staging", large_pull())
+    assert len(commits) == 300
+    assert client.paths[0] == (
+        "repos/trycua/cua-staging/compare/main..." + "f" * 40 + "?per_page=100&page=1"
+    )
+
+
+def test_compare_total_disagreeing_with_the_pull_request_is_refused():
+    client = PagedCompareGitHub(total=300, reported_total=299)
+    with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
+        client.all_pull_commits("trycua/cua-staging", large_pull())
+
+
+def test_compare_pages_that_stop_short_are_refused():
+    client = PagedCompareGitHub(total=250, reported_total=300)
+    with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
+        client.all_pull_commits("trycua/cua-staging", large_pull())

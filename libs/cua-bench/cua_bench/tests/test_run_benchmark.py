@@ -36,6 +36,20 @@ SIMPLE_BUTTON_HTML = """
 """
 
 
+@pytest.fixture(autouse=True)
+def _fake_sandboxes(monkeypatch):
+    """Tasks run in a (fake, in-memory) sandbox: no container, no network."""
+    from cua_bench import sandboxes
+
+    from .fakes import FakeSDK
+
+    sdk = FakeSDK()
+    monkeypatch.setattr(sandboxes, "_sdk", sdk.pair)
+    for var in ("CUA_BENCH_ON", "CUA_BENCH_RUNTIME", "CUA_BENCH_IMAGE"):
+        monkeypatch.delenv(var, raising=False)
+    return sdk
+
+
 class TestTaskResult:
     """Tests for TaskResult dataclass."""
 
@@ -130,8 +144,7 @@ class TestRunSingleTaskE2E:
         """Test run_single_task with oracle mode."""
         task_dir = tmp_path / "task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -142,26 +155,26 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="Click the button",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
 
 @cb.solve_task(split="train")
 async def solve(task, session):
     global pid
-    await session.click_element(pid, "#test-btn")
+    await session.write_file("/tmp/clicked", "1")
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
     global pid
-    clicked = await session.execute_javascript(pid, "window.__clicked")
+    clicked = await session.file_exists("/tmp/clicked")
     return [1.0 if clicked else 0.0]
-'''
-        )
+''')
 
         result = await run_single_task(task_dir, oracle=True)
 
@@ -173,8 +186,7 @@ async def evaluate(task, session):
         """Test run_single_task with custom agent that immediately finishes."""
         task_dir = tmp_path / "task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -185,21 +197,21 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="Click the button",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
     global pid
-    clicked = await session.execute_javascript(pid, "window.__clicked")
+    clicked = await session.file_exists("/tmp/clicked")
     return [1.0 if clicked else 0.0]
-'''
-        )
+''')
 
         def done_agent(screenshot: bytes, task: Task):
             return DoneAction()
@@ -245,15 +257,13 @@ class TestRunBenchmark:
         dataset_path.mkdir()
         task_dir = dataset_path / "my-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            """
+        (task_dir / "main.py").write_text("""
 import cua_bench as cb
 
 @cb.tasks_config(split="train")
 def get_tasks():
     return [cb.Task(description="Test")]
-"""
-        )
+""")
 
         with pytest.raises(ValueError, match="No tasks match filter"):
             await run_benchmark(dataset_path, task_filter="nonexistent-*")
@@ -270,8 +280,7 @@ class TestRunBenchmarkE2E:
 
         task_dir = dataset_path / "click-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -282,26 +291,26 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="Click the button",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
 
 @cb.solve_task(split="train")
 async def solve(task, session):
     global pid
-    await session.click_element(pid, "#test-btn")
+    await session.write_file("/tmp/clicked", "1")
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
     global pid
-    clicked = await session.execute_javascript(pid, "window.__clicked")
+    clicked = await session.file_exists("/tmp/clicked")
     return [1.0 if clicked else 0.0]
-'''
-        )
+''')
 
         result = await run_benchmark(dataset_path, oracle=True, max_parallel=1)
 
@@ -320,8 +329,7 @@ async def evaluate(task, session):
         for name in ["click-task", "type-task", "other-task"]:
             task_dir = dataset_path / name
             task_dir.mkdir()
-            (task_dir / "main.py").write_text(
-                f'''
+            (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -332,26 +340,26 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="{name}",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
 
 @cb.solve_task(split="train")
 async def solve(task, session):
     global pid
-    await session.click_element(pid, "#test-btn")
+    await session.write_file("/tmp/clicked", "1")
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
     global pid
-    clicked = await session.execute_javascript(pid, "window.__clicked")
+    clicked = await session.file_exists("/tmp/clicked")
     return [1.0 if clicked else 0.0]
-'''
-            )
+''')
 
         # Run with filter matching only click-task
         result = await run_benchmark(
@@ -372,8 +380,7 @@ class TestRunInteractiveE2E:
         """Test run_interactive returns environment."""
         task_dir = tmp_path / "task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -384,15 +391,15 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="Interactive task",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
-'''
-        )
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
+''')
 
         env, screenshot, task_cfg = await run_interactive(task_dir)
 

@@ -1,0 +1,187 @@
+[workspace]
+resolver = "2"
+# Every crate below is real; do not add empty placeholders.
+members = [
+    "crates/cua-proto",
+    # The cua home and the test guard for the real ~/.cua.
+    "crates/cua-home",
+    # App icons cached once for every UI (memory LRU over $CUA_HOME/cache/icons).
+    "crates/cua-icon-cache",
+    "crates/cua-spacesd-client",
+    "crates/cua-fleet",
+    "crates/cua-sandbox-core",
+    "crates/cua-vmm",
+    "crates/cua-image",
+    # Disk accounting, cache budget and garbage collection (`cua cache`).
+    "crates/cua-disk",
+    "crates/cua-daemon",
+    "crates/cua-teleport-bundle",
+    # Chromium localStorage (Local Storage LevelDB) as items.
+    "crates/cua-chromium-storage",
+    "crates/cua-teleport",
+    # The Keyvault: the local vault and broker that owns teleport.
+    "crates/cua-keyvault",
+    # The Cua Spaces app core: view models shared by the Tauri and SwiftUI apps.
+    "crates/cua-spaces-app-core",
+    "crates/cua-sdk",
+    "crates/cua-bindgen",
+    "crates/cua-cli",
+    "crates/cua-spaces-contract",
+    "crates/cua-spaces-transcript",
+    "crates/cua-spaces",
+    # Cua Spaces extensions (FSL-1.1-MIT): teleport, Cua Volume tools and
+    # persistent agents over the cua-spaces extension points.
+    "crates/cua-spaces-ext",
+    # Your own cloud account as a sandbox location (`--on aws|gcp|modal`):
+    # the AWS, Google Cloud and Modal providers, `cua cloud`, the sweeper.
+    "crates/cua-byoc",
+    # The Cua Spaces app export (FSL-1.1-MIT): the SDK plus the app core
+    # and teleport, one UniFFI library for the SwiftUI app.
+    "crates/cua-spaces-ffi",
+    # The Cua Spaces build of `cua` (FSL-1.1-MIT): the MIT CLI plus the
+    # Keyvault, teleport, the Cua Volume and persistent agents.
+    "crates/cua-spaces-cli",
+    # Hotspot (reverse-SOCKS) tunnel protocol shared with cua-spacesd.
+    "crates/cua-hotspot",
+    # Sealed delivery to a pinned machine key (S1), shared with cua-spacesd
+    # (the guest that decrypts).
+    "crates/cua-machine-seal",
+    # Host setup (unattended access) and the cua-relay directory client.
+    "crates/cua-host",
+    # Media plane shared with cua-spacesd (wire format, transport, codecs)
+    # and the media clients. The driver depends on these, never the reverse.
+    "crates/cua-media-protocol",
+    "crates/cua-media-transport",
+    "crates/cua-media-codec",
+    "crates/cua-media-client",
+    "crates/cua-logging",
+    # Anonymous product telemetry.
+    "crates/cua-telemetry",
+    "crates/cua-viewer",
+    # The HTML5 viewer (embedded in cua-spacesd at /viewer; standalone server).
+    "crates/cua-spacesd-html5",
+    # Agent onboarding: detect coding agents, install skills, configure MCP.
+    "crates/cua-agent-setup",
+    # Sign-in and the shared credential store.
+    "crates/cua-auth",
+    # Scripted mock LLM provider (tests and e2e: real harnesses, scripted output).
+    "crates/cua-mock-llm",
+    # Coding agents in sandboxes: harnesses over ACP, installs, runs.
+    "crates/cua-agents",
+    # Cua Volume: the versioned drive shared by every Space and agent.
+    "crates/cua-volume",
+    # Contrib sandbox providers (E2B, Daytona, Modal): `--on <provider>`,
+    # one feature each, off by default.
+    "crates/cua-contrib",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+authors = ["trycua"]
+license = "MIT"
+repository = "https://github.com/trycua/cua"
+
+[workspace.dependencies]
+# Async runtime and RPC stack.
+tokio = { version = "1", features = ["full"] }
+tonic = { version = "0.14", default-features = false }
+tonic-web = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+prost-build = "0.14"
+pbjson = "0.9"
+pbjson-types = "0.9"
+pbjson-build = "0.9"
+
+# HTTP stack shared by cua-spacesd-client (gRPC / gRPC-Web transports) and
+# cua-sandbox-core (service requests, readiness probes).
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "webpki-roots", "tls12", "logging"] }
+tower = { version = "0.5", features = ["util"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+bytes = "1"
+url = "2.5"
+
+# cua-daemon: HTTP routing (tonic routes + passthrough + WebSocket bridge).
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "tokio", "ws", "query"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+# CLI.
+clap = { version = "4", features = ["derive", "env"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Media plane (QUIC media, cua-media-transport / cua-viewer).
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23.42", default-features = false, features = ["ring", "std", "tls12"] }
+
+# General.
+async-trait = "0.1"
+base64 = "0.22"
+hex = "0.4"
+humantime = "2"
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+schemars = { version = "1.2", default-features = false, features = ["derive", "std"] }
+
+# The official MCP Rust SDK: typed MCP clients over the service pipe
+# (Apache-2.0). Pinned exactly; features are added per crate.
+rmcp = { version = "=3.4.1", default-features = false }
+
+# Bindings. Pinned exactly, same as libs/cua-driver/rust.
+uniffi = "=0.31.0"
+
+# In-workspace crates.
+cua-proto = { path = "crates/cua-proto", version = "0.1.0" }
+cua-home = { path = "crates/cua-home", version = "0.1.0" }
+cua-icon-cache = { path = "crates/cua-icon-cache", version = "0.1.0" }
+cua-spacesd-client = { path = "crates/cua-spacesd-client", version = "0.1.0" }
+cua-fleet = { path = "crates/cua-fleet", version = "0.1.0" }
+cua-image = { path = "crates/cua-image", version = "0.1.0" }
+cua-vmm = { path = "crates/cua-vmm", version = "0.1.0", default-features = false }
+cua-disk = { path = "crates/cua-disk", version = "0.1.0" }
+cua-sandbox-core = { path = "crates/cua-sandbox-core", version = "0.1.0" }
+cua-contrib = { path = "crates/cua-contrib", version = "0.1.0", default-features = false }
+cua-host = { path = "crates/cua-host", version = "0.1.0" }
+cua-daemon = { path = "crates/cua-daemon", version = "0.1.0", default-features = false }
+cua-auth = { path = "crates/cua-auth", version = "0.1.0" }
+cua-agent-setup = { path = "crates/cua-agent-setup", version = "0.1.0" }
+cua-agents = { path = "crates/cua-agents", version = "0.1.0" }
+cua-volume = { path = "crates/cua-volume", version = "0.1.0" }
+cua-sdk = { path = "crates/cua-sdk", version = "0.1.0", default-features = false }
+cua-teleport-bundle = { path = "crates/cua-teleport-bundle", version = "0.1.0" }
+cua-chromium-storage = { path = "crates/cua-chromium-storage", version = "0.1.0" }
+cua-teleport = { path = "crates/cua-teleport", version = "0.1.0" }
+cua-keyvault = { path = "crates/cua-keyvault", version = "0.1.0" }
+cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.1.0" }
+cua-spaces-ext = { path = "crates/cua-spaces-ext", version = "0.1.0" }
+cua-byoc = { path = "crates/cua-byoc", version = "0.1.0", default-features = false }
+cua-telemetry = { path = "crates/cua-telemetry", version = "0.1.0" }
+cua-media-protocol = { path = "crates/cua-media-protocol" }
+cua-media-transport = { path = "crates/cua-media-transport" }
+cua-media-codec = { path = "crates/cua-media-codec", default-features = false }
+cua-media-client = { path = "crates/cua-media-client", default-features = false }
+
+# Fleet SDK (read-only Copybara mirror under libs/fleet; never edited here).
+cyclops-sdk = { path = "../fleet/sdk" }
+cyclops-sdk-schema = { path = "../fleet/sdk-schema" }
+
+# SHA-256 over multi-GiB transfers is unusably slow unoptimised; keep test
+# builds fast without making every dependency release-mode.
+[profile.dev.package.sha2]
+opt-level = 3

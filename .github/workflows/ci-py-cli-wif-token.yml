@@ -1,33 +1,54 @@
-name: "CI: cua-cli GitHub WIF token"
+name: "CI: cua CLI GitHub WIF token"
+
+# Checks that `cua wif-token github` (Rust CLI) returns a GitHub Actions
+# OIDC token with the Fleets audience. The file name is kept from the
+# former Python CLI.
 
 on:
   push:
     branches: [main]
     paths:
-      - "libs/python/cua-cli/**"
+      - "libs/cua/crates/cua-cli/**"
       - ".github/workflows/ci-py-cli-wif-token.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
-      - name: Install cua-cli from the locked dependency set
-        working-directory: libs/python/cua-cli
-        run: uv sync --frozen
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-cli-wif-token
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: cargo build --locked -p cua-cli
       - name: Validate GitHub WIF token claims
-        working-directory: libs/python/cua-cli
         shell: bash
         run: |
           set -euo pipefail
-          FLEETS_TOKEN="$(uv run cua wif-token github)"
+          FLEETS_TOKEN="$(libs/cua/target/debug/cua wif-token github)"
           export FLEETS_TOKEN
-          uv run python - <<'PY'
+          python3 - <<'PY'
           import base64
           import json
           import os

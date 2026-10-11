@@ -79,6 +79,11 @@ class ChooseActionTest(unittest.TestCase):
         self.assertEqual(response["model"], "jev-test")
         criteria = client.sent["questions"]["candidate"].criteria
         self.assertEqual(set(criteria), {"submit-form", "reobserve", "abstain"})
+        self.assertEqual(
+            client.sent["questions"]["candidate"].instructions,
+            request()["goal"],
+        )
+        self.assertEqual(set(client.sent["state"]), {"observation"})
         observation = client.sent["state"]["observation"]
         self.assertEqual(observation["capture_id"], "capture-1")
         self.assertEqual(observation["regions"][0]["id"], "submit")

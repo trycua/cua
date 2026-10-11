@@ -10,12 +10,56 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus};
 
 use super::refusal::BrowserRefusal;
 use super::types::{
     BrowserClassification, BrowserProduct, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint,
 };
+
+/// Root process of a driver-owned isolated browser that core launched.
+///
+/// Core keeps this handle for the browser's lifetime to observe launcher
+/// exit, reap the process tree, and remove the driver-owned profile. The
+/// default implementation is [`std::process::Child`]. A platform that runs
+/// the browser under a different token than the Driver supplies its own
+/// handle so that filesystem work inside the browser-writable profile uses
+/// the browser's authority rather than the Driver's.
+pub trait IsolatedBrowserProcess: Send {
+    fn id(&self) -> u32;
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>>;
+    fn kill(&mut self) -> std::io::Result<()>;
+    fn wait(&mut self) -> std::io::Result<ExitStatus>;
+
+    /// Run `work` with the authority of the browser's token. The browser can
+    /// write its profile directory, so a more privileged Driver must not
+    /// follow browser-planted links there with its own rights. When the
+    /// browser runs with the Driver's token, `work` runs directly. An error
+    /// means `work` did not run; callers must then skip the file operation.
+    fn with_browser_file_authority(&self, work: &mut dyn FnMut()) -> std::io::Result<()> {
+        work();
+        Ok(())
+    }
+}
+
+impl IsolatedBrowserProcess for Child {
+    fn id(&self) -> u32 {
+        Child::id(self)
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        Child::try_wait(self)
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        Child::kill(self)
+    }
+
+    fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        Child::wait(self)
+    }
+}
 
 /// Select the first installed, non-redirected candidate and return its
 /// canonical path. Native adapters must supply only trusted installation
@@ -161,8 +205,23 @@ pub enum PrepareAttachmentKind {
     ExistingProfile,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BrowserConsentAction(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl BrowserConsentAction {
+    pub fn perform<T>(&self, action: impl FnOnce() -> T) -> T {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+        action()
+    }
+
+    pub(crate) fn started(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BrowserConsentRequest {
+    pub action: BrowserConsentAction,
     pub pid: i64,
     pub window_id: u64,
     pub attempt: u8,
@@ -277,6 +336,28 @@ pub trait BrowserPlatform: Send + Sync {
             super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
             "no supported installed Chromium executable is available for isolated launch",
         ))
+    }
+
+    /// Spawn the driver-owned isolated browser that core fully configured in
+    /// `command` for the private profile at `profile`. The default launches
+    /// it with the Driver's own token. A platform may instead launch it with
+    /// a less privileged token; it must then keep every trust check made by
+    /// [`Self::isolated_browser_executable`] valid for that token and refuse
+    /// rather than fall back to the Driver's token.
+    fn spawn_isolated_browser(
+        &self,
+        mut command: Command,
+        _profile: &Path,
+    ) -> Result<Box<dyn IsolatedBrowserProcess>, BrowserRefusal> {
+        command
+            .spawn()
+            .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
+            .map_err(|error| {
+                BrowserRefusal::new(
+                    super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not launch an isolated browser process: {error}"),
+                )
+            })
     }
 
     /// Explain why a trusted CDP Input route cannot preserve background
@@ -440,6 +521,26 @@ pub trait BrowserPlatform: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn consent_action_boundary_precedes_success_and_failure_and_never_resets() {
+        for succeeds in [true, false] {
+            let action = super::BrowserConsentAction::default();
+            let observer = action.clone();
+            assert!(!observer.started());
+            let result = action.perform(|| {
+                assert!(observer.started());
+                if succeeds {
+                    Ok(())
+                } else {
+                    Err("native action failed")
+                }
+            });
+            assert_eq!(result.is_ok(), succeeds);
+            assert!(observer.started());
+            assert!(!super::BrowserConsentAction::default().started());
+        }
+    }
+
     use super::select_isolated_browser_executable;
 
     #[test]

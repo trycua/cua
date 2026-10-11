@@ -8,6 +8,16 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CLAIM_BIND_DEADLINE_SECONDS: u32 = 900;
 
+/// Name prefix every claim-referenced Secret must carry. The /api/k8s gateway
+/// only lets a tenant create or delete Secrets with this prefix, and the
+/// pool-operator refuses to deliver any other Secret into a sandbox.
+pub const CLAIM_SECRET_NAME_PREFIX: &str = "cua-claim-";
+
+/// Secret key (and in-guest file name) carrying the in-guest daemon token.
+/// The pool-operator delivers it to `/run/cua/env-token`, the path
+/// cua-env-driver reads its token from.
+pub const CLAIM_ENV_TOKEN_KEY: &str = "env-token";
+
 fn default_warmpool() -> Option<String> {
     Some("default".into())
 }
@@ -28,6 +38,22 @@ fn sandbox_template_ref_schema(_: &mut schemars::SchemaGenerator) -> schemars::S
             "name": {
                 "type": "string",
                 "description": "OSGymSandboxTemplate the warm pool's OSGymSandboxes\nuse.\n"
+            }
+        }
+    })
+}
+
+fn claim_secret_ref_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "required": ["name"],
+        "description": "Secret in the claim's namespace whose keys the pool-operator\ndelivers as files into the bound sandbox once it binds, without\nrestarting it: each key becomes /run/cua/<key> (mode 0600), e.g.\nenv-token -> /run/cua/env-token for cua-env-driver. The data is\ncopied into an operator-owned per-sandbox Secret, never into the\nclaim status, and is wiped when the claim is released. The name\nmust be cua-claim-<claim name>, and the claim's template must set\nvmTemplate.claimSecrets, or the claim fails.\n",
+        "properties": {
+            "name": {
+                "type": "string",
+                "maxLength": 253,
+                "pattern": "^cua-claim-[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                "description": "Secret name (must start with cua-claim-)."
             }
         }
     })
@@ -69,6 +95,14 @@ pub struct ClaimLifecycle {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_renew: Option<bool>,
+}
+
+/// Reference to a claim-scoped Secret delivered into the bound sandbox. See
+/// [`CLAIM_SECRET_NAME_PREFIX`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimSecretRef {
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema, uniffi::Record)]
@@ -192,4 +226,8 @@ pub struct ClaimSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[uniffi(default = None)]
     pub ttl_seconds_after_created: Option<u32>,
+    #[schemars(default, schema_with = "claim_secret_ref_schema")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub secret_ref: Option<ClaimSecretRef>,
 }

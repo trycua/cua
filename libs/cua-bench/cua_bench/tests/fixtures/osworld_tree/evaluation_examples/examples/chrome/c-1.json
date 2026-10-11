@@ -1,0 +1,2 @@
+{"id": "c-1", "instruction": "Open a tab.", "config": [], "evaluator": {"func": "exact_match",
+ "result": {"type": "vm_command_line", "command": "echo 1", "shell": true}, "expected": {"type": "rule", "rules": {"expected": "1\n"}}}}

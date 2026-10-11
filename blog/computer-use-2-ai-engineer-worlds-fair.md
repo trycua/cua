@@ -48,7 +48,7 @@ Whole-desktop capture also assumes exclusive use of the machine. That is managea
 
 The one-agent, one-foreground-desktop pattern held until April 2026, when [Codex introduced background computer use](https://openai.com/index/codex-for-almost-everything/). Alongside work from the [Sky team](https://openai.com/index/openai-acquires-software-applications-incorporated/), it showed that an agent could operate a window in the background while the person at the machine kept using the same desktop. We had explored the same idea before and put it aside, but their release showed us that we had been close. We were already building a CLI and skill for coding agents, so we spent the next few days adding background execution. On April 22, six days after the Codex announcement, we released Cua Driver as open source.
 
-[Cua Driver](https://cua.ai/docs/tutorials/drive-your-first-app) is the first pluggable computer-use driver built around windows instead of the whole desktop. It gives agents the same window-level view and commands on macOS, Windows, and Linux while handling the platform-specific details underneath. We deliberately keep the CLI lean and leave the interaction policy with the coding model. The agent lists the current windows and asks for one window's state, which returns its accessibility tree and screenshot together.
+[Cua Driver](https://cua.ai/docs/cua-driver/quickstart) is the first pluggable computer-use driver built around windows instead of the whole desktop. It gives agents the same window-level view and commands on macOS, Windows, and Linux while handling the platform-specific details underneath. We deliberately keep the CLI lean and leave the interaction policy with the coding model. The agent lists the current windows and asks for one window's state, which returns its accessibility tree and screenshot together.
 
 Apps accept and refuse input in different ways, so action selection works as a ladder. When the accessibility tree represents the target well, the agent first tries an accessibility action. If the tree is sparse or the target is a canvas, it tries a coordinate-level pixel click. Only after those routes fail does it raise the window for the few milliseconds needed to land the click, then restore the prior focus. After each action, the driver reports whether the effect was confirmed, unverifiable, or likely a no-op so the agent knows whether to escalate.
 
@@ -181,7 +181,7 @@ If your startup needs to run GUI sandboxes at scale for evaluations or RL, [join
 
 The code and docs behind the talk are here:
 
-- [Install Cua Driver](https://cua.ai/docs/how-to-guides/driver/install) or read the [Driver source](https://github.com/trycua/cua/tree/main/libs/cua-driver).
+- [Install Cua Driver](https://cua.ai/docs/cua-driver/guides/install) or read the [Driver source](https://github.com/trycua/cua/tree/main/libs/cua-driver).
 - Browse [Cua-Bench](https://cua.ai/cuabench) and its [task framework](https://github.com/trycua/cua/tree/main/libs/cua-bench).
 - Join the [Cua Fleets waitlist](https://cua.ai/signup?redirect_url=%2Fwaitlist).
 - Follow the main repository at [github.com/trycua/cua](https://github.com/trycua/cua).

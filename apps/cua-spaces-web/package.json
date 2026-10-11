@@ -1,0 +1,52 @@
+{
+  "name": "@cua/cua-spaces-web",
+  "private": true,
+  "version": "0.0.0",
+  "license": "FSL-1.1-MIT",
+  "description": "Cua Spaces web UI, shared by the desktop shells",
+  "type": "module",
+  "scripts": {
+    "core": "node scripts/build-core-wasm.mjs",
+    "dev": "node scripts/build-core-wasm.mjs --optional && vite --port 5174 --strictPort",
+    "build": "node scripts/build-core-wasm.mjs && vite build",
+    "preview": "vite preview --port 5174",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/build-core-wasm.mjs --optional && vitest run",
+    "check": "pnpm typecheck && pnpm test",
+    "contract": "scripts/bridge-contract.sh",
+    "contract:shapes": "UPDATE_BRIDGE_SHAPES=1 vitest run src/bridge/__tests__/contract.test.ts",
+    "parity": "node scripts/build-core-wasm.mjs && playwright test -c e2e/playwright.config.ts",
+    "parity:electron": "node scripts/build-core-wasm.mjs && vite build && (cd ../cua-spaces-desktop && rm -rf dist-electron && npx tsdown && node scripts/check-channels.mjs) && PARITY_HOST=electron playwright test -c e2e/playwright.config.ts",
+    "screenshots": "node scripts/screenshots.mjs",
+    "perf": "node scripts/perf.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "@legendapp/list": "^3.6.0",
+    "@tanstack/react-router": "^1.170.41",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.50.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "^3.7.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@rolldown/plugin-babel": "^0.2.4",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/router-plugin": "^1.168.42",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "jsdom": "^30.1.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  }
+}

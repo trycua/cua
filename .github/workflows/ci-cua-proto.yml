@@ -1,0 +1,88 @@
+name: "CI: cua proto contract"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/proto/**"
+      - "libs/cua/crates/cua-proto/**"
+      - "libs/cua/scripts/check-proto.sh"
+      - "libs/cua/Cargo.toml"
+      - "libs/cua/Cargo.lock"
+      - "libs/cua/rust-toolchain.toml"
+      - ".github/workflows/ci-cua-proto.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/proto/**"
+      - "libs/cua/crates/cua-proto/**"
+      - "libs/cua/scripts/check-proto.sh"
+      - "libs/cua/Cargo.toml"
+      - "libs/cua/Cargo.lock"
+      - "libs/cua/rust-toolchain.toml"
+      - ".github/workflows/ci-cua-proto.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-proto-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  contract:
+    name: buf lint / format / breaking
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # buf breaking compares against the merge base with the base branch.
+          fetch-depth: 0
+      - name: Install buf
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - name: Check proto contract
+        env:
+          CUA_PROTO_BASE_REF: origin/${{ github.base_ref || 'main' }}
+        run: libs/cua/scripts/check-proto.sh
+
+  codegen:
+    name: cua-proto codegen + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy -p cua-proto --all-features --all-targets --locked -- -D warnings
+      - name: Test (default features)
+        run: cargo test -p cua-proto --locked
+      - name: Test (all features)
+        run: cargo test -p cua-proto --all-features --locked
+      - name: Build for wasm32 (gRPC-Web client subset)
+        run: cargo build -p cua-proto --locked --target wasm32-unknown-unknown --no-default-features --features client,serde

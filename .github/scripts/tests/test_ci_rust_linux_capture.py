@@ -56,7 +56,7 @@ class CaptureCiTests(unittest.TestCase):
     def test_readiness_probes_do_not_reset_disposable_servers(self):
         servers = [shlex.split(line) for line in capture_script().splitlines()
                    if line.startswith("Xvfb ")]
-        self.assertEqual(len(servers), 2)
+        self.assertEqual(len(servers), 3)  # primary, secondary, DirectColor (:100)
         self.assertTrue(all("-noreset" in command for command in servers))
         source = (ROOT / "libs/cua-driver/rust/crates/platform-linux/src/capture.rs").read_text()
         helper = source.split("impl XvfbServer {", 1)[1].split("fn stop(", 1)[0]

@@ -1,0 +1,236 @@
+name: "CD: Cua Spaces macOS Golden"
+
+# Builds the "macOS golden" Lume image for Local (Lume macOS) Spaces: a
+# disposable base that boots to an autologin desktop with the native agent
+# stack (cua-driver + cua-spacesd) already code-signed and TCC-granted, so a cloned
+# Space streams + drives with zero permission prompts.
+#
+# Two stages:
+#   1) build-sign  (GitHub-hosted macOS): build cua-driver + cua-spacesd and sign the
+#      .app bundles with the org Developer ID Application cert (same secrets as
+#      cd-rust-cua-driver.yml / cd-cua-spaces.yml). Ad-hoc signatures do NOT hold
+#      the seeded TCC grants, so a stable cert is mandatory here.
+#   2) golden      (SELF-HOSTED Apple-Silicon macOS + Lume): clone the base VM,
+#      install the signed apps, seed TCC, freeze, and lume-push to ghcr. The TCC
+#      seed only works inside a SIP-disabled VirtualMac, so this stage cannot run
+#      on a GitHub-hosted runner — it needs a self-hosted runner that has `lume`
+#      and a base image, labeled `[self-hosted, macOS, ARM64, lume]`.
+#
+# Required secrets (reuse the existing org Developer ID secrets):
+#   APPLICATION_CERT_BASE64, CERT_PASSWORD, DEVELOPER_NAME, TEAM_ID,
+#   APPLE_ID, APP_SPECIFIC_PASSWORD           (signing + optional notarization)
+#   CERT_IDENTITY_SHA                          (SHA-1 of the signing identity)
+#   GHCR_PUSH_TOKEN                            (write:packages on trycua, for lume push)
+#
+# STATUS: trycua/cua-staging currently has NONE of these. `gh api
+# repos/trycua/cua-staging/actions/secrets` returns an empty list and so does
+# .../organization-secrets. They all live in trycua/cua. Until they are
+# mirrored here (or this workflow lands there), build-sign cannot get past
+# the certificate import. Secret VALUES cannot be copied programmatically -- GitHub
+# never returns them -- so a human with the cert has to add them.
+#
+# SCOPE (resolved): build-macos-golden.sh used to be a SECOND definition of the
+# golden and built a materially thinner image -- the driver, a capture daemon,
+# node, Chrome, and nothing else. No Unity, no Blender, no skills, no ~/.cua
+# payload, no sanitizer. Publishing that to the tag the app pulls would have
+# looked like a successful release and shipped a broken product.
+#
+# It now delegates the entire provisioning phase to
+# apps/cua-spaces/scripts/golden/build-golden.sh -- the same script a maintainer
+# runs by hand -- and keeps only the CI concerns: VM creation, staging the
+# signed artifacts, the push-credential preflight, and `lume push`. Two gates
+# keep the paths from diverging again:
+#   * the `coverage` job below (static, seconds) fails if the CI script stops
+#     delegating or if build-golden.sh grows a step the image contract does not
+#     account for;
+#   * golden/verify-golden.sh runs in the guest as the LAST build step, after
+#     the sanitizer, and fails the build if the image is missing anything in
+#     golden/golden-required.txt.
+# push_image is therefore safe to use: a thin image cannot reach the push.
+
+on:
+  # `workflow_dispatch` only fires for a workflow file that is already on the
+  # default branch, so while this lives on a feature branch there is no way to
+  # start it by hand. A push trigger scoped to a throwaway `ci/macos-golden-*`
+  # branch makes it startable — and therefore testable — before it lands on
+  # main, without firing on every ordinary push.
+  push:
+    branches:
+      - "ci/macos-golden-*"
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Base Lume VM to clone (must be SIP-off, autologin, ssh lume/lume)"
+        default: "macos-tahoe"
+        type: string
+      push_image:
+        description: "Registry tag to push, e.g. macos-tahoe-cua-spaces:26.3.0 (blank = build only)"
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  # Seconds, on a free runner, and it gates both expensive jobs. This is the
+  # check that would have caught the CI path drifting into a thinner golden --
+  # and the one that caught `bash -n` failing on an apostrophe inside a
+  # single-quoted block, which left build-macos-golden.sh unrunnable for its
+  # entire life.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Golden coverage + syntax gate
+        run: bash apps/cua-spaces/scripts/golden/check-golden-coverage.sh
+
+  build-sign:
+    needs: coverage
+    runs-on: macos-26
+    env:
+      KEYCHAIN_PASSWORD: temporary-golden-keychain-pwd
+      # `secrets` is NOT an allowed context in a step-level `if:`. Referencing it
+      # there is not a step that gets skipped -- it fails the whole workflow at
+      # PARSE time, before any job is created, which is why every run of this
+      # file has been an instant `startup_failure` with no jobs and no log, and
+      # why the golden CD has never once executed. Hoisting the secret into the
+      # job env makes the same test legal as `env.APPLE_ID`.
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+    steps:
+      - name: Checkout cua-staging
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.app || true
+
+      - name: Import Developer ID certificate
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -l build.keychain
+          echo "$APPLICATION_CERT_BASE64" | base64 --decode > application.p12
+          security import application.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign > /dev/null 2>&1
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain > /dev/null 2>&1
+          # The substitution MUST word-split: list-keychains takes the existing
+          # keychains as separate arguments, and quoting it would pass the whole
+          # list as one bogus path, dropping every other keychain from the
+          # search list. Deliberate, hence the disable.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$HOME/Library/Keychains/build.keychain-db" $(security list-keychains -d user | tr -d '"')
+          rm -f application.p12
+          test "$(security find-identity -v -p codesigning build.keychain | grep -c 'Developer ID Application')" -ge 1
+
+      - name: Build + sign cua-driver (CuaDriverLocal.app)
+        env:
+          CERT_IDENTITY_SHA: ${{ secrets.CERT_IDENTITY_SHA }}
+        run: |
+          # CUA_DRIVER_LOCAL_SIGNING_IDENTITY is NOT a display name. The helper
+          # in scripts/_local-signing.sh rejects anything that is not exactly 40
+          # hex characters and silently falls back to "-" (ad-hoc) -- which
+          # --require-stable-signing then fails on. Passing
+          # "Developer ID Application: <name> (<team>)" here could never have
+          # produced a signed build. It also has to be told WHICH keychain: the
+          # helper defaults to login.keychain, and the cert was imported into
+          # build.keychain two steps up.
+          test -n "$CERT_IDENTITY_SHA" || { echo "CERT_IDENTITY_SHA is unset"; exit 1; }
+          export CUA_DRIVER_LOCAL_SIGNING_IDENTITY="$CERT_IDENTITY_SHA"
+          export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$HOME/Library/Keychains/build.keychain-db"
+          bash libs/cua-driver/scripts/install-local.sh --release --require-stable-signing
+          # Prove the bundle is certificate-backed before it is handed to the
+          # golden. An ad-hoc signature does not hold seeded TCC grants, so a
+          # silent downgrade here is a golden that prompts on every clone.
+          codesign -dv --verbose=2 /Applications/CuaDriverLocal.app 2>&1 \
+            | grep -q "TeamIdentifier=" \
+            || { echo "CuaDriverLocal.app is not certificate-backed"; exit 1; }
+          ditto -c -k --keepParent /Applications/CuaDriverLocal.app CuaDriverLocal.app.zip
+
+      - name: Build + sign cua-spacesd (Cua Spacesd.app)
+        env:
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          export CUA_ENV_CODESIGN_IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
+          export CUA_ENV_BUNDLE_ID="com.trycua.cua-env-driver"
+          bash libs/cua-spacesd/scripts/build-macos-app.sh
+          ditto -c -k --keepParent "libs/cua-spacesd/target/macos/Cua Spacesd.app" CuaSpacesd.app.zip
+
+      # Optional but recommended for a public image: notarize the signed apps so
+      # Gatekeeper trusts them off this build machine.
+      - name: Notarize (optional)
+        if: ${{ env.APPLE_ID != '' }}
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: |
+          for z in CuaDriverLocal.app.zip CuaSpacesd.app.zip; do
+            xcrun notarytool submit "$z" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" \
+              --password "$APP_SPECIFIC_PASSWORD" --wait --timeout 30m || echo "notarize $z failed (non-fatal)"
+          done
+
+      - name: Upload signed app bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-golden-apps
+          path: |
+            CuaDriverLocal.app.zip
+            CuaSpacesd.app.zip
+
+  golden:
+    needs: build-sign
+    # Self-hosted Apple-Silicon macOS runner with `lume` + a base image. The TCC
+    # seed + `lume push` cannot run on a GitHub-hosted runner.
+    runs-on: [self-hosted, macOS, ARM64, lume]
+    steps:
+      - name: Checkout cua-staging
+        uses: actions/checkout@v4
+
+      - name: Download signed apps
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-golden-apps
+          path: _apps
+
+      - name: Unpack signed apps
+        run: |
+          ditto -x -k _apps/CuaDriverLocal.app.zip _apps/
+          ditto -x -k _apps/CuaSpacesd.app.zip _apps/
+
+      - name: Ensure lume serve is running
+        run: |
+          curl -s --max-time 3 http://127.0.0.1:7777/lume/vms >/dev/null || (lume serve >/tmp/lume-serve.log 2>&1 &) && sleep 3
+
+      # Cheap, and it would have caught a real one: build-macos-golden.sh sat in
+      # the tree unrunnable, because an apostrophe in the comment "Google's
+      # signature" inside a single-quoted vmssh block closed the string and
+      # inverted the quoting of the rest of the file. `bash -n` fails on that in
+      # milliseconds; the workflow instead burned the whole build-sign job first
+      # and then died on the very first line of the build. Never again.
+      - name: Syntax-check the build scripts
+        run: bash apps/cua-spaces/scripts/golden/check-golden-coverage.sh
+
+      - name: Build (and optionally push) the golden
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+          GOLDEN: cua-spaces-golden
+          DRIVER_APP: ${{ github.workspace }}/_apps/CuaDriverLocal.app
+          SPACESD_APP: ${{ github.workspace }}/_apps/Cua Spacesd.app
+          PUSH_IMAGE: ${{ inputs.push_image }}
+          # `lume push` does its OWN ghcr token exchange from these env vars
+          # (ImageContainerRegistry.getCredentialsFromEnvironment) and never
+          # looks at docker's credential store. A `docker login` step here was
+          # decorative: the push would have failed authenticationFailed on the
+          # first real publish. The runner is self-hosted, so these must be
+          # scoped to the step rather than left in the environment.
+          GITHUB_USERNAME: trycua
+          GITHUB_TOKEN: ${{ secrets.GHCR_PUSH_TOKEN }}
+        run: |
+          bash apps/cua-spaces/scripts/build-macos-golden.sh

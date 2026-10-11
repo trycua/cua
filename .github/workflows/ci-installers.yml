@@ -1,0 +1,126 @@
+name: "CI: Installers"
+
+# install.sh / install.ps1 (scripts/install), the release manifest generator
+# and the macOS .pkg, exercised against a locally served fake release. Nothing
+# here installs onto the runner outside temp dirs, except the Linux container
+# smoke, which installs into a throwaway container.
+
+on:
+  pull_request:
+    paths:
+      - "scripts/install/**"
+      - "apps/cua-spaces/scripts/build-pkg.sh"
+      - "apps/cua-spaces/scripts/prepare-cli-sidecar.sh"
+      - "apps/cua-spaces/src-tauri/installer/**"
+      - "apps/cua-spaces/tests/installer/**"
+      - ".github/workflows/ci-installers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  lint:
+    name: shellcheck + shfmt + manifest unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/w:ro" koalaman/shellcheck:stable -s sh \
+            /w/scripts/install/install.sh /w/scripts/install/tests/run.sh /w/scripts/install/tests/docker-pester.sh \
+            /w/apps/cua-spaces/scripts/build-pkg.sh /w/apps/cua-spaces/scripts/prepare-cli-sidecar.sh \
+            /w/apps/cua-spaces/src-tauri/installer/macos-pkg/postinstall /w/apps/cua-spaces/tests/installer/pkg.test.sh
+      - name: shfmt
+        run: |
+          docker run --rm -v "$PWD:/w:ro" mvdan/shfmt:v3 -d \
+            /w/scripts/install/install.sh /w/scripts/install/tests/run.sh \
+            /w/apps/cua-spaces/scripts/build-pkg.sh /w/apps/cua-spaces/scripts/prepare-cli-sidecar.sh \
+            /w/apps/cua-spaces/src-tauri/installer/macos-pkg/postinstall /w/apps/cua-spaces/tests/installer/pkg.test.sh
+      - name: release_manifest.py unit tests
+        run: python3 -m unittest discover -s scripts/install/tests -v
+
+  installer-smoke-linux:
+    name: installer smoke (Linux containers)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "ubuntu:24.04", "alpine:3"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh test suite (fake release on a local HTTP server)
+        run: |
+          docker run --rm -v "$PWD/scripts/install:/w:ro" "${{ matrix.image }}" sh -c '
+            set -e
+            if command -v apk >/dev/null; then apk add -q python3 curl; adduser -D u
+            else apt-get update -qq && apt-get install -y -qq python3 curl ca-certificates bsdutils >/dev/null; useradd -m u; fi
+            echo "--- as root (dash/ash, deb path dry run)"; sh /w/tests/run.sh
+            echo "--- as a user"; su u -c "sh /w/tests/run.sh"
+          '
+      - name: install.sh --yes --no-onboarding against a served release dir
+        run: |
+          docker run --rm -v "$PWD/scripts/install:/w:ro" "${{ matrix.image }}" sh -c '
+            set -e
+            if command -v apk >/dev/null; then apk add -q python3 curl; else apt-get update -qq && apt-get install -y -qq python3 curl ca-certificates >/dev/null; fi
+            mkdir -p /rel/cua-install-latest /stage
+            printf "#!/bin/sh\necho cua 0.0.1\n" > /stage/cua && chmod +x /stage/cua
+            arch=x64; case "$(uname -m)" in aarch64|arm64) arch=arm64;; esac
+            tar -czf /rel/cua-install-latest/cua-cli-0.0.1-linux-$arch.tar.gz -C /stage cua
+            printf "#!/bin/sh\necho spaces\n" > /rel/cua-install-latest/cua-spaces-0.0.1-linux-$arch.AppImage
+            python3 /w/release_manifest.py --component cli --version 0.0.1 --dir /rel/cua-install-latest --out /tmp/cli.json
+            python3 /w/release_manifest.py --component app --version 0.0.1 --dir /rel/cua-install-latest \
+              --merge /tmp/cli.json --out /rel/cua-install-latest/release-artifacts.json
+            (cd /rel && python3 -m http.server 8765 >/dev/null 2>&1 &)
+            sleep 1
+            CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --yes --no-onboarding --mode client
+            /usr/local/bin/cua --version
+            test -x /usr/local/bin/cua-spaces
+            grep -qx client "$HOME/.cua/spaces-install-mode"
+          '
+
+  installer-smoke-macos:
+    name: installer smoke (macOS, temp prefix + dmg mount + pkg)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh test suite (includes the .dmg mount into --prefix)
+        run: sh scripts/install/tests/run.sh
+      - name: .pkg build + expand + postinstall against a temp volume
+        run: sh apps/cua-spaces/tests/installer/pkg.test.sh
+
+  installer-smoke-windows:
+    name: installer smoke (Windows, install.ps1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pester
+        shell: pwsh
+        run: |
+          Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5
+          $r = Invoke-Pester scripts/install/tests -Output Detailed -PassThru
+          if ($r.FailedCount -gt 0) { exit 1 }
+      - name: install.ps1 -DryRun against a local fake release
+        shell: pwsh
+        run: |
+          $rel = Join-Path $env:RUNNER_TEMP 'rel'
+          New-Item -ItemType Directory -Force -Path $rel | Out-Null
+          Set-Content (Join-Path $env:RUNNER_TEMP 'cua.exe') 'fake'
+          Compress-Archive (Join-Path $env:RUNNER_TEMP 'cua.exe') (Join-Path $rel 'cua-cli-0.0.1-windows-x64.zip')
+          Set-Content (Join-Path $rel 'cua-spaces-0.0.1-windows-x64.msi') 'msi'
+          python scripts/install/release_manifest.py --component cli --version 0.0.1 --dir $rel --out "$env:RUNNER_TEMP/cli.json"
+          python scripts/install/release_manifest.py --component app --version 0.0.1 --dir $rel --merge "$env:RUNNER_TEMP/cli.json" --out (Join-Path $rel 'release-artifacts.json')
+          $env:CUA_INSTALL_MANIFEST_URL = 'file:///' + ((Join-Path $rel 'release-artifacts.json') -replace '\\', '/')
+          $env:CUA_INSTALL_ARCH = 'AMD64'
+          ./scripts/install/install.ps1 -DryRun -Yes -Mode host
+          ./scripts/install/install.ps1 -CliOnly -Yes -NoOnboarding -Prefix (Join-Path $env:RUNNER_TEMP 'prefix')
+          if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'prefix/bin/cua.exe'))) { throw 'cua.exe was not installed' }

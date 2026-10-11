@@ -1,0 +1,804 @@
+{
+  "flow": "your-cloud",
+  "frames": [
+    {
+      "createSpace": "on=local image=ghcr.io/trycua/linux:24.04 cpus=2 memoryMb=4096",
+      "step": "wizard, nothing connected",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-cloud",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "createSpace": "on=local image=ghcr.io/trycua/linux:24.04 cpus=2 memoryMb=4096",
+      "step": "your cloud cannot be picked",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-cloud",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = ",
+        "profile": "Profile [default] = ",
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "sheet opens on the found provider"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Project [] = ",
+        "profile": null,
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found | selected",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one Compute Engine VM per sandbox, plus one dedicated network with no firewall rules. No service account is attached.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your Google Cloud project. Each VM deletes itself after its run-time limit.",
+          "Remove everything Cua created with `cua cloud sweep gcp --all --delete`."
+        ]
+      },
+      "step": "gcp's touches: a VM and its own network, no firewall rules"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Environment [main] = ",
+        "profile": "Profile [cuaai] = ",
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found | selected",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Runs sandboxes in the `cua-sandboxes` app, in the environment you choose.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your Modal workspace. Each sandbox is deleted automatically after its time limit (up to 24 hours).",
+          "Remove everything Cua created with `cua cloud sweep modal --all --delete`."
+        ]
+      },
+      "step": "modal's touches: sandboxes in the cua-sandboxes app"
+    },
+    {
+      "sheet": {
+        "buttons": "Test off ?Checks the account without creating anything. / Done on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": null,
+        "profile": null,
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is. | selected"
+        ],
+        "title": "Connect a cloud",
+        "touches": []
+      },
+      "step": "no cloud: no fields, no touches, and Modal (already connected) is left as is"
+    },
+    {
+      "sheet": {
+        "buttons": "Test off ?Checks the account without creating anything. / Done on / Cancel / Make default off",
+        "checks": [],
+        "done": true,
+        "error": null,
+        "field": null,
+        "profile": null,
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is. | selected"
+        ],
+        "title": "Connect a cloud",
+        "touches": []
+      },
+      "step": "no cloud, done: ends the flow without touching or disconnecting Modal"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = ",
+        "profile": "Profile [default] = ",
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "picking AWS resumes the normal flow"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = ",
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "a region"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "a profile"
+    },
+    {
+      "sheet": {
+        "buttons": "Testing… off ?Checks the account without creating anything. / Connect off / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": {
+          "kind": "test",
+          "target": {
+            "profile": "cua-byoc-sandbox",
+            "provider": "aws",
+            "region": "us-west-2"
+          }
+        },
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "test (creates nothing)"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [
+          "failed credentials: the profile cua-byoc-sandbox has no credentials"
+        ],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": null,
+        "result": "Not ready: fix what failed. Nothing was created.",
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "a failed check"
+    },
+    {
+      "sheet": {
+        "buttons": "Testing… off ?Checks the account without creating anything. / Connect off / Cancel / Make default off",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": {
+          "kind": "test",
+          "target": {
+            "profile": "cua-byoc-sandbox",
+            "provider": "aws",
+            "region": "us-west-2"
+          }
+        },
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "test again"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default off",
+        "checks": [
+          "ok credentials: account 418638388952",
+          "ok permissions: RunInstances (dry run) allowed"
+        ],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": null,
+        "result": "Ready: 418638388952. Nothing was created.",
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "every check passes"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default on",
+        "checks": [
+          "ok credentials: account 418638388952",
+          "ok permissions: RunInstances (dry run) allowed"
+        ],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": null,
+        "result": "Ready: 418638388952. Nothing was created.",
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "make default"
+    },
+    {
+      "sheet": {
+        "buttons": "Test off ?Checks the account without creating anything. / Connecting… off / Cancel / Make default on",
+        "checks": [],
+        "done": false,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": {
+          "kind": "connect",
+          "make_default": true,
+          "target": {
+            "profile": "cua-byoc-sandbox",
+            "provider": "aws",
+            "region": "us-west-2"
+          }
+        },
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "connect"
+    },
+    {
+      "sheet": {
+        "buttons": "Test on ?Checks the account without creating anything. / Connect on / Cancel / Make default on",
+        "checks": [],
+        "done": true,
+        "error": null,
+        "field": "Region [us-east-1] = us-west-2",
+        "profile": "Profile [default] = cua-byoc-sandbox",
+        "request": null,
+        "result": null,
+        "rows": [
+          "aws | AWS | ~/.aws profile default | found | selected",
+          "gcp | Google Cloud | gcloud account dillon@trycua.com | found",
+          "modal | Modal | Connected, Modal · cua-byoc | found",
+          "none | No cloud | Leaves your connected cloud as is."
+        ],
+        "title": "Connect a cloud",
+        "touches": [
+          "Creates one EC2 instance per sandbox, plus one shared security group with no inbound rules. No key pairs, no IAM roles.",
+          "Only resources Cua creates are touched; they are tagged and recorded, and nothing you already had is changed or deleted.",
+          "Costs are billed to your AWS account. Each sandbox ends itself after its time limit (8 hours by default).",
+          "Remove everything Cua created with `cua cloud sweep aws --all --delete`."
+        ]
+      },
+      "step": "connected"
+    },
+    {
+      "createSpace": "on=aws image=ghcr.io/trycua/linux:24.04 cpus=null memoryMb=null",
+      "step": "wizard with AWS (the default)",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-cloud",
+          "connect-by-address"
+        ],
+        "kindsOff": [
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
+        ],
+        "price": "About $0.04/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: t4g.medium",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: AWS · us-west-2",
+          "Kind: Container",
+          "Runtime: Container on t4g.medium",
+          "Cost: About $0.04/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "createSpace": "on=aws image=ghcr.io/trycua/linux:24.04 cpus=null memoryMb=null",
+      "step": "resources",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [],
+        "kindsOff": [
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
+        ],
+        "price": "About $0.04/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: t4g.medium",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 1,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: AWS · us-west-2",
+          "Kind: Container",
+          "Runtime: Container on t4g.medium",
+          "Cost: About $0.04/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "createSpace": "on=aws image=ghcr.io/trycua/linux:24.04 cpus=null memoryMb=null",
+      "step": "options",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [
+          "name",
+          "open-when-ready"
+        ],
+        "kindsOff": [
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
+        ],
+        "price": "About $0.04/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: t4g.medium",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 2,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: AWS · us-west-2",
+          "Kind: Container",
+          "Runtime: Container on t4g.medium",
+          "Cost: About $0.04/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "createSpace": "on=aws image=ghcr.io/trycua/linux:24.04 cpus=null memoryMb=null",
+      "step": "summary",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [],
+        "kindsOff": [
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
+        ],
+        "price": "About $0.04/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: t4g.medium",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 3,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: AWS · us-west-2",
+          "Kind: Container",
+          "Runtime: Container on t4g.medium",
+          "Cost: About $0.04/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "createSpace": "on=aws image=ghcr.io/trycua/linux:24.04 cpus=null memoryMb=null",
+      "step": "a second cloud",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [
+          "name",
+          "open-when-ready"
+        ],
+        "kindsOff": [
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *",
+          "modal | Modal · cua-byoc | 2 CPU, 4 GiB, about $0.10/hour | on"
+        ],
+        "price": "About $0.04/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: t4g.medium",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 2,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: AWS · us-west-2",
+          "Kind: Container",
+          "Runtime: Container on t4g.medium",
+          "Cost: About $0.04/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | Windows on AWS is not offered yet. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "createSpace": "on=modal image=ghcr.io/trycua/linux:24.04 cpus=null memoryMb=null",
+      "step": "create on Modal",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "modal",
+        "fields": [
+          "name",
+          "open-when-ready"
+        ],
+        "kindsOff": [
+          "vm | Virtual machine | Modal does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on Modal and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on",
+          "modal | Modal · cua-byoc | 2 CPU, 4 GiB, about $0.10/hour | on *"
+        ],
+        "price": "About $0.10/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: 2 CPU, 4 GiB",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 2,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Modal · cua-byoc",
+          "Kind: Container",
+          "Runtime: Container on 2 CPU, 4 GiB",
+          "Cost: About $0.10/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | Modal does not run this image. Ask your agent to deploy the Windows Server 2022 image on Modal and add it with cua spaces add. | off",
+          "macos | macOS | Modal does not run this image. Ask your agent to deploy the macOS Tahoe 26 image on Modal and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "createSpace": "on=local image=ghcr.io/trycua/linux:24.04 cpus=2 memoryMb=4096",
+      "step": "this Mac again",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "modal",
+        "fields": [
+          "name",
+          "open-when-ready"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on",
+          "modal | Modal · cua-byoc | 2 CPU, 4 GiB, about $0.10/hour | on"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 2,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    }
+  ]
+}

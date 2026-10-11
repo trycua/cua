@@ -1,0 +1,254 @@
+{
+  "flow": "share-sheet",
+  "frames": [
+    {
+      "step": "open, only you",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [] - as viewer",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "a partial email",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [bob@] Enter a full email address. as viewer",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "share is ignored while invalid",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [bob@] Enter a full email address. as viewer",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "a full email",
+      "view": {
+        "busy": false,
+        "buttons": "Share on / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [ Bob@Example.com ] - as viewer",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "as an editor",
+      "view": {
+        "busy": false,
+        "buttons": "Share on / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [ Bob@Example.com ] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "share (presence, then the relay)",
+      "view": {
+        "busy": true,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [ Bob@Example.com ] - as editor",
+        "request": {
+          "kind": "share",
+          "role": "editor",
+          "space": "local:studio",
+          "who": "bob@example.com"
+        },
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "shared",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [
+          "bob@example.com | editor"
+        ],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "bob connected",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [
+          "bob@example.com | editor | connected"
+        ],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "change bob to viewer",
+      "view": {
+        "busy": true,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [] - as editor",
+        "request": {
+          "kind": "share",
+          "role": "viewer",
+          "space": "local:studio",
+          "who": "bob@example.com"
+        },
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [
+          "bob@example.com | editor | connected"
+        ],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "presence declined",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": "not shared: you declined",
+        "field": "Email or account ID [] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [
+          "bob@example.com | editor | connected"
+        ],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "remove bob",
+      "view": {
+        "busy": true,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [] - as editor",
+        "request": {
+          "kind": "unshare",
+          "space": "local:studio",
+          "who": "bob@example.com"
+        },
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [
+          "bob@example.com | editor | connected"
+        ],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "removed",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "a team is refused",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": null,
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [team:design] Share with people, one at a time. as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "signed out",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": "Sign in to cua.ai to share.",
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [carol@example.com] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    },
+    {
+      "step": "an old driver",
+      "view": {
+        "busy": false,
+        "buttons": "Share off / Remove / Done",
+        "disabled": "This Space's driver is too old to share. Update its image.",
+        "empty": "Only you",
+        "error": null,
+        "field": "Email or account ID [carol@example.com] - as editor",
+        "request": null,
+        "roles": "viewer=Can view, editor=Can edit",
+        "rows": [],
+        "title": "Share “studio”"
+      }
+    }
+  ]
+}

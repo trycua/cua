@@ -1,0 +1,55 @@
+[package]
+name = "cua-sandbox-core"
+description = "One daemon-agnostic Sandbox over the Fleet, local (VMM) and direct providers, with cua-sandbox-compatible state files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# In-process servers for tests (`cua_sandbox_core::testing`): an rmcp MCP
+# server with multimodal tools and a raw streaming HTTP server. Never
+# enabled in release builds.
+testing = ["rmcp/server", "rmcp/transport-streamable-http-server", "dep:axum", "dep:base64"]
+
+[dependencies]
+cua-home.workspace = true
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider", "base64"] }
+axum = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+futures-util.workspace = true
+cua-spacesd-client.workspace = true
+cua-fleet.workspace = true
+# `ImageInfo` from the one resolver's result.
+cua-image.workspace = true
+# Create progress (`progress`), reported by the runtimes.
+cua-vmm.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "server", "http1"] }
+hyper-util.workspace = true
+hyper-rustls.workspace = true
+humantime.workspace = true
+# `$CUA_HOME/config.toml` (user defaults), edited in place.
+toml_edit = "0.25"
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+# `CancellationToken` for cancellable creates.
+tokio-util = "0.7"
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+cua-sandbox-core = { path = ".", features = ["testing"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+base64.workspace = true

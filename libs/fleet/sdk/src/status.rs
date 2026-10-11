@@ -100,6 +100,7 @@ mod tests {
             replicas: Some(1),
             ready_replicas: Some(0),
             selector: None,
+            ..Default::default()
         };
         let display = pool_display_status(pool(1, Some(status)));
         assert_eq!(display.kind, PoolDisplayStatusKind::Healthy);

@@ -1,0 +1,1 @@
+cua-spacesd is optional: images without it still boot and serve their declared services, and `sandbox.spacesd()` raises `SpacesdNotAvailable`. `capabilities()` reports what this spacesd supports (`has_feature(name)` checks one feature). `call_json(method, json)` reaches every `cua.env.v1` RPC of the [protocol](/cua-sdk/reference/protocol), including those without a typed method.

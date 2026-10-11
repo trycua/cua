@@ -1,0 +1,162 @@
+{
+  "flow": "menu-count",
+  "frames": [
+    {
+      "agree": true,
+      "case": "this machine not hosting",
+      "count": 0,
+      "menu": [
+        "status: No Spaces (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "0"
+    },
+    {
+      "agree": true,
+      "case": "this machine hosting",
+      "count": 1,
+      "menu": [
+        "status: 1 Space (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "hosting stopped",
+      "count": 1,
+      "menu": [
+        "status: 1 Space (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "provider only",
+      "count": 1,
+      "menu": [
+        "status: 1 Space (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "remote spaces",
+      "count": 3,
+      "menu": [
+        "status: 3 Spaces (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "3"
+    },
+    {
+      "agree": true,
+      "case": "remote spaces and hosting",
+      "count": 3,
+      "menu": [
+        "status: 3 Spaces (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "3"
+    },
+    {
+      "agree": true,
+      "case": "volume on this mac, one device",
+      "count": 1,
+      "menu": [
+        "status: 1 Space (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "volume synced",
+      "count": 1,
+      "menu": [
+        "status: 1 Space · Synced (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "volume syncing",
+      "count": 1,
+      "menu": [
+        "status: 1 Space · Syncing 3… (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "volume conflicts",
+      "count": 1,
+      "menu": [
+        "status: 1 Space · Synced (disabled)",
+        "volume-conflicts: 2 conflicts",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "volume offline",
+      "count": 1,
+      "menu": [
+        "status: 1 Space · Offline (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    },
+    {
+      "agree": true,
+      "case": "volume unreachable",
+      "count": 1,
+      "menu": [
+        "status: 1 Space · Offline (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "1"
+    }
+  ]
+}

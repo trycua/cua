@@ -1,0 +1,181 @@
+---
+title: Run and share a service
+description: Run a server in a sandbox, call it, connect to an MCP server in it, forward a port, and share it with a public URL.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A service is a named guest port. The image (or `command=`) runs the listener;
+`services=` names it and `wait_for=` holds `create` until it answers. The
+listener must bind a guest-reachable address (`0.0.0.0`, not only
+`127.0.0.1`).
+
+| Option | Meaning |
+| --- | --- |
+| `command=["python", "app.py"]` | argv that replaces the image's entrypoint |
+| `env={"LOG_LEVEL": "debug"}` | plain environment variables ([not secrets](/cua-sdk/guides/secrets)) |
+| `services={"api": 8000}` | named guest ports |
+| `wait_for=http("api", "/health")` or `tcp("api")` | readiness; a list waits for all. Fails at once if the command exits |
+
+## Start a server
+
+```python test="container" id="start-local" session="local" prelude="local-cleanup"
+from cua_sandbox import Image, Sandbox, http
+
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=["python", "-m", "http.server", "8000"],
+    env={"PYTHONUNBUFFERED": "1"},
+    services={"api": 8000},
+    wait_for=http("api", "/"),
+)
+```
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create python:3.12-slim --name api \
+  --service api=8000 --wait http:api/ --env PYTHONUNBUFFERED=1 \
+  -- python -m http.server 8000
+cua sb url api api
+```
+
+## Call it
+
+```python test="container" id="call" session="local" prelude="local-cleanup"
+api = sb.service("api")
+
+r = await api.request("GET", "/")                      # an httpx.Response
+r = await api.request("POST", "/items", json={"a": 1}, headers={"x-trace": "1"})
+print(await api.url())                                  # usable from this machine
+```
+
+`url()` is a loopback URL locally and a signed URL (1 hour) in the cloud. In
+the cloud the gateway adds its own credentials, so an `authorization` header
+of your own is refused.
+
+```ts test="container" id="typescript" prelude="local-cleanup"
+import { embedded, http, SandboxCreateOptions } from '@trycua/cua';
+
+const sb = await embedded().sandboxes().create(
+  SandboxCreateOptions.create({
+    image: 'python:3.12-slim',
+    command: ['python', '-m', 'http.server', '8000'],
+    env: new Map([['PYTHONUNBUFFERED', '1']]),
+    services: new Map([['api', 8000]]),
+    waitFor: [http('api', '/')],
+  })
+);
+const res = await sb.service('api').request('GET', '/', undefined, undefined, undefined);
+console.log(res.status, await sb.service('api').url());
+```
+
+## MCP servers
+
+An MCP server is a service that speaks streamable HTTP; no cua-spacesd is
+needed. This one serves an `add` tool:
+
+```python test="docs,container" id="mcp-server" session="mcp"
+import shlex
+
+SERVER = """
+from mcp.server.mcpserver import MCPServer
+server = MCPServer("demo")
+
+@server.tool()
+def add(a: int, b: int) -> int:
+    return a + b
+
+server.run("streamable-http", host="0.0.0.0", port=8765)
+"""
+COMMAND = ["sh", "-c", "pip install -q 'mcp>=2' && exec python -c " + shlex.quote(SERVER)]
+```
+
+```python test="container" id="mcp-local" session="mcp" prelude="local-cleanup"
+from cua_sandbox import Image, Sandbox, tcp
+
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=COMMAND,
+    services={"mcp": 8765},
+    wait_for=tcp("mcp"),
+)
+```
+
+`sb.mcp(service)` opens an official `mcp` client (`pip install "cua-sandbox[mcp]"`).
+`sb.mcp_config(service)` returns the URL and headers for any other client;
+fetch a fresh one per connection.
+
+```python test="container" id="mcp-call" session="mcp" prelude="local-cleanup"
+async with sb.mcp("mcp") as client:          # path="/other" for another endpoint
+    result = await client.call_tool("add", {"a": 2, "b": 3})
+
+config = await sb.mcp_config("mcp")           # {"url": "http://127.0.0.1:53817/mcp", "headers": {}}
+```
+
+```ts test="container" id="mcp-typescript" prelude="sb-mcp-local,local-cleanup"
+import { connectMcp } from '@trycua/cua';
+
+const client = await connectMcp(await sb.mcpConfig('mcp', undefined));
+const result = await client.callTool({ name: 'add', arguments: { a: 2, b: 3 } });
+await client.close();
+```
+
+```bash test="cli-shape" id="cua-sb-mcp"
+cua sb mcp NAME mcp tools
+cua sb mcp NAME mcp call add '{"a": 2, "b": 3}'
+cua sb mcp NAME mcp config        # URL and headers for another client
+```
+
+## Forward a port
+
+`sb.tunnel.forward(port)` opens a loopback port for local tools such as a
+browser, `psql` or a debugger.
+
+```python test="docs" id="forward-python" session="forward" prelude="fakefleet,sb-web"
+async with sb.tunnel.forward(8000) as t:
+    print(t.url)          # http://127.0.0.1:53817
+
+async with sb.tunnel.forward(8000, 9222) as tunnels:   # several ports
+    print(tunnels[9222].url)
+```
+
+TypeScript: `sb.forward(port)`, `sb.publicUrl(service, ttl, label)` and
+`sb.revokePublicUrl(id)`.
+
+```bash test="cli-shape" id="cua-sb-port-forward-web"
+cua sb port-forward web 8000          # until Ctrl-C
+cua sb port-forward web 8000:9000     # pick the local port
+```
+
+In the cloud, a port without cua-spacesd in the image must be declared in
+`services=`.
+
+## Share with a public URL
+
+`sb.public_url(service, ttl=...)` returns a URL that needs no cua credentials
+and stops working after `ttl` seconds (60 s to 24 h, default 1 h) or when
+revoked. Locally it is served by the cua daemon on loopback; in the cloud it
+is a signed HTTPS URL reachable from anywhere. For an MCP server, append `/mcp`.
+
+```python test="container" id="public-url" session="share" prelude="sb-web-local,local-cleanup"
+share = await sb.public_url("web", ttl=600, label="demo")
+print(share.url, share.expires_at)
+await sb.revoke_public_url(share)
+```
+
+```bash test="cli-shape" id="cua-sb-url-web"
+cua sb url web web --public --ttl 10m
+```
+
+Cloud sandboxes also list their signed URLs:
+
+```python test="docs" id="list-signed-urls" session="signed-urls" prelude="fakefleet,sb-web"
+for item in await sb.services.list_signed_urls():
+    print(item.label, item.expires_at, item.revoked_at)
+```
+
+<Callout type="warn">
+  A public URL is a bearer credential. Use the shortest practical `ttl`, revoke
+  it when sharing ends, and keep it out of logs and source control. It does
+  not extend the sandbox's lifetime.
+</Callout>

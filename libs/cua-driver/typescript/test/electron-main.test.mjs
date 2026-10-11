@@ -31,7 +31,7 @@ test(
 
     assert.equal(code, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`)
     const result = JSON.parse(stdout.trim().split("\n").at(-1))
-    assert.equal(result.versions.electron, "43.2.0")
+    assert.equal(result.versions.electron, "43.7.6")
     assert.equal(result.versions.package, packageVersion)
     assert.equal(result.connection.driverVersion, packageVersion)
     assert.equal(result.connection.socketPathIsPrivate, true)

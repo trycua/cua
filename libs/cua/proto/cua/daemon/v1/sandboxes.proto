@@ -1,0 +1,650 @@
+// cua.daemon.v1 is the local `cua daemon` API: the cua SDK runtime hosted
+// out of process on a Unix socket (`~/.cua/cua.sock`) or loopback + token,
+// so several apps (Spaces, the CLI, MCP clients) share sandboxes, tunnels
+// and streams. The cua-daemon crate implements it and owns its evolution;
+// the same evolution policy as cua.env.v1 applies.
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Sandbox lifecycle across providers (Fleet, local VMM, direct).
+//
+// Sandboxes are daemon-agnostic: nothing here assumes cua-spacesd is
+// installed in the guest.
+service SandboxService {
+  // Lists sandboxes known to the daemon.
+  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
+  // Creates a sandbox where `location` says (local by default), or
+  // connects to an existing machine (`direct:<addr>`).
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+  // Cancels a `CreateSandbox` of a named sandbox still running: the work
+  // in flight stops (an image download, a boot, a claim) and what the
+  // create made is deleted; a sandbox of that name that existed before is
+  // never touched. Finished image downloads stay cached. Returns once the
+  // clean-up is done. Idempotent: `cancelled` is false when no create of
+  // that name was running. A `CreateSandbox` whose caller goes away (a
+  // closed connection) is cleaned up the same way.
+  rpc CancelCreateSandbox(CancelCreateSandboxRequest) returns (CancelCreateSandboxResponse);
+  // Returns one sandbox.
+  rpc GetSandbox(GetSandboxRequest) returns (GetSandboxResponse);
+  // Deletes (or releases, or detaches from) a sandbox.
+  rpc DeleteSandbox(DeleteSandboxRequest) returns (DeleteSandboxResponse);
+  // Reattaches to a sandbox by ref (a state file, a live cloud claim or an
+  // address) and keeps the handle in the daemon.
+  rpc ConnectSandbox(ConnectSandboxRequest) returns (ConnectSandboxResponse);
+  // Suspends a sandbox (local: pause; Fleet: scale to zero).
+  rpc SuspendSandbox(SuspendSandboxRequest) returns (SuspendSandboxResponse);
+  // Resumes a suspended sandbox.
+  rpc ResumeSandbox(ResumeSandboxRequest) returns (ResumeSandboxResponse);
+  // Restarts a sandbox.
+  rpc RestartSandbox(RestartSandboxRequest) returns (RestartSandboxResponse);
+  // Extends a Fleet claim lease.
+  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
+  // Waits until user-declared readiness probes pass.
+  rpc WaitReady(WaitReadyRequest) returns (WaitReadyResponse);
+  // Sends one HTTP request to a named service of a sandbox. Credentials
+  // (for example the Fleet bearer) stay in the daemon.
+  rpc ServiceRequest(ServiceRequestRequest) returns (ServiceRequestResponse);
+  // Forwards a daemon loopback port to a guest port.
+  rpc ForwardPort(ForwardPortRequest) returns (ForwardPortResponse);
+  // Stops a forward started by `ForwardPort`.
+  rpc CloseForward(CloseForwardRequest) returns (CloseForwardResponse);
+  // Probes cua-spacesd in the sandbox and returns the daemon's loopback
+  // passthrough endpoint for it. `cua.env.v1` calls sent there are proxied
+  // with the sandbox credentials attached by the daemon.
+  rpc GetEnvEndpoint(GetEnvEndpointRequest) returns (GetEnvEndpointResponse);
+  // The daemon's loopback passthrough for a named service of a sandbox:
+  // any HTTP request (any method, streamed both ways, headers passed
+  // through) sent to `url` + path reaches that path on the service with the
+  // sandbox's route and credentials attached by the daemon. For MCP
+  // clients, SSE and anything else served over HTTP.
+  rpc GetServiceEndpoint(GetServiceEndpointRequest) returns (GetServiceEndpointResponse);
+  // Returns a URL for a named service usable from this machine without
+  // credentials: the published loopback port locally, a signed service URL
+  // in the cloud.
+  rpc GetServiceUrl(GetServiceUrlRequest) returns (GetServiceUrlResponse);
+  // Creates a shareable URL for a named service that expires: a signed
+  // service URL in the cloud; locally a loopback proxy URL with its own
+  // token, served by the daemon.
+  rpc CreatePublicUrl(CreatePublicUrlRequest) returns (CreatePublicUrlResponse);
+  // Revokes a URL created by `CreatePublicUrl`.
+  rpc RevokePublicUrl(RevokePublicUrlRequest) returns (RevokePublicUrlResponse);
+}
+
+// Where a sandbox comes from. Deprecated: requests use the `location`
+// string (`local`, `cloud`, `direct:<addr>`), which also names third-party
+// providers; responses carry `Sandbox.location`.
+enum SandboxProvider {
+  // Not set.
+  SANDBOX_PROVIDER_UNSPECIFIED = 0;
+  // Claimed from a Fleet pool.
+  SANDBOX_PROVIDER_FLEET = 1;
+  // Run locally through cua-vmm (Lume, QEMU, container).
+  SANDBOX_PROVIDER_LOCAL = 2;
+  // An existing machine reached by URL and token.
+  SANDBOX_PROVIDER_DIRECT = 3;
+  // A contrib provider (third-party platform).
+  SANDBOX_PROVIDER_CONTRIB = 4;
+}
+
+// Sandbox lifecycle state.
+enum SandboxState {
+  // Not reported.
+  SANDBOX_STATE_UNSPECIFIED = 0;
+  // Being created or booted.
+  SANDBOX_STATE_PROVISIONING = 1;
+  // Running and ready (per its readiness probes).
+  SANDBOX_STATE_RUNNING = 2;
+  // Suspended or stopped; can resume.
+  SANDBOX_STATE_STOPPED = 3;
+  // Being deleted.
+  SANDBOX_STATE_DELETING = 4;
+  // Failed; see `Sandbox.error`.
+  SANDBOX_STATE_FAILED = 5;
+}
+
+// A sandbox.
+message Sandbox {
+  // Name (unique within its location; see `id`).
+  string name = 1;
+  // Provider.
+  SandboxProvider provider = 2;
+  // State.
+  SandboxState state = 3;
+  // Image reference, for example "ghcr.io/trycua/linux:24.04".
+  string image = 4;
+  // Reachable endpoints by service name, for example {"env":
+  // "http://127.0.0.1:52011"}.
+  map<string, string> endpoints = 5;
+  // User labels.
+  map<string, string> labels = 6;
+  // Creation time.
+  google.protobuf.Timestamp created_at = 7;
+  // Failure reason when `state` is `SANDBOX_STATE_FAILED`.
+  string error = 8;
+  // Runtime identifier as persisted in the state file (`fleet`, `direct`,
+  // `docker`, `qemu`, `lume`, ...).
+  string runtime_type = 9;
+  // True when the sandbox has no state file and is torn down on delete.
+  bool ephemeral = 10;
+  // Declared services: logical name to guest port (0 when only the name is
+  // known, for example on Fleet).
+  map<string, uint32> services = 11;
+  // Where the sandbox runs: "local", "cloud", "direct" (a machine reached
+  // by address) or "relay".
+  string location = 12;
+  // When the sandbox expires unless kept alive. Unset when unknown or
+  // never (cloud sandboxes held by the daemon are renewed while held).
+  google.protobuf.Timestamp expires_at = 13;
+  // Provider internals for debugging (cloud: pool, namespace, claim;
+  // local: backend, container_id). Not part of the portable API.
+  map<string, string> provider_details = 14;
+  // Qualified ref: "local:<name>", "cloud:<name>" or "direct:<host:port>".
+  // Every request's `name` accepts it (and a bare name when that name is
+  // unique across locations).
+  string id = 15;
+  // What kind of machine it runs as: "container" or "vm"; empty when not
+  // known (an existing machine, or a cloud sandbox this daemon did not
+  // create).
+  string kind = 16;
+  // The engine that runs it: "gvisor", "runc", "qemu", "lume" or
+  // "kubevirt"; empty when not known.
+  string runtime = 17;
+}
+
+// A user-declared readiness probe. With no probes a sandbox is ready as soon
+// as its provider reports it running.
+message ReadinessProbe {
+  // Guest port to probe.
+  uint32 port = 1;
+  // HTTP path. Empty means a TCP connect probe.
+  string http_path = 2;
+  // Exact HTTP status to wait for. 0 accepts any 2xx.
+  uint32 http_status = 3;
+}
+
+// An extra container sharing a sandbox's network namespace: the sandbox
+// reaches its ports on `localhost`, and `services` may name them. Local
+// containers and cloud container (gVisor) sandboxes only.
+message Sidecar {
+  // Name, unique within the sandbox (a DNS label other than `main`). Empty
+  // derives it from the image.
+  string name = 1;
+  // Image reference.
+  string image = 2;
+  // argv replacing the image's entrypoint. Empty lets the image decide.
+  repeated string command = 3;
+  // Environment (plain values, not secrets).
+  map<string, string> env = 4;
+  // Ports it listens on.
+  repeated uint32 ports = 5;
+}
+
+// Credentials for a private registry. Write-only: never logged, stored in
+// state files or returned.
+message RegistrySecret {
+  // Registry host (`ghcr.io`, `localhost:5000`). Empty means the image's.
+  string registry = 1;
+  // User name (`AWS` for ECR tokens).
+  string username = 2;
+  // Password or token.
+  string password = 3;
+}
+
+// One image build step, as in `images.cua.ai/v1alpha1` recipes.
+message ImageLayer {
+  // `apt_install`, `pip_install`, `uv_install`, `run` or `app_install`.
+  string type = 1;
+  // Packages (the install types).
+  repeated string packages = 2;
+  // Shell command (`run`).
+  string command = 3;
+  // App id (`app_install`).
+  string app_id = 4;
+}
+
+// A local file copied into a built image.
+message BuildFile {
+  // Path on the daemon's machine.
+  string source = 1;
+  // Absolute path in the image.
+  string destination = 2;
+}
+
+// Image layers built on top of the sandbox's image. Cloud: a remote build
+// through the images API, cached by content.
+message ImageBuild {
+  // Steps, in order.
+  repeated ImageLayer layers = 1;
+  // Image environment.
+  map<string, string> env = 2;
+  // Ports the image exposes.
+  repeated uint32 ports = 3;
+  // Files copied into the image.
+  repeated BuildFile files = 4;
+  // Build budget. Unset uses one hour.
+  google.protobuf.Duration timeout = 5;
+}
+
+// Request for `SandboxService.ListSandboxes`.
+message ListSandboxesRequest {
+  // Deprecated: use `location`. Only sandboxes of this provider.
+  // Unspecified lists all.
+  SandboxProvider provider = 1 [deprecated = true];
+  // Also list the account's live Fleet claims (not only the ones this
+  // machine knows) when the provider filter allows cloud sandboxes. Unset
+  // means true. Without Fleet credentials nothing is added.
+  optional bool include_cloud = 2;
+  // Only sandboxes in this location: "local", "cloud" or "direct". Empty
+  // lists every location. Wins over `provider`.
+  string location = 3;
+}
+
+// Response for `SandboxService.ListSandboxes`.
+message ListSandboxesResponse {
+  // Sandboxes.
+  repeated Sandbox sandboxes = 1;
+  // What the listing left out, for example
+  // "cloud sandboxes not listed: <reason>". The listing still succeeds.
+  repeated string warnings = 2;
+}
+
+// Request for `SandboxService.CreateSandbox`.
+message CreateSandboxRequest {
+  // Desired name. Empty lets the daemon generate one.
+  string name = 1;
+  // Deprecated: use `location`. Used only when `location` is empty.
+  SandboxProvider provider = 2 [deprecated = true];
+  // Image reference (local and cloud sandboxes).
+  string image = 3;
+  // Cloud: claim from this existing pool (Fleets advanced API).
+  string pool = 4;
+  // Deprecated: use `location` "direct:<addr>". The address of an existing
+  // machine.
+  string url = 5;
+  // Access token for the direct provider's spacesd, if any.
+  string token = 6;
+  // User labels.
+  map<string, string> labels = 7;
+  // Guest OS: `linux` (default), `macos` or `windows`.
+  string os = 8;
+  // vCPUs. 0 uses the provider default.
+  uint32 cpus = 9;
+  // Memory in MiB. 0 uses the provider default.
+  uint64 memory_mb = 10;
+  // Extra guest ports to publish (local) or expose as `port-<n>` services
+  // (Fleet).
+  repeated uint32 ports = 11;
+  // Named services: logical name to guest port. `env` defaults to 3211.
+  map<string, uint32> services = 12;
+  // Readiness probes.
+  repeated ReadinessProbe wait_for = 13;
+  // Total readiness budget. Unset uses the provider default.
+  google.protobuf.Duration ready_timeout = 14;
+  // Guest environment. Local: container environment or cloud-init; cloud:
+  // the template environment (hashed into the managed pool key).
+  map<string, string> env = 15;
+  // Deprecated: use `runtime`. Cloud runtime (`kubevirt`, `gvisor`), used
+  // when `runtime` is empty.
+  string fleet_runtime = 16 [deprecated = true];
+  // Deprecated: initial replicas of a new managed Fleet pool (> 0 means
+  // warm). 0 leaves it to `fleet_warm`.
+  uint32 fleet_replicas = 17;
+  // Fleet claim TTL in seconds after creation. 0 uses the default (managed
+  // pools: `CUA_FLEET_CLAIM_TTL`, renewed by the daemon while the sandbox
+  // is held).
+  uint32 fleet_ttl_seconds = 18;
+  // Managed Fleet pools (no `pool`): start a new pool with one warm
+  // replica. Unset uses `CUA_FLEET_WARM`. Existing pools are never resized.
+  optional bool fleet_warm = 19;
+  // Managed Fleet pools: autoscaling ceiling. 0 uses the default
+  // (`CUA_FLEET_MAX_POOL_SIZE`, 10).
+  uint32 fleet_max_pool_size = 20;
+  // The sandbox's command (argv), replacing the image's entrypoint. Empty
+  // lets the image decide. Local containers: ENTRYPOINT; local Linux VMs:
+  // run by cloud-init; cloud pod runtimes: the template command. Cloud VMs
+  // (KubeVirt) and macOS guests reject it.
+  repeated string command = 21;
+  // Sidecar containers sharing the sandbox's network namespace. Local
+  // containers and cloud container sandboxes; VMs reject them.
+  repeated Sidecar sidecars = 22;
+  // Credentials for a private `image` (and sidecar images on its registry):
+  // local pulls use them; the cloud stores them as the sandbox's registry
+  // pull Secret. Never logged or returned.
+  RegistrySecret registry_secret = 23;
+  // Image layers built on top of `image` before the sandbox starts.
+  ImageBuild build = 24;
+  // Deprecated: use `runtime`. Local container sandboxes: `runc` or
+  // `gvisor`, used when `runtime` is empty. Cloud sandboxes ignore it.
+  string container_runtime = 25 [deprecated = true];
+  // With `pool`: update that pool's template to the sandbox fields given
+  // here (image, command, env, services, sidecars, cpus, memory) instead of
+  // failing with POOL_SPEC_MISMATCH when they differ. Managed pools refuse.
+  bool fleet_apply = 26;
+  // The client process that owns an ephemeral sandbox (no `name`). The
+  // daemon records it in the sandbox's lease, so a local ephemeral sandbox
+  // is reaped after its client dies even while the daemon runs. 0: the
+  // daemon itself owns it.
+  uint32 owner_pid = 27;
+  // Guest network: empty or `default` gives outbound network (like a
+  // Docker container); `none` cuts egress while published ports still
+  // work. Only local QEMU VMs honour `none`; containers, Lume and cloud
+  // sandboxes reject it.
+  string network = 28;
+  // Where it runs: "local", "cloud", "direct:<addr>" (an existing machine
+  // running cua-spacesd), or a registered provider (SANDBOX_PROVIDER_CONTRIB,
+  // e.g. "e2b"). Empty uses the default (`default.on` in the config,
+  // `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their
+  // side and send it explicitly.
+  string location = 29;
+  // What kind of machine: "auto" (empty), "container" or "vm". Auto
+  // decides from the image: macOS and Windows images are VMs, an image
+  // with a container rootfs is a container, a disk-only image is a VM.
+  string kind = 30;
+  // Which engine: "auto" (empty) or one the location offers for the kind.
+  // Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs). Cloud:
+  // "gvisor" (containers), "kubevirt" (VMs). A registered provider offers
+  // its own engines. Anything else is
+  // DAEMON_ERROR_REASON_INVALID_PLACEMENT, listing the valid values.
+  string runtime = 31;
+  // Keep a named sandbox whose readiness check fails (its cloud claim, VM
+  // or container, and its record) for debugging. False: a failed create
+  // deletes what it made and releases the claim. Ephemeral sandboxes are
+  // always deleted.
+  bool keep_on_failure = 32;
+  // A GPU option of the runtime it runs on (`GetGpuSupport`):
+  // "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental),
+  // "virgl" (QEMU on Linux), "nvidia" (a runc container on Linux), a
+  // contrib provider's GPU type; "auto" picks the runtime's own. Empty: no
+  // GPU. An option the runtime does not offer here is
+  // DAEMON_ERROR_REASON_INVALID_ARGUMENT or _UNSUPPORTED, saying why.
+  string gpu = 33;
+}
+
+// Response for `SandboxService.CreateSandbox`.
+message CreateSandboxResponse {
+  // The sandbox.
+  Sandbox sandbox = 1;
+}
+
+// Request for `SandboxService.GetSandbox`.
+message GetSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+}
+
+// Response for `SandboxService.GetSandbox`.
+message GetSandboxResponse {
+  // The sandbox.
+  Sandbox sandbox = 1;
+}
+
+// Request for `SandboxService.CancelCreateSandbox`.
+message CancelCreateSandboxRequest {
+  // The sandbox's name.
+  string name = 1;
+}
+
+// Response for `SandboxService.CancelCreateSandbox`.
+message CancelCreateSandboxResponse {
+  // A create of that name was running and was stopped.
+  bool cancelled = 1;
+  // What was removed and what stays, for people.
+  string message = 2;
+}
+
+// Request for `SandboxService.DeleteSandbox`.
+message DeleteSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+}
+
+// Response for `SandboxService.DeleteSandbox`.
+message DeleteSandboxResponse {}
+
+// Request for `SandboxService.ConnectSandbox`.
+message ConnectSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+}
+
+// Response for `SandboxService.ConnectSandbox`.
+message ConnectSandboxResponse {
+  // The sandbox.
+  Sandbox sandbox = 1;
+}
+
+// Request for `SandboxService.SuspendSandbox`.
+message SuspendSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+}
+
+// Response for `SandboxService.SuspendSandbox`.
+message SuspendSandboxResponse {}
+
+// Request for `SandboxService.ResumeSandbox`.
+message ResumeSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+}
+
+// Response for `SandboxService.ResumeSandbox`.
+message ResumeSandboxResponse {}
+
+// Request for `SandboxService.RestartSandbox`.
+message RestartSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+}
+
+// Response for `SandboxService.RestartSandbox`.
+message RestartSandboxResponse {}
+
+// Request for `SandboxService.KeepAlive`.
+message KeepAliveRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // How long to extend the lease by.
+  google.protobuf.Duration duration = 2;
+}
+
+// Response for `SandboxService.KeepAlive`.
+message KeepAliveResponse {}
+
+// Request for `SandboxService.WaitReady`.
+message WaitReadyRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // Probes to wait for.
+  repeated ReadinessProbe probes = 2;
+  // Total budget.
+  google.protobuf.Duration timeout = 3;
+}
+
+// Response for `SandboxService.WaitReady`.
+message WaitReadyResponse {}
+
+// One HTTP header.
+message HttpHeader {
+  // Header name.
+  string name = 1;
+  // Header value.
+  string value = 2;
+}
+
+// Request for `SandboxService.ServiceRequest`.
+message ServiceRequestRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // Logical service name, for example "env" or "server".
+  string service = 2;
+  // HTTP method. Empty means GET.
+  string method = 3;
+  // Path (and query) under the service.
+  string path = 4;
+  // Request body.
+  bytes body = 5;
+  // Timeout. Unset means 30 seconds.
+  google.protobuf.Duration timeout = 6;
+  // Request headers (for example content-type, or accept and
+  // mcp-session-id for MCP). On Fleet the gateway bearer and claim header
+  // are added by the daemon and may not be set here.
+  repeated HttpHeader headers = 7;
+}
+
+// Response for `SandboxService.ServiceRequest`.
+message ServiceRequestResponse {
+  // HTTP status.
+  uint32 status = 1;
+  // Response headers.
+  repeated HttpHeader headers = 2;
+  // Response body.
+  bytes body = 3;
+}
+
+// Request for `SandboxService.ForwardPort`.
+message ForwardPortRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // Guest port.
+  uint32 port = 2;
+}
+
+// Response for `SandboxService.ForwardPort`.
+message ForwardPortResponse {
+  // Forward id for `CloseForward`. Empty when no listener was started (the
+  // port is only reachable as `url`).
+  string forward_id = 1;
+  // Guest port.
+  uint32 guest_port = 2;
+  // Loopback `host:port` accepting connections, when a TCP forward runs.
+  string local_addr = 3;
+  // URL to use (a loopback URL, or the Fleet gateway URL of the port's
+  // service).
+  string url = 4;
+}
+
+// Request for `SandboxService.CloseForward`.
+message CloseForwardRequest {
+  // Forward id.
+  string forward_id = 1;
+}
+
+// Response for `SandboxService.CloseForward`.
+message CloseForwardResponse {}
+
+// Request for `SandboxService.GetEnvEndpoint`.
+message GetEnvEndpointRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // Probe timeout. Unset uses the daemon default.
+  google.protobuf.Duration probe_timeout = 2;
+}
+
+// Request for `SandboxService.GetServiceEndpoint`.
+message GetServiceEndpointRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // Service name, for example "mcp".
+  string service = 2;
+}
+
+// Response for `SandboxService.GetServiceEndpoint`.
+message GetServiceEndpointResponse {
+  // Base URL, for example
+  // "http://127.0.0.1:52011/v1/sandboxes/dev/svc/mcp". Append the path.
+  string url = 1;
+  // Headers every request needs (the daemon's loopback bearer).
+  repeated HttpHeader headers = 2;
+}
+
+// Response for `SandboxService.GetEnvEndpoint`.
+message GetEnvEndpointResponse {
+  // Loopback passthrough base URL, for example
+  // "http://127.0.0.1:52011/v1/sandboxes/dev/env". Append the gRPC path.
+  string url = 1;
+  // Bearer token for the passthrough (the daemon's loopback token).
+  string token = 2;
+  // spacesd version reported by the probe.
+  string spacesd_version = 3;
+}
+
+// Request for `SandboxService.GetServiceUrl`.
+message GetServiceUrlRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // Logical service name.
+  string service = 2;
+}
+
+// Response for `SandboxService.GetServiceUrl`.
+message GetServiceUrlResponse {
+  // The URL (no trailing slash).
+  string url = 1;
+}
+
+// A shareable, expiring URL of a sandbox service.
+message PublicUrl {
+  // Id for `RevokePublicUrl`.
+  string id = 1;
+  // The URL.
+  string url = 2;
+  // When it stops working.
+  google.protobuf.Timestamp expires_at = 3;
+  // Sandbox name.
+  string sandbox = 4;
+  // Logical service name.
+  string service = 5;
+  // Provider internals (cloud: namespace, claim; local: upstream).
+  map<string, string> provider_details = 6;
+}
+
+// Request for `SandboxService.CreatePublicUrl`.
+message CreatePublicUrlRequest {
+  // Sandbox ref or unique name (with `upstream_url`, only recorded).
+  string name = 1;
+  // Logical service name.
+  string service = 2;
+  // Lifetime, 60 s to 24 h. Unset means 1 h.
+  google.protobuf.Duration ttl = 3;
+  // Label shown in listings (cloud).
+  string label = 4;
+  // Share this loopback `http://` URL instead of resolving `name` and
+  // `service` (an embedded SDK runtime asking the daemon to host its URL).
+  string upstream_url = 5;
+}
+
+// Response for `SandboxService.CreatePublicUrl`.
+message CreatePublicUrlResponse {
+  // The URL.
+  PublicUrl public_url = 1;
+}
+
+// Request for `SandboxService.RevokePublicUrl`.
+message RevokePublicUrlRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // `PublicUrl.id`.
+  string id = 2;
+}
+
+// Response for `SandboxService.RevokePublicUrl`.
+message RevokePublicUrlResponse {}

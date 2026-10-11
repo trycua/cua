@@ -1,0 +1,394 @@
+{
+  "schema": "cua.transcript.frame/1",
+  "cast": "claude-interrupted",
+  "instant": "mid-turn",
+  "cli": "claude",
+  "cli_version": "2.1.278 (Claude Code)",
+  "columns": 100,
+  "rows": 34,
+  "requested_time_ms": 13200,
+  "effective_time_ms": 13188,
+  "events_applied": 70,
+  "unsupported_sequences": 0,
+  "unsupported_resize": false,
+  "alternate_screen": true,
+  "window_title": "◑ Calculator history essay",
+  "cursor": {
+    "row": 31,
+    "column": 2,
+    "visible": true
+  },
+  "lines": [
+    "",
+    "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+    "           Opus 5 (1M context) with low effort · Claude Max",
+    "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+    "",
+    "",
+    "❯ Write a detailed 500 word essay about the history of the calculator into ESSAY.md.",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "✽ Unraveling… (5s · ↓ 248 tokens)",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ ",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents"
+  ],
+  "attributes": [
+    {
+      "row": 1,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          6,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          8,
+          "dim"
+        ],
+        [
+          11,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          30,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 2,
+      "runs": [
+        [
+          11,
+          14,
+          "dim"
+        ],
+        [
+          16,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          29,
+          "dim"
+        ],
+        [
+          31,
+          34,
+          "dim"
+        ],
+        [
+          36,
+          38,
+          "dim"
+        ],
+        [
+          40,
+          45,
+          "dim"
+        ],
+        [
+          47,
+          47,
+          "dim"
+        ],
+        [
+          49,
+          54,
+          "dim"
+        ],
+        [
+          56,
+          58,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 3,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          6,
+          "dim"
+        ],
+        [
+          11,
+          39,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 6,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          8,
+          "dim"
+        ],
+        [
+          10,
+          17,
+          "dim"
+        ],
+        [
+          19,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          26,
+          "dim"
+        ],
+        [
+          28,
+          32,
+          "dim"
+        ],
+        [
+          34,
+          38,
+          "dim"
+        ],
+        [
+          40,
+          42,
+          "dim"
+        ],
+        [
+          44,
+          50,
+          "dim"
+        ],
+        [
+          52,
+          53,
+          "dim"
+        ],
+        [
+          55,
+          57,
+          "dim"
+        ],
+        [
+          59,
+          68,
+          "dim"
+        ],
+        [
+          70,
+          73,
+          "dim"
+        ],
+        [
+          75,
+          83,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 28,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          12,
+          "dim"
+        ],
+        [
+          14,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          18,
+          "dim"
+        ],
+        [
+          20,
+          32,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 30,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 31,
+      "runs": [
+        [
+          0,
+          1,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 32,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 33,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          19,
+          "dim"
+        ],
+        [
+          21,
+          30,
+          "dim"
+        ],
+        [
+          32,
+          33,
+          "dim"
+        ],
+        [
+          35,
+          40,
+          "dim"
+        ],
+        [
+          42,
+          42,
+          "dim"
+        ],
+        [
+          44,
+          46,
+          "dim"
+        ],
+        [
+          48,
+          49,
+          "dim"
+        ],
+        [
+          51,
+          59,
+          "dim"
+        ],
+        [
+          61,
+          61,
+          "dim"
+        ],
+        [
+          63,
+          63,
+          "dim"
+        ],
+        [
+          65,
+          67,
+          "dim"
+        ],
+        [
+          69,
+          74,
+          "dim"
+        ]
+      ]
+    }
+  ]
+}

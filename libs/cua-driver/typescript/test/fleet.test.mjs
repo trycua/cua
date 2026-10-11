@@ -21,6 +21,7 @@ const nativeAvailable = existsSync(
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const bytes = (value) => encoder.encode(value).buffer;
+const TRANSPORT_FAILED = 'MCP Driver transport failed; completion is unknown';
 
 function fixture({ sse = false } = {}) {
   const sandbox = {
@@ -174,6 +175,9 @@ test(
       throw new Error('secret-token-private-response');
     };
     await assert.rejects(connectFleetDriver(f), (error) => {
+      // The adapter converts the throw into a declared transport failure. Without
+      // that, the callback error panics in Rust and the reason becomes a drain timeout.
+      assert.deepEqual(error.inner, { reason: TRANSPORT_FAILED });
       assert.doesNotMatch(String(error), /secret-token-private-response/);
       assert.doesNotMatch(JSON.stringify(error), /secret-token-private-response/);
       return true;
@@ -201,6 +205,9 @@ test(
         sandbox: { namespace: 'tenant', claim: 'claim', name: 'guest', services: ['mcp'] },
       }),
       (error) => {
+        // The adapter enforces the limit as a transport failure before Rust parses
+        // the body; Rust's own limit would report a malformed negotiation instead.
+        assert.deepEqual(error.inner, { reason: TRANSPORT_FAILED });
         assert.doesNotMatch(String(error), new RegExp(secret));
         assert.doesNotMatch(JSON.stringify(error), new RegExp(secret));
         return true;

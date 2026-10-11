@@ -1,0 +1,79 @@
+---
+title: Migrate from deprecated packages
+description: cuabot, cua-computer, cua-computer-server and cua-agent are no longer maintained. What each one did and what to use instead.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn" title="Deprecated">
+  Cua no longer maintains `cuabot`, `cua-computer`, `cua-computer-server` or
+  `cua-agent`. They will not receive updates or fixes. Existing releases stay on
+  npm and PyPI, so current installs keep installing, but you should move off them.
+</Callout>
+
+<Callout type="error" title="Do not run cuabot">
+  `cuabot` has known security issues and is no longer maintained. Do not run it.
+  If it is installed, [stop and remove it](#cuabot) now.
+</Callout>
+
+| Package | Registry | Last release | Use instead |
+| --- | --- | --- | --- |
+| `cuabot` | npm | 1.0.14 | [Cua Driver](/cua-driver) over MCP, or a sandbox from the [`cua` CLI](/cua-sdk/quickstart) or [Cua Spaces](/spaces) |
+| `cua-computer` | PyPI | 0.5.19 | The [`cua` SDK](/cua-sdk/quickstart) (`cua-sandbox`) for sandboxes, [Cua Driver](/cua-driver) for the machine you are on |
+| `cua-computer-server` | PyPI | 0.3.46 | Images that ship [cua-spacesd](/cua-sdk/guides/spacesd), or [Cua Driver](/cua-driver) on a host |
+| `cua-agent` | PyPI | 0.9.0 | A coding agent with the [Cua Driver MCP](/cua-driver/guides/connect-your-agent), or [`sandbox.agents()`](/cua-sdk/guides/run-a-coding-agent) |
+
+## cuabot
+
+`cuabot` ran coding agents in a Docker sandbox with a local server and a
+desktop you could watch. Stop it, uninstall it and remove what it created:
+
+```bash skip="destructive"
+cuabot --stop                      # repeat with --name <session> for each named session
+npm uninstall -g cuabot            # or delete any local node_modules/cuabot
+docker rm -f cuabot-xpra
+docker images -q trycua/cuabot | xargs docker rmi
+rm -rf ~/.cuabot
+```
+
+Instead:
+
+- To let Claude Code, Codex, Cursor or another agent operate apps on your
+  machine, [connect it to Cua Driver](/cua-driver/guides/connect-your-agent).
+- To give an agent its own computer that you can watch,
+  [create a Space](/spaces/quickstart) or a sandbox with the
+  [`cua` CLI](/cua-sdk/quickstart), then
+  [run the agent in it](/cua-sdk/guides/run-a-coding-agent).
+
+## cua-computer
+
+`cua-computer` was the Python `Computer` class that started a VM or container
+and drove it through `cua-computer-server`. Use the `cua` SDK instead: it
+creates local and cloud sandboxes, and `Sandbox` exposes the screen, input,
+shell and files. Start with the [SDK quickstart](/cua-sdk/quickstart) and the
+[sandbox reference](/cua-sdk/reference/python/sandbox).
+
+To operate native apps on the machine you are on, use
+[Cua Driver](/cua-driver/quickstart).
+
+## cua-computer-server
+
+`cua-computer-server` was the HTTP and WebSocket server inside a guest that
+`cua-computer` talked to. The in-guest agent is now
+[cua-spacesd](/cua-sdk/guides/spacesd), which Cua Spaces and the current
+sandbox images ship. Nothing in the `cua` SDK talks to `cua-computer-server`
+any more. Images built before that change still carry it; see the
+[image catalog](/cua-sdk/reference/os-image-catalog) for which ones.
+
+To drive a desktop directly, install [Cua Driver](/cua-driver/quickstart) on it.
+
+## cua-agent
+
+`cua-agent` was the Python `ComputerAgent` loop with LiteLLM. Bring your own
+agent instead:
+
+- Connect Claude Code, Codex, Cursor, OpenClaw or another agent to the
+  [Cua Driver MCP server](/cua-driver/guides/connect-your-agent).
+- Run a coding agent inside a sandbox with
+  [`sandbox.agents()` or `cua agent run`](/cua-sdk/guides/run-a-coding-agent).
+- Score agents on tasks with [Cua Bench](/cua-bench).

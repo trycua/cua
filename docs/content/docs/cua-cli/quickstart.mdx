@@ -1,0 +1,63 @@
+---
+title: Quickstart
+description: 'Install the cua CLI, start a local sandbox, run a command in it, then start the same sandbox in the cloud.'
+---
+
+Start a Linux sandbox on this machine, run a command in it, then run the same
+sandbox in the cloud by changing one flag.
+
+## Prerequisites
+
+- macOS, Linux or Windows with Docker (or another local runtime:
+  `cua runtime doctor` lists them).
+- A [cua.ai](https://cua.ai) account for the cloud step only.
+
+## Run
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only   # or: pip install cua, npm i -g @trycua/cua
+```
+
+```bash test="cli-shape" id="cua-quickstart-local"
+cua sb create linux --name dev
+cua sb exec dev "uname -a"
+cua sb screenshot dev -o dev.png
+```
+
+## Result
+
+![cua sb create, ls, exec and view for a local Linux sandbox](/img/cua-cli/cua-sb-create.png)
+
+`exec` prints the guest's kernel line and exits with the command's status;
+`dev.png` is the sandbox desktop. With `--json` the result is structured:
+
+```bash test="cli-shape" id="cua-quickstart-json"
+cua --json sb exec dev pwd   # {"stdout": ..., "stderr": ..., "returncode": 0}
+```
+
+## Drive the desktop
+
+`--wait desktop` returns once the desktop session takes input (display,
+window manager and Cua Driver). `cua do` input waits for it too, and fails
+when input reaches no window.
+
+```bash test="cli-shape" id="cua-quickstart-do"
+cua sb create linux --name desk --wait desktop
+cua do switch desk
+cua do launch xfce4-terminal   # waits for the new window and focuses it
+cua do type "echo hello"
+cua do key enter
+```
+
+## Clean up
+
+```bash test="cli-shape" id="cua-quickstart-rm"
+cua sb rm dev
+cua sb rm desk
+```
+
+## Next
+
+- [Authentication](/cua-cli/guides/authentication): API keys and CI.
+- [MCP server](/cua-cli/guides/mcp-server): give an AI agent these sandboxes.
+- [CLI reference](/cua-cli/reference/cli): every command and option.

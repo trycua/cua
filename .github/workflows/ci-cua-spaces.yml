@@ -1,0 +1,168 @@
+name: "CI: Cua Spaces"
+
+# Pull-request builds of the Cua Spaces app: frontend tests, the Rust command
+# layer tests, and unsigned installer bundles on the three desktop OSes
+# (macOS dmg, Windows NSIS + MSI, Linux deb + AppImage). No signing or
+# notarization secrets are used; updater artifacts (which need the updater
+# signing key) are turned off with a config override. The signed macOS
+# release stays in cd-cua-spaces.yml.
+#
+# Installer mode (first-run onboarding preselection) is exercised by the
+# bundles themselves:
+#   Windows NSIS: setup.exe /S /MODE=host|client
+#   Windows MSI:  msiexec /i ... CUA_SPACES_MODE=host|client
+#   any OS:       launch the app with --mode host|client
+#
+# Every bundle ships the Cua Spaces build of the `cua` CLI (cua-spaces-cli) as
+# its `cua` sidecar (scripts/prepare-cli-sidecar.sh +
+# src-tauri/tauri.sidecar.conf.json); the first-run installer puts it on PATH.
+
+on:
+  pull_request:
+    paths:
+      - "apps/cua-spaces/**"
+      - "libs/cua/**"
+      - ".github/workflows/ci-cua-spaces.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-spaces-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/cua-spaces
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  frontend:
+    name: vitest + typecheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # The models call the shared app core (libs/cua/crates/cua-spaces-app-core)
+      # as wasm, built by scripts/build-core-wasm.mjs before test and build.
+      - name: Install Rust, the wasm32 target and wasm-bindgen
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  bundle:
+    name: bundle (${{ matrix.name }})
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-dmg
+            os: macos-26
+            bundles: app,dmg
+          - name: windows-nsis-msi
+            os: windows-latest
+            bundles: nsis,msi
+          - name: linux-deb-appimage
+            os: ubuntu-22.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      # Linking the debug test binaries and the bundle exhausted the Linux
+      # runner's disk (the linker died with SIGBUS). No-op off Linux.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
+      - name: Install Rust (toolchain from rust-toolchain.toml), wasm32 and wasm-bindgen
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libssl-dev file \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/cua-spaces/src-tauri/target
+          key: cua-spaces-bundle-${{ matrix.name }}-${{ hashFiles('apps/cua-spaces/src-tauri/Cargo.lock') }}
+          restore-keys: cua-spaces-bundle-${{ matrix.name }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Rust command-layer tests (hermetic)
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
+      - name: Stage the cua CLI sidecar
+        shell: bash
+        run: scripts/prepare-cli-sidecar.sh
+      - name: Build unsigned bundles
+        shell: bash
+        run: >
+          pnpm tauri build --bundles ${{ matrix.bundles }}
+          --config src-tauri/tauri.sidecar.conf.json
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Bundles carry the cua sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          b=src-tauri/target/release/bundle
+          case "${{ runner.os }}" in
+            macOS) test -x "$b/macos/Cua Spaces.app/Contents/MacOS/cua"
+                   "$b/macos/Cua Spaces.app/Contents/MacOS/cua" --version ;;
+            # Not `| grep -q`: grep exits at the first match and pipefail
+            # then fails on dpkg-deb's SIGPIPE.
+            # Tauri lists members as `usr/bin/cua` (no leading ./ or /).
+            Linux) dpkg-deb -c "$b"/deb/*.deb | grep -E '(^|[ ./])usr/bin/cua$' >/dev/null ;;
+            Windows) test -f src-tauri/target/release/cua.exe ;;
+          esac
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            apps/cua-spaces/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/cua-spaces/src-tauri/target/release/bundle/nsis/*.exe
+            apps/cua-spaces/src-tauri/target/release/bundle/msi/*.msi
+            apps/cua-spaces/src-tauri/target/release/bundle/deb/*.deb
+            apps/cua-spaces/src-tauri/target/release/bundle/appimage/*.AppImage

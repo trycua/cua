@@ -22,30 +22,59 @@ Usage::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from cua_sandbox._paths import cua_home, patched_or
 from cua_sandbox.generated.image_models import ImageFileReference, ImageResource
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LINUX_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
-# Anonymously pullable, so the built-in Windows image needs no registry credentials.
-# The guest is Windows Server 2022 (build 10.0.20348), which is why ``Image.windows()``
-# defaults to "2022". ``Image.windows("11")`` still means client Windows 11, which has
-# no containerDisk and is installed locally from a downloaded evaluation ISO.
-# Index digest: sha256:6d341afc26a37c4072d22ba403a89ecdad9a29aebab79570b5a38da6b8e16370
-DEFAULT_WINDOWS_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
-
-# Built-in image descriptors that resolve to a pinned KubeVirt containerDisk, so
-# Fleet cloud and the local QEMU runtime boot byte-identical disks.
-BUILTIN_REGISTRY_IMAGES: Dict[Tuple[str, str, str, Optional[str]], str] = {
-    ("linux", "ubuntu", "24.04", "vm"): DEFAULT_LINUX_REGISTRY_IMAGE,
-    ("windows", "windows", "2022", "vm"): DEFAULT_WINDOWS_REGISTRY_IMAGE,
+#: The canonical images (``cua_image::canonical`` in the native SDK):
+#: ``Image.linux()`` is ``ghcr.io/trycua/linux:24.04``, ``Image.windows()``
+#: ``ghcr.io/trycua/windows:2022``, ``Image.macos()`` ``ghcr.io/trycua/macos:26``
+#: (``"15"``/``"sequoia"``: ``macos:15``). One override per OS:
+#: ``CUA_IMAGE_LINUX`` / ``CUA_IMAGE_WINDOWS`` / ``CUA_IMAGE_MACOS`` (the old
+#: ``CUA_DEFAULT_LINUX_IMAGE`` / ``CUA_DEFAULT_WINDOWS_IMAGE`` /
+#: ``CUA_SANDBOX_LINUX_CONTAINER_IMAGE`` still work, deprecated). The one
+#: resolver then picks the variant a backend runs: the rootfs for containers,
+#: the ``-disk`` containerDisk for VMs (``kind="vm"``), Lume on a Mac.
+CANONICAL_DISTROS: Dict[str, Tuple[str, ...]] = {
+    "linux": ("ubuntu",),
+    "windows": ("windows",),
+    "macos": ("macos",),
 }
+#: Windows versions with a canonical image; others (``"11"``) install locally
+#: from an evaluation ISO.
+CANONICAL_WINDOWS_VERSIONS = ("2022",)
+MACOS_VERSIONS = ("15", "sequoia", "26", "tahoe")
 
-_IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
+
+def canonical_image(os_type: str, version: Optional[str] = None) -> str:
+    """The canonical image for ``os_type`` (native ``cua.canonical_image``)."""
+    from cua_sandbox._sdk import native
+
+    return native().canonical_image(os_type, version)
+
+
+def _tier_ref(os_type: str, version: Optional[str], tier: Optional[str]) -> Optional[str]:
+    """The registry ref of a non-default tier (``slim``, macOS ``xcode``), or
+    ``None`` for the full default. Raises the native
+    ``CuaError.ImageNotPublished`` for a tier CI has not published yet."""
+    if tier is None or tier.strip().lower() in ("", "full", "default"):
+        return None
+    from cua_sandbox._sdk import native
+
+    return native().canonical_image_tier(os_type, version, tier)
+
+
+_IMAGE_CACHE = cua_home() / "cua-sandbox" / "image-cache"
+_IMAGE_CACHE_DEFAULT = _IMAGE_CACHE
+
+
+def _image_cache() -> Path:
+    return patched_or(_IMAGE_CACHE, _IMAGE_CACHE_DEFAULT, "cua-sandbox", "image-cache")
 
 
 def _download_image(url: str) -> str:
@@ -57,18 +86,18 @@ def _download_image(url: str) -> str:
     import hashlib
     import urllib.request
 
-    _IMAGE_CACHE.mkdir(parents=True, exist_ok=True)
+    _image_cache().mkdir(parents=True, exist_ok=True)
 
     # Determine filename from URL
     url_filename = url.rsplit("/", 1)[-1].split("?")[0]
     # Use hash prefix to avoid collisions
     url_hash = hashlib.sha256(url.encode()).hexdigest()[:12]
-    download_path = _IMAGE_CACHE / f"{url_hash}_{url_filename}"
+    download_path = _image_cache() / f"{url_hash}_{url_filename}"
 
     # Check if we already have the extracted result
     if download_path.suffix.lower() == ".zip":
         # Look for an already-extracted disk image
-        extracted = _find_disk_image(_IMAGE_CACHE / url_hash)
+        extracted = _find_disk_image(_image_cache() / url_hash)
         if extracted:
             logger.info(f"Using cached image: {extracted}")
             return str(extracted)
@@ -82,7 +111,7 @@ def _download_image(url: str) -> str:
     if download_path.suffix.lower() == ".zip":
         import zipfile
 
-        extract_dir = _IMAGE_CACHE / url_hash
+        extract_dir = _image_cache() / url_hash
         extract_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Extracting {download_path} → {extract_dir}")
         with zipfile.ZipFile(download_path) as zf:
@@ -119,6 +148,49 @@ _INSTALL_OS_MAP: Dict[str, Tuple[str, ...]] = {
 
 
 @dataclass(frozen=True)
+class ImageInfo:
+    """The image a sandbox runs, as resolved and pinned at create time.
+
+    ``reference`` is the reference as requested (normalised, e.g.
+    ``docker.io/library/python:3.12-slim``), ``pinned_ref`` the
+    ``registry/repo@sha256:...`` that ran, ``variant`` one of ``rootfs``,
+    ``containerdisk`` or ``lume``, ``arch`` the architecture that
+    ran (``amd64``/``arm64``, when known), ``os`` the guest OS and
+    ``emulated`` whether it ran under emulation.
+    """
+
+    reference: str
+    pinned_ref: str
+    digest: str
+    variant: str
+    arch: Optional[str]
+    os: str
+    emulated: bool
+
+    @classmethod
+    def _from_native(cls, obj: Any) -> Optional["ImageInfo"]:
+        """From the SDK's ``ImageInfo`` or ``ResolvedImage`` (same fields);
+        ``None`` for ``None`` or anything unreadable. Never raises."""
+        if obj is None:
+            return None
+        try:
+            pinned = str(obj.pinned_ref)
+            digest = getattr(obj, "digest", None) or pinned.partition("@")[2]
+            arch = getattr(obj, "arch", None)
+            return cls(
+                reference=str(obj.reference),
+                pinned_ref=pinned,
+                digest=str(digest),
+                variant=str(obj.variant),
+                arch=str(arch) if arch else None,
+                os=str(getattr(obj, "os", "") or ""),
+                emulated=bool(getattr(obj, "emulated", False)),
+            )
+        except Exception:  # noqa: BLE001 - informational; never fail the caller
+            return None
+
+
+@dataclass(frozen=True)
 class Image:
     """Immutable, chainable image specification.
 
@@ -138,37 +210,89 @@ class Image:
     _disk_path: Optional[str] = None  # local disk file path (qcow2, vhdx, raw)
     _agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
     _snapshot_source: Optional[Dict[str, Any]] = None  # set by Sandbox.snapshot()
+    # Private-registry credentials (RegistrySecret); never serialized.
+    _secret: Optional[Any] = field(default=None, compare=False, repr=False)
+    # What the native resolver pinned (resolve_image_kind); never serialized.
+    _resolved: Optional[ImageInfo] = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # ``kind`` is "container", "vm" or None (auto); "auto" means None.
+        if isinstance(self.kind, str):
+            word = self.kind.strip().lower()
+            if word in ("", "auto"):
+                object.__setattr__(self, "kind", None)
+            elif word in ("container", "vm"):
+                object.__setattr__(self, "kind", word)
 
     # ── Constructors ─────────────────────────────────────────────────────
 
     @classmethod
-    def linux(cls, distro: str = "ubuntu", version: str = "24.04", kind: str = "vm") -> Image:
-        """Linux image. Defaults to 'vm' (QEMU). Use kind='container' for Docker/XFCE."""
-        return cls(os_type="linux", distro=distro, version=version, kind=kind)
+    def linux(
+        cls,
+        distro: str = "ubuntu",
+        version: str = "24.04",
+        kind: Optional[str] = None,
+        tier: Optional[str] = None,
+    ) -> Image:
+        """Linux: the canonical ``ghcr.io/trycua/linux:<version>`` image.
+
+        ``kind=None`` (or ``"auto"``) runs what the image is (the rootfs: a
+        gVisor container locally and in the cloud); ``kind="vm"`` its
+        ``-disk`` containerDisk (QEMU locally, KubeVirt in the cloud);
+        ``kind="container"`` the rootfs. ``Sandbox.create(kind=...)``
+        overrides it.
+
+        ``tier``: ``"full"`` (the default: dev tooling) or ``"slim"``
+        (``24.04-slim``: cua-spacesd and Chromium only; what CI runs). A tier
+        CI has not published yet raises ``CuaError.ImageNotPublished``; use
+        ``Image.from_registry(ref)`` to run it anyway.
+        """
+        ref = _tier_ref("linux", version, tier)
+        return cls(os_type="linux", distro=distro, version=version, kind=kind, _registry=ref)
 
     @classmethod
-    def macos(cls, version: str = "26", kind: str = "vm") -> Image:
-        """macOS image. Always a VM (Apple Virtualization / Lume).
+    def macos(cls, version: str = "26", kind: str = "vm", tier: Optional[str] = None) -> Image:
+        """macOS: the canonical ``ghcr.io/trycua/macos:<version>`` image (Lume locally).
 
         Supported versions: ``"15"`` / ``"sequoia"``, ``"26"`` / ``"tahoe"``.
+        ``tier``: ``"full"`` (the default), ``"slim"`` or ``"xcode"`` /
+        ``"xcode-<X.Y>"`` (full plus one pinned Xcode); unpublished tiers
+        raise ``CuaError.ImageNotPublished``.
         """
-        from cua_sandbox.runtime.images import MACOS_VERSION_IMAGES
-
-        if version not in MACOS_VERSION_IMAGES:
-            supported = ", ".join(f'"{v}"' for v in MACOS_VERSION_IMAGES)
+        if version not in MACOS_VERSIONS:
+            supported = ", ".join(f'"{v}"' for v in MACOS_VERSIONS)
             raise ValueError(f"Unsupported macOS version {version!r}. Supported: {supported}")
-        return cls(os_type="macos", distro="macos", version=version, kind=kind)
+        ref = _tier_ref("macos", version, tier)
+        return cls(os_type="macos", distro="macos", version=version, kind=kind, _registry=ref)
 
     @classmethod
-    def windows(cls, version: str = "2022", kind: str = "vm") -> Image:
-        """Windows image. Always a VM (QEMU or Hyper-V).
+    def windows(cls, version: str = "2022", kind: str = "vm", tier: Optional[str] = None) -> Image:
+        """Windows: the canonical ``ghcr.io/trycua/windows:2022`` containerDisk.
 
-        Defaults to ``"2022"`` (Windows Server 2022), the only version with a pinned
-        containerDisk — see :data:`BUILTIN_REGISTRY_IMAGES`. Other versions, including
-        ``"11"``, have no pinned disk: on Fleet cloud they are unsupported, and locally
-        they are installed from a downloaded evaluation ISO.
+        Other versions, including ``"11"``, have no canonical image: on Fleet
+        they are unsupported, and locally they are installed from a downloaded
+        evaluation ISO. ``tier="slim"`` names ``2022-slim`` once published.
         """
-        return cls(os_type="windows", distro="windows", version=version, kind=kind)
+        ref = _tier_ref("windows", version, tier)
+        return cls(os_type="windows", distro="windows", version=version, kind=kind, _registry=ref)
+
+    @classmethod
+    def omarchy(cls, channel: Optional[str] = None) -> Image:
+        """Omarchy (Arch Linux, Hyprland) with cua-spacesd:
+        ``ghcr.io/trycua/omarchy:edge`` (or ``"rc"``/``"stable"``).
+
+        An amd64 VM: QEMU locally (emulated on arm64 hosts, so slow there),
+        KubeVirt in the cloud. Until CI publishes it this raises
+        ``CuaError.ImageNotPublished``; use
+        ``Image.from_registry("ghcr.io/trycua/omarchy:edge", kind="vm")`` to
+        run it anyway.
+        """
+        from cua_sandbox._sdk import native
+
+        ref = native().omarchy_image(channel)
+        return cls(
+            os_type="linux", distro="omarchy", version=channel or "edge", kind="vm", _registry=ref
+        )
 
     @classmethod
     def android(cls, version: str = "14", kind: str = "vm") -> Image:
@@ -183,8 +307,13 @@ class Image:
         os_type: str = "linux",
         kind: Optional[str] = None,
         agent_type: Optional[str] = None,
+        secret: Optional[Any] = None,
     ) -> Image:
         """Create an image from a registry reference.
+
+        ``secret`` (a :class:`~cua_sandbox.RegistrySecret`) pulls a private
+        image, the same way locally (the pull) and in the cloud (a registry
+        pull secret for the sandbox). It is never logged or saved.
 
         os_type selects the firmware: Windows guest disks are built UEFI-only,
         so a Windows containerDisk pulled from a registry must say so or it is
@@ -201,6 +330,7 @@ class Image:
             kind=kind,
             _registry=ref,
             _agent_type=agent_type,
+            _secret=secret,
         )
 
     @classmethod
@@ -270,20 +400,7 @@ class Image:
     # ── Chainable mutations (return new Image) ───────────────────────────
 
     def _add_layer(self, layer: Dict[str, Any]) -> Image:
-        return Image(
-            os_type=self.os_type,
-            distro=self.distro,
-            version=self.version,
-            kind=self.kind,
-            _layers=self._layers + (layer,),
-            _env=self._env,
-            _ports=self._ports,
-            _files=self._files,
-            _registry=self._registry,
-            _disk_path=self._disk_path,
-            _agent_type=self._agent_type,
-            _snapshot_source=self._snapshot_source,
-        )
+        return self._with(_layers=self._layers + (layer,))
 
     def _with(self, **kwargs) -> Image:
         """Return a new Image with specific fields overridden."""
@@ -300,6 +417,8 @@ class Image:
             "_disk_path": self._disk_path,
             "_agent_type": self._agent_type,
             "_snapshot_source": self._snapshot_source,
+            "_secret": self._secret,
+            "_resolved": self._resolved,
         }
         fields.update(kwargs)
         return Image(**fields)
@@ -437,7 +556,7 @@ class Image:
             raise ValueError("remote builds do not accept local disk images")
         if self._snapshot_source is not None:
             raise ValueError("remote builds do not accept snapshot source images")
-        if self.os_type != "linux" or self.kind != "vm":
+        if self.os_type != "linux" or self.kind not in ("vm", None):
             raise ValueError("remote builds currently support only Linux VM recipes")
 
         references = dict(file_references or {})
@@ -460,7 +579,7 @@ class Image:
             "osType": self.os_type,
             "distro": self.distro,
             "version": self.version,
-            "kind": self.kind,
+            "kind": self.kind or "vm",
             "layers": layers,
         }
         if self._env:
@@ -610,12 +729,69 @@ class Image:
 
 
 def cloud_registry_image(image: Image) -> Optional[str]:
-    """Return the explicit or built-in containerDisk reference for an image.
+    """The registry reference an image runs from, local or on Fleet.
 
-    An explicit ``Image.from_registry(...)`` reference always wins; otherwise the
-    built-in descriptors resolve through :data:`BUILTIN_REGISTRY_IMAGES`. Images
-    with no pinned disk (custom distros, container kinds) return ``None``.
+    An explicit ``Image.from_registry(...)`` reference always wins; the
+    built-in descriptors (``Image.linux()``, ``Image.windows()`` for 2022,
+    ``Image.macos()``) are the canonical images (see :func:`canonical_image`).
+    Other descriptors (custom distros, ``Image.windows("11")``) return ``None``.
     """
     if image._registry is not None:
         return image._registry
-    return BUILTIN_REGISTRY_IMAGES.get((image.os_type, image.distro, image.version, image.kind))
+    if image.distro not in CANONICAL_DISTROS.get(image.os_type, ()):
+        return None
+    if image.os_type == "windows" and image.version not in CANONICAL_WINDOWS_VERSIONS:
+        return None
+    return canonical_image(image.os_type, image.version)
+
+
+#: What each resolved variant means for :attr:`Image.kind`.
+_VARIANT_KIND = {"rootfs": "container", "containerdisk": "vm", "lume": "vm"}
+
+
+def resolve_image_kind(image: Image) -> Image:
+    """Resolve an image's kind (and OS) with the one native resolver.
+
+    Returns the image unchanged when its kind is set or it has no registry
+    reference. Short refs are docker.io (``python:3.12-slim``); the registry
+    is read with the docker/ghcr/ECR credential chain; a containerDisk runs
+    as a VM (QEMU), a rootfs as a container, a Lume image on Lume. A tag the
+    registry does not know (one only the local engine has) runs as a
+    container. An image no local backend runs raises.
+    Blocks while the registry is read.
+    """
+    if image.kind is not None:
+        return image
+    ref = cloud_registry_image(image)
+    if ref is None:
+        return image
+    from cua_sandbox._sdk import native
+
+    n = native()
+    try:
+        if image._secret is not None:
+            # A private image: its credentials head the registry auth chain.
+            resolved = n.resolve_image_with_secret(ref, "local", None, image._secret.native())
+        else:
+            resolved = n.resolve_image(ref, "local", None)
+    except n.CuaError.NotFound:
+        logger.debug("%s is not in a registry; running it as a local container image", ref)
+        return image._with(kind="container")
+    except n.CuaError.Unauthenticated as error:
+        raise PermissionError(
+            f"cannot read {ref}: {error}. Log in to its registry (`docker login`), "
+            "or set CUA_REGISTRY_USERNAME/CUA_REGISTRY_PASSWORD"
+        ) from error
+    except n.CuaError.Unsupported as error:
+        raise ValueError(str(error)) from error
+    except n.CuaError as error:
+        # Offline, or resolution switched off (CUA_IMAGE_RESOLVE=0): the
+        # local backend decides from the reference (a container).
+        logger.warning("could not resolve %s (%s); running it as a container", ref, error)
+        return image._with(kind="container")
+    kind = _VARIANT_KIND.get(resolved.variant, "container")
+    os_type = image.os_type
+    if resolved.os != "linux" or resolved.variant == "lume":
+        os_type = resolved.os
+    # Kept for Sandbox.image_info on runtimes that do not report it.
+    return image._with(kind=kind, os_type=os_type, _resolved=ImageInfo._from_native(resolved))

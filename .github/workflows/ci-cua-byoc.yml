@@ -1,0 +1,59 @@
+name: "CI: cua your-cloud providers"
+
+# Your own cloud as a sandbox location (libs/cua/crates/cua-byoc: AWS EC2,
+# Google Compute Engine, Modal) against mocks of their APIs and the fake
+# relay. Everything here is hermetic: no cloud credential is used and
+# nothing leaves the runner. The sweeper tests prove that only resources
+# Cua tagged and recorded are ever touched. The first-boot tests (local
+# QEMU and Docker against a local cua-relay) are opt-in and ignored here.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-byoc/**"
+      - "libs/cua/crates/cua-sandbox-core/**"
+      - "libs/cua/crates/cua-daemon/**"
+      - "libs/cua/crates/cua-spaces/src/cloud.rs"
+      - "libs/cua/crates/cua-contrib/modal-helper/**"
+      - ".github/workflows/ci-cua-byoc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  rust:
+    name: providers against their API mocks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-byoc
+      - name: Format
+        run: cargo fmt -p cua-byoc -- --check
+      - name: Clippy
+        run: cargo clippy --locked -p cua-byoc --all-targets --features all,testing -- -D warnings
+      - name: Test (each cloud's mock, the flow, the sweeper, Spaces on top)
+        run: cargo test --locked -p cua-byoc --features all,testing -- --test-threads=4

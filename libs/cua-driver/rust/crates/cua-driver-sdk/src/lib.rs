@@ -11,10 +11,10 @@ use cua_driver_contract::{
     GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
     GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
     ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
-    PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage,
-    StartSessionInput, StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput,
-    VerifyStateOutput, WindowStateOutput,
+    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
+    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -22,12 +22,13 @@ use cua_driver_core::daemon::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 mod abi;
 mod activity_observer;
 mod authorization_host;
+mod cursor_motion;
 mod embedded;
 pub mod remote;
 pub mod remote_foreign;
@@ -43,6 +44,7 @@ pub use authorization_host::{
     DriverAuthorizationAction, DriverAuthorizationDecision, DriverAuthorizationHost,
     DriverAuthorizationHostError, DriverAuthorizationRequest,
 };
+pub use cursor_motion::*;
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 pub use remote_mcp::{
@@ -52,6 +54,30 @@ pub use remote_mcp::{
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
 use worker::{ActionCompletion, PrivateWorkerClient};
+
+static PERCEPTION_CLIENT_RESOLVER: OnceLock<
+    Arc<dyn cua_driver_core::perception_client::PerceptionClientResolver>,
+> = OnceLock::new();
+
+/// Configure the binary-owned resolver for optional installed perception.
+/// Every runtime consults it per `parse_visual_regions` request, so extension
+/// install, update, and removal take effect on a running Driver. Language SDKs
+/// without a binary host retain the typed unavailable tool.
+#[doc(hidden)]
+pub fn configure_perception_client_resolver(
+    resolver: Arc<dyn cua_driver_core::perception_client::PerceptionClientResolver>,
+) {
+    let _ = PERCEPTION_CLIENT_RESOLVER.set(resolver);
+}
+
+pub(crate) fn configured_perception_client(
+) -> cua_driver_core::perception_client::PerceptionClientHandle {
+    use cua_driver_core::perception_client::{PerceptionClient, PerceptionClientHandle};
+    PERCEPTION_CLIENT_RESOLVER.get().map_or_else(
+        || PerceptionClientHandle::fixed(PerceptionClient::unavailable()),
+        |resolver| PerceptionClientHandle::live(resolver.clone()),
+    )
+}
 
 fn host_sessions_json_for_prefix(runtime_prefix: &str) -> Value {
     let sessions = cua_driver_core::session::list_session_snapshots_with_prefix(
@@ -641,6 +667,7 @@ macro_rules! desktop_tool_methods {
             get_screen_size: GetScreenSizeInput,
             get_cursor_position: GetCursorPositionInput,
             verify_state: VerifyStateInput,
+            parse_visual_regions: ParseVisualRegionsInput,
             move_cursor: MoveCursorInput,
             set_window_frame: SetWindowFrameInput,
             invoke_menu: InvokeMenuInput,
@@ -730,8 +757,15 @@ macro_rules! define_native_window_methods {
 
             pub async fn get_window_state(
                 &self,
-                input: GetWindowStateInput,
+                mut input: GetWindowStateInput,
             ) -> Result<WindowStateOutput, DriverError> {
+                // The typed snapshot is read by programs, not budgeted
+                // against a model context: keep the full response (both tree
+                // representations, platform walk limits) unless the caller
+                // picks a leaner shape.
+                if input.tree_format.is_none() && input.full_output.is_none() {
+                    input.full_output = Some(true);
+                }
                 self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
                     .await?
                     .window_state_success()
@@ -1976,12 +2010,14 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
 #[cfg(test)]
+#[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
 
 #[cfg(test)]
 mod tests {
     mod native_windows;
     use super::*;
+    use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
     #[cfg(unix)]
@@ -2062,7 +2098,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_observer_receives_only_content_free_authorization_metadata() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let observer = Arc::new(RecordingActivityObserver::default());
         let driver = CuaDriver::create_configured_with_activity_observer(
             ConfiguredDriverOptions {
@@ -2157,7 +2193,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn host_tool_inspection_does_not_acquire_runtime_ownership() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let inventory = CuaDriver::inspect_host_tools(DriverHostOptions {
             cursor: cursor_overlay::CursorConfig {
                 enabled: false,
@@ -2181,7 +2217,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_owns_tools_without_daemon_ipc_and_shuts_down_idempotently() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         assert_eq!(driver.execution_mode(), DriverExecutionMode::Embedded);
         assert!(driver.socket_path().is_empty());
@@ -2212,7 +2248,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_host_listing_spans_its_runtime_without_exposing_owner_keys() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         let public = format!("host-listing-{}", uuid::Uuid::new_v4());
         driver
@@ -2220,6 +2256,7 @@ mod tests {
                 session: Some(public.clone()),
                 capture_scope: None,
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -2253,7 +2290,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_drains_an_already_admitted_call() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::try_create_for_host(DriverHostOptions {
             cursor: cursor_overlay::CursorConfig {
                 enabled: false,
@@ -2307,7 +2344,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_runtime_enforces_authorization_before_platform_dispatch() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create(None).unwrap();
         let result = driver
             .call_tool(
@@ -2335,7 +2372,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_runtimes_have_independent_sessions_and_shutdown() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let hook_baseline = cua_driver_core::session::session_end_hook_count();
         let first = configured_standard_driver();
         let second = CuaDriver::create_configured(ConfiguredDriverOptions {
@@ -2508,7 +2545,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_session_idle_ttl_reaches_the_lifecycle_contract() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = configured_standard_driver();
         let session = driver
             .create_trusted_session(TrustedSessionOptions {
@@ -2547,7 +2584,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorization_expiry_in_one_runtime_does_not_affect_another() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let expiring = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
             authorization: RuntimeAuthorizationOptions {
@@ -2603,7 +2640,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_session_close_can_race_with_invoke_without_invalidating_the_handle() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = configured_standard_driver();
 
         for iteration in 0..64 {
@@ -2649,7 +2686,7 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_session_is_bound_in_memory_and_rejects_public_id_substitution() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let driver = CuaDriver::create_configured(ConfiguredDriverOptions {
             claude_code_compatibility: false,
             authorization: RuntimeAuthorizationOptions {
@@ -2769,6 +2806,7 @@ mod tests {
             .get_desktop_state(GetDesktopStateInput {
                 session: Some("run-1".into()),
                 screenshot_out_file: None,
+                max_image_dimension: None,
             })
             .await
             .unwrap();
@@ -2783,6 +2821,75 @@ mod tests {
         assert_eq!(request["args"], serde_json::json!({"session": "run-1"}));
         assert_eq!(request["observation_origin"], "direct");
         assert_eq!(request["client_kind"], "python_sdk");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn visual_parse_call_preserves_success_and_error_dtos() {
+        let mut output: Value = serde_json::from_str(include_str!(
+            "../../cua-driver-contract/tests/fixtures/parse-visual-regions-output-full-v1.json"
+        ))
+        .unwrap();
+        output["capture"]["capture_id"] = "capture-123".into();
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "parsed"}],
+                "structuredContent": output,
+                "isError": false
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver =
+            CuaDriver::connect_with_client_kind(Some(socket), SdkClientKind::Typescript).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        let structured = result.structured_json.as_deref().unwrap();
+        let decoded: ParseVisualRegionsOutput = serde_json::from_str(structured).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded.schema, "cua.visual_regions_v1");
+        assert_eq!(decoded.capture.capture_id, "capture-123");
+        let request = server.join().unwrap();
+        assert_eq!(request["name"], "parse_visual_regions");
+        assert_eq!(
+            request["args"],
+            serde_json::json!({"capture_id": "capture-123", "options": {}})
+        );
+        assert_eq!(request["client_kind"], "typescript_sdk");
+
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "not installed"}],
+                "structuredContent": {
+                    "code": "not_installed",
+                    "message": "the optional cua-perception extension is not installed",
+                    "retryable": false
+                },
+                "isError": true
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver = CuaDriver::connect(Some(socket)).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert_eq!(result.error_code.as_deref(), Some("not_installed"));
+        let error: VisualParseError =
+            serde_json::from_str(result.structured_json.as_deref().unwrap()).unwrap();
+        error.validate().unwrap();
+        assert!(!error.retryable);
+        assert_eq!(server.join().unwrap()["name"], "parse_visual_regions");
     }
 
     #[test]
@@ -2985,6 +3092,7 @@ mod tests {
                 session: Some("run-2".into()),
                 capture_scope: Some(cua_driver_contract::CaptureScope::Auto),
                 cursor_theme: None,
+                cursor_motion: None,
             })
             .await
             .unwrap();
@@ -3185,7 +3293,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn direct_macos_runtime_reports_cursor_overlay_facility_unavailable() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         // This test is about the unavailable host-owned cursor facility, not
         // protected input admission. Use an explicitly acknowledged
         // unrestricted runtime so the call reaches that platform invariant.

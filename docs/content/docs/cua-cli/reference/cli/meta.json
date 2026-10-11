@@ -1,0 +1,32 @@
+{
+  "title": "CLI",
+  "pages": [
+    "index",
+    "auth",
+    "sandbox",
+    "sandbox-access",
+    "config",
+    "viewer",
+    "do",
+    "image",
+    "fleet",
+    "mcp",
+    "agent",
+    "agents",
+    "skills",
+    "trajectory",
+    "spaces",
+    "cloud",
+    "host",
+    "devices",
+    "teleport",
+    "volume",
+    "keyvault",
+    "spacesd",
+    "daemon",
+    "cache",
+    "runtime",
+    "doctor",
+    "telemetry"
+  ]
+}

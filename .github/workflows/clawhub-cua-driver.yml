@@ -29,6 +29,9 @@ permissions:
   id-token: write
 
 env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
   CLAWHUB_CLI_VERSION: "0.23.1"
   CLAWHUB_SKILL_SLUG: "driver"
   SKILL_PATH: "libs/cua-driver/rust/Skills/cua-driver"

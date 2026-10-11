@@ -3,9 +3,18 @@ import { choice, TypeSafeClient } from '@typesafe-ai/sdk';
 import {
   chooseMock,
   type BrowserSnapshot,
+  type HistoryEntry,
   type Candidate,
   type VisualObservation,
 } from './core.js';
+import {
+  FIXTURE_GOAL,
+  FixtureFormTask,
+  fixtureSources,
+  requirePage,
+  type Task,
+  type TaskSources,
+} from './tasks.js';
 
 type TypeSafeClientLike = Pick<TypeSafeClient, 'systemOne'>;
 
@@ -24,11 +33,10 @@ export async function chooseBoundedWithTypeSafe(
 ): Promise<ProviderChoice> {
   const response = await client.systemOne({
     state: {
-      goal,
       observation: JSON.stringify(observation),
     },
     questions: {
-      candidate: choice('Select exactly one supplied candidate ID.', { ...criteria }),
+      candidate: choice(goal, { ...criteria }),
     },
   });
   const answer = response.answers.candidate;
@@ -97,29 +105,63 @@ export function visualDecisionState(visual?: VisualObservation) {
   };
 }
 
-export async function chooseWithTypeSafe(
-  client: TypeSafeClientLike,
-  candidates: Candidate[],
+export const GOAL = FIXTURE_GOAL;
+
+/**
+ * Build the compact, deterministic, secret-redacted state sent to Jev. `form`
+ * is the task's state summary, which states what the runner verified from its
+ * candidate sources, so the model does not have to infer it from the outline.
+ * Every secret task parameter is replaced everywhere, including outline and
+ * visual text.
+ */
+export function taskDecisionState(
+  task: Task,
+  sources: TaskSources,
+  history: readonly HistoryEntry[]
+) {
+  const snapshot = requirePage(sources).snapshot;
+  return {
+    goal: task.goal,
+    observation: {
+      page: JSON.stringify(task.redact(snapshot.page ?? null)),
+      form: JSON.stringify(task.stateSummary(sources)),
+      outline: task.redact(snapshot.outline ?? '') as string,
+      visual: JSON.stringify(task.redact(visualDecisionState(sources.visual?.observation))),
+    },
+    history: JSON.stringify(history),
+  };
+}
+
+/** Build the fixture task's decision state; see taskDecisionState. */
+export function decisionState(
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
-  history: Record<string, unknown>[]
+  history: readonly HistoryEntry[],
+  token: string,
+  visualPath = false
+) {
+  return taskDecisionState(
+    new FixtureFormTask(token),
+    fixtureSources(snapshot, visual, false, 'background', visualPath),
+    history
+  );
+}
+
+export const DRIVER_ACTION_INSTRUCTIONS =
+  'Which complete executable action should Cua Driver run next?';
+
+export async function chooseForTask(
+  client: TypeSafeClientLike,
+  task: Task,
+  sources: TaskSources,
+  candidates: Candidate[],
+  history: readonly HistoryEntry[]
 ) {
   const criteria = candidateCriteria(candidates);
   const response = await client.systemOne({
-    state: {
-      goal: 'Enter the verification token, then submit the form.',
-      observation: {
-        page: JSON.stringify(snapshot.page ?? null),
-        outline: snapshot.outline ?? '',
-        visual: JSON.stringify(visualDecisionState(visual)),
-      },
-      history: JSON.stringify(history),
-    },
+    state: taskDecisionState(task, sources, history),
     questions: {
-      driver_action: choice(
-        'Which complete executable action should Cua Driver run next?',
-        criteria
-      ),
+      driver_action: choice(DRIVER_ACTION_INSTRUCTIONS, criteria),
     },
   });
   const answer = response.answers.driver_action;
@@ -130,20 +172,82 @@ export async function chooseWithTypeSafe(
   return answer;
 }
 
+export function chooseWithTypeSafe(
+  client: TypeSafeClientLike,
+  candidates: Candidate[],
+  snapshot: BrowserSnapshot,
+  visual: VisualObservation | undefined,
+  history: readonly HistoryEntry[],
+  token: string,
+  visualPath = false
+) {
+  return chooseForTask(
+    client,
+    new FixtureFormTask(token),
+    fixtureSources(snapshot, visual, false, 'background', visualPath),
+    candidates,
+    history
+  );
+}
+
+export function chooseLiveForTask(
+  task: Task,
+  sources: TaskSources,
+  candidates: Candidate[],
+  history: readonly HistoryEntry[]
+) {
+  return chooseForTask(new TypeSafeClient(), task, sources, candidates, history);
+}
+
+/**
+ * Deterministic mock provider. A task may declare mockPreferences: the first
+ * preferred ID present wins (a refused control's `<id>:foreground` variant
+ * counts as its ID), otherwise reobserve. Tasks without preferences keep the
+ * fixed browser-fixture order.
+ */
+export function chooseMockForTask(
+  task: Task,
+  _sources: TaskSources,
+  candidates: Candidate[],
+  _history: readonly HistoryEntry[]
+) {
+  const preferences = (task as { mockPreferences?: readonly string[] }).mockPreferences ?? [];
+  if (!preferences.length) return chooseMock(candidates);
+  const ids = candidates.map((candidate) => candidate.id);
+  const selected =
+    preferences
+      .flatMap((preferred) => [preferred, `${preferred}:foreground`])
+      .find((id) => ids.includes(id)) ?? (ids.includes('reobserve') ? 'reobserve' : null);
+  return {
+    choice: selected,
+    confidence: selected ? 1 : 0,
+    probabilities: Object.fromEntries(ids.map((id) => [id, Number(id === selected)])),
+  };
+}
+
 export function chooseLive(
   candidates: Candidate[],
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
-  history: Record<string, unknown>[]
+  history: readonly HistoryEntry[],
+  token: string,
+  visualPath = false
 ) {
-  return chooseWithTypeSafe(new TypeSafeClient(), candidates, snapshot, visual, history);
+  return chooseLiveForTask(
+    new FixtureFormTask(token),
+    fixtureSources(snapshot, visual, false, 'background', visualPath),
+    candidates,
+    history
+  );
 }
 
 export function chooseMockAdapter(
   candidates: Candidate[],
   _snapshot: BrowserSnapshot,
   _visual: VisualObservation | undefined,
-  _history: Record<string, unknown>[]
+  _history: readonly HistoryEntry[],
+  _token: string,
+  _visualPath = false
 ) {
   return chooseMock(candidates);
 }

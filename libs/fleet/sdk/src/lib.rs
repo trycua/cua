@@ -6,6 +6,7 @@ mod image_uploads;
 mod images;
 mod namespaces;
 mod pools;
+mod registry_secrets;
 mod routes;
 mod services;
 mod signed_service_urls;
@@ -15,8 +16,10 @@ mod transport;
 mod types;
 mod user_keys;
 
+pub use claims::claim_env_token_key;
 pub use client::CyclopsClient;
 pub use cyclops_sdk_schema::PreservedJson;
+pub use cyclops_sdk_schema::{CLAIM_ENV_TOKEN_KEY, CLAIM_SECRET_NAME_PREFIX, ClaimSecretRef};
 pub use error::{
     AccessTokenProviderError, HttpError, MAX_STATUS_BODY_BYTES, SdkBuildError, SdkError,
     bounded_body,
@@ -27,6 +30,10 @@ pub use fleets::{
 pub use image_uploads::{
     ImageUploadFileRequest, ImageUploadInstruction, ImageUploadRequest, ImageUploadResponse,
     PresignedPut,
+};
+pub use registry_secrets::{
+    CreateRegistrySecretRequest, CreateRegistrySecretRequestBuilder, RegistrySecret, ResolvedImage,
+    registry_secret_name_prefix,
 };
 pub use routes::validate_dns_label;
 pub use status::{

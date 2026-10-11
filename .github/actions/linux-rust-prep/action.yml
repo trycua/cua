@@ -1,0 +1,41 @@
+name: "Prepare a Linux runner for Rust builds"
+description: >-
+  On Linux runners only (a no-op elsewhere): free disk the hosted image spends
+  on toolchains Cua never uses, then install the system libraries the cua SDK,
+  cua-spacesd and cua-driver crates link against (X11 for the x11 crate,
+  Wayland, xkbcommon, PipeWire, D-Bus, udev). Big debug test binaries otherwise
+  exhaust the 14 GB free disk (the linker dies with SIGBUS) and the x11 build
+  script fails without x11.pc.
+
+inputs:
+  free-disk:
+    description: "Remove unused preinstalled toolchains and Docker images first."
+    default: "true"
+  install-deps:
+    description: "Install the Linux build dependencies."
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk
+      if: runner.os == 'Linux' && inputs.free-disk == 'true'
+      shell: bash
+      run: |
+        df -h / | tail -1
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+          /usr/share/swift /usr/local/julia* /opt/az /usr/local/share/powershell
+        sudo docker image prune --all --force >/dev/null 2>&1 || true
+        df -h / | tail -1
+    - name: Install Linux build dependencies
+      if: runner.os == 'Linux' && inputs.install-deps == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake clang pkg-config \
+          libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxi-dev \
+          libxtst-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-dev \
+          libwayland-dev libdbus-1-dev libudev-dev \
+          libpipewire-0.3-dev libspa-0.2-dev libei-dev

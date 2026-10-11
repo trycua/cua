@@ -1,0 +1,55 @@
+{
+  "name": "space-power",
+  "about": "The power button next to Delete: a local container suspends and resumes (Suspend, Resume), a Lume VM and a Space one of your machines provides turn off and on (Turn off, Turn on), a cloud Space has none. A press shows Suspending (the button a spinner, disabled) at once, a second press does nothing, the row keeps saying so until the registry shows it off, a failure shows why inline and the button works again, and a delete takes the power action with it.",
+  "now": 1800000000000,
+  "rows": [
+    { "id": "local:box", "name": "box", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "kind": "container", "reachable": true, "power": "suspend", "powerState": "running" },
+    { "id": "local:mac", "name": "mac", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "macos", "kind": "vm", "reachable": true, "power": "stop", "powerState": "running" },
+    { "id": "relay:space-0123456789abcdef", "name": "studio", "provider": "relay", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T06:00:00Z", "os": "linux", "reachable": true, "power": "stop", "host": "mini1234", "hostName": "Mac mini" },
+    { "id": "cloud:pool-c", "name": "pool-c", "provider": "cloud", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T05:00:00Z", "os": "linux", "reachable": true }
+  ],
+  "steps": [
+    { "step": "initial", "rows": [
+      { "id": "local:box", "name": "box", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "kind": "container", "reachable": true, "power": "suspend", "powerState": "running" },
+      { "id": "local:mac", "name": "mac", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "macos", "kind": "vm", "reachable": true, "power": "stop", "powerState": "running" },
+      { "id": "relay:space-0123456789abcdef", "name": "studio", "provider": "relay", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T06:00:00Z", "os": "linux", "reachable": true, "power": "stop", "host": "mini1234", "hostName": "Mac mini" },
+      { "id": "cloud:pool-c", "name": "pool-c", "provider": "cloud", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T05:00:00Z", "os": "linux", "reachable": true }
+    ] },
+    { "step": "suspend box", "action": { "type": "power-start", "id": "local:box", "on": false, "now": 1800000001000 } },
+    { "step": "press again while it runs", "action": { "type": "power-start", "id": "local:box", "on": false, "now": 1800000001500 } },
+    { "step": "suspend box returns", "action": { "type": "power-done", "id": "local:box" } },
+    { "step": "refresh still running", "rows": [
+      { "id": "local:box", "name": "box", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "kind": "container", "reachable": true, "power": "suspend", "powerState": "running" },
+      { "id": "local:mac", "name": "mac", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "macos", "kind": "vm", "reachable": true, "power": "stop", "powerState": "running" },
+      { "id": "relay:space-0123456789abcdef", "name": "studio", "provider": "relay", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T06:00:00Z", "os": "linux", "reachable": true, "power": "stop", "host": "mini1234", "hostName": "Mac mini" },
+      { "id": "cloud:pool-c", "name": "pool-c", "provider": "cloud", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T05:00:00Z", "os": "linux", "reachable": true }
+    ] },
+    { "step": "refresh: box suspended", "rows": [
+      { "id": "local:box", "name": "box", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "kind": "container", "reachable": false, "error": "sandbox box is Paused; resume it first", "power": "suspend", "powerState": "suspended" },
+      { "id": "local:mac", "name": "mac", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "macos", "kind": "vm", "reachable": true, "power": "stop", "powerState": "running" },
+      { "id": "relay:space-0123456789abcdef", "name": "studio", "provider": "relay", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T06:00:00Z", "os": "linux", "reachable": true, "power": "stop", "host": "mini1234", "hostName": "Mac mini" },
+      { "id": "cloud:pool-c", "name": "pool-c", "provider": "cloud", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T05:00:00Z", "os": "linux", "reachable": true }
+    ] },
+    { "step": "resume box", "action": { "type": "power-start", "id": "local:box", "on": true, "now": 1800000002000 } },
+    { "step": "resume box fails", "action": { "type": "power-fail", "id": "local:box", "error": "Docker is not running" } },
+    { "step": "turn off mac", "action": { "type": "power-start", "id": "local:mac", "on": false, "now": 1800000003000 } },
+    { "step": "turn off mac returns", "action": { "type": "power-done", "id": "local:mac" } },
+    { "step": "refresh: mac off", "rows": [
+      { "id": "local:box", "name": "box", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "kind": "container", "reachable": false, "error": "sandbox box is Paused; resume it first", "power": "suspend", "powerState": "suspended" },
+      { "id": "local:mac", "name": "mac", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "macos", "kind": "vm", "reachable": false, "error": "sandbox mac is Stopped; resume it first", "power": "stop", "powerState": "stopped" },
+      { "id": "relay:space-0123456789abcdef", "name": "studio", "provider": "relay", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T06:00:00Z", "os": "linux", "reachable": true, "power": "stop", "host": "mini1234", "hostName": "Mac mini" },
+      { "id": "cloud:pool-c", "name": "pool-c", "provider": "cloud", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T05:00:00Z", "os": "linux", "reachable": true }
+    ] },
+    { "step": "turn off studio on its host", "action": { "type": "power-start", "id": "relay:space-0123456789abcdef", "on": false, "now": 1800000004000 } },
+    { "step": "turn off studio returns", "action": { "type": "power-done", "id": "relay:space-0123456789abcdef" } },
+    { "step": "refresh: studio offline", "rows": [
+      { "id": "local:box", "name": "box", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T08:00:00Z", "os": "linux", "kind": "container", "reachable": false, "error": "sandbox box is Paused; resume it first", "power": "suspend", "powerState": "suspended" },
+      { "id": "local:mac", "name": "mac", "provider": "local", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T07:00:00Z", "os": "macos", "kind": "vm", "reachable": false, "error": "sandbox mac is Stopped; resume it first", "power": "stop", "powerState": "stopped" },
+      { "id": "relay:space-0123456789abcdef", "name": "studio", "provider": "relay", "spacesdVersion": "", "features": [], "addedAt": "2027-01-15T06:00:00Z", "os": "linux", "reachable": false, "error": "timed out", "power": "stop", "host": "mini1234", "hostName": "Mac mini" },
+      { "id": "cloud:pool-c", "name": "pool-c", "provider": "cloud", "spacesdVersion": "0.4.0", "features": ["desktop_stream"], "addedAt": "2027-01-15T05:00:00Z", "os": "linux", "reachable": true }
+    ] },
+    { "step": "turn on mac", "action": { "type": "power-start", "id": "local:mac", "on": true, "now": 1800000005000 } },
+    { "step": "delete mac while it boots", "action": { "type": "delete-start", "id": "local:mac", "now": 1800000005500 } },
+    { "step": "delete mac returns", "action": { "type": "delete-done", "id": "local:mac" } }
+  ]
+}

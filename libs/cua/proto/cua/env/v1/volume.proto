@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "google/protobuf/duration.proto";
+
+// Cua Volume in the guest: the Space's view of the user's volume, mounted
+// at a fixed path and served by the client (the host that runs the volume).
+//
+// The client calls `AttachVolume` and opens the returned WebSocket
+// (`/volume`, ticket-authenticated), which it keeps open. Once it is
+// attached, cua-spacesd mounts the volume in the guest; the mount's traffic
+// travels as tunnel streams over that socket (the frame format of the
+// hotspot, `OPEN` carrying the target `nfs` or `fs`), and the client
+// answers them from its own copy of the volume, scoped to this Space. The
+// guest never holds storage keys and never has a network path to the
+// client. The mount goes away when the socket closes or on
+// `DetachVolume`.
+//
+// | Guest | Backend | Mount path |
+// |---|---|---|
+// | macOS | `nfs`: the system NFS client | `~/Cua Volume` |
+// | Linux | `fs`: FUSE (the file operations protocol) | `/volume`, else `~/Cua Volume` |
+// | Windows | not yet: a preview (`nfs`, Client for NFS, on `V:\`) is off unless the guest sets `CUA_VOLUME_WINDOWS_PREVIEW=1` | |
+//
+// On Windows a `mount_path` that is not a drive (for example
+// `C:\Users\<user>\Cua Volume`) becomes a directory symbolic link to the
+// drive the volume mounts on.
+service VolumeService {
+  // Prepares a mount and returns the WebSocket the client attaches.
+  rpc AttachVolume(AttachVolumeRequest) returns (AttachVolumeResponse);
+  // Unmounts and closes the socket.
+  rpc DetachVolume(DetachVolumeRequest) returns (DetachVolumeResponse);
+  // Reports the mount.
+  rpc GetVolumeStatus(GetVolumeStatusRequest) returns (GetVolumeStatusResponse);
+}
+
+// Request for `VolumeService.AttachVolume`.
+message AttachVolumeRequest {
+  // Where to mount. Empty means the guest's default (see the table above).
+  string mount_path = 1;
+  // How long the ticket accepts the client's WebSocket. Unset means 60
+  // seconds.
+  google.protobuf.Duration ticket_ttl = 2;
+}
+
+// Response for `VolumeService.AttachVolume`.
+message AttachVolumeResponse {
+  // Volume session id.
+  string volume_id = 1;
+  // Ticket for the volume WebSocket.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the ticket,
+  // for example "/volume?ticket=…".
+  string ws_path = 3;
+  // Where the volume will be mounted.
+  string mount_path = 4;
+  // `nfs` or `fs`: the target name the guest's streams carry, which the
+  // client answers.
+  string backend = 5;
+}
+
+// Request for `VolumeService.DetachVolume`.
+message DetachVolumeRequest {
+  // Which session. Empty means the current one.
+  string volume_id = 1;
+}
+
+// Response for `VolumeService.DetachVolume`.
+message DetachVolumeResponse {}
+
+// Request for `VolumeService.GetVolumeStatus`.
+message GetVolumeStatusRequest {}
+
+// State of the guest mount.
+enum VolumeState {
+  // Not reported.
+  VOLUME_STATE_UNSPECIFIED = 0;
+  // No volume.
+  VOLUME_STATE_DETACHED = 1;
+  // Attached by RPC, waiting for the client WebSocket.
+  VOLUME_STATE_WAITING_FOR_CLIENT = 2;
+  // Mounting.
+  VOLUME_STATE_MOUNTING = 3;
+  // Mounted and served.
+  VOLUME_STATE_MOUNTED = 4;
+  // The mount failed; see `detail`.
+  VOLUME_STATE_ERROR = 5;
+}
+
+// Response for `VolumeService.GetVolumeStatus`.
+message GetVolumeStatusResponse {
+  // State.
+  VolumeState state = 1;
+  // Volume session id (empty when detached).
+  string volume_id = 2;
+  // Mount path.
+  string mount_path = 3;
+  // `nfs` or `fs`.
+  string backend = 4;
+  // Why, when `state` is `VOLUME_STATE_ERROR`.
+  string detail = 5;
+  // Open streams to the client.
+  uint32 active_streams = 6;
+  // Bytes sent from the guest to the client.
+  uint64 bytes_out = 7;
+  // Bytes received from the client.
+  uint64 bytes_in = 8;
+}

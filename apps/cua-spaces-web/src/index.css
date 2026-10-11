@@ -1,0 +1,245 @@
+/* SPDX-License-Identifier: FSL-1.1-MIT */
+/* Copyright (c) 2026 Cua AI, Inc. */
+
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark, .dark *));
+
+/*
+ * Design tokens. Semantic names only; components never reference raw colors.
+ * Light is the default; `.dark` on <html> switches the palette (see index.html
+ * and src/lib/theme.ts). Cua Blue is `--brand`, kept for focus, selection and
+ * the active marker. Primary actions use the neutral `--primary`.
+ */
+:root {
+  --background: oklch(0.979 0.003 264.5);
+  --foreground: oklch(0.22 0.01 264);
+  --chrome: oklch(0.962 0.004 264);
+  --sidebar: oklch(0.955 0.005 264 / 0.78);
+  --sidebar-foreground: oklch(0.3 0.01 264);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --muted: oklch(0.945 0.004 264);
+  --muted-foreground: oklch(0.52 0.012 264);
+  --accent: oklch(0.93 0.006 264);
+  --accent-foreground: oklch(0.22 0.01 264);
+  --primary: oklch(0.25 0.012 264);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.94 0.005 264);
+  --secondary-foreground: oklch(0.25 0.012 264);
+  --border: oklch(0.9 0.006 264);
+  --input: oklch(0.88 0.007 264);
+  --ring: oklch(0.764 0.108 227.5);
+  --brand: oklch(0.764 0.108 227.5);
+  --brand-strong: oklch(0.56 0.11 232);
+  --brand-surface: oklch(0.764 0.108 227.5 / 0.14);
+  --success: oklch(0.62 0.15 152);
+  --warning: oklch(0.72 0.15 75);
+  --destructive: oklch(0.58 0.2 27);
+  --destructive-foreground: oklch(0.985 0 0);
+  --thumb: oklch(0.93 0.005 264);
+  --thumb-line: oklch(0.905 0.005 264);
+
+  --glass-blur: 20px;
+  --glass-saturation: 1.6;
+  --shadow-color: 220 20% 20%;
+
+  /* Host shells set this to clear the macOS traffic lights (e.g. 78px). */
+  --titlebar-left-inset: 0px;
+  /* Room for the window controls overlay on Windows and Linux (Electron's
+     titleBarOverlay). 0 in browsers and on macOS, where there is no overlay. */
+  --titlebar-right-inset: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  --titlebar-height: 44px;
+  --sidebar-width: 232px;
+}
+
+.dark {
+  --background: oklch(0.209 0.009 264.4);
+  --foreground: oklch(0.94 0.005 264);
+  --chrome: oklch(0.19 0.009 264);
+  --sidebar: oklch(0.235 0.01 264 / 0.72);
+  --sidebar-foreground: oklch(0.86 0.008 264);
+  --card: oklch(0.245 0.01 264);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.255 0.011 264);
+  --popover-foreground: var(--foreground);
+  --muted: oklch(0.27 0.01 264);
+  --muted-foreground: oklch(0.68 0.012 264);
+  --accent: oklch(0.3 0.012 264);
+  --accent-foreground: oklch(0.96 0.004 264);
+  --primary: oklch(0.94 0.005 264);
+  --primary-foreground: oklch(0.21 0.01 264);
+  --secondary: oklch(0.29 0.011 264);
+  --secondary-foreground: oklch(0.94 0.005 264);
+  --border: oklch(1 0 0 / 0.09);
+  --input: oklch(1 0 0 / 0.13);
+  --brand-strong: oklch(0.8 0.1 227.5);
+  --brand-surface: oklch(0.764 0.108 227.5 / 0.16);
+  --success: oklch(0.72 0.15 152);
+  --warning: oklch(0.8 0.14 80);
+  --destructive: oklch(0.66 0.19 25);
+  --thumb: oklch(0.255 0.01 264);
+  --thumb-line: oklch(0.285 0.01 264);
+  --shadow-color: 220 40% 2%;
+}
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Dense UI steps below text-xs. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  --ease-out-soft: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-chrome: var(--chrome);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-surface: var(--brand-surface);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-thumb: var(--thumb);
+  --color-thumb-line: var(--thumb-line);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    font-size: 13px;
+    line-height: 1.45;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable],
+  .selectable {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  ::selection {
+    background: var(--brand-surface);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--foreground) 14%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@utility glass {
+  background: color-mix(in oklch, var(--popover) 90%, transparent);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+@utility shadow-float {
+  box-shadow:
+    0 0 0 1px hsl(var(--shadow-color) / 0.06),
+    0 2px 4px hsl(var(--shadow-color) / 0.06),
+    0 12px 32px -8px hsl(var(--shadow-color) / 0.22);
+}
+
+/* Window drag regions. Electron 44 inherits app-region into children, so
+   interactive descendants opt back out explicitly. */
+@utility app-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.app-drag :is(button, a, input, select, textarea, [role="button"], [data-no-drag]) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* The caret at the end of an agent message that is still being written. */
+.markdown-streaming > .markdown > :is(p, blockquote):last-child::after,
+.markdown-streaming > .markdown > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: var(--brand);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -8,100 +8,262 @@ on:
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/lume/src/**"
       - "libs/python/cua-sandbox/**"
-      - "libs/python/cua/pyproject.toml"
-      - "libs/python/computer-server/pyproject.toml"
+      - "libs/cua/python/pyproject.toml"
       - "libs/typescript/fleet/package.json"
       - "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json"
-      - "docs/content/docs/reference/cua-driver/**"
-      - "docs/content/docs/reference/lume/**"
-      - "docs/content/docs/reference/sandbox-sdk/runtime-support.mdx"
-      - "docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx"
+      - "docs/content/docs/cua-driver/reference/**"
+      - "docs/content/docs/lume/reference/**"
+      - "libs/cua-bench/**"
+      - "docs/content/docs/cua-bench/reference/**"
       - "docs/package.json"
       - "docs/pnpm-lock.yaml"
       - "scripts/docs-generators/**"
+      # The cua SDK, CLI, daemon, protos and bindings behind the generated
+      # cua-cli, cua-sdk, cua-sdk-python, cua-sdk-ts, cua-rust and cua-proto pages.
+      - "libs/cua/**"
+      - "docs/content/docs/cua-cli/reference/**"
+      - "docs/content/docs/cua-sdk/reference/**"
+      # Fleets (libs/fleet mirror: client, swagger, Terraform provider) and
+      # Spaces (contract manifest) references.
+      - "libs/fleet/**"
+      - "docs/content/docs/fleets/reference/**"
+      - "docs/content/docs/fleets/guides/**"
+      - "docs/content/docs/spaces/reference/**"
+      # The shared image catalog and the hand-written pages with generated
+      # catalog regions (scripts/docs-generators/sandbox.ts).
+      - "libs/images/sandbox-images.json"
+      - "libs/images/bench/*/lock.json"
+      - "docs/content/docs/cua-sdk/quickstart.mdx"
+      - "docs/content/docs/start-here/sandbox-images.mdx"
       - ".github/workflows/ci-check-docs.yml"
       - ".gitattributes"
+  # Run every native check on demand, e.g. to produce the native Windows Driver
+  # MCP snapshot (artifact cua-driver-mcp-snapshot-windows) without a PR.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+concurrency:
+  group: ci-check-docs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Route once on Linux, then start only the generator rows this change can
+  # affect. Unaffected rows previously booted a macOS or Windows runner just to
+  # decide to skip.
+  scope:
+    name: Select affected generators
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      selected: ${{ steps.scope.outputs.selected }}
+    steps:
+      # The merge commit's first parent is the base, so two commits of history
+      # are enough to list exactly what the pull request changes.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - name: Install docs dependencies
+        run: pnpm --dir docs install --frozen-lockfile
+      - name: Test generator routing and ownership
+        run: |
+          node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts scripts/docs-generators/prose-style.test.ts scripts/docs-generators/lume.test.ts scripts/docs-generators/cua-cli.test.ts scripts/docs-generators/cli-mdx.test.ts scripts/docs-generators/cua-bench.test.ts scripts/docs-generators/reference-quality.test.ts scripts/docs-generators/cua-sdk.test.ts scripts/docs-generators/python-sdk.test.ts scripts/docs-generators/typescript-sdk.test.ts scripts/docs-generators/rust-crates.test.ts scripts/docs-generators/proto.test.ts scripts/docs-generators/fleet.test.ts scripts/docs-generators/spaces.test.ts
+      - name: Select affected generator rows
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            GENERATORS="cua-driver lume cua-bench sandbox cua-cli cua-sdk cua-sdk-python cua-sdk-ts cua-rust cua-proto fleet spaces"
+          else
+            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
+            GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
+          fi
+          echo "Selected generators: ${GENERATORS:-none}"
+          python3 - "$GENERATORS" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          rows = {
+              "cua-driver": [
+                  {"library": "cua-driver", "platform": "linux", "os": "ubuntu-latest"},
+                  {"library": "cua-driver", "platform": "macos", "os": "macos-latest"},
+                  {"library": "cua-driver", "platform": "windows", "os": "windows-latest"},
+              ],
+              "lume": [{"library": "lume", "platform": "macos", "os": "macos-latest"}],
+              "sandbox": [{"library": "sandbox", "platform": "linux", "os": "ubuntu-latest"}],
+          }
+          for library in ("cua-bench", "cua-cli", "cua-sdk", "cua-sdk-python", "cua-sdk-ts",
+                          "cua-rust", "cua-proto", "fleet", "spaces"):
+              rows[library] = [{"library": library, "platform": "linux", "os": "ubuntu-latest"}]
+          selected = sys.argv[1].split()
+          unknown = sorted(set(selected) - set(rows))
+          if unknown:
+              raise SystemExit(f"no Check Docs row for generator(s): {', '.join(unknown)}")
+          include = [row for key in selected for row in rows[key]]
+          print(f"matrix={json.dumps({'include': include})}")
+          print(f"selected={'true' if include else 'false'}")
+          PY
+
   native-reference:
     name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
+    needs: scope
+    if: needs.scope.outputs.selected == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - library: cua-driver
-            platform: linux
-            os: ubuntu-latest
-          - library: cua-driver
-            platform: macos
-            os: macos-latest
-          - library: cua-driver
-            platform: windows
-            os: windows-latest
-          - library: lume
-            platform: macos
-            os: macos-latest
-          - library: sandbox
-            platform: linux
-            os: ubuntu-latest
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
     steps:
+      # The generators read release tags to record the documented version.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The cua SDK generators build cua-sdk, cua-spaces-ffi and cua-bindgen
+      # in debug; with the restored cache that fills the hosted runner's disk
+      # ("No space left on device" linking libcua_spaces_ffi.a).
+      - name: Free disk space (cua SDK generators)
+        if: runner.os == 'Linux' && contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
+          df -h /
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - uses: pnpm/action-setup@v4
       - name: Install docs dependencies
         run: pnpm --dir docs install --frozen-lockfile
-      - name: Test generator routing and ownership
-        run: |
-          node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
-          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
-      - name: Select affected generator
-        id: scope
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          LIBRARY: ${{ matrix.library }}
-        run: |
-          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
-          GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
-          if [[ " $GENERATORS " == *" $LIBRARY "* ]]; then
-            echo "selected=true" >> "$GITHUB_OUTPUT"
-          fi
+      # The full generator suite runs once, on Linux, in the scope job; each
+      # row re-checks only the ownership and routing tests (the rest assume
+      # POSIX paths and line endings).
+      - name: Test generator ownership
+        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
+      # Restore the release build that CI: cua-driver contract clients saves
+      # from main. Its MCP discovery job installs the same toolchain, so the
+      # cache key matches. Pull requests never save.
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.library == 'cua-driver'
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        if: matrix.library == 'cua-driver'
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          shared-key: mcp-client-discovery
+          save-if: false
       - name: Install Linux build dependencies
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'linux' && matrix.library == 'cua-driver'
+        if: matrix.platform == 'linux' && matrix.library == 'cua-driver'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Install protoc (cua SDK generators)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain (cua SDK generators)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install the pinned nightly for rustdoc JSON (this job only)
+        if: matrix.library == 'cua-rust'
+        run: rustup toolchain install nightly-2026-09-20 --profile minimal
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        with:
+          workspaces: |
+            libs/cua
+            scripts/docs-generators/rustdoc-json
+          key: docs-${{ matrix.library }}
+      - name: Install Linux build dependencies (cua SDK)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
+            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libxrandr-dev libxi-dev libudev-dev
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+        if: contains(fromJSON('["cua-sdk-python","cua-bench"]'), matrix.library)
+      - name: Install the TypeScript SDK's dependencies (typedoc input)
+        if: matrix.library == 'cua-sdk-ts'
+        run: npm ci --ignore-scripts
+        working-directory: libs/cua/typescript
+      - name: Install buf
+        if: matrix.library == 'cua-proto'
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
       - name: Check generated reference
-        if: steps.scope.outputs.selected == 'true' && matrix.platform != 'windows'
+        if: matrix.platform != 'windows'
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
       - name: Check generated reference in PowerShell
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'windows'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
+      # Each host dumps only its own Driver MCP registry. Always publish this
+      # host's native snapshot (the check above already failed on drift), so a
+      # snapshot that could not be dumped elsewhere (Windows) can be committed
+      # from here: download cua-driver-mcp-snapshot-<platform>, copy it over
+      # scripts/docs-generators/cli-specs/, then regenerate the pages.
+      - name: Regenerate from the native dump (for the artifact)
+        id: native-dump
+        if: always() && matrix.library == 'cua-driver'
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver
+      - name: Upload the native Driver MCP snapshot
+        if: always() && steps.native-dump.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-mcp-snapshot-${{ matrix.platform }}
+          path: scripts/docs-generators/cli-specs/cua-driver-mcp-${{ matrix.platform }}.json
+          if-no-files-found: error
+      - name: Upload the regenerated reference
+        if: failure() && matrix.library == 'cua-driver'
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-cua-driver-reference-${{ matrix.platform }}
+          path: |
+            scripts/docs-generators/cli-specs/
+            docs/content/docs/cua-driver/reference/
       - name: Verify docs extraction preserves policy-filtered discovery
-        if: steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        if: matrix.library == 'cua-driver'
         run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts scripts/docs-generators/cua-driver-policy-binary.test.ts
 
   check-docs-sync:
     name: Check Documentation Sync
     if: always()
-    needs: native-reference
+    needs: [scope, native-reference]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Require native checks to pass
+      - name: Require routing and every selected check to pass
         env:
+          SCOPE: ${{ needs.scope.result }}
+          SELECTED: ${{ needs.scope.outputs.selected }}
           RESULT: ${{ needs.native-reference.result }}
-        run: test "$RESULT" = success
+        run: |
+          test "$SCOPE" = success
+          if [ "$SELECTED" = true ]; then
+            test "$RESULT" = success
+          else
+            echo "No generated reference is affected by this change."
+          fi

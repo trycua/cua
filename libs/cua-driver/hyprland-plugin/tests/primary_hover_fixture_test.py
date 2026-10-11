@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_active_primary_proof as proof
 
 

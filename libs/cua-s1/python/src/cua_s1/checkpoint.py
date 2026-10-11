@@ -47,9 +47,19 @@ def resolve_checkpoint_paths(directory_or_path: str | Path) -> tuple[Path, Path]
             "to a safetensors file plus JSON configuration in a trusted environment"
         )
     if suffix == ".safetensors":
-        return path, path.with_suffix(".json")
+        same_stem_config = path.with_suffix(".json")
+        if path.name == "model.safetensors":
+            canonical_config = path.with_name("config.json")
+            if canonical_config.exists() or not same_stem_config.exists():
+                return path, canonical_config
+        return path, same_stem_config
     if suffix == ".json":
-        return path.with_suffix(".safetensors"), path
+        same_stem_weights = path.with_suffix(".safetensors")
+        if path.name == "config.json":
+            canonical_weights = path.with_name("model.safetensors")
+            if canonical_weights.exists() or not same_stem_weights.exists():
+                return canonical_weights, path
+        return same_stem_weights, path
     if suffix:
         raise ValueError("checkpoint path must be a directory, .safetensors file, or .json file")
     return path / "model.safetensors", path / "config.json"

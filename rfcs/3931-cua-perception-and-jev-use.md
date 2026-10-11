@@ -3,8 +3,8 @@ title: Optional Cua Perception extension and jev-use boundary
 authors:
   - f-trycua
 created: 2026-09-17
-last_updated: 2026-09-18
-status: accepted
+last_updated: 2026-09-29
+status: completed
 discussion: https://github.com/trycua/cua/issues/3931
 rfc_pr: https://github.com/trycua/cua/pull/3934
 implementation:
@@ -19,6 +19,26 @@ implementation:
   - https://github.com/trycua/cua/pull/3941
   - https://github.com/trycua/cua/pull/3942
   - https://github.com/trycua/cua/pull/3943
+  - https://github.com/trycua/cua/pull/4071
+  - https://github.com/trycua/cua/pull/4072
+  - https://github.com/trycua/cua/pull/4074
+  - https://github.com/trycua/cua/pull/4040
+  - https://github.com/trycua/cua/pull/4075
+  - https://github.com/trycua/cua/pull/4174
+  - https://github.com/trycua/cua/pull/4180
+  - https://github.com/trycua/cua/pull/4206
+  - https://github.com/trycua/cua/pull/4222
+  - https://github.com/trycua/cua/pull/4296
+  - https://github.com/trycua/cua/pull/4192
+  - https://github.com/trycua/cua/pull/4322
+  - https://github.com/trycua/cua/pull/4190
+  - https://github.com/trycua/cua/pull/4325
+  - https://github.com/trycua/cua/pull/4176
+  - https://github.com/trycua/cua/pull/4196
+  - https://github.com/trycua/cua/pull/4228
+  - https://github.com/trycua/cua/pull/4251
+  - https://github.com/trycua/cua/pull/4255
+  - https://github.com/trycua/cua/pull/4266
 supersedes:
 superseded_by:
 ---
@@ -803,3 +823,45 @@ publication remains blocked pending legal and license review.
 Disposition: accepted. This decision does not authorize extension publication,
 a default-installer change, external `cua-som` deprecation, implementation pull-
 request merge, release, or deployment.
+
+## Implementation status
+
+Recorded on 2026-09-29. All exit gates in the test and acceptance plan have
+recorded evidence.
+
+Shipped:
+
+- [x] Driver capture registry, `parse_visual_regions`, the generic extension
+      lifecycle, and the optional Rust `cua-perception` worker (#3943).
+- [x] Release and license gates: the OmniParser detector is distributed as
+      AGPL-3.0-only and marked `release-verified` in the artifact lock, bundles
+      ship their license texts, SBOM, and corresponding source (#4071, #4074,
+      #4180), and the signing key was rotated (#4072).
+- [x] Publication through Release Please with no manual dispatch (#4174,
+      #4206, #4222). `cua-perception-v0.2.1` carries a signed catalog and
+      archive for macOS arm64, Linux x64, and Windows x64. The release gate
+      installed each catalog with the released Driver.
+- [x] Canonical desktop E2E on macOS, Windows, and Linux X11. The contract rows
+      use a deterministic worker (#4192). The published-catalog row installs
+      `cua-perception-v0.2.1` as `publisher-verified` and clicks an OCR region
+      on a visual-only canvas once with its `capture_id` (#4322). Wayland lanes
+      record an explicit coverage limitation.
+- [x] `jev-use`: the credential-free deterministic proof runs on all three
+      platforms against the released Driver (#4228, #4251). Live Jev passed
+      5/5 per host and language on the page-structure and visual paths on
+      Linux X11 and Windows 11 with the published extension (#4255, #4266,
+      evidence in #4190).
+- [x] Public documentation no longer describes either component as a preview
+      (#4190, #4325).
+- [x] Item 13 of the implementation plan: live-Jev source videos on macOS,
+      Windows, and Linux X11 with the released signed extension
+      (`cua-perception-v0.2.1`, `publisher-verified`), recorded during the
+      RFC 4268 Phase 3 matrix on `main` `3937539c0` with released Cua Driver
+      0.30.2 (#4298, #4301). Each clip runs the `canvas-cancel` task on the
+      visual-only canvas: live Jev picks one bounded candidate ID, Driver sends
+      one capture-bound click, and the fixture's own journal is the
+      independent postcondition. Live Jev passed 10/10 per platform (Python
+      and TypeScript). All three clips and a combined reel were fully decoded
+      without errors and inspected. The videos are kept with the maintainer
+      as private evidence and aren't published.
+

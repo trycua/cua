@@ -2,7 +2,7 @@
 
 Implements the 3-layer qcow2 chain:
 
-  base (OS + computer-server)  →  user overlay (layers)  →  session overlay (ephemeral)
+  base (OS + cua-spacesd)  →  user overlay (layers)  →  session overlay (ephemeral)
 
 Usage::
 
@@ -34,54 +34,66 @@ from cua_sandbox.image import Image
 
 logger = logging.getLogger(__name__)
 
-# computer-server setup script — ported from setup-cua-server.ps1
-# Runs inside the VM after first boot to install computer-server + scheduled task
-SETUP_COMPUTER_SERVER_PS1 = r'''
+# cua-spacesd release artifacts. The Linux name matches
+# libs/cua-spacesd/packaging/install.sh; the Windows name is a placeholder
+# until the release workflow publishes a Windows build.
+SPACESD_VERSION = "0.1.0"
+SPACESD_PORT = 3211
+SPACESD_RELEASE_URL = (
+    "https://github.com/trycua/cua/releases/download/"
+    "cua-spacesd-v{version}/cua-spacesd-{target}.{ext}"
+)
+
+# Base-layer setup for Windows: runs inside the VM at first logon to install
+# cua-spacesd and a hidden logon task serving 0.0.0.0:3211. The token lives
+# in C:\ProgramData\cua\env-token (generated) and reaches the driver through
+# the environment, never the command line.
+SETUP_SPACESD_PS1 = (
+    r'''
 $ErrorActionPreference = 'Continue'
 
-# Install UV
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-$uvPath = Join-Path $env:USERPROFILE ".local\bin"
-$env:Path = "$uvPath;$env:Path"
+$Version = '__VERSION__'
+$Port = '__PORT__'
+$InstallDir = 'C:\Program Files\cua-spacesd'
+$DataDir = 'C:\ProgramData\cua'
+$TokenFile = Join-Path $DataDir 'env-token'
+$Url = '__WINDOWS_URL__'
 
-# Create UV project
-$ProjectDir = Join-Path $env:USERPROFILE "cua-server"
-if (!(Test-Path (Join-Path $ProjectDir "pyproject.toml"))) {
-    New-Item -ItemType Directory -Force -Path $ProjectDir | Out-Null
-    & uv init --vcs none --no-readme --no-workspace --no-pin-python $ProjectDir
+New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir | Out-Null
+$zip = Join-Path $env:TEMP 'cua-spacesd.zip'
+for ($i = 1; $i -le 5; $i++) {
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $InstallDir -Force
+        break
+    } catch { Start-Sleep -Seconds ($i * 5) }
+}
+$Exe = Join-Path $InstallDir 'cua-spacesd.exe'
+
+if (!(Test-Path $TokenFile)) {
+    $bytes = New-Object byte[] 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    Set-Content -Path $TokenFile -Value (($bytes | ForEach-Object { $_.ToString('x2') }) -join '') -NoNewline -Encoding ASCII
 }
 
-# Install cua-computer-server (no agent — VM only needs automation server)
-& uv add --directory $ProjectDir cua-computer-server
+netsh advfirewall firewall add rule name="cua-spacesd $Port" dir=in action=allow protocol=TCP localport=$Port
 
-# Install playwright + firefox
-& uv add --directory $ProjectDir playwright
-& uv run --directory $ProjectDir playwright install firefox
-
-# Firewall rule for port 8000
-netsh advfirewall firewall add rule name="CUA Computer Server" dir=in action=allow protocol=TCP localport=8000
-
-# Create start script
-$StartScript = Join-Path $ProjectDir "start-server.ps1"
+$StartScript = Join-Path $InstallDir 'start-spacesd.ps1'
 @"
-`$env:PYTHONUNBUFFERED = '1'
-`$uvPath = Join-Path `$env:USERPROFILE '.local\bin'
-`$env:Path = "`$uvPath;`$env:Path"
+`$env:CUA_ENV_TOKEN = (Get-Content -Raw '$TokenFile').Trim()
 while (`$true) {
-    & uv run --directory '$ProjectDir' python -m computer_server --port 8000
+    & '$Exe' --listen '0.0.0.0:$Port'
     Start-Sleep -Seconds 5
 }
 "@ | Set-Content -Path $StartScript -Encoding UTF8
 
-# VBScript wrapper for hidden execution
-$VbsWrapper = Join-Path $ProjectDir "start-server-hidden.vbs"
+$VbsWrapper = Join-Path $InstallDir 'start-spacesd-hidden.vbs'
 @"
 Set objShell = CreateObject("WScript.Shell")
 objShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$StartScript""", 0, False
 "@ | Set-Content -Path $VbsWrapper -Encoding ASCII
 
-# Scheduled task at logon
-$TaskName = "Cua-Computer-Server"
+$TaskName = "Cua-Spacesd"
 $Username = $env:USERNAME
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing) { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false }
@@ -98,56 +110,67 @@ $Settings = New-ScheduledTaskSettingsSet `
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger `
     -Principal $Principal -Settings $Settings -Force | Out-Null
 
-# Start the server now too
+# Start the driver now too
 Start-Process wscript.exe -ArgumentList "`"$VbsWrapper`""
 
-Write-Host "CUA Computer Server setup complete"
-'''
+Write-Host "cua-spacesd setup complete"
+'''.replace("__VERSION__", SPACESD_VERSION)
+    .replace("__PORT__", str(SPACESD_PORT))
+    .replace(
+        "__WINDOWS_URL__",
+        SPACESD_RELEASE_URL.format(
+            version=SPACESD_VERSION, target="x86_64-pc-windows-msvc", ext="zip"
+        ),
+    )
+)
 
-# Linux equivalent
-SETUP_COMPUTER_SERVER_SH = r"""#!/bin/bash
+# Linux equivalent: install the release tarball and a systemd unit on :3211.
+SETUP_SPACESD_SH = r"""#!/bin/bash
 set -e
 
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
+VERSION="${CUA_SPACESD_VERSION:-${CUA_GUESTD_VERSION:-${CUA_ENV_DRIVER_VERSION:-__VERSION__}}}"
+PORT="${CUA_ENV_PORT:-__PORT__}"
+case "$(uname -m)" in
+    x86_64|amd64) ARCH=x86_64 ;;
+    aarch64|arm64) ARCH=aarch64 ;;
+    *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
+URL="https://github.com/trycua/cua/releases/download/cua-spacesd-v${VERSION}/cua-spacesd-${ARCH}-unknown-linux-gnu.tar.gz"
+curl -fsSL "$URL" | sudo tar -xz -C /usr/local/bin cua-spacesd
+sudo chmod 0755 /usr/local/bin/cua-spacesd
+sudo ln -sfn cua-spacesd /usr/local/bin/cua-guestd  # older names, one release
+sudo ln -sfn cua-spacesd /usr/local/bin/cua-env-driver
 
-# Create uv project
-mkdir -p ~/cua-server
-cd ~/cua-server
-[ -f pyproject.toml ] || uv init --vcs none --no-readme --no-workspace --no-pin-python .
+sudo install -d -m 0755 /etc/cua
+if [ ! -s /etc/cua/env-token ]; then
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | sudo tee /etc/cua/env-token >/dev/null
+fi
+sudo chown root:"$USER" /etc/cua/env-token
+sudo chmod 0640 /etc/cua/env-token
 
-# Install cua-computer-server
-uv add cua-computer-server "cua-agent[all]"
-
-# Install playwright + firefox
-uv add playwright
-uv run playwright install firefox
-
-# Create systemd service
-sudo tee /etc/systemd/system/cua-computer-server.service > /dev/null <<UNIT
+sudo tee /etc/systemd/system/cua-spacesd.service > /dev/null <<UNIT
 [Unit]
-Description=CUA Computer Server
+Description=cua-spacesd (in-sandbox daemon, :$PORT)
 After=network.target
 
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$HOME/cua-server
-ExecStart=$HOME/.local/bin/uv run python -m computer_server --port 8000
+ExecStart=/bin/sh -c 'CUA_ENV_TOKEN="\$(cat /etc/cua/env-token)" exec /usr/local/bin/cua-spacesd --listen 0.0.0.0:$PORT'
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
+Alias=cua-env-driver.service
+Alias=cua-guestd.service
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now cua-computer-server
+sudo systemctl enable --now cua-spacesd
 
-echo "CUA Computer Server setup complete"
-"""
+echo "cua-spacesd setup complete"
+""".replace("__VERSION__", SPACESD_VERSION).replace("__PORT__", str(SPACESD_PORT))
 
 
 async def ensure_base_image(
@@ -158,7 +181,7 @@ async def ensure_base_image(
     product_key: Optional[str] = None,
     force: bool = False,
 ) -> Path:
-    """Ensure the base image (OS + computer-server) exists. Build if needed.
+    """Ensure the base image (OS + cua-spacesd) exists. Build if needed.
 
     Returns the path to the base qcow2.
     """
@@ -195,7 +218,7 @@ async def _build_windows_base(
     windows_iso: Optional[str],
     product_key: Optional[str],
 ) -> Path:
-    """Build Windows base: unattend install + computer-server."""
+    """Build Windows base: unattend install + cua-spacesd."""
     from cua_sandbox.registry.qemu_builder import (
         QEMUImageConfig,
         build_image,
@@ -209,28 +232,15 @@ async def _build_windows_base(
         config, windows_iso=windows_iso, work_dir=work_dir, product_key=product_key
     )
 
-    # Phase 2: Boot and install computer-server
-    logger.info("Installing computer-server into base image...")
-    # Boot the raw disk to install computer-server
-    # First we need to boot without expecting computer-server (it's not installed yet)
-    # We use a temporary overlay so we can retry if needed
+    # Phase 2: cua-spacesd is installed by the Autounattend FirstLogonCommand
+    # (SETUP_SPACESD_PS1 on the unattend ISO) during the install above.
+    logger.info("Finalizing base image with cua-spacesd...")
     import shutil
 
     temp_disk = work_dir / "temp-boot.qcow2"
     shutil.copy2(raw_disk, temp_disk)
 
-    # Boot and wait for Windows to be accessible (but not computer-server — it's not installed)
-    # We need to wait for Windows to boot then run the setup script
-    # This is tricky because we don't have computer-server yet...
-    # Use QMP or VNC to inject the setup script, or use the virtio-serial approach
-    #
-    # For now: the Autounattend.xml should include a FirstLogonCommand that
-    # downloads and runs the setup script. Let's add that to the builder.
-    logger.info(
-        "Base image built at %s. Computer-server must be installed via "
-        "Autounattend FirstLogonCommand or manual VNC session.",
-        raw_disk,
-    )
+    logger.info("Base image built at %s (cua-spacesd via FirstLogonCommand).", raw_disk)
 
     # Move the built disk to the base path
     base_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,7 +250,7 @@ async def _build_windows_base(
 
 
 async def _build_linux_base(version: str, base_path: Path) -> Path:
-    """Build Linux base: install from cloud image + computer-server."""
+    """Build Linux base: install from cloud image + cua-spacesd."""
     raise NotImplementedError("Linux base image building not yet implemented")
 
 
@@ -326,7 +336,7 @@ async def build_user_image(
     """Build a user image by applying Image layers on top of the base.
 
     Creates a qcow2 overlay backed by base_path, boots it, runs all layers
-    via computer-server, then shuts down. The overlay is the user image.
+    through cua-spacesd, then shuts down. The overlay is the user image.
 
     Returns the path to the user image qcow2.
     """
@@ -349,17 +359,23 @@ async def build_user_image(
     # Boot the overlay and execute layers
     from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
 
-    runtime = QEMUBaremetalRuntime(api_port=18098, memory_mb=8192, cpu_count=4)
+    # The legacy launcher boots user_path in place, so the layers land in it
+    # (the SDK backend would put a throwaway instance overlay on top).
+    runtime = QEMUBaremetalRuntime(api_port=18098, memory_mb=8192, cpu_count=4, use_sdk=False)
 
     build_image = Image.from_file(str(user_path), os_type=image.os_type)
     try:
         info = await runtime.start(build_image, f"cua-build-{lhash}")
 
-        # Execute layers via computer-server. os_type matters: the executor wraps
-        # `run` commands per-OS (sudo bash on Linux, plain cmd on Windows).
+        # Execute layers through cua-spacesd (baked into the base image).
+        # os_type matters: the executor wraps `run` commands per-OS (sudo bash
+        # on Linux, plain cmd on Windows). The driver starts late on a fresh
+        # boot, so the executor waits for it.
         from cua_sandbox.builder.executor import LayerExecutor
 
-        executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
+        executor = LayerExecutor(
+            f"http://{info.host}:{info.api_port}", os_type=image.os_type, ready_timeout=900
+        )
 
         # Env first, so copied files and run layers can reference the variables.
         await _apply_env(executor, image)
@@ -415,13 +431,16 @@ async def resolve_backing_disk(image: Image) -> Path:
 
     ref = cloud_registry_image(image)
     if ref is not None:
-        from cua_sandbox.registry.container_disk import pull_container_disk
+        from cua_sandbox._sdk import local_runtime, native
 
         logger.info(f"Resolving containerDisk {ref} for local session...")
+        n = native()
         try:
-            # Network + multi-GB extraction: keep it off the event loop.
-            return await asyncio.to_thread(pull_container_disk, ref)
-        except FileNotFoundError as exc:
+            # The SDK resolves the VM variant (a canonical image's -disk
+            # sibling), pulls it into its image cache and returns the disk.
+            pulled = await local_runtime().local().pull_image(f"vm:{ref}")
+            return Path(pulled.location)
+        except (n.CuaError.Unsupported, n.CuaError.NotFound) as exc:
             # Not a containerDisk (e.g. a lume/tart/qemu-format VM image) — fall back.
             logger.info(f"{ref} is not a containerDisk ({exc}); falling back to base image")
 

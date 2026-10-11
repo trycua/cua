@@ -1,0 +1,14 @@
+[Unit]
+Description=bench-web-ctl (HTTP API over CDP on :7000)
+After=network.target bench-web-chromium.service
+
+[Service]
+Type=simple
+User=cua
+Environment=HOME=/home/cua
+ExecStart=/opt/bench-web/venv/bin/python /opt/bench-web/bench-web-ctl.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

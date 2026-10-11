@@ -1,10 +1,15 @@
 name: "CD: Cua Driver Reference Docs"
 
-# On a cua-driver release tag, regenerate the auto-generated reference MDX
-# (cli-reference.mdx + mcp-tools.mdx) from the released binary's `dump-docs`
-# output and open a PR with the refresh. This keeps the shipped reference in
-# lockstep with the released binary's CLI/MCP surface without a human having
-# to remember to run `pnpm docs:generate:cua-driver` after every cut.
+# On a cua-driver release tag, regenerate the auto-generated reference
+# (docs/content/docs/cua-driver/reference/) from native `dump-docs` output and
+# open a PR with the refresh. This keeps the shipped reference in lockstep with
+# the released CLI/MCP surface without a human having to remember to run
+# `pnpm docs:generate:cua-driver` after every cut.
+#
+# The MCP tool registry differs per OS and only a native build can dump it, so
+# the macOS and Windows jobs each dump their own registry snapshot
+# (scripts/docs-generators/cli-specs/cua-driver-mcp-<platform>.json) and the
+# Linux job dumps its own, drops the other two in, and renders every page.
 #
 # A PR (rather than a direct push to main) keeps a human in the loop for the
 # generated-content diff. The App token mirrors the identity the version-bake
@@ -20,10 +25,58 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
+  native-snapshot:
+    name: Dump the ${{ matrix.platform }} MCP registry
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-latest
+          - platform: windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for git-tag version discovery
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install docs dependencies
+        run: pnpm --dir docs install --frozen-lockfile
+
+      - name: Regenerate this platform's snapshot (builds cua-driver)
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver
+
+      - name: Upload the native snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-mcp-snapshot-${{ matrix.platform }}
+          path: scripts/docs-generators/cli-specs/cua-driver-mcp-${{ matrix.platform }}.json
+          if-no-files-found: error
+
   regenerate-reference-docs:
     name: Regenerate cua-driver reference
-    runs-on: macos-latest
+    needs: native-snapshot
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,21 +90,30 @@ jobs:
           node-version: "20"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Install docs dependencies
-        run: pnpm install
-        working-directory: docs
+        run: pnpm --dir docs install --frozen-lockfile
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
 
-      - name: Build cua-driver (release)
-        run: cargo build -p cua-driver --release
-        working-directory: libs/cua-driver/rust
+      - name: Take the native macOS and Windows snapshots
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cua-driver-mcp-snapshot-*
+          merge-multiple: true
+          path: scripts/docs-generators/cli-specs
 
-      - name: Regenerate reference docs
-        run: npx tsx scripts/docs-generators/runner.ts --library cua-driver
+      - name: Regenerate the Linux snapshot and every page
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver
 
       - name: Generate GitHub App token
         id: app-token
@@ -66,7 +128,14 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if git diff --quiet -- docs/content/docs/reference/cua-driver; then
+          PATHS=(
+            docs/content/docs/cua-driver/reference
+            scripts/docs-generators/cli-specs/cua-driver.json
+            scripts/docs-generators/cli-specs/cua-driver-mcp-macos.json
+            scripts/docs-generators/cli-specs/cua-driver-mcp-linux.json
+            scripts/docs-generators/cli-specs/cua-driver-mcp-windows.json
+          )
+          if git diff --quiet -- "${PATHS[@]}"; then
             echo "Reference docs already up to date; nothing to open."
             exit 0
           fi
@@ -82,11 +151,11 @@ jobs:
           git config user.name  "trycua-release[bot]"
           git config user.email "trycua-release[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
-          git add docs/content/docs/reference/cua-driver
+          git add -- "${PATHS[@]}"
           git commit -m "docs(cua-driver): regenerate reference for ${GITHUB_REF_NAME}"
           git push -u origin "$BRANCH" --force-with-lease
 
           gh pr create --base main --head "$BRANCH" \
             --title "docs(cua-driver): regenerate reference for ${GITHUB_REF_NAME}" \
-            --body "Auto-generated from \`cua-driver dump-docs\` at \`${GITHUB_REF_NAME}\` by the cua-driver reference-docs workflow. Only the auto-generated \`cli-reference.mdx\` and \`mcp-tools.mdx\` change; the hand-maintained sibling files are untouched." \
+            --body "Auto-generated from native \`cua-driver dump-docs\` output on macOS, Linux and Windows at \`${GITHUB_REF_NAME}\` by the cua-driver reference-docs workflow. Only the generated reference pages and the cli-specs snapshots change." \
             || echo "PR already exists for ${BRANCH}; the push updated it."

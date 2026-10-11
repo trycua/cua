@@ -1,0 +1,202 @@
+---
+title: Drive a browser
+description: Bind a browser window, snapshot its tab, and navigate, click, and type without raising it; attach to a logged-in Chrome or Edge profile.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The `browser_*` tools act inside Chromium and Electron pages through the Chrome
+DevTools Protocol (CDP), bound to the exact native window you picked. They
+reach an occluded tab without moving the real cursor or taking keyboard focus.
+Safari, Firefox, Tauri, WKWebView, WebKitGTK, and split-process WebView2 hosts
+return `browser_route_unavailable`; use the native
+[accessibility and pixel actions](/cua-driver/concepts/how-cua-driver-works)
+there.
+
+<VideoDemo
+  className="my-8"
+  src="https://github.com/user-attachments/assets/46f4be37-92c2-4360-bc20-bde35401bc71"
+  poster="https://github.com/user-attachments/assets/bcbe275a-9b37-4432-9f76-124d88574f6a"
+  title="Chrome remains behind the agent terminal"
+  sourceUrl="https://x.com/trycua/status/2047383209244287350"
+>
+  Claude Code starts a YouTube video in Chrome without raising the browser window.
+</VideoDemo>
+
+## Bind and snapshot
+
+Browser capabilities belong to a named session. Pick the window with
+`list_apps` and `list_windows`, then bind it:
+
+```jsonc skip="pseudo"
+start_session({"session": "research-1"})
+get_browser_state({"pid": 844, "window_id": 10725, "session": "research-1"})
+```
+
+Keep the returned opaque `target_id` and the `tab_id` whose `active` is `true`.
+`active: null` means the window title cannot tell tabs apart: choose a tab
+explicitly. Mutation needs `binding_quality: "exact"`.
+
+Snapshot the tab, then act only on returned refs:
+
+```jsonc skip="pseudo"
+get_browser_state({
+  "target_id": "<target_id>", "tab_id": "<tab_id>",
+  "session": "research-1", "snapshot_format": "semantic_v2"
+})
+```
+
+A `semantic_v2` snapshot returns an `outline` of visible content, action
+`refs` (each lists `click`, `type`, `upload`, or `pointer` in `actions`), and
+read-only `content_refs` for `scope_ref`. Narrow it with `query` or
+`scope_ref`; follow `snapshot.continuation` for the next segment. Refs die on
+a newer snapshot, navigation, or reconnect: snapshot again after
+`browser_ref_stale`.
+
+## Act
+
+```jsonc skip="pseudo"
+browser_click({"target_id": "<target_id>", "tab_id": "<tab_id>", "ref": "p1:7", "session": "research-1"})
+browser_type({"target_id": "<target_id>", "tab_id": "<tab_id>", "ref": "p2:3", "text": "status: ready", "replace": true, "session": "research-1"})
+browser_navigate({"target_id": "<target_id>", "tab_id": "<tab_id>", "url": "https://example.com", "session": "research-1"})
+end_session({"session": "research-1"})
+```
+
+| Tool | Notes |
+| --- | --- |
+| `browser_click` | Trusted CDP input by default. Works fully in the background for Chrome and Edge on Windows; macOS and Linux return `browser_input_trust_unavailable` because the browser would activate. Pass `input_route: "dom_event"` for a synthetic DOM click that stays in the background but returns `effect: "unverifiable"`. |
+| `browser_type` | `insert_text` by default; `mode: "keystrokes"` for per-key events; `replace: true` to overwrite. |
+| `browser_pointer` | `hover`, `right_click`, `double_click`, `scroll`, `drag` (with `destination_ref` in the same frame). |
+| `browser_dialog` | `inspect`, then `accept` or `dismiss` the returned `dialog_id`. Linux needs `delivery_mode: "foreground"`. |
+| `browser_set_input_files` | Absolute paths to regular files (max 32), on a ref with `upload`. |
+| `browser_download` | Into an existing absolute `destination_root` that your policy admits. Returns only a byte count and id. |
+| `browser_navigate` | Invalidates every ref on the tab. |
+
+Verify the result with a fresh snapshot. The driver never falls back from
+trusted input to a DOM event, or foregrounds the browser, to make a call look
+successful.
+
+## Use an isolated browser
+
+When `get_browser_state` returns `browser_requires_setup`, start a separate
+driver-owned Chromium profile. It never touches the person's profile:
+
+```jsonc skip="pseudo"
+browser_prepare({
+  "pid": 844, "session": "research-1", "allow_launch": true,
+  "profile": {"mode": "isolated_new"}
+})
+```
+
+Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
+deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`
+to keep it. Do not pass remote-debugging flags through `launch_app`: they are
+refused.
+
+## Attach to a logged-in profile
+
+Use an existing Chrome or Edge profile only when the task needs its signed-in
+session, on a trusted machine. CDP exposes that profile's pages, cookies, and
+storage, and loopback is not authentication: other processes running as the
+same user can reach an open endpoint.
+
+Relaunching the browser yourself with `--remote-debugging-port` does not reach
+that profile. Chrome and Edge ignore the flag on their default user-data
+directory: no listener opens and no `DevToolsActivePort` file is written. The
+flag works only with a different `--user-data-dir`, which is a different,
+signed-out profile. The browser's own remote-debugging switch, which
+`browser_prepare` drives below, is the route into the real profile.
+
+<Callout type="warn">
+  Attachment is an explicit boundary. It needs `--grant existing-profile` at launch (standard),
+  a manifest entry `kind: existing_profile` (bounded), an embedding host's authorization callback,
+  or unrestricted mode. A tool argument or MCP approval cannot grant it.
+</Callout>
+
+A bounded manifest for this (on Windows and Linux, use Chrome's absolute
+`executable` path instead of `bundle_id`):
+
+```yaml test="config" id="yaml-config"
+version: 3
+expires_after: 2h
+idle_timeout: 20m
+
+resources:
+  apps:
+    - bundle_id: com.google.Chrome
+      launch: false
+      windows: all
+      terminate: deny
+  browser:
+    profiles:
+      - kind: existing_profile
+    origins:
+      - https://app.example.com
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - get_browser_state
+    - browser_prepare
+    - browser_navigate
+    - browser_click
+    - browser_type
+```
+
+```bash test="cli-shape" id="cua-driver-serve-bounded"
+cua-driver serve \
+  --permission-mode bounded \
+  --capability-manifest ./browser-session.yaml \
+  --approve-capability-manifest
+```
+
+For a standalone standard-mode launch instead, use
+`cua-driver mcp --grant existing-profile` or
+`cua-driver serve --grant existing-profile`. Then request the exact window:
+
+```jsonc skip="pseudo"
+browser_prepare({
+  "pid": 844, "window_id": 10725, "session": "research-1",
+  "strategy": {"kind": "existing_profile"}
+})
+```
+
+If the browser has no DevTools endpoint, the driver opens a temporary tab at
+`chrome://inspect/#remote-debugging` (or `edge://…`), turns on **Allow remote
+debugging for this browser instance**, proves the new listener is loopback and
+owned by that process, and closes the tab. It presses only the browser's own
+consent button. On Chrome 144 and later it connects through the running
+profile's auto-connect endpoint. It never restarts, copies, or edits the
+profile. The result's `side_effects` reports what it did (for example
+`enabled_remote_debugging`, `foregrounded_window`). On macOS, if Chrome hides
+that page's accessibility tree, a bounded pixel click on the setup page may
+briefly foreground the approved window and then restore focus.
+
+After `attached_existing_profile`, bind again with `get_browser_state`; old
+ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
+8 hours, and ends with the session or runtime. Ending the session does not turn
+off Chrome's remote-debugging setting; do that in Chrome.
+
+Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
+Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
+with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
+
+## Refusals
+
+| Code | Meaning |
+| --- | --- |
+| `browser_requires_setup` | No approved endpoint: call `browser_prepare`. |
+| `browser_consent_required` | Existing profile without a grant, host approval, or matching manifest. |
+| `browser_consent_revoked` | The host denied, or the browser's prompt was dismissed. |
+| `browser_ref_stale`, `browser_binding_stale` | Snapshot or bind again. |
+| `browser_wrong_target_refused`, `browser_endpoint_owner_mismatch` | Window, prompt, or endpoint identity is not exact. |
+| `browser_input_trust_unavailable` | Trusted input would activate the browser; use `input_route: "dom_event"` if acceptable. |
+| `browser_route_unavailable` | No typed route for this engine or platform. |
+| `browser_origin_outside_scope` | The tab left the manifest's origins; mutation pauses. |
+| `browser_action_unavailable` | The ref does not declare the needed action. |
+
+The legacy `page` tool keeps its read-only `get_text` and `query_dom` actions.
+Its mutation actions need `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` at daemon
+start and skip the typed tools' binding and consent checks; migrate to
+`browser_*`.

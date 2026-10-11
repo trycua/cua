@@ -10,13 +10,13 @@
 use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
-use cua_driver_core::element_cache::{current_runtime_cache, register_runtime_cache};
+use cua_driver_core::snapshot_store::{current_runtime_store, register_runtime_store};
 
 #[cfg(target_os = "windows")]
-use crate::uia::cache::{CachedSnapshot, SnapshotKind};
+use crate::uia::snapshot::{SnapshotKind, UiaSnapshot};
 
 #[cfg(target_os = "windows")]
-use crate::uia::ElementCache;
+use crate::uia::Snapshots;
 
 use cua_driver_core::recording::ScreenshotCapture;
 
@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
-pub fn set_element_cache(cache: Arc<ElementCache>) {
-    register_runtime_cache(&cache);
+pub fn set_snapshots(cache: Arc<Snapshots>) {
+    register_runtime_store(&cache);
 }
 
 /// Resolve the window whose application evidence should be captured. Keep a
@@ -96,27 +96,41 @@ pub(crate) fn capture_dispatch_click_target(window_id: u64, pid: u32, x: i32, y:
 }
 
 #[cfg(target_os = "windows")]
-pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+/// Per-turn application state for trajectory recording, walked under the
+/// shared `get_window_state` budget. The walk reports the shared walk fields so
+/// the turn evidence says when the tree is partial. UIA's bulk cache fetch is
+/// not interruptible per node; the recorder's backstop bounds it.
+pub fn app_state_json_for(
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
-    let result = crate::uia::walk_tree(hwnd, None);
+    let mut walk = cua_driver_core::walk_budget::WalkBudget::new(
+        budget.timeout_ms,
+        crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
+    );
+    let result =
+        crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
     let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
         SnapshotKind::Msaa
     } else {
         SnapshotKind::Uia
     };
-    let _native_payload = CachedSnapshot::from_nodes(&result.nodes, kind);
+    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
     let element_count = result
         .nodes
         .iter()
         .filter(|n| n.element_index.is_some())
         .count();
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "pid": pid,
         "window_id": hwnd,
         "element_count": element_count,
         "tree_markdown": result.tree_markdown,
     });
+    walk.outcome().apply(&mut payload);
     serde_json::to_vec_pretty(&payload).ok()
 }
 
@@ -126,24 +140,11 @@ pub fn element_window_local_xy(
     args: &serde_json::Value,
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
-    let cache = current_runtime_cache::<CachedSnapshot>()?;
+    let cache = current_runtime_store::<UiaSnapshot>()?;
     let pid_u32 = u32::try_from(pid).ok()?;
-    let resolved = cache
-        .resolve_element_args(
-            pid_u32 as i32,
-            args.get("element_index")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize),
-            args.get("element_token").and_then(|value| value.as_str()),
-            args.get("snapshot_id").and_then(|value| value.as_str()),
-            args.get("window_id").and_then(|value| value.as_u64()),
-            "recording",
-        )
-        .ok()?;
+    let resolved = cache.resolve(pid_u32 as i32, args).ok()?;
     let cua_driver_core::element_token::ResolvedElement::Element {
-        window_id: Some(window_id),
-        element,
-        ..
+        window_id, element, ..
     } = resolved
     else {
         return None;
@@ -165,7 +166,11 @@ pub fn element_window_local_xy(
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn app_state_json_for(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {
+pub fn app_state_json_for(
+    _window_id: Option<u64>,
+    _pid: Option<i64>,
+    _budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     None
 }
 #[cfg(not(target_os = "windows"))]

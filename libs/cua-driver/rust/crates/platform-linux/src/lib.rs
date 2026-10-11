@@ -10,15 +10,27 @@
 //! Wayland: falls back to xdg-output and virtual-keyboard protocols when
 //! running under a Wayland compositor with XWayland support.
 
+// Off Linux the crate still builds (so workspace-wide checks compile on every
+// host) but its native backends are cfg'd out, which strands the shared
+// helpers they call. They are live on Linux, where dead_code stays enforced.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// Tool helpers return `Result<_, ToolResult>`: the error arm is the finished
+// tool reply (see the note in cua-driver-core), not a propagated error.
+#![allow(clippy::result_large_err)]
+
 use cua_driver_core::tool::ToolRegistry;
 
 pub mod health_report;
 pub mod overlay;
+pub mod overlay_capture;
 pub mod pip;
 pub mod tools;
 
 #[cfg(target_os = "linux")]
 pub mod x11;
+
+#[cfg(any(target_os = "linux", test))]
+mod x11_client_pid;
 
 #[cfg(target_os = "linux")]
 pub mod input;
@@ -46,6 +58,7 @@ pub mod installed_apps;
 
 #[cfg(target_os = "linux")]
 pub mod capture;
+mod capture_action_frame;
 #[cfg(target_os = "linux")]
 mod clipboard;
 
@@ -67,15 +80,89 @@ pub mod video_wayland;
 #[cfg(target_os = "linux")]
 pub mod wayland;
 
+// Pure AT-SPI role / X cursor name tables for presence cursor shapes; tested
+// on every host.
+pub mod pointer_shape_map;
+
+#[cfg(target_os = "linux")]
+pub mod pointer_shape;
+
+/// Install the Linux [`cua_driver_core::pointer_shape::PointerShapeBackend`]
+/// (and the X11 real-cursor probe for `cursor_shape`). False off Linux, when
+/// no display is reachable, or when a backend is already installed.
+pub fn install_pointer_shape_backend() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        pointer_shape::install()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 // `terminal` is OS-independent (pure string matching + a thin x11 hook).
 // Keeping it un-gated lets the unit tests run on any host.
 pub mod terminal;
+
+// Pure background pixel-click routing facts; un-gated so their unit tests run
+// on every host.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod at_point_policy;
 
 #[cfg(target_os = "linux")]
 pub mod xauth;
 
 #[cfg(target_os = "linux")]
 pub mod session_bus;
+
+/// Process-environment overrides for unit tests. Every lib test that changes
+/// display variables must go through [`test_env::unreachable_x11_display`] so
+/// writers are serialized and the prior values are restored even on panic.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod test_env {
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct DisplayOverride {
+        display: Option<OsString>,
+        wayland_display: Option<OsString>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    /// Point `DISPLAY` at a server that cannot exist and hide
+    /// `WAYLAND_DISPLAY`, so the X11 path is taken and its connect fails
+    /// regardless of the host session.
+    pub(crate) fn unreachable_x11_display() -> DisplayOverride {
+        let lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = DisplayOverride {
+            display: std::env::var_os("DISPLAY"),
+            wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+            _lock: lock,
+        };
+        std::env::set_var("DISPLAY", ":9999999");
+        std::env::remove_var("WAYLAND_DISPLAY");
+        guard
+    }
+
+    impl Drop for DisplayOverride {
+        fn drop(&mut self) {
+            for (name, value) in [
+                ("DISPLAY", self.display.take()),
+                ("WAYLAND_DISPLAY", self.wayland_display.take()),
+            ] {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+}
 
 /// Pure WSL-detection predicate, split out from [`is_wsl`] so both branches
 /// are unit-testable without the process-global env / `OnceLock` cache.

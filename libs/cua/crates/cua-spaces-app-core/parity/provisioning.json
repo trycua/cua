@@ -1,0 +1,57 @@
+{
+  "name": "provisioning",
+  "about": "New Spaces show the instant a create starts, follow the SDK's create progress (sidebar ring and percentage, notch activity and tile, the detail), a failure stays inline until dismissed (a create the local daemon could not take says the daemon is not running, not a raw transport error; a cloud create Fleet refused for want of credit says so in one line with Add credit and the billing page), and a finished create hands over to the registry row without a gap or a duplicate.",
+  "now": 1800000000000,
+  "rows": [
+    {
+      "id": "local:demo",
+      "name": "0123456789ab",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2027-01-15T08:00:00Z",
+      "os": "linux",
+      "reachable": true
+    }
+  ],
+  "creates": [
+    { "type": "start", "id": "pending:1", "name": "", "os": "linux", "provider": "local", "now": 1800000001000 },
+    { "type": "progress", "id": "pending:1", "phase": "preparing", "fraction": null },
+    { "type": "progress", "id": "pending:1", "phase": "pulling", "fraction": 0.5 },
+    { "type": "start", "id": "pending:2", "name": "Mac", "os": "macos", "provider": "local", "now": 1800000002000 },
+    { "type": "progress", "id": "pending:2", "phase": "creating", "fraction": null },
+    { "type": "progress", "id": "pending:1", "phase": "booting", "fraction": null },
+    { "type": "fail", "id": "pending:2", "error": "no macOS image is configured" },
+    { "type": "progress", "id": "pending:1", "phase": "connecting", "fraction": null },
+    { "type": "finish", "id": "pending:1", "spaceId": "local:fresh" },
+    { "type": "dismiss", "id": "pending:2" },
+    { "type": "start", "id": "pending:3", "name": "Omarchy", "os": "linux", "provider": "cloud", "now": 1800000003000 },
+    { "type": "fail", "id": "pending:3", "error": "transport: Connection refused (os error 61)" },
+    { "type": "dismiss", "id": "pending:3" },
+    { "type": "start", "id": "pending:4", "name": "Cloud", "os": "linux", "provider": "cloud", "now": 1800000004000 },
+    { "type": "fail", "id": "pending:4", "error": "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing" },
+    { "type": "dismiss", "id": "pending:4" }
+  ],
+  "refreshed": [
+    {
+      "id": "local:demo",
+      "name": "0123456789ab",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2027-01-15T08:00:00Z",
+      "os": "linux",
+      "reachable": true
+    },
+    {
+      "id": "local:fresh",
+      "name": "fresh",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": ["desktop_stream"],
+      "addedAt": "2027-01-15T08:01:00Z",
+      "os": "linux",
+      "reachable": true
+    }
+  ]
+}

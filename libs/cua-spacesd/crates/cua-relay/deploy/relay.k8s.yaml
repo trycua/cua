@@ -1,0 +1,101 @@
+# Example (Helm-free) deployment of cua-relay. Machines join with
+#   cua-spacesd join --relay wss://relay.example.com --relay-token <token>
+# and clients reach them at https://relay.example.com/m/<machine-id>/ (or
+# https://<machine-id>.relay.example.com/ with host mode and a wildcard
+# certificate). Connected machines live in the process: a machine
+# reconnects to whichever replica it lands on, so run one replica per
+# hostname (or route /relay/v1/connect and /m/<id> with consistent hashing
+# on the id). Account mode also keeps its directory on a ReadWriteOnce
+# volume, so replace the pod (Recreate) instead of rolling it.
+#
+# Account mode (cua.ai logins, `cua host setup`): set CUA_RELAY_OIDC_ISSUER
+# (+ audience), and keep the machine directory and the assertion signing key
+# on the volume below so they survive restarts. Static tokens may be left
+# empty in account-only deployments.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cua-relay
+stringData:
+  tokens: "replace-with-a-long-random-machine-registration-token"
+  admin-token: "replace-with-a-long-random-admin-token"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cua-relay
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: cua-relay }
+  template:
+    metadata:
+      labels: { app: cua-relay }
+    spec:
+      containers:
+        - name: cua-relay
+          image: ghcr.io/trycua/cua-relay:latest
+          ports: [{ containerPort: 8080, name: http }]
+          env:
+            - { name: CUA_RELAY_HOST_DOMAIN, value: relay.example.com }
+            - name: CUA_RELAY_TOKENS
+              valueFrom: { secretKeyRef: { name: cua-relay, key: tokens } }
+            - name: CUA_RELAY_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: cua-relay, key: admin-token } }
+            - { name: CUA_RELAY_OIDC_ISSUER, value: "https://auth.cua.ai/realms/cyclops-cs" }
+            - { name: CUA_RELAY_OIDC_AUDIENCE, value: cua-relay }
+            - { name: CUA_RELAY_PUBLIC_URL, value: "https://relay.example.com" }
+            - { name: CUA_RELAY_STATE_FILE, value: /var/lib/cua-relay/machines.json }
+            - { name: CUA_RELAY_SIGNING_KEY_FILE, value: /var/lib/cua-relay/signing.key }
+          volumeMounts: [{ name: state, mountPath: /var/lib/cua-relay }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: state
+          persistentVolumeClaim: { claimName: cua-relay-state }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cua-relay-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cua-relay
+spec:
+  selector: { app: cua-relay }
+  ports: [{ port: 80, targetPort: http, name: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cua-relay
+  annotations:
+    # Long-lived WebSockets and gRPC streams.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+spec:
+  tls: [{ hosts: [relay.example.com, "*.relay.example.com"], secretName: cua-relay-tls }]
+  rules:
+    - host: relay.example.com
+      http:
+        paths: [{ path: /, pathType: Prefix, backend: { service: { name: cua-relay, port: { name: http } } } }]
+    - host: "*.relay.example.com"
+      http:
+        paths: [{ path: /, pathType: Prefix, backend: { service: { name: cua-relay, port: { name: http } } } }]

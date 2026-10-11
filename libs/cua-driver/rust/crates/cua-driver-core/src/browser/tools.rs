@@ -61,6 +61,30 @@ fn require_explicit_session(args: &Value) -> Result<String, ToolResult> {
     Ok(sid)
 }
 
+/// `delivery_mode` of a trusted page mutation: `background` (default)
+/// refuses trusted input that would activate the browser window on platforms
+/// where the trusted route cannot stay in the background; `foreground`
+/// accepts that activation. Returns true for `foreground`.
+pub(crate) fn parse_delivery_mode(args: &Value) -> Result<bool, String> {
+    match args.get("delivery_mode").and_then(Value::as_str) {
+        None => Ok(false),
+        Some(mode) if mode.eq_ignore_ascii_case("background") => Ok(false),
+        Some(mode) if mode.eq_ignore_ascii_case("foreground") => Ok(true),
+        Some(other) => Err(format!(
+            "delivery_mode must be \"background\" or \"foreground\", got {other:?}"
+        )),
+    }
+}
+
+fn schema_delivery_mode() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["background", "foreground"],
+        "default": "background",
+        "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
+    })
+}
+
 fn schema_target_id() -> Value {
     json!({
         "type": "string",
@@ -614,6 +638,7 @@ impl BrowserPrepareTool {
                     },
                     "profile": {
                         "type": "object",
+                        "description": "Driver-owned isolated Chromium profile to launch with allow_launch=true. mode=isolated_new creates a fresh throwaway profile; mode=isolated_named reuses the named driver-owned profile. Never an existing user profile.",
                         "properties": {
                             "mode": { "type": "string", "enum": ["isolated_new", "isolated_named"] },
                             "name": { "type": "string", "description": "Required only for isolated_named; 1-64 path-safe ASCII characters." }
@@ -623,6 +648,7 @@ impl BrowserPrepareTool {
                     },
                     "strategy": {
                         "type": "object",
+                        "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
                         "properties": {
                             "kind": { "type": "string", "enum": ["existing_profile"] }
                         },
@@ -879,7 +905,9 @@ impl BrowserClickTool {
             description: "Click a page element (by ref) or viewport coordinates in an \
                 exactly-bound tab. Default route is trusted hardware-like input \
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
-                preserve standalone-browser background posture. \
+                preserve standalone-browser background posture unless \
+                delivery_mode=\"foreground\" accepts that the browser window may \
+                activate (Linux Chromium; for example a browser inside a sandbox). \
                 input_route=\"dom_event\" (synthetic \
                 el.click(), ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
@@ -895,6 +923,7 @@ impl BrowserClickTool {
                     "ref": schema_ref(),
                     "x": { "type": "number", "description": "Viewport x (CSS px) — alternative to ref." },
                     "y": { "type": "number", "description": "Viewport y (CSS px) — alternative to ref." },
+                    "delivery_mode": schema_delivery_mode(),
                     "input_route": {
                         "type": "string",
                         "enum": ["trusted", "dom_event"],
@@ -978,6 +1007,10 @@ impl Tool for BrowserClickTool {
         if route == "dom_event" && ext_ref.is_none() {
             return ToolResult::error("input_route=dom_event requires a ref");
         }
+        let foreground = match parse_delivery_mode(&args) {
+            Ok(f) => f,
+            Err(e) => return ToolResult::error(e),
+        };
 
         // Resolve the ref BEFORE revalidation? No — revalidate first so a
         // stale binding refuses before we touch the page at all.
@@ -997,7 +1030,7 @@ impl Tool for BrowserClickTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        if route == "trusted" && validated.record.cdp_window_id.is_some() {
+        if route == "trusted" && !foreground && validated.record.cdp_window_id.is_some() {
             if let Some(limitation) = self
                 .engine
                 .platform
@@ -1006,7 +1039,7 @@ impl Tool for BrowserClickTool {
                 return BrowserRefusal::new(
                     BrowserRefusalCode::BrowserInputTrustUnavailable,
                     format!(
-                        "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click"
+                        "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click, or delivery_mode=\"foreground\" to accept that the browser window may activate"
                     ),
                 )
                 .with_detail(json!({
@@ -1014,6 +1047,7 @@ impl Tool for BrowserClickTool {
                     "limitation": limitation,
                     "alternative_route": "dom_event",
                     "alternative_requires_ref": true,
+                    "alternative_delivery_mode": "foreground",
                     "trusted_delivery_attempted": false,
                 }))
                 .to_tool_result();
@@ -1288,6 +1322,7 @@ impl Tool for BrowserClickTool {
         ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}")).with_structured(json!({
             "status": "ok",
             "route": "trusted",
+            "delivery_mode": if foreground { "foreground" } else { "background" },
             "target_id": target_id,
             "tab_id": tab_id,
             "ref": ext_ref,
@@ -2076,7 +2111,7 @@ impl BrowserDialogTool {
                         "target_id": schema_target_id(),
                         "tab_id": schema_tab_id(),
                         "session": schema_session(),
-                        "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"] },
+                        "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"], "description": "inspect returns the current dialog and its dialog_id; accept or dismiss resolves that exact dialog." },
                         "dialog_id": { "type": "string", "description": "Opaque current dialog generation returned by action=inspect." },
                         "prompt_text": { "type": "string", "description": "Sensitive response text, valid only when accepting a prompt dialog." },
                         "delivery_mode": {
@@ -2293,6 +2328,7 @@ impl BrowserSetInputFilesTool {
                         "ref": schema_ref(),
                         "files": {
                             "type": "array", "minItems": 1, "maxItems": 32,
+                            "description": "Absolute paths of 1 to 32 local regular files to assign to the input.",
                             "items": { "type": "string", "description": "Absolute path to one local regular file." }
                         }
                     },

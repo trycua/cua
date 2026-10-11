@@ -8,12 +8,12 @@ symlinks from their existing `tests/integration/fixtures/` and `assets/` trees.
 
 | File | Purpose |
 |------|---------|
-| `interactive.html` | 31-line minimal click + type-mirror harness. Stable IDs: `#counter`, `#clicker`, `#textbox`, `#typed`. Used by `test_background_focus.py` — opened via `file://`. |
+| `interactive.html` | 31-line minimal click + type-mirror harness. Stable IDs: `#counter`, `#clicker`, `#textbox`, `#typed`. Used by `test_background_focus.py`, opened via `file://`. |
 | `form_all_inputs.html` | Every HTML5 input type (text, password, email, number, tel, textarea, select, checkbox, radio, range, date, color). Submit handler stores result in `window._submitted`; live read via `getFieldValues()`. Used by `test_drag_slider_delivery.py`, `test_hermes_form_fill*.py`. |
-| `test_page.html` | Richer Safari/Chrome/Electron harness — button counter, text input, checkbox, dropdown, textarea, link, canvas. Served via local `html_server` HTTP fixture. Used by `test_chrome.py`, `test_safari.py`, `test_electron.py`. |
-| `gesture_panels.html` | **New** — extends the same ID-convention style as `test_page.html` with panels for the four gestures not currently covered by the v2 harness: hotkey + modifier-state propagation, pixel-coord pinpoint accuracy, drag-and-drop event sequence, scroll position. See **Why** below. |
+| `test_page.html` | Richer Safari/Chrome/Electron harness: button counter, text input, checkbox, dropdown, textarea, link, canvas. Served via local `html_server` HTTP fixture. Used by `test_chrome.py`, `test_safari.py`, `test_electron.py`. |
+| `gesture_panels.html` | **New**: extends the same ID-convention style as `test_page.html` with panels for the four gestures not currently covered by the v2 harness: hotkey + modifier-state propagation, pixel-coord pinpoint accuracy, drag-and-drop event sequence, scroll position. See **Why** below. |
 
-All four files are vanilla HTML — no external deps, no build step. Open
+All four files are vanilla HTML with no external deps, no build step. Open
 directly in any browser:
 
 ```bash
@@ -48,7 +48,7 @@ test (May 2026) showed need explicit harness coverage:
    OS modifier state, so the page-level `KeyboardEvent.ctrlKey` reads
    `false` even after a routed `ctrl+s`. SendInput updates `GetKeyState`,
    so the same event reads `ctrl=true`. The status div prints
-   `ctrl=true|false` directly — single assertion per routing path.
+   `ctrl=true|false` directly: single assertion per routing path.
 
 2. **Pixel-coord pinpoint** (`#coord-area` + `#coord-status`): a known
    target at viewport `(60, 60)` inside the box; status shows the
@@ -61,7 +61,7 @@ test (May 2026) showed need explicit harness coverage:
    the page (not just that the driver moved the cursor).
 
 4. **Scroll position** (`#scroll-area` + `#scroll-status`): a scrollable
-   container whose `scrollTop` is printed live — tests can assert scroll
+   container whose `scrollTop` is printed live: tests can assert scroll
    direction + amount after a routed scroll gesture.
 
 Like `test_page.html`, each panel exposes a global accessor:
@@ -85,7 +85,7 @@ Windows, the integration tests should be aware of:
   `--force-renderer-accessibility` flag (or rely on `--remote-debugging-port`).
 - **`hotkey` SendInput injection requires the daemon at UIAccess
   integrity.** Otherwise `SetForegroundWindow` is rejected and the
-  injected events land on the wrong window — `SendInput inserted only 0
+  injected events land on the wrong window: `SendInput inserted only 0
   of 4 events`. Workaround: run `cua-driver` via the
   `cua-driver-uia.exe` worker (PR #1593) which carries the manifest.
 
@@ -100,7 +100,7 @@ canonical fixtures, only how they're driven.
 3. Add a relative symlink under whichever driver test path needs it
 4. Commit the new file + symlink(s) in the same PR
 
-Do **not** create copies under the driver tree — symlink-only.
+Do **not** create copies under the driver tree. Symlink only.
 
 ## License
 

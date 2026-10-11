@@ -1,0 +1,89 @@
+name: "CI: Cua Driver desktop readiness (non-certifying)"
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/linux/preflight-rust-e2e.sh"
+      - "scripts/ci/windows/preflight-rust-e2e.ps1"
+      - "scripts/ci/windows/verify-user-session.ps1"
+      - ".github/actions/cua-sandbox/**"
+      - ".github/actions/build-cua-under-test/**"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      - ".github/workflows/ci-cua-driver-preflight.yml"
+      # Docs-only edits never start the sandbox job.
+      - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
+      - "!**/*.md"
+      - "!**/*.mdx"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+concurrency:
+  group: ci-cua-driver-preflight-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  linux:
+    # The readiness checks run inside a real desktop sandbox (the canonical
+    # ghcr.io/trycua/linux:24.04, locally on the runner) against the
+    # cua-driver built from this commit, injected over whatever the image
+    # carries. The doctor fails unless that exact executable is what runs,
+    # and the preflight checks the driver's embedded git sha against the
+    # source under test, so a stale driver can never pass.
+    name: "Linux / desktop readiness in a Cua sandbox"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.CUA_E2E_SOURCE_SHA }}
+      - id: build
+        uses: ./.github/actions/build-cua-under-test
+        with:
+          components: cua cua-driver
+      - uses: ./.github/actions/cua-sandbox
+        with:
+          image: ghcr.io/trycua/linux:24.04
+          cua-bin: ${{ steps.build.outputs.cua }}
+          # The overlay adds expect cua-driver=sha256:<the injected build>,
+          # which names this standalone executable. A git expectation would
+          # also cover the driver linked into the image's cua-spacesd, which
+          # is not under test here; the preflight checks the standalone
+          # driver's embedded git sha against the source instead.
+          overlay: cua-driver=${{ steps.build.outputs.cua-driver }}
+          guest-setup: >-
+            apt-get update -qq &&
+            apt-get install -y -qq --no-install-recommends ffmpeg jq libglib2.0-bin libei1 >/dev/null
+          run: |
+            bash -n scripts/ci/linux/preflight-rust-e2e.sh
+            cua sb cp scripts/ci/linux/preflight-rust-e2e.sh "$CUA_SANDBOX:/tmp/preflight-rust-e2e.sh"
+            cua sb shell "$CUA_SANDBOX" "set -a; . /run/cua-desktop/desktop.env; set +a;
+              export CUA_E2E_SOURCE_SHA=$CUA_E2E_SOURCE_SHA CUA_TEST_DRIVER_BIN=/usr/local/bin/cua-driver;
+              bash /tmp/preflight-rust-e2e.sh"
+
+  windows:
+    name: "Windows / lightweight desktop readiness"
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.CUA_E2E_SOURCE_SHA }}
+      - name: Ensure recording tools are available
+        shell: pwsh
+        run: .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Check host readiness
+        shell: pwsh
+        run: .\scripts\ci\windows\preflight-rust-e2e.ps1

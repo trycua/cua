@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev --turbo -p 8090",
+    "dev": "python3 scripts/rss-budget.py --budget-mb 6144 -- next dev --turbo -p 8190",
     "start": "next start -p 8090",
     "postinstall": "fumadocs-mdx",
     "docs:generate": "tsx ../scripts/docs-generators/runner.ts",
@@ -12,23 +12,46 @@
     "docs:check:cua-driver": "tsx ../scripts/docs-generators/runner.ts --library cua-driver --check",
     "docs:check:lume": "tsx ../scripts/docs-generators/runner.ts --library lume --check",
     "docs:check:sandbox": "tsx ../scripts/docs-generators/runner.ts --library sandbox --check",
+    "docs:check:cua-cli": "tsx ../scripts/docs-generators/runner.ts --library cua-cli --check",
+    "docs:check:cua-sdk": "tsx ../scripts/docs-generators/runner.ts --library cua-sdk --check",
+    "docs:check:python": "tsx ../scripts/docs-generators/runner.ts --library cua-sdk-python --check",
+    "docs:check:cua-sdk-ts": "tsx ../scripts/docs-generators/runner.ts --library cua-sdk-ts --check",
     "docs:list": "tsx ../scripts/docs-generators/runner.ts --list",
     "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts",
     "docs:generate:sandbox": "tsx ../scripts/docs-generators/sandbox.ts",
+    "docs:generate:cua-sdk": "tsx ../scripts/docs-generators/cua-sdk.ts",
+    "docs:check:cua-rust": "tsx ../scripts/docs-generators/runner.ts --library cua-rust --check",
+    "docs:generate:cua-rust": "tsx ../scripts/docs-generators/rust-crates.ts",
+    "docs:check:cua-proto": "tsx ../scripts/docs-generators/runner.ts --library cua-proto --check",
+    "docs:generate:cua-proto": "tsx ../scripts/docs-generators/proto.ts",
     "docs:generate:cua-driver": "tsx ../scripts/docs-generators/cua-driver.ts",
+    "docs:generate:cua-cli": "tsx ../scripts/docs-generators/cua-cli.ts",
     "docs:generate:python": "tsx ../scripts/docs-generators/python-sdk.ts",
+    "docs:generate:cua-sdk-ts": "tsx ../scripts/docs-generators/typescript-sdk.ts",
     "docs:generate:changelog": "tsx ../scripts/docs-generators/generate-changelog.ts",
-    "docs:generate:versions": "tsx ../scripts/docs-generators/generate-versioned-docs.ts",
+    "docs:check:fleet": "tsx ../scripts/docs-generators/runner.ts --library fleet --check",
+    "docs:generate:fleet": "tsx ../scripts/docs-generators/fleet.ts",
+    "docs:check:spaces": "tsx ../scripts/docs-generators/runner.ts --library spaces --check",
+    "docs:generate:spaces": "tsx ../scripts/docs-generators/spaces.ts",
     "docs:check-links": "tsx scripts/check-links.ts",
     "docs:check-links:external": "tsx scripts/check-links.ts --external",
-    "docs:check-hygiene": "tsx scripts/check-hygiene.ts"
+    "docs:check-hygiene": "tsx scripts/check-hygiene.ts",
+    "docs:check-blocks": "python3 ../tests/e2e/cua-sdk/docs/extract.py --lint && python3 ../tests/e2e/cua-sdk/docs/cli_shape.py && uv run -q --no-project --python 3.12 --with pyyaml==6.0.2 --with jsonschema==4.23.0 python3 ../tests/e2e/cua-sdk/docs/config_lane.py",
+    "docs:check-em-dash": "bash ../scripts/check-no-em-dash.sh",
+    "docs:check-image-refs": "python3 ../scripts/images/check-image-refs.py && python3 ../scripts/images/gen-image-constants.py --check",
+    "docs:check-structure": "tsx --test scripts/product-structure.test.ts scripts/page-budget.test.ts",
+    "build:budget": "python3 scripts/rss-budget.py --budget-mb 6144 -- next build",
+    "preview": "python3 scripts/rss-budget.py --budget-mb 6144 -- sh -c 'next build && next start -p ${PORT:-8190}'",
+    "docs:check:cua-bench": "tsx ../scripts/docs-generators/runner.ts --library cua-bench --check",
+    "docs:generate:cua-bench": "tsx ../scripts/docs-generators/cua-bench.ts"
   },
   "dependencies": {
+    "@fumadocs/mdx-remote": "1.5.2",
     "fumadocs-core": "16.0.8",
     "fumadocs-mdx": "13.0.8",
     "fumadocs-ui": "16.0.8",
     "lucide-react": "^0.525.0",
-    "next": "16.2.6",
+    "next": "16.3.6",
     "next-themes": "^0.4.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -47,11 +70,13 @@
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.8",
     "tsx": "^4.7.0",
+    "typedoc": "0.28.20",
+    "typedoc-plugin-markdown": "4.13.1",
     "typescript": "^5.8.3"
   },
   "pnpm": {
     "overrides": {
-      "postcss": "8.5.10"
+      "postcss": "8.5.23"
     }
   }
 }

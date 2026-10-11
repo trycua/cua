@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 9ca3ef44-a054-461a-94ee-f76b39ca8147."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Modify the value of R1 to center the DC bias of the electret microphone output and provide the maximum, non-distorted voltage output range. Treat the electret microphone as a current sink with a typical draw of 0.5 mA.''',
-            metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
+            description="""Modify the value of R1 to center the DC bias of the electret microphone output and provide the maximum, non-distorted voltage output range. Treat the electret microphone as a current sink with a typical draw of 0.5 mA.""",
+            metadata={"difficulty": "medium", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -36,7 +37,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_MicrophoneAmp_circuit/kicad_MicrophoneAmp_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_MicrophoneAmp_circuit/kicad_MicrophoneAmp_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

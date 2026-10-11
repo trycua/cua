@@ -7,12 +7,17 @@ import {
   buildCandidates,
   chooseMock,
   classify,
+  hasExecutableCandidate,
   parseVisualRegions,
   validateChoice,
   type Candidate,
 } from './core.js';
 import {
+  backgroundRefusalCode,
+  candidatesForStep,
   Driver,
+  DriverToolError,
+  observeVisual,
   optionalVisualObservation,
   selectTabId,
   supportsCaptureBoundClick,
@@ -74,9 +79,11 @@ test('reserved candidates are always available', () => {
   assert.equal(chooseMock(candidates).choice, 'reobserve');
 });
 
-test('visual fixture builds the equivalent immutable capture-bound submit candidate', () => {
+test('visual fixture builds a candidate without claiming interactivity', () => {
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  payload.regions[0].interactive = false;
   const visual = parseVisualRegions(
-    fixture('parse-visual-regions-submit-v1.json'),
+    payload,
     'capture-submit',
     7,
     9
@@ -101,13 +108,163 @@ test('visual fixture builds the equivalent immutable capture-bound submit candid
   });
 });
 
-test('ambiguous visual regions offer only reobserve and abstain', () => {
+test('Retina affine mapping keeps the original screenshot point (#4289)', () => {
+  // Driver reports a non-identity capture as `affine` (never `scaled_top_left`).
+  // A Retina-like 2x capture of a window at (100, 200) maps pixels to points
+  // with scale 0.5 plus that offset.
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  assert.equal(payload.capture.action_coordinate_space.kind, 'affine');
+  const visual = parseVisualRegions(payload, 'capture-submit', 7, 9);
+  assert.deepEqual(visual.screenshotToAction, [0.5, 0, 0, 0.5, 100, 200]);
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const selected = validateChoice(
+    'submit-form',
+    buildCandidates(page, 'expected', visual, true),
+    'capture-submit'
+  );
+  // Driver applies the mapping for the capture ID, so the click carries the
+  // region center in screenshot pixels, not the mapped (275, 330).
+  assert.deepEqual(
+    [selected.arguments.x, selected.arguments.y, selected.arguments.capture_id],
+    [350, 260, 'capture-submit']
+  );
+
+  // The reporter's observed macOS Retina mapping from #4289.
+  payload.capture.action_coordinate_space = {
+    kind: 'affine',
+    m11: 1.530612244897959,
+    m12: 0,
+    m21: 0,
+    m22: 1.5304487179487178,
+    tx: 0,
+    ty: 0,
+  };
+  assert.equal(parseVisualRegions(payload, 'capture-submit', 7, 9).screenshotToAction[0], 1.530612244897959);
+});
+
+test('identity screenshot_pixels mapping', () => {
+  const visual = parseVisualRegions(fixture('parse-visual-regions-ambiguous-v1.json'), 'capture-ambiguous', 7, 9);
+  assert.deepEqual(visual.screenshotToAction, [1, 0, 0, 1, 0, 0]);
+});
+
+test('unrepresentable coordinate mappings fail closed', () => {
+  const affine = fixture('parse-visual-regions-submit-v1.json').capture.action_coordinate_space;
+  const { ty: _ty, ...missing } = affine;
+  const cases: Record<string, unknown> = {
+    'non-invertible': { ...affine, m11: 0, m22: 0 },
+    singular: { ...affine, m11: 1, m12: 2, m21: 2, m22: 4 },
+    nan: { ...affine, m11: Number.NaN },
+    infinite: { ...affine, tx: Number.POSITIVE_INFINITY },
+    'missing coefficient': missing,
+    'boolean coefficient': { ...affine, m12: false },
+    'string coefficient': { ...affine, m12: '0' },
+    overflowing: { ...affine, m11: 1e308, m22: 1e308 },
+    scaled_top_left: {
+      kind: 'scaled_top_left',
+      action_origin_x: 100,
+      action_origin_y: 200,
+      action_units_per_pixel_x: 0.5,
+      action_units_per_pixel_y: 0.5,
+    },
+    'unknown kind': { kind: 'projective' },
+    absent: undefined,
+  };
+  for (const [name, space] of Object.entries(cases)) {
+    const payload = fixture('parse-visual-regions-submit-v1.json');
+    payload.capture.action_coordinate_space = space;
+    assert.throws(() => parseVisualRegions(payload, 'capture-submit', 7, 9), /coordinate/, name);
+  }
+});
+
+test('submit path depends on the DOM button ref', () => {
   const visual = parseVisualRegions(
-    fixture('parse-visual-regions-ambiguous-v1.json'),
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  const withRef = buildCandidates(snapshot('expected'), 'expected', visual, true);
+  assert.equal(withRef[0].id, 'submit-form');
+  assert.equal(withRef[0].tool, 'browser_click');
+  assert.equal(withRef[0].captureId, undefined);
+
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const withoutRef = buildCandidates(page, 'expected', visual, true);
+  assert.equal(withoutRef[0].id, 'submit-form');
+  assert.equal(withoutRef[0].tool, 'click');
+  assert.equal(withoutRef[0].captureId, 'capture-submit');
+  assert.deepEqual(
+    buildCandidates(page, 'expected', undefined, true).map((candidate) => candidate.id),
+    ['reobserve', 'abstain']
+  );
+});
+
+test('visual input does not change a semantic executable candidate set', () => {
+  // Salvaged from #4165: when the page structure already offers an executable
+  // action, a visual observation cannot change the candidates.
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  for (const value of [null, 'expected']) {
+    const withoutVisual = buildCandidates(snapshot(value), 'expected', undefined, true);
+    const withVisual = buildCandidates(snapshot(value), 'expected', visual, true);
+    assert.deepEqual(withVisual, withoutVisual);
+    assert.ok(hasExecutableCandidate(withoutVisual));
+  }
+});
+
+test('foreground escalation is a distinct visual candidate', () => {
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const candidates = buildCandidates(page, 'expected', visual, true, 'foreground');
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.id),
+    ['submit-form-foreground', 'reobserve', 'abstain']
+  );
+  assert.equal(candidates[0].tool, 'click');
+  assert.equal(candidates[0].arguments.delivery_mode, 'foreground');
+  assert.equal(candidates[0].arguments.capture_id, 'capture-submit');
+  assert.match(candidates[0].description, /foreground/);
+  assert.equal(chooseMock(candidates).choice, 'submit-form-foreground');
+  assert.equal(
+    buildCandidates(snapshot('expected'), 'expected', visual, true, 'foreground')[0].tool,
+    'browser_click'
+  );
+});
+
+test('ambiguous visual regions offer only reobserve and abstain', () => {
+  const payload = fixture('parse-visual-regions-ambiguous-v1.json');
+  for (const region of payload.regions) region.interactive = false;
+  const visual = parseVisualRegions(
+    payload,
     'capture-ambiguous',
     7,
     9
   );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  assert.deepEqual(
+    buildCandidates(page, 'expected', visual, true).map((candidate) => candidate.id),
+    ['reobserve', 'abstain']
+  );
+});
+
+test('non-Submit visual observation offers only reobserve and abstain', () => {
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  payload.regions[0].text = 'Continue';
+  payload.regions[0].interactive = true;
+  const visual = parseVisualRegions(payload, 'capture-submit', 7, 9);
   const page = snapshot('expected');
   page.refs = page.refs.slice(0, 1);
   assert.deepEqual(
@@ -223,7 +380,7 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
     9
   );
   const candidates = buildCandidates(page, 'expected', visual, true);
-  const answer = await chooseWithTypeSafe(client, candidates, page, visual, []);
+  const answer = await chooseWithTypeSafe(client, candidates, page, visual, [], 'expected');
 
   assert.equal(answer.choice, 'submit-form');
   assert.deepEqual(
@@ -233,6 +390,9 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
   const sentVisual = JSON.parse(requestBody?.state.observation.visual);
   assert.equal(sentVisual.capture_id, 'capture-submit');
   assert.equal(sentVisual.regions[0].id, 'submit-text');
+  const sentForm = JSON.parse(requestBody?.state.observation.form);
+  assert.equal(sentForm.verification_field, 'contains_required_token');
+  assert.equal(JSON.stringify(requestBody?.state).includes('expected'), false);
 });
 
 test('live adapter rejects an id outside the supplied table', async () => {
@@ -251,7 +411,7 @@ test('live adapter rejects an id outside the supplied table', async () => {
   const page = snapshot();
   const candidates = buildCandidates(page, 'expected');
   await assert.rejects(
-    () => chooseWithTypeSafe(client as never, candidates, page, undefined, []),
+    () => chooseWithTypeSafe(client as never, candidates, page, undefined, [], 'expected'),
     /unknown candidate/
   );
 });
@@ -324,6 +484,229 @@ test('visual tool is optional and uses the public contract when advertised', asy
       },
     },
   ]);
+});
+
+test('visual status is logged for ok, not_installed, and error', async () => {
+  const tools = new Set(['get_window_state', 'parse_visual_regions', 'click']);
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  function scripted(parseResult: unknown) {
+    const calls: string[] = [];
+    const client = {
+      callTool: async (request: { name: string }) => {
+        calls.push(request.name);
+        if (request.name === 'get_window_state') {
+          return { isError: false, structuredContent: { capture_id: 'capture-submit' } };
+        }
+        return parseResult;
+      },
+    };
+    return { driver: new Driver(client as never, 'jev-test'), calls };
+  }
+
+  const ok = await observeVisual(
+    scripted({ isError: false, structuredContent: payload }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.equal(ok.visual?.captureId, 'capture-submit');
+  assert.deepEqual(ok.status, {
+    status: 'ok',
+    capture_id: 'capture-submit',
+    region_count: ok.visual?.regions.length,
+  });
+
+  const notInstalled = await observeVisual(
+    scripted({ isError: true, structuredContent: { code: 'not_installed' }, content: [] }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.equal(notInstalled.visual, undefined);
+  assert.deepEqual(notInstalled.status, { status: 'not_installed', error_code: 'not_installed' });
+
+  const workerFailed = await observeVisual(
+    scripted({ isError: true, structuredContent: { code: 'worker_failed' }, content: [] }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.deepEqual(workerFailed.status, { status: 'error', error_code: 'worker_failed' });
+
+  const stalePayload = structuredClone(payload);
+  stalePayload.capture.capture_id = 'older-capture';
+  const stale = await observeVisual(
+    scripted({ isError: false, structuredContent: stalePayload }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.equal(stale.visual, undefined);
+  assert.deepEqual(stale.status, { status: 'error', error_code: 'capture_mismatch' });
+
+  const malformed = await observeVisual(
+    scripted({ isError: false, structuredContent: { ...payload, regions: 'bad' } }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.deepEqual(malformed.status, { status: 'error', error_code: 'invalid_visual_result' });
+
+  const uncoded = await observeVisual(
+    scripted({ isError: true, content: [] }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.deepEqual(uncoded.status, { status: 'error', error_code: 'driver_error' });
+
+  const idle = scripted({ isError: false, structuredContent: payload });
+  assert.deepEqual((await observeVisual(idle.driver, 7, 9, new Set(['click']), true)).status, {
+    status: 'unavailable',
+    error_code: 'tool_not_advertised',
+  });
+  assert.deepEqual((await observeVisual(idle.driver, 7, 9, tools, false)).status, {
+    status: 'unavailable',
+    error_code: 'capture_bound_click_unsupported',
+  });
+  assert.deepEqual(idle.calls, []);
+});
+
+test('driver errors carry the structured error code', async () => {
+  const client = {
+    callTool: async () => ({ isError: true, structuredContent: { code: 'not_installed' }, content: [] }),
+  };
+  await assert.rejects(
+    () => new Driver(client as never, 'jev-test').call('parse_visual_regions', {}),
+    (error: unknown) => error instanceof DriverToolError && error.code === 'not_installed'
+  );
+});
+
+function pageWith(submitRef: boolean) {
+  const refs: { role: string; name: string; ref: string; value?: string }[] = [
+    { role: 'textbox', name: 'verification value', ref: 'p1:0', value: 'expected' },
+  ];
+  if (submitRef) refs.push({ role: 'button', name: 'Submit', ref: 'p1:1' });
+  return { target_id: 'target', tab_id: 'tab', refs };
+}
+
+function recordingDriver(responses: unknown[] = []) {
+  const calls: string[] = [];
+  const client = {
+    callTool: async (request: { name: string }) => {
+      calls.push(request.name);
+      return { isError: false, structuredContent: responses.shift() ?? { status: 'ok' } };
+    },
+  };
+  return { driver: new Driver(client as never, 'jev-test'), calls };
+}
+
+test('visual parse runs only when it can contribute a candidate', async () => {
+  const tools = new Set(['get_window_state', 'parse_visual_regions', 'click']);
+  const payload = () => fixture('parse-visual-regions-submit-v1.json');
+
+  let rec = recordingDriver();
+  let step = await candidatesForStep(rec.driver, pageWith(true), 'expected', 7, 9, tools, true);
+  assert.equal(step.candidates[0].tool, 'browser_click');
+  assert.equal(step.visual, undefined);
+  assert.deepEqual(step.status, { status: 'skipped', reason: 'page_structure_candidate' });
+  step = await candidatesForStep(rec.driver, pageWith(false), 'expected', 7, 9, tools, true, 'off');
+  assert.deepEqual(step.status, { status: 'skipped', reason: 'disabled' });
+  assert.deepEqual(rec.calls, []);
+
+  rec = recordingDriver([{ capture_id: 'capture-submit' }, payload()]);
+  step = await candidatesForStep(rec.driver, pageWith(false), 'expected', 7, 9, tools, true);
+  assert.deepEqual(rec.calls, ['get_window_state', 'parse_visual_regions']);
+  assert.equal(step.status.status, 'ok');
+  assert.equal(step.candidates[0].tool, 'click');
+  assert.equal(step.candidates[0].arguments.delivery_mode, 'background');
+
+  rec = recordingDriver([{ capture_id: 'capture-submit' }, payload()]);
+  step = await candidatesForStep(rec.driver, pageWith(true), 'expected', 7, 9, tools, true, 'always');
+  assert.equal(step.status.status, 'ok');
+  assert.equal(step.visual?.captureId, 'capture-submit');
+  assert.equal(step.candidates[0].tool, 'browser_click');
+
+  rec = recordingDriver([{ capture_id: 'capture-submit' }, payload()]);
+  step = await candidatesForStep(
+    rec.driver,
+    pageWith(false),
+    'expected',
+    7,
+    9,
+    tools,
+    true,
+    'auto',
+    'foreground'
+  );
+  assert.equal(step.candidates[0].id, 'submit-form-foreground');
+  assert.equal(step.candidates[0].arguments.delivery_mode, 'foreground');
+});
+
+test('structured background refusal escalates but other errors do not', async () => {
+  const args = { pid: 7, window_id: 9, x: 1, y: 1, capture_id: 'c' };
+  const background = {
+    id: 'submit-form',
+    description: 'visual',
+    tool: 'click',
+    arguments: { ...args, delivery_mode: 'background' },
+    captureId: 'c',
+  };
+  const foreground = {
+    ...background,
+    id: 'submit-form-foreground',
+    arguments: { ...args, delivery_mode: 'foreground' },
+  };
+  const dom = { id: 'submit-form', description: 'dom', tool: 'browser_click', arguments: { ref: 'p1:1' } };
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('refused', 'background_unavailable')),
+    'background_unavailable'
+  );
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('refused', 'background_occluded')),
+    'background_occluded'
+  );
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('refused', 'some_new_code', 'foreground')),
+    'some_new_code'
+  );
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('stale', 'capture_generation_mismatch')),
+    undefined
+  );
+  assert.equal(backgroundRefusalCode(background, new Error('background_unavailable')), undefined);
+  assert.equal(
+    backgroundRefusalCode(foreground, new DriverToolError('refused', 'background_unavailable')),
+    undefined
+  );
+  assert.equal(
+    backgroundRefusalCode(dom, new DriverToolError('refused', 'background_unavailable')),
+    undefined
+  );
+
+  const client = {
+    callTool: async () => ({
+      isError: true,
+      structuredContent: {
+        code: 'background_unavailable',
+        escalation: { recommended: 'foreground', reason: 'chromium' },
+      },
+      content: [],
+    }),
+  };
+  await assert.rejects(
+    () => new Driver(client as never, 'jev-test').call('click', background.arguments),
+    (error: unknown) =>
+      error instanceof DriverToolError &&
+      error.recommendedDelivery === 'foreground' &&
+      backgroundRefusalCode(background, error) === 'background_unavailable'
+  );
 });
 
 test('capture-bound click requires capture_id in the advertised schema', () => {

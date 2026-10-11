@@ -1,0 +1,116 @@
+---
+title: What the relay can see
+description: 'A plain accounting of what relay.cua.ai (or any self-hosted cua-relay) can and cannot see, and what we have done and are still doing about it.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`relay.cua.ai` (and any self-hosted `cua-relay`) is a **trusted, TLS-terminating
+proxy, not a blind relay**. This page says plainly what that means, kept
+current as the relay changes. If anything here reads as a surprise, it is a
+bug in this page: tell us.
+
+## The short version
+
+- TLS ends at the relay's ingress. The relay process parses every request it
+  forwards (gRPC, gRPC-Web, WebSocket upgrades, `/files` transfers) to route
+  and authorize it. **It can read the plaintext of anything it proxies while
+  the request is in flight**: shell output, file contents, the desktop media
+  stream, keystrokes and clipboard data sent as input, and, unless sealed
+  (below), Keyvault passwords and teleport session bundles.
+- It does not **store** traffic, env tokens or account tokens: it strips a
+  client's credentials and forwards a short-lived signed assertion instead
+  (account mode), or forwards a self-hosted relay's env token unmodified
+  without persisting it (static mode). See the relay README
+  (`libs/cua-spacesd/crates/cua-relay/README.md` in the cua repository)
+  for the exact claims and how they are enforced in code.
+- A compromised relay process, relay host, or a memory dump of either, is
+  equivalent to a compromised session for every machine currently routed
+  through it: it can mint assertions the machines still trust, and read
+  whatever crosses it meanwhile.
+
+## What crosses the relay
+
+| | Path | Relay sees plaintext? |
+|---|---|---|
+| gRPC (shell, files, input) | Parsed and forwarded | Yes |
+| Desktop media stream | Parsed and forwarded (TCP over the relay; QUIC only on a direct/LAN path) | Yes |
+| `/files` transfers | Parsed and forwarded | Yes |
+| Env / account tokens | Stripped and replaced (account mode); forwarded unmodified, not stored (static mode) | In transit only (static mode); not at all (account mode) |
+| Keyvault site-login password | `browser_type` call argument | **Gated**: refused over a `relay:` Space by default; sending anyway needs your explicit, per-sign-in acknowledgement (no end-to-end sealing for this path yet; see below) |
+| Teleport session bundle (cookies, Safe Storage keys) | `TeleportService.ImportSession` | **Sealed** once the Space's guest key is pinned (every image built from this point on); **gated** otherwise: refused unless you explicitly acknowledge the risk for that one delivery |
+
+## Sealed delivery: where it stands
+
+We seal teleport secrets end to end to the destination machine's own key, so
+the relay forwards only ciphertext for a sealed delivery. The construction:
+an ephemeral X25519 key per delivery, HKDF-SHA256, XChaCha20Poly1305, bound
+to the Space id, a purpose string and a timestamp, with replay rejection
+(`cua-machine-seal`; no hand-rolled crypto, every primitive is a vetted
+RustCrypto / dalek crate). A guest's spacesd generates its own keypair on
+first start (0600 on disk) and reports the public half through its
+capabilities; the host pins it on first use (trust-on-first-use) and seals
+every subsequent teleport delivery to it.
+
+<Callout type="warn">
+  **Current state, honestly:** teleport's sealing and the gate are both live.
+  A Space whose image was built before this shipped reports no guest key, so
+  the teleport `ImportSession` path (which the Keyvault broker's combined
+  prompt also uses for cookies and session data) refuses to send over a
+  `relay:` Space from such an image unless you explicitly acknowledge the
+  risk for that one delivery -- republishing the guest image is what makes
+  the refusal go away, by making the delivery sealed instead. The
+  **Keyvault site-login password path** (typed directly into a page via
+  `browser_type`) is **gated the same way, but not yet sealed**: a saved
+  password still crosses the relay as a plain request argument when you
+  acknowledge the risk, since there is no practical way yet to seal a single
+  driver-call argument the way a whole bundle upload is sealed. Treat an
+  acknowledged site-login sign-in into a `relay:` Space the same as you
+  would treat typing that password into any other network request that
+  crosses a proxy you do not control, until this page says otherwise.
+</Callout>
+
+**Local and direct Spaces are unaffected either way**: no relay is in the
+path, so there is nothing to seal against.
+
+## Other hardening already shipped
+
+- **Device enrollment with MFA for new devices.** Re-signing in enrolls only
+  your own machine (a re-key, or your account's first device). A brand-new
+  device on an account that already has an enrolled device needs an approval
+  from an enrolled device, or a sign-in whose token itself proves a second
+  factor -- a verified email alone is not enough.
+- **New machines are flagged.** A machine registered without an enrolled
+  device's signature or MFA is marked unconfirmed until an enrolled device
+  vouches for it.
+- **A separate origin for machine content.** Machines no longer render as
+  HTML, register a Service Worker, or set cookies on the relay's own
+  origin outside the one known viewer path; a fully separate registrable
+  domain for machine content is designed and partly implemented in code,
+  pending a DNS/TLS rollout.
+- **Bounded relay memory.** A per-machine cap on buffered bytes and streams,
+  plus a relay-wide budget with backpressure, so one machine (or one
+  account's worth of them) with slow-reading clients cannot take down every
+  other machine's connection.
+- **A tamper-evident, exportable audit log**, hash-chained like the
+  Keyvault's own, with `GET /v1/audit?format=jsonl` for export to your own
+  SIEM or backup.
+- **The migration grace period (a stolen session alone reaching every
+  machine) is off by default**, and time-boxed to an announced rollout
+  window when it does run.
+
+## Reporting a concern
+
+See [`SECURITY.md`](https://github.com/trycua/cua/blob/main/SECURITY.md) for
+how to report a vulnerability privately, our response targets, and our safe
+harbor for good-faith security research.
+
+## Related
+
+- [Set up unattended access](/spaces/guides/unattended-access) -- device
+  enrollment in full.
+- [Share a Space](/spaces/guides/share-a-space) -- the allowlist and audit
+  trail for sharing.
+- [Keyvault](/spaces/guides/keyvault) and [Teleport an
+  app](/spaces/guides/teleport-an-app) -- what these deliver and how consent
+  works.

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the app's Info.plist by the Tauri bundler. The cua daemon
+     the app starts reaches local Spaces (Lume VMs) on the host's VM network,
+     which macOS Local Network privacy gates on the app. -->
+<plist version="1.0">
+<dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Cua Spaces connects to Spaces and machines on your local network.</string>
+</dict>
+</plist>

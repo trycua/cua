@@ -1,0 +1,10 @@
+{
+  "title": "Cua Fleets",
+  "root": true,
+  "pages": [
+    "index",
+    "quickstart",
+    "guides",
+    "reference"
+  ]
+}

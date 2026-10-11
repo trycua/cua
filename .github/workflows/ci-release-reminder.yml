@@ -7,6 +7,9 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
+permissions:
+  contents: read
+
 jobs:
   release-reminder:
     runs-on: ubuntu-latest
@@ -29,18 +32,11 @@ jobs:
 
           # Map paths to publishable services
           declare -A PATH_TO_SERVICE=(
-            ["libs/python/cua-cli/"]="pypi/cli"
-            ["libs/python/cua-auto/"]="pypi/auto"
             ["libs/python/agent/"]="pypi/agent"
-            ["libs/python/computer/"]="pypi/computer"
             ["libs/python/core/"]="pypi/core"
             ["libs/python/som/"]="pypi/som"
             ["libs/python/bench-ui/"]="pypi/bench-ui"
             ["libs/cua-bench/"]="pypi/bench"
-            ["libs/python/computer-server/"]="pypi/computer-server"
-            ["libs/python/mcp-server/"]="pypi/mcp-server"
-            ["libs/typescript/cua-cli/"]="npm/cli"
-            ["libs/typescript/computer/"]="npm/computer"
             ["libs/typescript/core/"]="npm/core"
             ["libs/typescript/playground/"]="npm/playground"
             ["libs/cuabot/"]="npm/cuabot"

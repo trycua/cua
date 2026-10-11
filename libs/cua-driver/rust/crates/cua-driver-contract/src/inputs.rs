@@ -6,7 +6,7 @@
 //! These types are transport-free. The contract generator derives JSON Schema
 //! from them, and live Rust handlers deserialize the same types before acting.
 
-use crate::CursorThemeSelection;
+use crate::{schema_settings, CursorThemeSelection};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -19,11 +19,9 @@ pub trait ToolInput: Serialize + DeserializeOwned + JsonSchema {
     }
 
     fn input_schema() -> Value {
-        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-            settings.meta_schema = None;
-            settings.inline_subschemas = true;
-        });
-        let schema = settings.into_generator().into_root_schema_for::<Self>();
+        let schema = schema_settings()
+            .into_generator()
+            .into_root_schema_for::<Self>();
         let mut value = serde_json::to_value(schema).expect("tool input schema serializes");
         normalize_schema(&mut value);
         value
@@ -34,6 +32,26 @@ fn normalize_schema(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
+            if object.get("default").is_some_and(Value::is_null) {
+                object.remove("default");
+            }
+            if let Some(types) = object.get("type").and_then(Value::as_array).cloned() {
+                let kept: Vec<_> = types
+                    .into_iter()
+                    .filter(|ty| ty.as_str() != Some("null"))
+                    .collect();
+                let Ok([one]) = <[Value; 1]>::try_from(kept) else {
+                    panic!("exactly one non-null type, got {}", object["type"]);
+                };
+                object.insert("type".into(), one);
+            }
+            if let Some(constant) = object.remove("const") {
+                let Some(text) = constant.as_str() else {
+                    panic!("schema const must be a string, got {constant}");
+                };
+                object.insert("type".into(), serde_json::json!("string"));
+                object.insert("enum".into(), serde_json::json!([text]));
+            }
             if object.get("type").and_then(Value::as_str) == Some("object") {
                 object
                     .entry("properties")
@@ -60,6 +78,14 @@ fn normalize_schema(value: &mut Value) {
 
 fn string_schema(generator: &mut SchemaGenerator) -> Schema {
     String::json_schema(generator)
+}
+
+fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "minLength": 1 })
+}
+
+fn element_token_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "pattern": "^s[0-9a-f]{8}:[0-9]+$" })
 }
 
 pub const MULTI_CALL_SESSION_DESCRIPTION: &str =
@@ -89,6 +115,16 @@ fn positive_number_schema(_: &mut SchemaGenerator) -> Schema {
 
 fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "integer", "minimum": 1 })
+}
+
+// Optional enums advertise the bare string enum: Gemini rejects a `null`
+// entry in `enum`, and an omitted field already means "keep".
+fn cursor_motion_style_schema(generator: &mut SchemaGenerator) -> Schema {
+    crate::CursorMotionStyle::json_schema(generator)
+}
+
+fn cursor_motion_timing_schema(generator: &mut SchemaGenerator) -> Schema {
+    crate::CursorMotionTiming::json_schema(generator)
 }
 
 fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
@@ -214,24 +250,31 @@ fn desktop_scope_schema(generator: &mut SchemaGenerator) -> Schema {
 /// `display_id="primary"` is the portable desktop target in this release.
 /// Platforms that cannot address another display reject it explicitly rather
 /// than silently changing coordinate spaces.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, uniffi::Enum)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActionTarget {
     Window { pid: u32, window_id: u64 },
     Desktop { display_id: String },
 }
 
-pub fn action_target_schema() -> Value {
-    let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-        settings.meta_schema = None;
-        settings.inline_subschemas = true;
-    });
-    let schema = settings
-        .into_generator()
-        .into_root_schema_for::<ActionTarget>();
-    let mut value = serde_json::to_value(schema).expect("action target schema serializes");
-    normalize_schema(&mut value);
-    value
+impl JsonSchema for ActionTarget {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ActionTarget".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "description": "Exact window (kind \"window\", with pid and window_id) or desktop (kind \"desktop\", with display_id). \"primary\" is the portable desktop target.",
+            "required": ["kind"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["window", "desktop"], "description": "window requires pid and window_id; desktop requires display_id."},
+                "pid": {"type": "integer", "minimum": 0, "description": "Process id. Required when kind is window."},
+                "window_id": {"type": "integer", "minimum": 0, "description": "Window id from list_windows. Required when kind is window."},
+                "display_id": {"type": "string", "description": "Display id. Required when kind is desktop; use \"primary\"."}
+            }
+        })
+    }
 }
 
 impl JsonSchema for DesktopScope {
@@ -315,6 +358,12 @@ pub struct StartSessionInput {
     /// first made visible, avoiding a flash of the default theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_theme: Option<CursorThemeSelection>,
+    /// Optional initial cursor motion (style, timing, effects and tuning). The host applies it
+    /// before the cursor is first made visible. A later `set_agent_cursor_motion` call wins;
+    /// this wins over the saved default (`cursor.motion.*` in the driver config) and the
+    /// built-in `signature_arc`. Reduced motion always wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_motion: Option<CursorMotionSelection>,
 }
 
 impl ToolInput for StartSessionInput {
@@ -323,7 +372,9 @@ impl ToolInput for StartSessionInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct EscalateSessionInput {
+    /// Public label of the legacy capture-scope session to escalate.
     pub session: String,
+    /// Why the window-scoped attempt failed and desktop capture is needed.
     pub reason: EscalationReason,
     /// Optional bounded diagnostic detail. Never use secrets or page content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -389,7 +440,9 @@ pub struct EndSessionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetAgentCursorEnabledInput {
+    /// Public label of the session that owns the cursor.
     pub session: String,
+    /// `true` shows the session's agent cursor overlay; `false` hides it.
     pub enabled: bool,
 }
 
@@ -397,18 +450,121 @@ impl ToolInput for SetAgentCursorEnabledInput {
     const TOOL_NAME: &'static str = "set_agent_cursor_enabled";
 }
 
+/// Cursor motion for a session, with the fields of `set_agent_cursor_motion` minus `session`.
+/// Omitted or null fields keep the saved default (`cursor.motion.*` in the driver config), then
+/// the built-in `signature_arc`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CursorMotionSelection {
+    /// Trajectory style. `signature_arc` (default) is one arc with a small follow-through;
+    /// `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;
+    /// `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for
+    /// small targets and a swoop for long moves; `classic` is the previous Dubins glide. When
+    /// the theme's reduced motion is on, every move is a short straight glide with no effects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_style_schema")]
+    pub style: Option<crate::CursorMotionStyle>,
+    /// `native` uses the style's own timing; `fitts` scales the move time with distance and
+    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_timing_schema")]
+    pub timing: Option<crate::CursorMotionTiming>,
+    /// Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<crate::CursorMotionEffects>,
+    /// Arc control-point offset from the start, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_handle: Option<f64>,
+    /// Arc control-point offset from the end, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_handle: Option<f64>,
+    /// Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)
+    /// keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arc_size: Option<f64>,
+    /// Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:
+    /// positive moves the apex toward the destination. Clamped to -1..1 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arc_flow: Option<f64>,
+    /// Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped
+    /// to 0.3..1 (default 0.72).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spring: Option<f64>,
+    /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
+    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glide_duration_ms: Option<f64>,
+    /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dwell_after_click_ms: Option<f64>,
+    /// Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
+    /// 0..60000 (default 15000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_hide_ms: Option<f64>,
+    /// Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.
+    /// Clamped to 1..1000 (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_radius: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetAgentCursorMotionInput {
+    /// Public label of the session that owns the cursor. Omitted or null motion fields keep
+    /// their current value.
     pub session: String,
+    /// Trajectory style. `signature_arc` (default) is one arc with a small follow-through;
+    /// `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;
+    /// `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for
+    /// small targets and a swoop for long moves; `classic` is the previous Dubins glide. When
+    /// the theme's reduced motion is on, every move is a short straight glide with no effects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_style_schema")]
+    pub style: Option<crate::CursorMotionStyle>,
+    /// `native` uses the style's own timing; `fitts` scales the move time with distance and
+    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_timing_schema")]
+    pub timing: Option<crate::CursorMotionTiming>,
+    /// Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<crate::CursorMotionEffects>,
+    /// Arc control-point offset from the start, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_handle: Option<f64>,
+    /// Arc control-point offset from the end, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_handle: Option<f64>,
+    /// Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)
+    /// keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arc_size: Option<f64>,
+    /// Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:
+    /// positive moves the apex toward the destination. Clamped to -1..1 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arc_flow: Option<f64>,
+    /// Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped
+    /// to 0.3..1 (default 0.72).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spring: Option<f64>,
+    /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
+    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glide_duration_ms: Option<f64>,
+    /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dwell_after_click_ms: Option<f64>,
+    /// Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
+    /// 0..60000 (default 15000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_hide_ms: Option<f64>,
+    /// Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.
+    /// Clamped to 1..1000 (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_radius: Option<f64>,
 }
 
@@ -419,9 +575,13 @@ impl ToolInput for SetAgentCursorMotionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetAgentCursorThemeInput {
+    /// Public label of the session that owns the cursor.
     pub session: String,
+    /// Id of an installed cursor theme (see `cua-driver cursor-theme list`).
     #[schemars(schema_with = "cursor_theme_id_schema")]
     pub theme_id: String,
+    /// Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always
+    /// animates, `auto` (default) leaves the choice to the host.
     #[serde(default)]
     pub reduced_motion: crate::CursorReducedMotion,
 }
@@ -433,6 +593,7 @@ impl ToolInput for SetAgentCursorThemeInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetAgentCursorStateInput {
+    /// Public label of the session whose cursor to inspect.
     pub session: String,
 }
 
@@ -456,6 +617,17 @@ pub struct GetDesktopStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_out_file: Option<String>,
+    /// Optional long-edge cap for the returned PNG, in pixels. Omitted or 0
+    /// returns the full-size capture. When the cap downsizes the image,
+    /// desktop-scope x/y taken from it are mapped back automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonnegative_integer_schema")]
+    #[uniffi(default = None)]
+    pub max_image_dimension: Option<u32>,
+}
+
+fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 0 })
 }
 
 impl ToolInput for GetDesktopStateInput {
@@ -493,11 +665,15 @@ impl ToolInput for GetCursorPositionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MoveCursorInput {
+    /// Destination X: window-local screenshot pixels for a window target, native
+    /// get_desktop_state screenshot pixels for the desktop.
     #[schemars(schema_with = "number_schema")]
     pub x: f64,
+    /// Destination Y, in the same space as `x`.
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
-    /// Preferred per-call target. New callers should set this field.
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -514,16 +690,22 @@ pub struct MoveCursorInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetWindowFrameInput {
+    /// Process ID that owns the window.
     #[schemars(schema_with = "positive_integer_schema")]
     pub pid: u32,
+    /// Window ID from list_windows.
     #[schemars(schema_with = "positive_integer_schema")]
     pub window_id: u64,
+    /// New left edge in the desktop coordinate space reported by list_windows.
     #[schemars(schema_with = "number_schema")]
     pub x: f64,
+    /// New top edge in the desktop coordinate space reported by list_windows.
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
+    /// New width, in the same units as list_windows bounds.
     #[schemars(schema_with = "positive_number_schema")]
     pub width: f64,
+    /// New height, in the same units as list_windows bounds.
     #[schemars(schema_with = "positive_number_schema")]
     pub height: f64,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
@@ -539,14 +721,20 @@ impl ToolInput for SetWindowFrameInput {
 
 /// Exact, immediate-child application menu path to resolve and invoke through
 /// the operating system's accessibility API. Path labels are matched after
-/// trimming surrounding whitespace and otherwise remain case-sensitive.
+/// trimming surrounding whitespace and otherwise remain case-sensitive. On
+/// macOS, three periods in a label also match the ellipsis character that
+/// native menu titles use (`Save As...` finds `Save As…`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InvokeMenuInput {
+    /// Process ID of the application that owns the menu.
     #[schemars(schema_with = "positive_integer_schema")]
     pub pid: u32,
+    /// Window ID from list_windows whose menu is invoked.
     #[schemars(schema_with = "positive_integer_schema")]
     pub window_id: u64,
+    /// Menu labels from the top-level menu to the item, e.g. `["File", "Save As..."]`
+    /// (1 to 16 labels).
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
@@ -571,6 +759,8 @@ pub struct LegacyClickInput {
     pub x: f64,
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -606,6 +796,7 @@ pub enum InputDeliveryMode {
 pub enum ClickPosition {
     Coordinates { x: f64, y: f64 },
     Element { element_token: String },
+    CapturedCoordinates { x: f64, y: f64, capture_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, uniffi::Record)]
@@ -623,6 +814,11 @@ pub struct ClickInput {
     pub count: Option<u32>,
 }
 
+impl ClickInput {
+    pub const DESKTOP_BACKGROUND_MESSAGE: &'static str =
+        "desktop clicks require delivery_mode:\"foreground\"; background delivery is unavailable for desktop targets";
+}
+
 // Parse the flat wire shape before constructing the sum type: an untagged
 // serde enum alone would silently accept mixed coordinate and element fields.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -637,8 +833,11 @@ struct ClickWireInput {
     #[schemars(schema_with = "number_schema")]
     y: Option<f64>,
     #[serde(default, deserialize_with = "present_click_field")]
-    #[schemars(schema_with = "string_schema")]
+    #[schemars(schema_with = "element_token_schema")]
     element_token: Option<String>,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "nonempty_string_schema")]
+    capture_id: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default)]
@@ -663,9 +862,12 @@ where
 impl TryFrom<ClickWireInput> for ClickInput {
     type Error = String;
     fn try_from(wire: ClickWireInput) -> Result<Self, Self::Error> {
-        let position = match (wire.x, wire.y, wire.element_token) {
-            (Some(x), Some(y), None) => ClickPosition::Coordinates { x, y },
-            (None, None, Some(element_token)) => ClickPosition::Element { element_token },
+        let position = match (wire.x, wire.y, wire.element_token, wire.capture_id) {
+            (Some(x), Some(y), None, None) => ClickPosition::Coordinates { x, y },
+            (Some(x), Some(y), None, Some(capture_id)) => {
+                ClickPosition::CapturedCoordinates { x, y, capture_id }
+            }
+            (None, None, Some(element_token), None) => ClickPosition::Element { element_token },
             _ => return Err("click requires exactly x and y, or element_token".into()),
         };
         let input = Self {
@@ -686,12 +888,7 @@ impl JsonSchema for ClickInput {
         "ClickInput".into()
     }
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        let mut schema = ClickWireInput::json_schema(generator);
-        schema.insert("oneOf".into(), serde_json::json!([
-            {"required":["x","y"], "not":{"required":["element_token"]}},
-            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]}]}}
-        ]));
-        schema
+        ClickWireInput::json_schema(generator)
     }
 }
 
@@ -701,6 +898,11 @@ impl ToolInput for ClickInput {
         match &self.position {
             ClickPosition::Coordinates { x, y } if !x.is_finite() || !y.is_finite() => {
                 return Err("click coordinates must be finite".into())
+            }
+            ClickPosition::CapturedCoordinates { x, y, capture_id }
+                if !x.is_finite() || !y.is_finite() || capture_id.trim().is_empty() =>
+            {
+                return Err("captured click coordinates and capture_id must be valid".into())
             }
             ClickPosition::Element { element_token } if element_token.trim().is_empty() => {
                 return Err("element_token must not be empty".into())
@@ -712,7 +914,7 @@ impl ToolInput for ClickInput {
                 return Err("portable desktop target must be primary".into());
             }
             if self.delivery_mode != InputDeliveryMode::Foreground {
-                return Err("desktop clicks require foreground delivery".into());
+                return Err(Self::DESKTOP_BACKGROUND_MESSAGE.into());
             }
             if matches!(self.position, ClickPosition::Element { .. }) {
                 return Err("element clicks require an exact window target".into());
@@ -736,6 +938,8 @@ pub struct DragInput {
     pub to_x: f64,
     #[schemars(schema_with = "number_schema")]
     pub to_y: f64,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -773,6 +977,8 @@ pub struct ScrollInput {
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
     pub direction: ScrollDirection,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -800,6 +1006,8 @@ impl ToolInput for ScrollInput {
 #[serde(deny_unknown_fields)]
 pub struct TypeTextInput {
     pub text: String,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -865,6 +1073,8 @@ impl ToolInput for ClipboardWriteInput {
 #[serde(deny_unknown_fields)]
 pub struct PressKeyInput {
     pub key: String,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -888,8 +1098,15 @@ impl ToolInput for PressKeyInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
+    // Enforced by the parser as well as the schema so a typed input can never
+    // carry a combination the platform runtimes would refuse. Not a doc
+    // comment: that would become a schema description and change the
+    // published contract.
     #[schemars(length(min = 2))]
+    #[serde(deserialize_with = "at_least_two_keys")]
     pub keys: Vec<String>,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -907,15 +1124,52 @@ impl ToolInput for HotkeyInput {
     const TOOL_NAME: &'static str = "hotkey";
 }
 
+fn at_least_two_keys<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let keys = Vec::<String>::deserialize(deserializer)?;
+    if keys.len() < 2 {
+        return Err(serde::de::Error::custom(
+            "hotkey.keys must contain at least two keys",
+        ));
+    }
+    Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
 
+    /// Found by the tool-call boundary fuzzer: the published schema and every
+    /// platform runtime require at least two keys, but the contract parser
+    /// accepted any count, so `{"keys": []}` passed typed validation.
+    #[test]
+    fn hotkey_parser_enforces_the_published_two_key_minimum() {
+        for keys in [json!([]), json!(["ctrl"])] {
+            let error = serde_json::from_value::<HotkeyInput>(json!({"keys": keys}))
+                .expect_err("fewer than two keys must be rejected");
+            assert!(
+                error.to_string().contains("at least two keys"),
+                "unexpected error for {keys}: {error}"
+            );
+        }
+        let parsed: HotkeyInput = serde_json::from_value(json!({"keys": ["ctrl", "c"]})).unwrap();
+        assert_eq!(parsed.keys, vec!["ctrl", "c"]);
+        assert_eq!(
+            HotkeyInput::input_schema()["properties"]["keys"]["minItems"],
+            2
+        );
+    }
+
     #[test]
     fn typed_click_round_trips_flat_native_wire_and_exact_window_id() {
-        for position in [json!({"x":-1.5,"y":2.0}), json!({"element_token":"s1:0"})] {
+        for position in [
+            json!({"x":-1.5,"y":2.0}),
+            json!({"x":-1.5,"y":2.0,"capture_id":"capture-1"}),
+            json!({"element_token":"s00000001:0"}),
+        ] {
             let mut wire = json!({"target":{"kind":"window","pid":7,"window_id":9007199254740993_u64},"delivery_mode":"background"});
             wire.as_object_mut()
                 .unwrap()
@@ -925,8 +1179,15 @@ mod tests {
         }
         let schema = ClickInput::input_schema();
         assert_eq!(schema["required"], json!(["target", "delivery_mode"]));
-        assert!(schema["oneOf"].is_array());
+        assert!(schema.get("oneOf").is_none());
+        assert!(schema.get("not").is_none());
         assert!(schema["properties"].get("position").is_none());
+        assert!(schema["properties"].get("capture_id").is_some());
+        assert_eq!(schema["properties"]["capture_id"]["minLength"], 1);
+        assert_eq!(
+            schema["properties"]["element_token"]["pattern"],
+            "^s[0-9a-f]{8}:[0-9]+$"
+        );
     }
 
     #[test]
@@ -935,9 +1196,11 @@ mod tests {
             json!({}),
             json!({"x":1}),
             json!({"y":2}),
-            json!({"x":1,"y":2,"element_token":"s1:0"}),
-            json!({"x":1,"element_token":"s1:0"}),
-            json!({"x":null,"element_token":"s1:0"}),
+            json!({"x":1,"y":2,"element_token":"s00000001:0"}),
+            json!({"element_token":"s00000001:0","capture_id":"capture-1"}),
+            json!({"x":1,"y":2,"capture_id":"  "}),
+            json!({"x":1,"element_token":"s00000001:0"}),
+            json!({"x":null,"element_token":"s00000001:0"}),
             json!({"element_token":"  "}),
             json!({"x":1,"y":2,"unknown":true}),
         ] {
@@ -968,12 +1231,15 @@ mod tests {
         };
         assert!(input.validate().is_err());
         input.position = ClickPosition::Element {
-            element_token: "s1:0".into(),
+            element_token: "s00000001:0".into(),
         };
         assert!(input.validate().is_err());
         input.position = ClickPosition::Coordinates { x: 1.0, y: 2.0 };
         input.delivery_mode = InputDeliveryMode::Background;
-        assert!(input.validate().is_err());
+        assert_eq!(
+            input.validate().unwrap_err(),
+            ClickInput::DESKTOP_BACKGROUND_MESSAGE
+        );
     }
 
     #[test]
@@ -982,8 +1248,9 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["additionalProperties"], false);
         assert_eq!(schema["required"], json!(["x", "y"]));
-        assert_eq!(schema["properties"]["scope"]["const"], "desktop");
-        assert!(schema["properties"]["target"]["anyOf"].is_array());
+        assert_eq!(schema["properties"]["scope"]["enum"], json!(["desktop"]));
+        assert_eq!(schema["properties"]["target"]["type"], "object");
+        assert!(schema["properties"]["target"].get("anyOf").is_none());
         assert_eq!(
             schema["properties"]["button"],
             json!({ "type": "string", "enum": ["left", "right", "middle"] })
@@ -1017,5 +1284,56 @@ mod tests {
         }))
         .expect_err("portable input must reject runtime-only fields");
         assert!(error.to_string().contains("unknown field `pid`"));
+    }
+
+    #[test]
+    #[should_panic(expected = "schema const must be a string")]
+    fn normalize_schema_panics_on_a_non_string_const() {
+        let mut schema = json!({"const": 1});
+        normalize_schema(&mut schema);
+    }
+
+    #[test]
+    #[should_panic(expected = "exactly one non-null type")]
+    fn normalize_schema_panics_on_a_multi_type_array() {
+        let mut schema = json!({"type": ["string", "number"]});
+        normalize_schema(&mut schema);
+    }
+
+    #[test]
+    fn normalize_schema_drops_null_and_rewrites_string_const() {
+        let mut number = json!({"type": ["number", "null"], "default": null, "title": "N"});
+        normalize_schema(&mut number);
+        assert_eq!(number, json!({"type": "number"}));
+
+        let mut constant = json!({"const": "x"});
+        normalize_schema(&mut constant);
+        assert_eq!(constant, json!({"type": "string", "enum": ["x"]}));
+
+        let mut object = json!({"type": ["object", "null"]});
+        normalize_schema(&mut object);
+        assert_eq!(object["type"], "object");
+        assert_eq!(object["properties"], json!({}));
+        assert_eq!(object["required"], json!([]));
+        assert_eq!(object["additionalProperties"], true);
+
+        let target = MoveCursorInput::input_schema()["properties"]["target"].clone();
+        assert_eq!(target["type"], "object");
+        assert!(target.get("anyOf").is_none());
+        assert!(target.get("oneOf").is_none());
+        assert_eq!(
+            target["properties"]["kind"]["enum"],
+            json!(["window", "desktop"])
+        );
+        assert_eq!(
+            MoveCursorInput::input_schema()["properties"]["scope"]["enum"],
+            json!(["desktop"])
+        );
+        let effects = SetAgentCursorMotionInput::input_schema()["properties"]["effects"].clone();
+        assert_eq!(effects["properties"]["trail"]["type"], "string");
+        assert_eq!(
+            effects["properties"]["trail"]["enum"],
+            json!(["on", "off", "default"])
+        );
     }
 }

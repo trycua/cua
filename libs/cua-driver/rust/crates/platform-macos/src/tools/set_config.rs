@@ -20,6 +20,13 @@ impl SetConfigTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+fn with_cursor_motion_properties(mut schema: Value) -> Value {
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+    }
+    schema
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
@@ -30,19 +37,16 @@ fn def() -> &'static ToolDef {
             initialised once at startup).\n\nNote: capture_mode is a per-call \
             param (on get_window_state / click), not a stored setting. Capture \
             modality is selected by each action's target; the old \
-            capture_scope config key is retired.".into(),
-        input_schema: serde_json::json!({
+            capture_scope config key is retired.\n\nCursor motion defaults: \
+            cursor.motion.style, cursor.motion.timing and \
+            cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to \
+            ~/.cua-driver/config.json and seed sessions started afterwards. \
+            start_session cursor_motion and set_agent_cursor_motion override them; \
+            reduced motion always wins."
+            .into(),
+        input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
             "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Name of a single config field to write ({key, value} shape, \
-                        matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. \
-                        Equivalent to passing the field directly."
-                },
-                "value": {
-                    "description": "New value for `key`. JSON type depends on the key."
-                },
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
@@ -59,7 +63,7 @@ fn def() -> &'static ToolDef {
                 }
             },
             "additionalProperties": false
-        }),
+        })),
         read_only: false,
         destructive: false,
         idempotent: true,
@@ -75,9 +79,7 @@ impl Tool for SetConfigTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
+        if args.get("capture_scope").is_some() {
             return ToolResult::error(
                 "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
@@ -95,22 +97,14 @@ impl Tool for SetConfigTool {
         // sessions don't clobber each other or the persisted default.
         let session_id = args.opt_str("_session_id");
 
-        // Accept BOTH the direct field and {key,value} shapes.
-        let kv: Option<(String, Value)> = args
-            .opt_str("key")
-            .and_then(|k| args.get("value").map(|v| (k, v.clone())));
-        let kv_u64 = |name: &str| -> Option<u64> {
-            kv.as_ref()
-                .filter(|(k, _)| k == name)
-                .and_then(|(_, v)| v.as_u64())
+        // Cursor motion defaults are a driver-wide saved setting, so they are
+        // validated and persisted like the other config.json keys.
+        let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
         };
 
-        // Validate max_image_dimension up front so both branches share the
-        // u32 check and we never half-apply.
-        let max_dim: Option<u32> = match args
-            .opt_u64("max_image_dimension")
-            .or_else(|| kv_u64("max_image_dimension"))
-        {
+        let max_dim: Option<u32> = match args.opt_u64("max_image_dimension") {
             Some(dim) => match u32::try_from(dim) {
                 Ok(d) => Some(d),
                 Err(_) => {
@@ -176,6 +170,12 @@ impl Tool for SetConfigTool {
                     " — restart cua-driver for experimental_pip_geometry={geom} to take effect"
                 );
             }
+        }
+        if !motion_keys.is_empty() {
+            pip_note.push_str(&format!(
+                " — saved {} (applies to sessions started from now on)",
+                motion_keys.join(", ")
+            ));
         }
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- OpenKoalaBots app icon: the koala mark on a near-black rounded square. -->
+  <rect x="28" y="28" width="456" height="456" rx="104" fill="#111214"/>
+  <g transform="translate(96 104) scale(1.25)">
+    <circle cx="60" cy="88" r="50" fill="#8e98a3"/>
+    <circle cx="196" cy="88" r="50" fill="#8e98a3"/>
+    <circle cx="56" cy="90" r="30" fill="#e6e9ed"/>
+    <circle cx="200" cy="90" r="30" fill="#e6e9ed"/>
+    <ellipse cx="128" cy="142" rx="84" ry="76" fill="#a9b2bc"/>
+    <ellipse cx="128" cy="176" rx="46" ry="30" fill="#c3cad1"/>
+    <circle cx="94" cy="128" r="9" fill="#1b1e23"/>
+    <circle cx="162" cy="128" r="9" fill="#1b1e23"/>
+    <circle cx="97" cy="125" r="3" fill="#ffffff"/>
+    <circle cx="165" cy="125" r="3" fill="#ffffff"/>
+    <ellipse cx="128" cy="160" rx="22" ry="29" fill="#2a2e35"/>
+    <ellipse cx="121" cy="149" rx="6" ry="8" fill="#4a505a"/>
+  </g>
+</svg>

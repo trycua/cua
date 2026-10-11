@@ -766,7 +766,7 @@ async def test_create_claim_returns_a_serializable_lease(monkeypatch):
         "namespace": "foo",
         "pool": "foo",
         "claim": "claim-1",
-        "service": "server",
+        "service": "env",
     }
     assert _ClaimHandle.from_dict(lease.to_dict()).to_dict() == lease.to_dict()
 
@@ -959,7 +959,7 @@ async def test_named_claim_retry_reattaches_without_creating(monkeypatch):
 
     assert client.claims == []
     assert sandbox.claim_name == "claim-1"
-    assert sandbox.to_dict()["service"] == "server"
+    assert sandbox.to_dict()["service"] == "env"
     await sandbox.close()
 
 
@@ -1010,79 +1010,72 @@ async def test_new_claim_acquisition_failure_releases_created_claim(monkeypatch)
     assert client.closed is True
 
 
+class _AppliedResources:
+    """What the Python Fleet client reads back after ``Fleet.apply``."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def get_pool(self, name: str) -> object:
+        return fleet_pool(name)
+
+    async def get_template(self, namespace: str, name: str) -> object:
+        return fleet_template(name)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _capture_native_apply(monkeypatch) -> list:
+    """``Pool.apply`` writes only through the SDK's ``Fleet.apply``: capture
+    the native (name, spec, options) it hands over."""
+    seen: list = []
+
+    async def native_apply(name, spec, options):
+        seen.append((name, spec, options))
+
+    monkeypatch.setattr("cua_sandbox.pool._native_apply", native_apply)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", _AppliedResources)
+    return seen
+
+
 @pytest.mark.asyncio
-async def test_pool_apply_delegates_to_template_and_pool_reconcile(monkeypatch):
-    template_requests = []
-    pool_requests = []
-    reconcile_order = []
+async def test_pool_apply_goes_through_the_one_native_writer(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
 
-    async def reconcile_template(cls, request):
-        reconcile_order.append("template")
-        template_requests.append(request)
-        return Template(fleet_template(request.name))
+    with pytest.warns(DeprecationWarning):
+        pool = await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+            cpu=4,
+            memory_mb=4096,
+        )
 
-    async def reconcile_pool(cls, request):
-        reconcile_order.append("pool")
-        pool_requests.append(request)
-        return Pool(fleet_pool(request.namespace))
-
-    monkeypatch.setattr(Template, "reconcile", classmethod(reconcile_template))
-    monkeypatch.setattr(Pool, "reconcile", classmethod(reconcile_pool))
-
-    pool = await Pool.apply(
-        Image.from_registry("registry.example/workspace:latest"),
-        name="workspace",
-        cpu=4,
-        memory_mb=4096,
-    )
-
-    assert reconcile_order == ["pool", "template"]
-    assert len(template_requests) == 1
-    assert len(pool_requests) == 1
-    assert pool.name == pool_requests[0].namespace == template_requests[0].name
+    [(name, spec, options)] = seen
+    assert name == pool.name == "workspace"
+    assert (spec.image, spec.cpu, spec.memory_mb) == ("registry.example/workspace:latest", 4, 4096)
+    assert options.replicas == 1
+    assert pool._owned_template is not None
 
 
 @pytest.mark.asyncio
 async def test_pool_apply_delete_removes_owned_pool_and_template(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(3)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
+    _capture_native_apply(monkeypatch)
     pool = await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
         name="workspace",
     )
+    client = FakeFleetClient()
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: client)
     await pool.delete()
 
-    assert clients[2].deleted_pools == ["workspace"]
-    assert clients[2].deleted_templates == ["workspace"]
+    assert client.deleted_pools == ["workspace"]
+    assert client.deleted_templates == ["workspace"]
 
 
 @pytest.mark.asyncio
-async def test_pool_apply_rolls_back_pool_when_template_reconcile_fails(monkeypatch):
-    clients = [
-        FakeFleetClient(),
-        FakeFleetClient(reconcile_error=RuntimeError("template failed")),
-        FakeFleetClient(),
-    ]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(RuntimeError, match="template failed"):
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
-
-    assert clients[2].deleted_pools == ["workspace"]
-    assert clients[2].deleted_templates == []
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_forwards_autoscaling_to_the_pool_request(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_forwards_autoscaling_to_the_pool_options(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
     autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
 
     await Pool.apply(
@@ -1091,21 +1084,22 @@ async def test_pool_apply_forwards_autoscaling_to_the_pool_request(monkeypatch):
         autoscaling=autoscaling,
     )
 
-    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+    options = seen[0][2]
+    assert (options.min_pool_size, options.replicas, options.max_pool_size) == (0, 2, 10)
 
 
 @pytest.mark.asyncio
-async def test_pool_apply_without_autoscaling_leaves_the_pool_spec_static(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_without_autoscaling_leaves_the_pool_static(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
 
     await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
         name="workspace",
     )
 
-    assert clients[0].reconciled[0].spec.autoscaling is None
+    options = seen[0][2]
+    assert options.min_pool_size is None and options.max_pool_size is None
+    assert options.warm is None
 
 
 @pytest.mark.asyncio
@@ -1120,10 +1114,72 @@ async def test_pool_apply_requires_an_explicit_name():
         await Pool.apply(image, name=None)
 
 
+async def _applied_runtime(monkeypatch, image, **kwargs):
+    seen = _capture_native_apply(monkeypatch)
+    await Pool.apply(image, name="workspace", **kwargs)
+    return {"gvisor": RuntimeKind.GVISOR, "kubevirt": RuntimeKind.KUBEVIRT}[seen[0][2].runtime]
+
+
+DESKTOP = "ghcr.io/trycua/cua-desktop-linux"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reference", "kind", "runtime", "expected"),
+    [
+        # Defaults from the image kind.
+        (f"{DESKTOP}:docker-latest", "container", None, RuntimeKind.GVISOR),
+        (f"{DESKTOP}:latest", "vm", None, RuntimeKind.KUBEVIRT),
+        # An unresolved kind follows the image's manifest (tests/_image_fixtures.py).
+        (f"{DESKTOP}:docker-latest", None, None, RuntimeKind.GVISOR),
+        ("registry.example/workspace:latest", None, None, RuntimeKind.KUBEVIRT),
+        # Explicit runtimes win; an unreadable manifest sends them unchecked.
+        ("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-1", None, "gvisor", RuntimeKind.GVISOR),
+        (f"{DESKTOP}:latest", "container", "kubevirt", RuntimeKind.KUBEVIRT),
+    ],
+)
+async def test_pool_apply_sets_the_template_runtime(
+    monkeypatch, reference, kind, runtime, expected
+):
+    image = Image.from_registry(reference, kind=kind)
+    assert await _applied_runtime(monkeypatch, image, runtime=runtime) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reference", "runtime", "hint"),
+    [
+        (f"{DESKTOP}:latest", "gvisor", "containerDisk"),
+        (f"{DESKTOP}:docker-latest", "kubevirt", "container rootfs"),
+    ],
+)
+async def test_pool_apply_refuses_a_crossed_runtime_before_creating_anything(
+    monkeypatch, reference, runtime, hint
+):
+    import cua
+
+    def no_client():
+        raise AssertionError("no Fleet call for an invalid runtime/image pairing")
+
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", no_client)
+    with pytest.raises(cua.CuaError.InvalidArgument, match=hint):
+        await Pool.apply(Image.from_registry(reference), name="workspace", runtime=runtime)
+    with pytest.raises(ValueError, match="kubevirt"):
+        await Pool.apply(Image.from_registry(reference), name="workspace", runtime="firecracker")
+
+
+def test_sync_pool_apply_forwards_the_runtime(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
+    SyncPool.apply(
+        Image.from_registry("public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-1"),
+        name="workspace",
+        runtime="gvisor",
+    )
+    assert seen[0][2].runtime == "gvisor"
+
+
 def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    seen = _capture_native_apply(monkeypatch)
     autoscaling = WarmPoolAutoscaling(min_pool_size=1, initial_pool_size=1, max_pool_size=5)
 
     pool = SyncPool.apply(
@@ -1133,14 +1189,13 @@ def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
     )
 
     assert pool.name == "workspace"
-    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+    options = seen[0][2]
+    assert (options.min_pool_size, options.replicas, options.max_pool_size) == (1, 1, 5)
 
 
 @pytest.mark.asyncio
-async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_forwards_creation_ttl_to_the_pool_options(monkeypatch):
+    seen = _capture_native_apply(monkeypatch)
 
     await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
@@ -1148,21 +1203,19 @@ async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch)
         ttl_seconds_after_created=86400,
     )
 
-    assert clients[0].reconciled[0].spec.ttl_seconds_after_created == 86400
+    assert seen[0][2].pool_ttl_seconds == 86400
 
 
 @pytest.mark.asyncio
 async def test_pool_apply_without_creation_ttl_leaves_the_pool_unreaped(monkeypatch):
-    clients = [FakeFleetClient() for _ in range(2)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    seen = _capture_native_apply(monkeypatch)
 
     await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
         name="workspace",
     )
 
-    assert clients[0].reconciled[0].spec.ttl_seconds_after_created is None
+    assert seen[0][2].pool_ttl_seconds is None
 
 
 @pytest.mark.asyncio
@@ -1177,16 +1230,18 @@ async def test_pool_apply_rejects_invalid_creation_ttl(monkeypatch):
         )
 
 
-def _forbidden(operation: str) -> SdkError.Status:
-    return SdkError.Status(operation=operation, status=403, body="k8s request is not allowed")
-
-
 @pytest.mark.asyncio
-async def test_pool_apply_maps_forbidden_pool_reconcile_to_access_denied(monkeypatch):
-    clients = [FakeFleetClient(reconcile_error=_forbidden("create pool"))]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+async def test_pool_apply_maps_a_taken_name_to_access_denied(monkeypatch):
+    import cua
 
+    class _Fleet:
+        async def apply(self, name, spec, options):
+            raise cua.CuaError.Fleet(
+                "Fleet denied create pool on pool namespace 'workspace' (HTTP 403). Pool "
+                "names are globally unique across accounts"
+            )
+
+    monkeypatch.setattr("cua_sandbox.pool.native_fleet", lambda: _Fleet())
     with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
         await Pool.apply(
             Image.from_registry("registry.example/workspace:latest"),
@@ -1194,74 +1249,7 @@ async def test_pool_apply_maps_forbidden_pool_reconcile_to_access_denied(monkeyp
         )
 
     assert "'workspace'" in str(error.value)
-    assert isinstance(error.value.__cause__, SdkError.Status)
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_maps_forbidden_template_reconcile_and_still_rolls_back(monkeypatch):
-    clients = [
-        FakeFleetClient(),
-        FakeFleetClient(reconcile_error=_forbidden("update template")),
-        FakeFleetClient(),
-    ]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(PoolAccessDeniedError, match="globally unique"):
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
-
-    assert clients[2].deleted_pools == ["workspace"]
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_canonicalizes_native_pool_access_denied(monkeypatch):
-    upstream = getattr(SdkError, "PoolAccessDenied", None)
-    if upstream is None:
-        pytest.skip("installed cua-fleet predates SdkError.PoolAccessDenied")
-
-    native = upstream(
-        operation="create pool",
-        namespace="workspace",
-        status=403,
-        body="k8s request is not allowed",
-    )
-    clients = [FakeFleetClient(reconcile_error=native)]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
-
-    assert error.value is native
-    assert "Fleet denied create pool on pool namespace 'workspace'" in str(error.value)
     assert "https://discord.gg/mVnXXpdE85" in str(error.value)
-
-
-@pytest.mark.asyncio
-async def test_pool_apply_rollback_failure_does_not_mask_template_error(monkeypatch):
-    class DeleteDeniedClient(FakeFleetClient):
-        async def delete_pool(self, pool: object) -> None:
-            raise _forbidden("delete pool")
-
-    clients = [
-        FakeFleetClient(),
-        FakeFleetClient(reconcile_error=_forbidden("update template")),
-        DeleteDeniedClient(),
-    ]
-    iterator = iter(clients)
-    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-
-    with pytest.raises(PoolAccessDeniedError, match="update template"):
-        await Pool.apply(
-            Image.from_registry("registry.example/workspace:latest"),
-            name="workspace",
-        )
 
 
 @pytest.mark.asyncio

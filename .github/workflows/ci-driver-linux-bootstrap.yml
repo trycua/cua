@@ -10,6 +10,15 @@ on:
 permissions:
   contents: read
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+concurrency:
+  group: ci-driver-linux-bootstrap-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   bootstrap:
     name: Debian 11 bootstrap (${{ matrix.arch }})

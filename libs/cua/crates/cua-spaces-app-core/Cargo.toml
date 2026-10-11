@@ -1,0 +1,38 @@
+[package]
+name = "cua-spaces-app-core"
+description = "The Cua Spaces app core: view models and state machines (Spaces list, New Space wizard, teleport picker and review, Keyvault, onboarding, settings, notch) shared by the Tauri app and the native SwiftUI app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[features]
+# Pure view-model logic only (builds for wasm32; the Tauri webview loads it).
+default = []
+# The Keyvault broker client (`cua daemon`'s `$CUA_HOME/keyvault.sock`) both
+# shells use: verified connect, the overview and the page actions.
+keyvault-client = ["dep:cua-keyvault", "dep:async-trait", "dep:tokio"]
+# The first-run "Command line" step (put the bundled `cua` on PATH) both
+# shells run: file writes and `cua --version`, so not for wasm.
+installer = ["dep:tokio", "tokio/process", "tokio/time", "tokio/fs"]
+# Sends the core's telemetry signals (`telemetry::record`) on a
+# cua-telemetry client: both shells enable it, the wasm build does not.
+telemetry = ["dep:cua-telemetry"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+cua-keyvault = { workspace = true, optional = true }
+cua-telemetry = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["sync"] }
+
+[dev-dependencies]
+# Wire-drift tests: the core's Keyvault mirror types decode the broker's
+# real serde output.
+cua-keyvault.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true

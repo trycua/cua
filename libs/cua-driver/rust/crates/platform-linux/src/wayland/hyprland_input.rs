@@ -18,7 +18,13 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
-const MAX_STALE_GEOMETRY_RETRIES: usize = 1;
+/// Retries of an action the plugin refused as `stale_geometry` (the target's
+/// surface box changed between TARGET and the action). Hyprland animates a
+/// window for a few hundred milliseconds after a click activates it or the
+/// layout changes, so an immediate retry lands in the same animation: wait
+/// `STALE_GEOMETRY_BACKOFF * attempt` before each (at most ~0.6 s in all).
+const MAX_STALE_GEOMETRY_RETRIES: usize = 4;
+const STALE_GEOMETRY_BACKOFF: Duration = Duration::from_millis(60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeliveryRoute {
@@ -109,6 +115,52 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
         .collect()
 }
 
+/// Wheel detents per `by: "page"` unit. This is the same documented
+/// approximation the Windows foreground fallback uses (page = 3 detents); it is
+/// not a toolkit-measured viewport fraction, and callers must not treat a page
+/// as an exact viewport.
+pub(crate) const PAGE_WHEEL_DETENTS: usize = 3;
+/// Public scroll `amount` bound (before the page multiplier).
+const MAX_SCROLL_AMOUNT: usize = 50;
+/// One protocol packet carries at most 100 detents (|value| <= 1000 at 10 per
+/// detent). Larger requests are decomposed, never clamped.
+const MAX_DETENTS_PER_PACKET: usize = 100;
+
+/// Validate the whole request before dispatching anything, then expand it to
+/// wheel packets. `amount` is the public 1..=50 count of lines or pages. A page
+/// request that exceeds one packet becomes several consecutive same-direction
+/// packets whose detents sum exactly to `amount * PAGE_WHEEL_DETENTS`.
+pub(crate) fn scroll_actions(
+    point: Option<(f64, f64)>,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<Vec<Action>> {
+    ensure!(
+        (1..=MAX_SCROLL_AMOUNT).contains(&amount),
+        "unsupported scroll amount"
+    );
+    ensure!(
+        matches!(direction, "up" | "down" | "left" | "right"),
+        "unsupported scroll direction"
+    );
+    let mut remaining = match by {
+        cua_driver_contract::ScrollBy::Line => amount,
+        cua_driver_contract::ScrollBy::Page => amount * PAGE_WHEEL_DETENTS,
+    };
+    let mut actions = Vec::new();
+    while remaining > 0 {
+        let chunk = remaining.min(MAX_DETENTS_PER_PACKET);
+        actions.push(Action::Scroll {
+            point,
+            direction: direction.to_owned(),
+            amount: chunk,
+        });
+        remaining -= chunk;
+    }
+    Ok(actions)
+}
+
 /// Cancellation belongs to one invocation, never to its session's next call.
 #[derive(Clone, Default)]
 pub(crate) struct ActionCancellation(Arc<AtomicBool>);
@@ -159,7 +211,8 @@ impl std::fmt::Display for LaneBusy {
 impl std::error::Error for LaneBusy {}
 
 /// A sent action has no trustworthy final reply. The count describes only
-/// acknowledged gesture phases (drag start or completed text keys), never a
+/// acknowledged gesture phases (drag start, completed text keys, or completed
+/// wheel packets of a multi-packet scroll), never a
 /// total event count or proof that no later events landed.
 #[derive(Debug)]
 pub struct DispatchUnknown {
@@ -197,6 +250,19 @@ pub fn enabled() -> bool {
                         })
                 })
             }))
+}
+
+/// Whether background (isolated seat) input is admitted for `pid`'s windows,
+/// the check a background action makes before dispatch. `Err` carries the
+/// refusal reason (`client_not_qualified`, ...). Only meaningful while
+/// [`enabled`]: without the isolated seats the tools route background input
+/// elsewhere.
+pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+    if protocol() == InputProtocol::Production {
+        super::hyprland_compatibility::qualify(pid)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -566,15 +632,6 @@ impl Client {
         }
     }
 
-    fn execute_routed(
-        &mut self,
-        action: Action,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
-        route: DeliveryRoute,
-    ) -> Result<Value> {
-        self.execute_routed_with_attest(action, started, route, Self::attest)
-    }
-
     fn execute_routed_with_attest(
         &mut self,
         action: Action,
@@ -630,6 +687,7 @@ impl Client {
                 && reply.get("delivery").is_none()
                 && attempt < MAX_STALE_GEOMETRY_RETRIES
             {
+                std::thread::sleep(STALE_GEOMETRY_BACKOFF * (attempt as u32 + 1));
                 continue;
             }
             if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
@@ -642,26 +700,6 @@ impl Client {
             return Ok(reply);
         }
         unreachable!("bounded stale geometry retry loop always returns")
-    }
-
-    #[cfg(test)]
-    fn dispatch(
-        &self,
-        packet: &str,
-        is_drag: bool,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> Result<Value> {
-        self.dispatch_routed(packet, is_drag, started, DeliveryRoute::Background)
-    }
-
-    fn dispatch_routed(
-        &self,
-        packet: &str,
-        is_drag: bool,
-        mut started: Option<tokio::sync::oneshot::Sender<()>>,
-        route: DeliveryRoute,
-    ) -> Result<Value> {
-        self.dispatch_routed_with_started(packet, is_drag, &mut started, route)
     }
 
     fn dispatch_routed_with_started(
@@ -720,11 +758,6 @@ impl Client {
             reply["delivery"] = json!({"mode":route.mode(),"delivered_count":1});
         }
         Ok(reply)
-    }
-
-    #[cfg(test)]
-    fn target_packet(&self, action: &Action) -> String {
-        self.target_packet_routed(action, DeliveryRoute::Background)
     }
 
     fn check_route(&self, route: DeliveryRoute) -> Result<()> {
@@ -1036,8 +1069,7 @@ fn execute_routed(
 ) -> Result<Value> {
     execute_actions_routed(
         owner,
-        pid,
-        address,
+        (pid, address),
         vec![action],
         started,
         cancellation,
@@ -1080,6 +1112,66 @@ pub(crate) fn execute_background_text(
     )
 }
 
+pub(crate) fn execute_scroll(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_scroll_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+pub(crate) fn execute_foreground_scroll(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_scroll_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+/// One packet keeps the single-action reply; several run as a paced sequence
+/// whose `delivered_count` counts acknowledged wheel packets, not detents.
+fn execute_scroll_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    ensure!(
+        !actions.is_empty() && actions.iter().all(|a| matches!(a, Action::Scroll { .. })),
+        "scroll requires wheel actions"
+    );
+    let sequence = actions.len() > 1;
+    execute_actions_routed(
+        owner,
+        (pid, address),
+        actions,
+        None,
+        cancellation,
+        route,
+        sequence,
+    )
+}
+
 fn execute_text_routed(
     owner: Option<String>,
     pid: u32,
@@ -1096,8 +1188,7 @@ fn execute_text_routed(
     );
     execute_actions_routed(
         owner,
-        pid,
-        address,
+        (pid, address),
         actions,
         None,
         cancellation,
@@ -1106,16 +1197,17 @@ fn execute_text_routed(
     )
 }
 
+/// `target` is the exact (pid, Hyprland window address) the actions go to.
 fn execute_actions_routed(
     owner: Option<String>,
-    pid: u32,
-    address: u64,
+    target: (u32, u64),
     actions: Vec<Action>,
     started: Option<tokio::sync::oneshot::Sender<()>>,
     cancellation: ActionCancellation,
     route: DeliveryRoute,
     text: bool,
 ) -> Result<Value> {
+    let (pid, address) = target;
     cancellation.check()?;
     ensure!(enabled(), "Hyprland isolated input is unavailable");
     ensure!(
@@ -1202,6 +1294,11 @@ fn execute_text_actions(
 ) -> Result<Value> {
     let mut delivered = 0u32;
     let action_count = actions.len();
+    // Shared by text keys and wheel packets; only the interruption code differs.
+    let interrupted_code = match actions.first() {
+        Some(Action::Scroll { .. }) => "scroll_interrupted",
+        _ => "text_interrupted",
+    };
     for (index, action) in actions.into_iter().enumerate() {
         match dispatch(action) {
             Ok(mut reply) if reply["ok"] == false => {
@@ -1229,7 +1326,7 @@ fn execute_text_actions(
                     return Err(error);
                 }
                 return Ok(
-                    json!({"ok":false,"code":"text_interrupted","detail":error.to_string(),
+                    json!({"ok":false,"code":interrupted_code,"detail":error.to_string(),
                         "effect":"partial","delivery":{"mode":route.mode(),"delivered_count":delivered}}),
                 );
             }
@@ -1277,6 +1374,7 @@ fn terminal_connection_result(value: &Value) -> bool {
                         | "plugin_shutdown"
                         | "generation_exhausted"
                         | "text_interrupted"
+                        | "scroll_interrupted"
                 )
             ))
 }
@@ -1341,6 +1439,18 @@ mod tests {
         );
     }
 
+    /// Send one raw packet through the production dispatch path.
+    fn dispatch(
+        client: &Client,
+        packet: &str,
+        is_drag: bool,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
+    ) -> Result<Value> {
+        let mut started = started;
+        client.dispatch_routed_with_started(packet, is_drag, &mut started, route)
+    }
+
     fn dispatch_production_key(slot: &mut Option<Client>, route: DeliveryRoute) -> Result<Value> {
         dispatch_actions_in_slot(
             slot,
@@ -1353,6 +1463,116 @@ mod tests {
             false,
             record_test_attestation,
         )
+    }
+
+    fn scroll_values(actions: &[Action]) -> Vec<String> {
+        actions
+            .iter()
+            .map(|action| {
+                let packet = action.packet(1, TOKEN, 1, 100.0, 100.0).unwrap();
+                packet.rsplit(' ').next().unwrap().to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scroll_line_keeps_ten_units_per_detent_in_each_direction() {
+        use cua_driver_contract::ScrollBy::Line;
+        for (direction, axis, sign) in [
+            ("up", 0, -1),
+            ("down", 0, 1),
+            ("left", 1, -1),
+            ("right", 1, 1),
+        ] {
+            let actions = scroll_actions(None, direction, 3, Line).unwrap();
+            assert_eq!(actions.len(), 1);
+            let packet = actions[0].packet(1, TOKEN, 1, 100.0, 100.0).unwrap();
+            assert_eq!(
+                packet,
+                format!("SCROLL 1 {TOKEN} 1 50 50 {axis} {}", 30 * sign)
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_page_is_three_detents_per_page_in_each_direction() {
+        use cua_driver_contract::ScrollBy::Page;
+        for (direction, sign) in [("up", -1), ("down", 1), ("left", -1), ("right", 1)] {
+            let actions = scroll_actions(Some((5.0, 6.0)), direction, 2, Page).unwrap();
+            assert_eq!(scroll_values(&actions), vec![(60 * sign).to_string()]);
+        }
+    }
+
+    #[test]
+    fn scroll_page_beyond_one_packet_is_decomposed_without_loss() {
+        use cua_driver_contract::ScrollBy::{Line, Page};
+        // Maximum public amount: 50 lines fit one packet; 50 pages = 150
+        // detents = 100 + 50, never clamped.
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 50, Line).unwrap()),
+            vec!["500"]
+        );
+        let actions = scroll_actions(None, "up", 50, Page).unwrap();
+        assert_eq!(scroll_values(&actions), vec!["-1000", "-500"]);
+        // The first packet at the protocol's |1000| limit is still valid.
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 34, Page).unwrap()),
+            vec!["1000", "20"]
+        );
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 33, Page).unwrap()),
+            vec!["990"]
+        );
+    }
+
+    #[test]
+    fn scroll_rejects_invalid_amount_and_direction_before_any_packet() {
+        use cua_driver_contract::ScrollBy::{Line, Page};
+        for by in [Line, Page] {
+            assert!(scroll_actions(None, "down", 0, by).is_err());
+            assert!(scroll_actions(None, "down", 51, by).is_err());
+            assert!(scroll_actions(None, "sideways", 1, by).is_err());
+            assert!(scroll_actions(None, "", 1, by).is_err());
+        }
+        // The packet encoder keeps its own protocol bound.
+        let over = Action::Scroll {
+            point: None,
+            direction: "down".into(),
+            amount: 101,
+        };
+        assert!(over.packet(1, TOKEN, 1, 100.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn multi_packet_scroll_reports_packets_and_interruption_honestly() {
+        let actions =
+            scroll_actions(None, "down", 50, cua_driver_contract::ScrollBy::Page).unwrap();
+        let mut calls = 0;
+        let result = execute_text_actions(actions, DeliveryRoute::Foreground, |_| {
+            calls += 1;
+            Ok(json!({"ok":true,"effect":"unverifiable","route":"primary_foreground"}))
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result["delivery"]["delivered_count"], 2);
+        assert_eq!(result["route"], "primary_foreground");
+
+        let actions =
+            scroll_actions(None, "down", 50, cua_driver_contract::ScrollBy::Page).unwrap();
+        let mut calls = 0;
+        let result = execute_text_actions(actions, DeliveryRoute::Background, |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(json!({"ok":true,"effect":"unverifiable","route":"synthetic_events"}))
+            } else {
+                anyhow::bail!("cancelled")
+            }
+        })
+        .unwrap();
+        assert_eq!(result["code"], "scroll_interrupted");
+        assert_eq!(result["effect"], "partial");
+        assert_eq!(result["delivery"]["delivered_count"], 1);
+        assert!(terminal_connection_result(&result));
     }
 
     #[test]
@@ -1387,33 +1607,28 @@ mod tests {
                     .unwrap();
             }
         });
-        let mut attestations = 0;
+        let mut handshake_attestations = 0;
         assert!(client
             .attest_and_handshake(0, |_| {
-                attestations += 1;
+                handshake_attestations += 1;
                 Ok(())
             })
             .unwrap());
-        assert_eq!(attestations, 1);
+        assert_eq!(handshake_attestations, 1);
+        reset_test_attestations();
         let mut slot = Some(client);
         for (call, text) in ["abc", "de"].into_iter().enumerate() {
-            let result = dispatch_in_slot(
+            let result = dispatch_actions_in_slot(
                 &mut slot,
-                |_| {
-                    attestations += 1;
-                    Ok(())
-                },
-                |client| {
-                    execute_text_actions(
-                        text_actions(text).unwrap(),
-                        DeliveryRoute::Foreground,
-                        |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
-                    )
-                },
+                text_actions(text).unwrap(),
+                None,
+                DeliveryRoute::Foreground,
+                true,
+                record_test_attestation,
             )
             .unwrap();
             assert_eq!(result["delivery"]["delivered_count"], text.len());
-            assert_eq!(attestations, call + 2);
+            assert_eq!(test_attestations(), call + 1);
             assert!(slot.is_some());
         }
         server.join().unwrap();
@@ -1545,16 +1760,13 @@ mod tests {
             );
         });
         let mut slot = Some(client);
-        let result = dispatch_in_slot(
+        let result = dispatch_actions_in_slot(
             &mut slot,
-            |_| Ok(()),
-            |client| {
-                execute_text_actions(
-                    text_actions("abc").unwrap(),
-                    DeliveryRoute::Foreground,
-                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
-                )
-            },
+            text_actions("abc").unwrap(),
+            None,
+            DeliveryRoute::Foreground,
+            true,
+            record_test_attestation,
         )
         .unwrap();
         assert_eq!(result["code"], "desktop_changed");
@@ -1598,16 +1810,13 @@ mod tests {
             );
         });
         let mut slot = Some(client);
-        let result = dispatch_in_slot(
+        let result = dispatch_actions_in_slot(
             &mut slot,
-            |_| Ok(()),
-            |client| {
-                execute_text_actions(
-                    text_actions("abc").unwrap(),
-                    DeliveryRoute::Foreground,
-                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
-                )
-            },
+            text_actions("abc").unwrap(),
+            None,
+            DeliveryRoute::Foreground,
+            true,
+            record_test_attestation,
         )
         .unwrap();
         assert_eq!(result["code"], "target_changed");
@@ -1623,13 +1832,14 @@ mod tests {
         client.lane = Some(0);
         // This socket's peer is the test process, never the Wayland compositor.
         assert!(client
-            .execute_routed(
+            .execute_routed_with_attest(
                 Action::Key {
                     key: "a".into(),
                     modifiers: vec![]
                 },
                 None,
                 DeliveryRoute::Background,
+                Client::attest,
             )
             .is_err());
         drop(client);
@@ -1701,10 +1911,16 @@ mod tests {
             reset_test_attestations();
             let (client, peer) = production_test_client();
             let acknowledgement = route.acknowledgement();
+            // Success on the second attempt, or every attempt refused.
+            let attempts = if succeeds {
+                2
+            } else {
+                MAX_STALE_GEOMETRY_RETRIES as u64 + 1
+            };
             let server = std::thread::spawn(move || {
-                for (sequence, revision) in [(1, 11), (2, 22)] {
-                    serve_key_target(&peer, route, sequence, revision);
-                    let reply = if sequence == 2 && succeeds {
+                for sequence in 1..=attempts {
+                    serve_key_target(&peer, route, sequence, sequence * 11);
+                    let reply = if sequence == attempts && succeeds {
                         json!({"ok":true,"effect":"unverifiable","route":acknowledgement})
                     } else {
                         json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})
@@ -1719,15 +1935,26 @@ mod tests {
             });
 
             let mut slot = Some(client);
+            let started = Instant::now();
             let reply = dispatch_production_key(&mut slot, route).unwrap();
             assert_eq!(reply["ok"], succeeds);
+            // Each retry waits for the window to settle, a little longer
+            // every time.
+            let waited: Duration = (1..attempts as u32)
+                .map(|n| STALE_GEOMETRY_BACKOFF * n)
+                .sum();
+            assert!(
+                started.elapsed() >= waited,
+                "{:?} < {waited:?}",
+                started.elapsed()
+            );
             if !succeeds {
                 assert_eq!(reply["code"], "stale_geometry");
                 assert!(reply.get("effect").is_none());
                 assert!(reply.get("delivery").is_none());
             }
-            assert_eq!(slot.as_ref().unwrap().sequence, 2);
-            assert_eq!(test_attestations(), 2);
+            assert_eq!(slot.as_ref().unwrap().sequence, attempts);
+            assert_eq!(test_attestations(), attempts as usize);
             drop(slot);
             server.join().unwrap();
         }
@@ -1815,14 +2042,14 @@ mod tests {
                 .unwrap();
         });
         let (started, acknowledgement) = tokio::sync::oneshot::channel();
-        let reply = client
-            .dispatch_routed(
-                "DRAG synthetic",
-                true,
-                Some(started),
-                DeliveryRoute::Foreground,
-            )
-            .unwrap();
+        let reply = dispatch(
+            &client,
+            "DRAG synthetic",
+            true,
+            Some(started),
+            DeliveryRoute::Foreground,
+        )
+        .unwrap();
         assert!(acknowledgement.blocking_recv().is_ok());
         assert_eq!(reply["effect"], "partial");
         assert_eq!(
@@ -1840,10 +2067,15 @@ mod tests {
             peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
                 .unwrap();
         });
-        assert!(client
-            .dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
-            .unwrap_err()
-            .is::<DispatchUnknown>());
+        assert!(dispatch(
+            &client,
+            "KEY synthetic",
+            false,
+            None,
+            DeliveryRoute::Foreground
+        )
+        .unwrap_err()
+        .is::<DispatchUnknown>());
         server.join().unwrap();
     }
 
@@ -1868,9 +2100,8 @@ mod tests {
                     0
                 );
             });
-            let error = client
-                .dispatch_routed(packet, started, None, DeliveryRoute::Foreground)
-                .unwrap_err();
+            let error =
+                dispatch(&client, packet, started, None, DeliveryRoute::Foreground).unwrap_err();
             assert_eq!(
                 error
                     .downcast_ref::<DispatchUnknown>()
@@ -1901,7 +2132,15 @@ mod tests {
         let error = execute_text_actions(
             text_actions("abc").unwrap(),
             DeliveryRoute::Foreground,
-            |_| client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground),
+            |_| {
+                dispatch(
+                    &client,
+                    "KEY synthetic",
+                    false,
+                    None,
+                    DeliveryRoute::Foreground,
+                )
+            },
         )
         .unwrap_err();
         assert_eq!(
@@ -1922,7 +2161,14 @@ mod tests {
             assert_eq!(read_packet(&peer), "KEY synthetic");
             peer.send(br#"{"ok":false,"code":"foreground_partial_unknown","detail":"foreground_partial_unknown"}"#).unwrap();
         });
-        let reply = client.dispatch("KEY synthetic", false, None).unwrap();
+        let reply = dispatch(
+            &client,
+            "KEY synthetic",
+            false,
+            None,
+            DeliveryRoute::Background,
+        )
+        .unwrap();
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["code"], "foreground_partial_unknown");
         server.join().unwrap();
@@ -1983,32 +2229,6 @@ mod tests {
             );
             assert!(terminal_connection_result(&reply));
         }
-    }
-
-    #[test]
-    fn foreground_text_unknown_delivery_keeps_only_acknowledged_key_count() {
-        let mut calls = 0;
-        let error = execute_text_actions(
-            text_actions("abc").unwrap(),
-            DeliveryRoute::Foreground,
-            |_| {
-                calls += 1;
-                if calls == 1 {
-                    Ok(json!({"ok":true}))
-                } else {
-                    Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
-                }
-            },
-        )
-        .unwrap_err();
-        assert_eq!(calls, 2);
-        assert_eq!(
-            error
-                .downcast_ref::<DispatchUnknown>()
-                .unwrap()
-                .acknowledged_phases,
-            1
-        );
     }
 
     #[test]
@@ -2258,7 +2478,13 @@ mod tests {
             |_| Ok(()),
             |client| {
                 client.request("TARGET synthetic")?;
-                client.dispatch("CLICK synthetic", false, None)
+                dispatch(
+                    client,
+                    "CLICK synthetic",
+                    false,
+                    None,
+                    DeliveryRoute::Background,
+                )
             },
         )
         .unwrap();
@@ -2300,7 +2526,13 @@ mod tests {
                 |_| Ok(()),
                 |client| {
                     dispatches += 1;
-                    client.dispatch("CLICK synthetic", false, None)
+                    dispatch(
+                        client,
+                        "CLICK synthetic",
+                        false,
+                        None,
+                        DeliveryRoute::Background,
+                    )
                 },
             )
             .unwrap_err();
@@ -2551,6 +2783,10 @@ mod tests {
     }
 
     #[tokio::test]
+    // Holding the lane's std mutex across the awaits is the scenario under
+    // test: the queued call contends for it from a blocking-pool thread, never
+    // from this runtime, so the lint's deadlock does not apply.
+    #[allow(clippy::await_holding_lock)]
     async fn aborted_queued_invocation_never_targets_or_changes_the_active_connection() {
         let (client, peer) = test_connection();
         let session = Arc::new(SessionClient {
@@ -2641,7 +2877,15 @@ mod tests {
                 let result = dispatch_in_slot(
                     &mut slot,
                     |_| Ok(()),
-                    |client| client.dispatch("DRAG synthetic", true, Some(started)),
+                    |client| {
+                        dispatch(
+                            client,
+                            "DRAG synthetic",
+                            true,
+                            Some(started),
+                            DeliveryRoute::Background,
+                        )
+                    },
                 );
                 assert!(slot.is_none());
                 finished.send(result).unwrap();
@@ -2713,9 +2957,7 @@ mod tests {
             let (guard, cancellation) = ActionCancellation::invocation();
             client.cancellation = cancellation;
             drop(guard);
-            let error = client
-                .dispatch_routed("CLICK synthetic", false, None, route)
-                .unwrap_err();
+            let error = dispatch(&client, "CLICK synthetic", false, None, route).unwrap_err();
             assert!(error.is::<ActionCancelled>());
             assert!(!error.is::<DispatchUnknown>());
             let mut byte = [0u8];
@@ -2778,9 +3020,7 @@ mod tests {
                         std::io::ErrorKind::WouldBlock
                     );
                 });
-                let error = client
-                    .dispatch_routed(packet, is_drag, Some(started), route)
-                    .unwrap_err();
+                let error = dispatch(&client, packet, is_drag, Some(started), route).unwrap_err();
                 let unknown = error.downcast_ref::<DispatchUnknown>().unwrap();
                 assert_eq!(unknown.acknowledged_phases, u32::from(is_drag));
                 assert_eq!(unknown.detail, ActionCancelled.to_string());
@@ -2810,7 +3050,13 @@ mod tests {
                 }
             });
             let (started, acknowledged) = tokio::sync::oneshot::channel();
-            let result = client.dispatch("DRAG synthetic", true, Some(started));
+            let result = dispatch(
+                &client,
+                "DRAG synthetic",
+                true,
+                Some(started),
+                DeliveryRoute::Background,
+            );
             assert!(acknowledged.blocking_recv().is_ok());
             if expected_cancel {
                 let reply = result.unwrap();
@@ -2839,7 +3085,14 @@ mod tests {
         let server = std::thread::spawn(move || {
             assert_eq!(read_packet(&peer), "CLICK synthetic");
         });
-        let result = client.dispatch("CLICK synthetic", false, None).unwrap_err();
+        let result = dispatch(
+            &client,
+            "CLICK synthetic",
+            false,
+            None,
+            DeliveryRoute::Background,
+        )
+        .unwrap_err();
         assert_eq!(
             result
                 .downcast_ref::<DispatchUnknown>()
@@ -2936,10 +3189,15 @@ mod tests {
                 8,
             ),
         ] {
-            assert_eq!(
-                client.target_packet(&action),
-                format!("TARGET 1 1 {capability}")
-            );
+            for (route, command) in [
+                (DeliveryRoute::Background, "TARGET"),
+                (DeliveryRoute::Foreground, "FOREGROUND_TARGET"),
+            ] {
+                assert_eq!(
+                    client.target_packet_routed(&action, route),
+                    format!("{command} 1 1 {capability}")
+                );
+            }
         }
         for lane in 0..MAX_LANES {
             assert_ne!(

@@ -1,7 +1,6 @@
 """Agent management commands for cua-bench CLI."""
 
-import json
-import os
+from ._help import examples
 import re
 from pathlib import Path
 
@@ -24,8 +23,9 @@ def register_parser(subparsers):
     """Register the agent subcommand and its subcommands."""
     agent_parser = subparsers.add_parser(
         "agent",
-        help="Agent management commands",
+        help="Scaffold custom agents",
         description="Create and manage custom agents for cua-bench.",
+        **examples(("Scaffold an agent in ./my-agent", "cb agent init my-agent")),
     )
 
     agent_subparsers = agent_parser.add_subparsers(
@@ -39,6 +39,13 @@ def register_parser(subparsers):
         "init",
         help="Create a new agent from template",
         description="Scaffold a new custom agent with working sample code.",
+        **examples(
+            ("Scaffold an agent in ./my-agent", "cb agent init my-agent"),
+            (
+                "Scaffold it into another directory",
+                "cb agent init my-agent --output-dir ./agents/my-agent",
+            ),
+        ),
     )
     init_parser.add_argument(
         "name",
@@ -50,11 +57,14 @@ def register_parser(subparsers):
         help="Output directory (default: ./<name>)",
     )
 
-    # cb agent build <path>
+    # cb agent build <path> (deprecated)
     build_parser = agent_subparsers.add_parser(
         "build",
-        help="Build agent Docker image",
+        help="Deprecated: cb run executes agents in-process",
         description="Build a Docker image for an agent directory containing a Dockerfile.",
+        **examples(
+            ("Build an agent image (deprecated)", "cb agent build ./my-agent --tag my-agent:dev")
+        ),
     )
     build_parser.add_argument(
         "path",
@@ -69,8 +79,9 @@ def register_parser(subparsers):
     # cb agent push <image-name>
     push_parser = agent_subparsers.add_parser(
         "push",
-        help="Push agent Docker image to CUA registry",
+        help="Deprecated: agent images are no longer used",
         description="Push a Docker image through the CUA API proxy with workspace namespacing.",
+        **examples(("Push an agent image (deprecated)", "cb agent push my-agent:dev")),
     )
     push_parser.add_argument(
         "image_name",
@@ -103,166 +114,25 @@ def execute(args):
     return 1
 
 
-def load_token() -> dict | None:
-    """Load the authentication token from the config file."""
-    if not TOKEN_FILE.exists():
-        return None
-    try:
-        with open(TOKEN_FILE, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return None
-
-
 def build_agent(agent_path: str, tag: str | None = None) -> int:
-    """Build Docker image for an agent.
-
-    Args:
-        agent_path: Path to agent directory (containing Dockerfile)
-        tag: Optional image tag (default: agent name from directory)
-
-    Returns:
-        Exit code (0 for success, 1 for error)
-    """
-    import subprocess
-
-    agent_dir = Path(agent_path).resolve()
-    dockerfile = agent_dir / "Dockerfile"
-
-    if not agent_dir.exists():
-        print(f"{RED}Error: Directory not found: {agent_dir}{RESET}")
-        return 1
-
-    if not dockerfile.exists():
-        print(f"{RED}Error: No Dockerfile found in {agent_dir}{RESET}")
-        print(f"{GREY}Run 'cb agent init <name>' to create a new agent with Dockerfile{RESET}")
-        return 1
-
-    # Determine tag from directory name if not specified
-    image_tag = tag or agent_dir.name
-
-    print(f"{CYAN}Building agent image...{RESET}")
-    print(f"  {GREY}Source:{RESET} {agent_dir}")
-    print(f"  {GREY}Tag:{RESET} {image_tag}")
-
-    # Build image
-    result = subprocess.run(
-        ["docker", "build", "-t", image_tag, "."],
-        cwd=agent_dir,
+    """Deprecated: ``cb run`` runs agents in-process (no agent images)."""
+    print(
+        f"{YELLOW}cb agent build is deprecated and does nothing: cb run executes agents in "
+        f"this Python environment. Install the agent package (pip install -e {agent_path}) and "
+        f"run it with --agent-import-path module:Class, or give it an import_path in "
+        f".cua/agents.yaml.{RESET}"
     )
-
-    if result.returncode == 0:
-        print(f"\n{GREEN}✓ Successfully built {image_tag}{RESET}")
-        print(f"\n{GREY}To run locally:{RESET}")
-        print(f"  cb run <task> --agent-import-path {agent_dir}")
-        print(f"\n{GREY}To push to cloud:{RESET}")
-        print(f"  cb agent push {image_tag}")
-    else:
-        print(f"\n{RED}✗ Build failed{RESET}")
-
-    return result.returncode
+    return 0
 
 
 def push_image(image_name: str, registry_url: str | None = None) -> int:
-    """Push a Docker image to the CUA registry via API proxy.
-
-    Args:
-        image_name: Docker image name (e.g., 'cua-bench:latest')
-        registry_url: Custom API proxy URL (default: https://api.cua.ai)
-
-    Returns:
-        Exit code (0 for success, 1 for error)
-    """
-    # Check for authentication
-    token_data = load_token()
-    if not token_data or not token_data.get("token"):
-        print(f"{RED}Error: Not authenticated{RESET}")
-        print(f"{GREY}Run {RESET}{CYAN}cb login{RESET}{GREY} first to authenticate.{RESET}")
-        return 1
-
-    token = token_data["token"]
-
-    # Get API URL
-    api_url = registry_url or os.getenv("CUA_API_URL", DEFAULT_API_URL)
-    api_host = api_url.replace("https://", "").replace("http://", "")
-
-    try:
-        import docker
-    except ImportError:
-        print(f"{RED}Error: docker package not installed{RESET}")
-        print(f"{GREY}Install with: pip install docker{RESET}")
-        return 1
-
-    try:
-        client = docker.from_env()
-    except docker.errors.DockerException as e:
-        print(f"{RED}Error: Could not connect to Docker daemon{RESET}")
-        print(f"{GREY}{e}{RESET}")
-        return 1
-
-    # Check if the image exists locally
-    try:
-        image = client.images.get(image_name)
-    except docker.errors.ImageNotFound:
-        print(f"{RED}Error: Image '{image_name}' not found locally{RESET}")
-        print(f"{GREY}Build the image first with: docker build -t {image_name} .{RESET}")
-        return 1
-
-    # Extract the image name and tag
-    parts = image_name.split("/")
-    name_with_tag = parts[-1]
-    if ":" in name_with_tag:
-        base_name, tag = name_with_tag.rsplit(":", 1)
-    else:
-        base_name = name_with_tag
-        tag = "latest"
-
-    # Create the remote tag
-    remote_tag = f"{api_host}/{base_name}:{tag}"
-
-    print(f"{CYAN}Tagging image...{RESET}")
-    print(f"  {GREY}Source:{RESET} {image_name}")
-    print(f"  {GREY}Target:{RESET} {remote_tag}")
-
-    try:
-        image.tag(remote_tag)
-    except docker.errors.APIError as e:
-        print(f"{RED}Error tagging image: {e}{RESET}")
-        return 1
-
-    print(f"\n{CYAN}Pushing through API proxy...{RESET}")
-    print(f"  {GREY}Endpoint:{RESET} {api_url}")
-
-    # Create auth config for the push
-    auth_config = {
-        "username": "_token",
-        "password": token,
-    }
-
-    try:
-        for line in client.images.push(
-            remote_tag, auth_config=auth_config, stream=True, decode=True
-        ):
-            if "status" in line:
-                status = line["status"]
-                progress = line.get("progress", "")
-                layer_id = line.get("id", "")
-
-                if layer_id:
-                    print(f"  {GREY}{layer_id}:{RESET} {status} {progress}", end="\r")
-                else:
-                    print(f"  {status} {progress}")
-
-            if "error" in line:
-                print(f"\n{RED}Error: {line['error']}{RESET}")
-                return 1
-
-        print(f"\n{GREEN}✓ Successfully pushed {remote_tag}{RESET}")
-        return 0
-
-    except docker.errors.APIError as e:
-        print(f"\n{RED}Error pushing image: {e}{RESET}")
-        return 1
+    """Deprecated: agent images for the retired api.cua.ai backend."""
+    print(
+        f"{YELLOW}cb agent push is deprecated and does nothing: agent images were for the "
+        f"retired api.cua.ai backend. cb run executes agents in-process "
+        f"(--agent-import-path module:Class).{RESET}"
+    )
+    return 0
 
 
 def create_agent_scaffold(name: str, output_dir: str | None = None) -> int:

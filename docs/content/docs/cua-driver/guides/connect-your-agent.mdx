@@ -1,0 +1,192 @@
+---
+title: Connect your agent
+description: Register Cua Driver with Claude Code, Codex, Cursor, Hermes, OpenClaw, local models, and agent SDKs.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+An agent reaches Cua Driver in one of two ways: an MCP client launches
+`cua-driver mcp`, or a skill teaches a shell-capable agent to run
+`cua-driver call <tool>`. The harness owns the model and the loop; Cua Driver
+never calls a model API.
+
+## Register the MCP server
+
+To add the skill and MCP server to every agent on the machine in one step, use
+the cua installer: `curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver`.
+
+`mcp-config` prints the exact command or JSON for your client, with your
+installed binary's absolute path. Run what it prints, then restart the client:
+
+```bash test="cli-shape" id="cua-driver-mcp-config"
+cua-driver mcp-config --client <client>
+```
+
+| Harness | Setup | Notes |
+| --- | --- | --- |
+| Claude Code | `claude mcp add --transport stdio cua-driver -- cua-driver mcp`, or `--client claude` for the computer-use compatibility profile | Install the skill for native skill activation. |
+| Codex (CLI, IDE, app) | `--client codex`, which prints `codex mcp add cua-driver -- <path> mcp` | Codex's own approval policy also applies. |
+| Cursor | `--client cursor`; paste into `~/.cursor/mcp.json` or `.cursor/mcp.json` | |
+| Antigravity CLI (Gemini) | `--client antigravity`; merge into `~/.gemini/config/mcp_config.json` | `--client gemini` is a legacy alias. |
+| OpenClaw | `--client openclaw`, which prints `openclaw mcp set cua-driver '{…}'` | On macOS, a gateway-spawned server does not inherit OpenClaw.app's grants. |
+| Hermes | Built in: `hermes tools enable computer_use --platform cli`, then `hermes -t computer_use chat` | Repair with `hermes computer-use install` and `doctor`. Do not add a second raw MCP server. |
+| Prime Agent | `cua-driver skills install`, then `/reload` and `/skill:cua-driver` | Calls the CLI; no MCP. |
+| OpenCode, Factory Droid, ZCode | `--client opencode`, `--client droid`, `--client zcode` | |
+| Qwen Code | `--client qwen`, which prints `qwen mcp add cua-driver <path> mcp` | |
+| Pi | `--client pi` | No MCP: runs one-shot `cua-driver call …` commands. |
+| Kimi Code | `kimi mcp add cua-driver -- <path> mcp`, then `kimi mcp test cua-driver` | No preset. |
+| T3 Code | Register Cua Driver in the harness that T3 Code launches | |
+
+Find `<path>` with `command -v cua-driver`. The full roster is in the
+[`mcp-config` reference](/cua-driver/reference/cli#cua-driver-mcp-config). Any
+other client that accepts the standard shape can use this (`cua-driver
+mcp-config` with no flag):
+
+```json test="config" id="json-config" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Model providers map to harnesses: Claude through Claude Code, OpenAI through
+Codex, Gemini through Antigravity, Kimi through Kimi
+Code, Qwen through Qwen Code. MiniMax documents setups for
+[Codex](https://platform.minimax.io/docs/token-plan/codex) and
+[Claude Code](https://platform.minimax.io/docs/token-plan/claude-code).
+
+<Callout type="warn">
+  Registering a client does not choose a [permission mode](/cua-driver/guides/permissions). On
+  macOS, `cua-driver mcp` proxies to the `CuaDriver.app` daemon, whose launch flags decide. On
+  Windows and Linux it owns its runtime: set `CUA_DRIVER_PERMISSION_MODE` in the client's `env`
+  block, or use `cua-driver mcp --socket <endpoint>` to reach a configured daemon. The default,
+  `standard`, allows input to every app.
+</Callout>
+
+## Install the agent skill
+
+The skill teaches an agent to pick tools, address elements, keep focus, and
+verify each action. It links into Claude Code, Codex, Prime Agent, OpenClaw,
+OpenCode, Antigravity, Hermes, and Pi:
+
+```bash test="cli-shape" id="cua-driver-skills-install"
+cua-driver skills install
+cua-driver skills status
+```
+
+If `status` reports a client's skill directory as absent, create it
+(`~/.agents/skills` for Codex, `~/.claude/skills` for Claude Code) and rerun.
+Add `--all-platforms` to keep the macOS, Windows, and Linux guides together.
+OpenClaw can use ClawHub instead: `clawhub install @cua/driver`. Cua Driver
+0.28.0+ also serves the skill as MCP resources; whether that activates it as a
+skill is up to the client.
+
+## Agent SDKs
+
+Examples in `libs/cua-driver/examples/agent-sdks` (Python and TypeScript):
+
+| SDK | Route | Run |
+| --- | --- | --- |
+| Claude Agent SDK | Native callbacks calling `CuaDriver.create()` in process | `claude_agent.py --route native` / `npm run claude -- --route native` |
+| Claude Agent SDK | MCP | `claude_agent.py --route mcp` / `npm run claude -- --route mcp` |
+| Codex SDK | MCP (it has no custom tool callbacks) | `codex_agent.py` / `npm run codex` |
+
+They remove interactive approval prompts: run only trusted tasks.
+
+## Local models
+
+Tested: Meta's Muse Glimmer 30B with Claude Code as the harness, served by
+Ollama or by llama.cpp with Unsloth's `UD-Q4_K_XL` GGUF. Every tool schema
+costs context, so hide unused tools with the filter:
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/docs/examples/local-models/cua-mcp-filter.py \
+  -o "$HOME/.local/bin/cua-mcp-filter" && chmod +x "$HOME/.local/bin/cua-mcp-filter"
+```
+
+Save as `muse-cua-mcp.json` (the filter hides tools; it does not authorize):
+
+```json test="config" id="json-config-local-model" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "cua-computer-use": {
+      "command": "cua-mcp-filter",
+      "args": [
+        "--allow",
+        "start_session,end_session,launch_app,list_apps,list_windows,get_window_state,get_accessibility_tree,move_cursor,click,type_text,press_key,hotkey,invoke_menu"
+      ]
+    }
+  }
+}
+```
+
+<Tabs items={['Ollama', 'llama.cpp']}>
+  <Tab value="Ollama">
+
+```bash skip="third-party-cli"
+ollama pull muse-glimmer:30b-mlx
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 \
+ollama launch claude --model muse-glimmer:30b-mlx --yes -- \
+  --bare --strict-mcp-config --mcp-config ./muse-cua-mcp.json --tools ""
+```
+
+  </Tab>
+  <Tab value="llama.cpp">
+
+```bash skip="third-party-cli"
+llama-server --hf-repo "unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL" \
+  --alias "muse-glimmer-local" --host 127.0.0.1 --port 8001 \
+  --ctx-size 131072 --parallel 1 --temp 1.0 --top-p 0.95 --top-k 64 \
+  --jinja --mmproj-auto --fit on --no-webui
+
+# In another terminal, once http://127.0.0.1:8001/health responds:
+ANTHROPIC_BASE_URL=http://127.0.0.1:8001 \
+ANTHROPIC_API_KEY=local-no-key-required \
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072 \
+claude --bare --strict-mcp-config --mcp-config ./muse-cua-mcp.json \
+  --tools "" --model muse-glimmer-local
+```
+
+  </Tab>
+</Tabs>
+
+Keep context small: bound `get_window_state` with `max_elements` and
+`max_depth`, reuse `pid` and `window_id`, and batch text into one `type_text`.
+In the tested Calculator runs this cut uncached input from 71,088 to 12,251
+tokens. Use at least a 64K context window. To target a macOS VM, pass the
+guest's SSH MCP command ([Run in a VM](/cua-driver/guides/vms-and-remote#macos-lume-vm))
+to `cua-mcp-filter --driver`.
+
+### Text-only models
+
+For a model that cannot accept images, such as iFlytek Spark-X2.5 on the
+Astron Token Plan, add `--text-only` to the filter's `args`. The filter then
+requests `get_window_state` without a screenshot and replaces any remaining
+image content with a short text note, so the model works through the
+accessibility tree and its `element_token` values. Leave pixel-only tools such
+as `screenshot` and `zoom` out of the allowlist. Without `--text-only`, a
+provider that rejects images fails every request once a screenshot reaches
+the conversation. Apps that expose no usable accessibility elements (canvas,
+video, custom-drawn surfaces) need a vision model instead.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial-poster.jpg"
+    title="Create a checklist in Apple Notes"
+  >
+    Muse Glimmer runs locally and completes the task through Cua Driver.
+  </VideoDemo>
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial-poster.jpg"
+    title="Schedule an Apple Reminder"
+  >
+    Muse Glimmer sets the reminder and verifies the final state.
+  </VideoDemo>
+</div>

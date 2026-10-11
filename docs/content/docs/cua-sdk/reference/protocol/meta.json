@@ -1,0 +1,19 @@
+{
+  "title": "Protocol",
+  "pages": [
+    "env-system",
+    "env-diagnose",
+    "env-common",
+    "env-process",
+    "env-filesystem",
+    "env-computer",
+    "env-windows",
+    "env-stream",
+    "env-teleport-tunnel",
+    "env-host-spaces",
+    "daemon-sandboxes",
+    "daemon-runtimes",
+    "daemon-spaces",
+    "daemon-service"
+  ]
+}

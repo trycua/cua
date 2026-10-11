@@ -8,7 +8,8 @@
 //! subscribers are intentionally invisible to the tool result.
 
 use cua_driver_contract::{
-    classify_cursor_semantics, CursorAction, CursorSemantics, CursorThemeSelection,
+    classify_cursor_semantics, CursorAction, CursorMotionSelection, CursorSemantics,
+    CursorThemeSelection,
 };
 use serde_json::Value;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -33,6 +34,12 @@ pub enum CursorEvent {
     SelectTheme {
         session: String,
         selection: CursorThemeSelection,
+    },
+    /// Initial motion from `start_session.cursor_motion`, in the field shape
+    /// of `set_agent_cursor_motion` without `session`.
+    SelectMotion {
+        session: String,
+        motion: Value,
     },
 }
 
@@ -100,6 +107,14 @@ pub fn begin_tool(name: &str, args: &Value) -> Option<(String, CursorAction)> {
                 session: session.clone(),
                 selection,
             });
+        }
+        if let Some(motion) = args.get("cursor_motion").filter(|value| value.is_object()) {
+            if serde_json::from_value::<CursorMotionSelection>(motion.clone()).is_ok() {
+                emit(CursorEvent::SelectMotion {
+                    session: session.clone(),
+                    motion: motion.clone(),
+                });
+            }
         }
     }
     let semantics = classify_cursor_semantics(name, args)?;
@@ -184,6 +199,47 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn start_session_cursor_motion_is_emitted_before_the_cursor_is_shown() {
+        let _guard = test_sink_guard();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        install_cursor_event_sink(Arc::new(move |event| {
+            captured
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(event);
+        }));
+
+        begin_tool(
+            "start_session",
+            &json!({"session":"run","cursor_motion":{"style":"spring_settle"}}),
+        );
+        // An invalid selection never reaches the overlay.
+        begin_tool(
+            "start_session",
+            &json!({"session":"run","cursor_motion":{"style":7}}),
+        );
+
+        clear_cursor_event_sink();
+        let events = events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let selected: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(event, CursorEvent::SelectMotion { .. }))
+            .collect();
+        assert_eq!(
+            selected,
+            vec![&CursorEvent::SelectMotion {
+                session: "run".into(),
+                motion: json!({"style":"spring_settle"}),
+            }]
+        );
+        // The motion is queued ahead of the action that first shows the cursor.
+        assert!(matches!(events[0], CursorEvent::SelectMotion { .. }));
     }
 
     #[test]

@@ -1,0 +1,71 @@
+name: "CI: infinite-canvas (Swift)"
+
+# samples/infinite-canvas-swift builds on the Swift packages (libs/cua/swift,
+# libs/spaces-sdk-swift, and libs/spaces-app-swift for CuaSpacesStreaming) and
+# the cua SDK dylib, so an SDK change can break it
+# without touching the sample. The tests are hermetic: the canvas model, the
+# tile pipeline on a local H.264 test pattern (VideoToolbox encode and
+# decode), and a UI smoke test in an offscreen window. Nothing connects to a
+# Space and nothing touches host apps. Liquid Glass needs the macOS 26 SDK.
+
+on:
+  pull_request:
+    paths:
+      - "samples/infinite-canvas-swift/**"
+      - "libs/cua/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
+      - ".github/workflows/ci-infinite-canvas-swift.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-infinite-canvas-swift-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  swift:
+    name: infinite-canvas-swift (swift test)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: infinite-canvas-swift
+      - name: Build and stage the cua SDK for Swift
+        run: |
+          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
+      - name: Cursor theme is the driver's
+        run: samples/infinite-canvas-swift/scripts/sync-cursor-assets.sh --check
+      - name: Test the sample
+        run: samples/infinite-canvas-swift/scripts/test.sh
+      - name: Benchmark (headless hot paths)
+        working-directory: samples/infinite-canvas-swift
+        run: |
+          swift build -c release --product canvas-bench
+          .build/release/canvas-bench --tiles 8 --seconds 5 --json canvas-bench.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: infinite-canvas-bench
+          path: samples/infinite-canvas-swift/canvas-bench.json
+          if-no-files-found: ignore

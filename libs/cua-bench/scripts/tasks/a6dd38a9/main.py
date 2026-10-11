@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission a6dd38a9-71df-42b7-99a4-d3e33bb01c5b."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a passive RC band-pass filter for audio signals with corner frequencies near 1 kHz and 10 kHz. Implement it as a cascaded high-pass stage followed by a low-pass stage using 10 kΩ resistors, a 15 nF capacitor for the high-pass section, and a 1.5 nF capacitor for the low-pass section. Include 2-pin input and output connectors sharing a common ground. Create the KiCad schematic and export the KiCad netlist for the design.',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="Design a passive RC band-pass filter for audio signals with corner frequencies near 1 kHz and 10 kHz. Implement it as a cascaded high-pass stage followed by a low-pass stage using 10 kΩ resistors, a 15 nF capacitor for the high-pass section, and a 1.5 nF capacitor for the low-pass section. Include 2-pin input and output connectors sharing a common ground. Create the KiCad schematic and export the KiCad netlist for the design.",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 

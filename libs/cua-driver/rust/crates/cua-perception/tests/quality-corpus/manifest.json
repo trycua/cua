@@ -1,0 +1,852 @@
+{
+  "schema_version": 1,
+  "corpus_version": "1.0.0",
+  "license": "MIT",
+  "coordinate_system": {
+    "space": "source_pixels",
+    "origin": "top_left",
+    "bbox_format": "x_y_width_height"
+  },
+  "metric_definitions": {
+    "text_detection_iou": {
+      "unit": "ratio",
+      "description": "Intersection over union between a predicted text box and its matched expected box."
+    },
+    "text_recognition_exact": {
+      "unit": "boolean",
+      "description": "Case-sensitive equality between predicted and expected text after trimming outer whitespace."
+    },
+    "control_detection_iou": {
+      "unit": "ratio",
+      "description": "Intersection over union between a predicted control box and its matched expected box."
+    },
+    "control_kind_accuracy": {
+      "unit": "ratio",
+      "description": "Fraction of matched controls whose predicted kind equals the expected kind."
+    },
+    "false_positive_count": {
+      "unit": "count",
+      "description": "Unmatched predictions for an image, including images with no annotations."
+    }
+  },
+  "images": [
+    {
+      "file": "images/native-controls-light.png",
+      "sha256": "a4ad401a8d86abf81b187460e05de27aed60dba630c4bdd87d182a9d6f8fc89e",
+      "width": 960,
+      "height": 600,
+      "scenario_tags": [
+        "native-controls",
+        "light",
+        "standard-dpi",
+        "small-text"
+      ],
+      "expected": {
+        "text": [
+          {
+            "id": "window-title",
+            "text": "SETTINGS",
+            "bbox": [
+              18,
+              13,
+              94,
+              14
+            ],
+            "role": "title"
+          },
+          {
+            "id": "heading",
+            "text": "DEVICE SETTINGS",
+            "bbox": [
+              62,
+              104,
+              267,
+              21
+            ],
+            "role": "heading"
+          },
+          {
+            "id": "device-label",
+            "text": "DEVICE NAME",
+            "bbox": [
+              64,
+              178,
+              130,
+              14
+            ],
+            "role": "label"
+          },
+          {
+            "id": "device-value",
+            "text": "DESK MAC",
+            "bbox": [
+              78,
+              218,
+              94,
+              14
+            ],
+            "role": "value"
+          },
+          {
+            "id": "capture-label",
+            "text": "ENABLE CAPTURE",
+            "bbox": [
+              100,
+              287,
+              166,
+              14
+            ],
+            "role": "label"
+          },
+          {
+            "id": "cancel-text",
+            "text": "CANCEL",
+            "bbox": [
+              716,
+              510,
+              70,
+              14
+            ],
+            "role": "button-label"
+          },
+          {
+            "id": "save-text",
+            "text": "SAVE",
+            "bbox": [
+              834,
+              510,
+              46,
+              14
+            ],
+            "role": "button-label"
+          }
+        ],
+        "controls": [
+          {
+            "id": "device-input",
+            "kind": "text-field",
+            "label": "DEVICE NAME",
+            "bbox": [
+              64,
+              204,
+              420,
+              44
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "capture-checkbox",
+            "kind": "checkbox",
+            "label": "ENABLE CAPTURE",
+            "bbox": [
+              64,
+              282,
+              22,
+              22
+            ],
+            "state": "checked"
+          },
+          {
+            "id": "quality-slider",
+            "kind": "slider",
+            "label": null,
+            "bbox": [
+              64,
+              332,
+              290,
+              28
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "cancel-button",
+            "kind": "button",
+            "label": "CANCEL",
+            "bbox": [
+              700,
+              496,
+              104,
+              40
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "save-button",
+            "kind": "button",
+            "label": "SAVE",
+            "bbox": [
+              816,
+              496,
+              84,
+              40
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/native-controls-dark-hidpi.png",
+      "sha256": "614c4e18a17c854fc1c979351b60932b3fb55750ddc91b0bc58cb5d0c7087b36",
+      "width": 1440,
+      "height": 900,
+      "scenario_tags": [
+        "native-controls",
+        "dark",
+        "high-dpi",
+        "small-text"
+      ],
+      "expected": {
+        "text": [
+          {
+            "id": "window-title",
+            "text": "TRANSFER",
+            "bbox": [
+              36,
+              24,
+              188,
+              28
+            ],
+            "role": "title"
+          },
+          {
+            "id": "heading",
+            "text": "COPY FILES",
+            "bbox": [
+              120,
+              174,
+              295,
+              35
+            ],
+            "role": "heading"
+          },
+          {
+            "id": "source-label",
+            "text": "SOURCE",
+            "bbox": [
+              124,
+              282,
+              105,
+              21
+            ],
+            "role": "label"
+          },
+          {
+            "id": "source-value",
+            "text": "/USERS/DEMO/REPORT.PDF",
+            "bbox": [
+              146,
+              346,
+              393,
+              21
+            ],
+            "role": "value"
+          },
+          {
+            "id": "browse-text",
+            "text": "BROWSE",
+            "bbox": [
+              1080,
+              348,
+              105,
+              21
+            ],
+            "role": "button-label"
+          },
+          {
+            "id": "replace-label",
+            "text": "REPLACE EXISTING",
+            "bbox": [
+              192,
+              486,
+              285,
+              21
+            ],
+            "role": "label"
+          },
+          {
+            "id": "copy-text",
+            "text": "COPY",
+            "bbox": [
+              1072,
+              724,
+              69,
+              21
+            ],
+            "role": "button-label"
+          }
+        ],
+        "controls": [
+          {
+            "id": "source-input",
+            "kind": "text-field",
+            "label": "SOURCE",
+            "bbox": [
+              120,
+              324,
+              900,
+              72
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "browse-button",
+            "kind": "button",
+            "label": "BROWSE",
+            "bbox": [
+              1050,
+              324,
+              180,
+              72
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "replace-checkbox",
+            "kind": "checkbox",
+            "label": "REPLACE EXISTING",
+            "bbox": [
+              120,
+              474,
+              48,
+              48
+            ],
+            "state": "checked"
+          },
+          {
+            "id": "copy-button",
+            "kind": "button",
+            "label": "COPY",
+            "bbox": [
+              1020,
+              700,
+              210,
+              72
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/browser-canvas-light.png",
+      "sha256": "39e7437f4a83d768a334bbd0a86c369da7af9a3767f900dc47210ab39d1e3f5f",
+      "width": 960,
+      "height": 600,
+      "scenario_tags": [
+        "browser-canvas",
+        "light",
+        "standard-dpi",
+        "icon-only"
+      ],
+      "expected": {
+        "text": [
+          {
+            "id": "address",
+            "text": "LOCAL DASHBOARD",
+            "bbox": [
+              92,
+              25,
+              89,
+              7
+            ],
+            "role": "address"
+          },
+          {
+            "id": "heading",
+            "text": "WEEKLY SIGNAL",
+            "bbox": [
+              62,
+              118,
+              231,
+              21
+            ],
+            "role": "heading"
+          },
+          {
+            "id": "subtitle",
+            "text": "CANVAS RENDER",
+            "bbox": [
+              64,
+              170,
+              77,
+              7
+            ],
+            "role": "label"
+          },
+          {
+            "id": "export-text",
+            "text": "EXPORT",
+            "bbox": [
+              790,
+              208,
+              70,
+              14
+            ],
+            "role": "button-label"
+          }
+        ],
+        "controls": [
+          {
+            "id": "chart-canvas",
+            "kind": "canvas",
+            "label": null,
+            "bbox": [
+              80,
+              210,
+              700,
+              280
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "export-button",
+            "kind": "button",
+            "label": "EXPORT",
+            "bbox": [
+              772,
+              188,
+              116,
+              54
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "menu-button",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              866,
+              104,
+              34,
+              34
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/remote-desktop-dark.png",
+      "sha256": "b3625e11abec0d4280748f55b3b997e211c1e1814d05142209563dc844ee0f4a",
+      "width": 960,
+      "height": 600,
+      "scenario_tags": [
+        "remote-desktop-like",
+        "dark",
+        "standard-dpi",
+        "small-text",
+        "noisy"
+      ],
+      "expected": {
+        "text": [
+          {
+            "id": "session",
+            "text": "REMOTE SESSION 04",
+            "bbox": [
+              12,
+              11,
+              101,
+              7
+            ],
+            "role": "status"
+          },
+          {
+            "id": "window-title",
+            "text": "SYSTEM MONITOR",
+            "bbox": [
+              204,
+              108,
+              83,
+              7
+            ],
+            "role": "title"
+          },
+          {
+            "id": "processes",
+            "text": "PROCESSES",
+            "bbox": [
+              222,
+              174,
+              53,
+              7
+            ],
+            "role": "list-item"
+          },
+          {
+            "id": "network",
+            "text": "NETWORK",
+            "bbox": [
+              222,
+              202,
+              41,
+              7
+            ],
+            "role": "list-item"
+          },
+          {
+            "id": "storage",
+            "text": "STORAGE",
+            "bbox": [
+              222,
+              230,
+              41,
+              7
+            ],
+            "role": "list-item"
+          },
+          {
+            "id": "cpu",
+            "text": "CPU 37 PERCENT",
+            "bbox": [
+              434,
+              170,
+              83,
+              7
+            ],
+            "role": "value"
+          },
+          {
+            "id": "status",
+            "text": "STATUS CONNECTED",
+            "bbox": [
+              434,
+              320,
+              95,
+              7
+            ],
+            "role": "status"
+          }
+        ],
+        "controls": [
+          {
+            "id": "remote-window",
+            "kind": "window",
+            "label": "SYSTEM MONITOR",
+            "bbox": [
+              184,
+              94,
+              620,
+              390
+            ],
+            "state": "active"
+          },
+          {
+            "id": "processes-nav",
+            "kind": "list-item",
+            "label": "PROCESSES",
+            "bbox": [
+              214,
+              164,
+              160,
+              24
+            ],
+            "state": "selected"
+          },
+          {
+            "id": "close-window",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              770,
+              100,
+              24,
+              24
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/downsampled-table.png",
+      "sha256": "b281379be6f5b9bb30d7267ebdd53453bf1aa390d63f9f138d6f7d72ab5bd736",
+      "width": 480,
+      "height": 300,
+      "scenario_tags": [
+        "downsampled",
+        "light",
+        "small-text",
+        "native-controls"
+      ],
+      "expected": {
+        "text": [
+          {
+            "id": "heading",
+            "text": "INVENTORY",
+            "bbox": [
+              39,
+              38,
+              106,
+              14
+            ],
+            "role": "heading"
+          },
+          {
+            "id": "header",
+            "text": "ITEM STATUS OWNER",
+            "bbox": [
+              47,
+              80,
+              101,
+              7
+            ],
+            "role": "column-header"
+          },
+          {
+            "id": "row-alpha",
+            "text": "ALPHA READY MAY",
+            "bbox": [
+              47,
+              110,
+              89,
+              7
+            ],
+            "role": "table-cell"
+          },
+          {
+            "id": "row-bravo",
+            "text": "BRAVO HOLD LEE",
+            "bbox": [
+              47,
+              144,
+              89,
+              7
+            ],
+            "role": "table-cell"
+          },
+          {
+            "id": "row-charlie",
+            "text": "CHARLIE READY KIM",
+            "bbox": [
+              47,
+              178,
+              107,
+              7
+            ],
+            "role": "table-cell"
+          },
+          {
+            "id": "row-delta",
+            "text": "DELTA REVIEW SAM",
+            "bbox": [
+              47,
+              212,
+              101,
+              7
+            ],
+            "role": "table-cell"
+          }
+        ],
+        "controls": [
+          {
+            "id": "inventory-table",
+            "kind": "table",
+            "label": "INVENTORY",
+            "bbox": [
+              39,
+              71,
+              402,
+              169
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/icon-only-toolbar.png",
+      "sha256": "db2c8d301d738b6946e0ffb888cd91e8d7d940b6bba194ea622d5af58f78c220",
+      "width": 480,
+      "height": 320,
+      "scenario_tags": [
+        "icon-only",
+        "light",
+        "standard-dpi",
+        "native-controls"
+      ],
+      "expected": {
+        "text": [],
+        "controls": [
+          {
+            "id": "tool-1",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              28,
+              110,
+              64,
+              64
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "tool-2",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              116,
+              110,
+              64,
+              64
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "tool-3",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              204,
+              110,
+              64,
+              64
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "tool-4",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              292,
+              110,
+              64,
+              64
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "tool-5",
+            "kind": "icon-button",
+            "label": null,
+            "bbox": [
+              380,
+              110,
+              64,
+              64
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/overlapping-annotations.png",
+      "sha256": "9806614667aa265e4129ce2a37d37756e5e4008a98bca5fb44238016d95c4bbe",
+      "width": 640,
+      "height": 400,
+      "scenario_tags": [
+        "overlapping-ocr-icon-boxes",
+        "light",
+        "standard-dpi",
+        "small-text"
+      ],
+      "expected": {
+        "text": [
+          {
+            "id": "heading",
+            "text": "FIND COMMAND",
+            "bbox": [
+              82,
+              98,
+              213,
+              21
+            ],
+            "role": "heading"
+          },
+          {
+            "id": "query",
+            "text": "SEARCH FILES",
+            "bbox": [
+              122,
+              186,
+              142,
+              14
+            ],
+            "role": "placeholder"
+          },
+          {
+            "id": "run-text",
+            "text": "RUN",
+            "bbox": [
+              437,
+              268,
+              34,
+              14
+            ],
+            "role": "button-label"
+          }
+        ],
+        "controls": [
+          {
+            "id": "search-icon",
+            "kind": "icon",
+            "label": null,
+            "bbox": [
+              94,
+              175,
+              40,
+              40
+            ],
+            "state": "static"
+          },
+          {
+            "id": "search-field",
+            "kind": "text-field",
+            "label": "SEARCH FILES",
+            "bbox": [
+              82,
+              166,
+              476,
+              58
+            ],
+            "state": "enabled"
+          },
+          {
+            "id": "run-button",
+            "kind": "button",
+            "label": "RUN",
+            "bbox": [
+              392,
+              252,
+              166,
+              46
+            ],
+            "state": "enabled"
+          }
+        ]
+      }
+    },
+    {
+      "file": "images/empty-surface.png",
+      "sha256": "7b252c0297bd0d31a44be27d108fce9fa9163624cd6981b8529fe0237a38d105",
+      "width": 640,
+      "height": 400,
+      "scenario_tags": [
+        "empty",
+        "light",
+        "standard-dpi"
+      ],
+      "expected": {
+        "text": [],
+        "controls": []
+      }
+    },
+    {
+      "file": "images/noisy-surface.png",
+      "sha256": "d7936c181ad42b7d3b28c267e1c2f50179fe11f1c1d2b9a01d4446d804873fa2",
+      "width": 640,
+      "height": 400,
+      "scenario_tags": [
+        "noisy",
+        "dark",
+        "standard-dpi"
+      ],
+      "expected": {
+        "text": [],
+        "controls": []
+      }
+    }
+  ]
+}

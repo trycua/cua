@@ -1,0 +1,67 @@
+name: "CI: Check Docs Image Refs"
+
+# Docs gate of the image doctor (same family as ci-check-docs*.yml): every cua
+# image a guide, skill or README points at must resolve to digests with a
+# passing image-doctor ledger entry (the image-doctor-ledger branch, written
+# only by the image workflows). Refs published before the gate existed live in
+# scripts/images/docs-image-refs-baseline.json, which may only shrink. Also
+# runs nightly: a nightly Fleet regression flips a ledger entry and turns this
+# red until the image is fixed or the guide changes.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "skills/**"
+      - "README.md"
+      - "libs/**/README.md"
+      - "libs/cua/crates/cua-image/src/canonical.rs"
+      - "libs/cua/crates/cua-image/src/resolve.rs"
+      - "scripts/images/check-docs-image-refs.py"
+      - "scripts/images/doctor_ledger.py"
+      - "scripts/images/docs-image-refs-baseline.json"
+      - ".github/workflows/ci-check-docs-image-refs.yml"
+  schedule:
+    - cron: "11 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-refs:
+    name: Docs image refs have passing doctor reports
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install crane
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      # fetch-depth: 0 already fetched every branch. Fetching again needs
+      # credentials on a private repository, which this checkout drops.
+      - name: Fetch the ledger
+        run: |
+          if git rev-parse -q --verify refs/remotes/origin/image-doctor-ledger >/dev/null; then
+            git worktree add -q "$RUNNER_TEMP/ledger" refs/remotes/origin/image-doctor-ledger
+          elif git fetch -q origin image-doctor-ledger 2>/dev/null; then
+            git worktree add -q "$RUNNER_TEMP/ledger" FETCH_HEAD
+          else
+            mkdir -p "$RUNNER_TEMP/ledger"
+            echo "::notice::no image-doctor-ledger branch yet; every ref must be in the baseline"
+          fi
+      - name: Unit tests
+        run: python3 -m unittest discover -s scripts/images/tests
+      - name: Every image ref passed the doctor (baseline shrinks only)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          args=(--ledger "$RUNNER_TEMP/ledger")
+          if [ -n "${BASE_SHA:-}" ] && git show "$BASE_SHA:scripts/images/docs-image-refs-baseline.json" >"$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+            args+=(--baseline-base "$RUNNER_TEMP/base-baseline.json")
+          fi
+          python3 scripts/images/check-docs-image-refs.py "${args[@]}"

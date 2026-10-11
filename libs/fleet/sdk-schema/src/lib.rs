@@ -6,12 +6,14 @@ mod sandbox;
 mod warmpool;
 
 pub use claim::{
-    ClaimLifecycle, ClaimSpec, DEFAULT_CLAIM_BIND_DEADLINE_SECONDS, OSGymSandboxClaim,
-    OSGymSandboxClaimCondition, OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus,
+    CLAIM_ENV_TOKEN_KEY, CLAIM_SECRET_NAME_PREFIX, ClaimLifecycle, ClaimSecretRef, ClaimSpec,
+    DEFAULT_CLAIM_BIND_DEADLINE_SECONDS, OSGymSandboxClaim, OSGymSandboxClaimCondition,
+    OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus,
 };
 pub use common::{
-    Firmware, ImagePullPolicy, OidcConfig, RuntimeKind, SandboxService, SandboxServiceBuilder,
-    ServiceProtocol, VmTemplate, VmTemplateBuilder,
+    Firmware, ImagePullPolicy, OidcConfig, ProcessMode, REGISTRY_SECRET_NAME_PREFIX, RuntimeKind,
+    SHARED_ECR_PULL_SECRET, SandboxService, SandboxServiceBuilder, ServiceProtocol, VmTemplate,
+    VmTemplateBuilder,
 };
 pub use common::{SandboxTemplateRef, SandboxTemplateRefBuilder};
 pub use json::{JsonValueError, PreservedJson};
@@ -21,7 +23,7 @@ pub use sandbox::{
 };
 pub use warmpool::{
     OSGymSandboxWarmPool, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolSpecBuilder,
-    OSGymSandboxWarmPoolStatus, WarmPoolAutoscaling, WarmPoolAutoscalingBuilder,
+    OSGymSandboxWarmPoolStatus, WarmPoolAutoscaling, WarmPoolAutoscalingBuilder, WarmPoolTtlPolicy,
 };
 
 uniffi::setup_scaffolding!("cyclops_sdk_schema");

@@ -8,7 +8,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_idle_reconnect_proof as proof
+from proof_fixtures import inkscape_profile
 
 
 BOUNDS = {'x': 0, 'y': 0, 'width': 800, 'height': 600}
@@ -80,8 +82,8 @@ class ExpiryTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, '85 seconds'):
             proof.wait_for_idle_expiry(value, runtime(value), status(), 1, 0, Mock(),
                                       read_status=lambda: status(), now=clock.now, sleep=clock.sleep)
-        self.assertLessEqual(clock.ns + proof.STATUS_READ_BUDGET_NS - 1_000_000_000, 85_000_000_000)
-        self.assertGreaterEqual(clock.ns, 60_000_000_000)
+        # 1 s polls stop once a 5 s status read could end after the 85 s deadline.
+        self.assertEqual(clock.ns, 81_000_000_000)
         value.tool.assert_not_called()
 
     def test_early_disconnect_and_ambiguous_expiry_fail_closed(self):
@@ -223,18 +225,12 @@ class ClickTests(unittest.TestCase):
 
 
 class IdentityAndPlanTests(unittest.TestCase):
-    def test_target_and_geometry_checks_use_real_snapshot_helper(self):
-        spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
-        for window, bounds in [({'pid': 20, 'window_id': 201}, BOUNDS),
-                               ({'pid': 21, 'window_id': 200}, BOUNDS),
-                               ({'pid': 20, 'window_id': 200}, {**BOUNDS, 'x': 1})]:
-            value = client()
-            value.tool.side_effect = [
-                {'structuredContent': {'windows': [window]}},
-                {'structuredContent': {'window_bounds': bounds, 'screenshot_width': 800, 'screenshot_height': 600}}]
-            with self.subTest(window=window, bounds=bounds), self.assertRaises(AssertionError):
-                proof.grounded_snapshot(value, spec['target'], spec)
-            self.assertTrue(all(call.args[0] != 'click' for call in value.tool.call_args_list))
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile(plan(), drag=False)
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
 
     def test_runtime_object_pid_and_liveness_are_fixed(self):
         original = client()
@@ -293,6 +289,25 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(episodes.call_count, 2 if expires else 1)
                 self.assertEqual(events, ['click_b2', 'expiry', 'click_a1'] if expires else ['click_b2', 'expiry'])
                 first_client.tool.assert_called_once_with('start_session', {'session': 'idle-proof'})
+
+    def test_invalid_plan_records_failed_result_without_runtime_or_status_reads(self):
+        import json
+        for name, text in (('invalid_plan', json.dumps({**plan(), 'idle_timeout': 1})), ('malformed_json', '{')):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                path = Path(directory) / 'plan.json'
+                path.write_text(text)
+                args = SimpleNamespace(plan=path, evidence=Path(directory) / 'proof',
+                                       trace_socket=Path('/synthetic/cua-input-v3.sock'))
+                spawn = stack.enter_context(patch.object(proof, 'DirectMCP'))
+                status_read = stack.enter_context(patch.object(proof, 'read_input_status'))
+                stack.enter_context(patch('sys.stdout', new_callable=io.StringIO))
+                self.assertEqual(proof.run(args), 1)
+                spawn.assert_not_called()
+                status_read.assert_not_called()
+                report = json.loads((args.evidence / 'result.json').read_text())
+                self.assertEqual(report['result'], 'failed')
+                self.assertEqual(report['cleanup_errors'], [])
+                self.assertIn('error', report)
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ Refs #3915; extend the existing draft PR #3916 and its canonical branch. The mai
 
 ## Initial technical scope
 
-The public guide now lives at `docs/content/docs/how-to-guides/driver/jev-use.mdx` and the example at `libs/cua-driver/examples/jev-use/`. Earlier entries below retain the historical paths and commit pins used when the work was still presented as `typesafe-jev`. The primary supported walkthrough is macOS with the existing Python example; TypeScript is an optional second route. Use the checked-in SDK dependency locks and existing fixture/runner. No changes to the Driver, permissions contract, installers, or model API are planned. Rehearsal failures later justified a small managed verification entry point beside the existing fixture; it does not change either agent's decisions or actions. Link the example README back to the complete setup guide.
+The public guide now lives at `docs/content/docs/cua-driver/guides/visual-regions.mdx` and the example at `libs/cua-driver/examples/jev-use/`. Earlier entries below retain the historical paths and commit pins used when the work was still presented as `typesafe-jev`. The primary supported walkthrough is macOS with the existing Python example; TypeScript is an optional second route. Use the checked-in SDK dependency locks and existing fixture/runner. No changes to the Driver, permissions contract, installers, or model API are planned. Rehearsal failures later justified a small managed verification entry point beside the existing fixture; it does not change either agent's decisions or actions. Link the example README back to the complete setup guide.
 
 The guide must explain the agent/driver boundary, host versus controller machine, human approvals, installation and PATH, Python provisioning, signed browser prerequisite, source checkout before the PR merges, credential handling without shell-history exposure, persistent MCP ownership, fixture readiness, mock versus live proofs, independent readback, failure handling, sequential execution, and cleanup. No dependency on private experiment files, remembered PIDs, old sessions, or conversation context is allowed.
 
@@ -405,28 +405,37 @@ only the `cua.jev_choice_v1` response fields.
 `verify_choice_cli.py` launches the Python interface with the active interpreter
 and an absolute script path, passes JSON on stdin, and does not use a shell. The
 credential-free workflow runs that verifier in mock mode; the separately
-authorized live workflow runs it with the reviewer-gated TypeSafe secret. The
-chooser itself relies on the official SDK's environment handling and never
-reads, prints, or forwards the key.
+authorized candidate workflow also runs it in mock mode, and no GitHub Actions
+workflow supplies the TypeSafe credential. The chooser itself relies on the
+official SDK's environment handling and never reads, prints, or forwards the
+key.
 
 Final local verification passed 34 Python tests, 24 TypeScript tests,
 TypeScript typechecking, both mock chooser commands, workflow YAML parsing, and
 `git diff --check`. The SDK client tests cover live request/response shaping
 with local fake transports; no live TypeSafe request was made locally.
 
-### Live workflow credential hardening
+### Workflow credential boundary
 
-The authorized workflow resolves and installs the locked Python and Node clients
-before the reviewer-gated secret is available. Secret-bearing steps now invoke
-the resulting `.venv/bin/python` directly; they do not run uv, pip, npm, cargo,
-or another resolver, installer, or build command. The chooser verifier continues
-to launch the absolute chooser path with that interpreter and without a shell.
-All third-party actions in the workflow are pinned to immutable commits.
+No GitHub Actions workflow stores, references, or uses `TYPESAFE_API_KEY`. The
+authorized workflows keep the exact-SHA trusted-branch gate, the immutable
+signed-candidate verification, and the canonical Windows/Linux certification
+checks, and they run the bounded mock chooser rows through the preinstalled
+`.venv/bin/python`; they never run a live provider row or the chooser with a
+credential. All third-party actions in the workflow are pinned to immutable
+commits.
 
-A focused workflow contract test enumerates every action reference and every
-step containing `TYPESAFE_API_KEY`. It requires 40-character action commits,
-the preinstalled interpreter path, and the absence of resolver, installer, and
-build invocations in those steps.
+A focused workflow contract test enumerates every action reference and requires
+40-character action commits, the preinstalled interpreter path, mock-only
+chooser invocations, and the complete absence of secret references. A separate
+repository-wide guard scans every Actions workflow so the credential name
+cannot be reintroduced through another workflow file.
+
+Live TypeSafe validation is an out-of-band procedure: it runs only directly on
+a disposable Tahoe Lume guest, with the credential supplied from that guest's
+local Keychain to the bounded chooser process. That procedure is maintained
+privately and publishes hashes and outcomes only, never the key value or
+fleet details.
 
 Final focused verification passed 36 Python tests, 24 TypeScript tests,
 TypeScript typechecking, workflow YAML parsing, and `git diff --check`.

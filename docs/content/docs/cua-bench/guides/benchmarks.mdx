@@ -1,0 +1,119 @@
+---
+title: Run a benchmark
+description: 'Pick a taskset from the Cua Bench registry, run it with one cb run command on a local or cloud desktop sandbox, and read the results.'
+---
+
+A benchmark in Cua Bench is a registry taskset: a versioned set of desktop
+tasks, each with a setup, an oracle and an evaluator. Browse them at
+**[cua.ai/cuabench/registry](https://cua.ai/cuabench/registry)** and run one
+by name.
+
+## 1. Pick a taskset
+
+```bash test="cli-shape" id="bench-registry-list"
+cb dataset list
+```
+
+| Taskset | Tasks | What the agent does | Desktop image |
+| --- | --: | --- | --- |
+| `cua-bench-basic` | 13 (68 variants) | Click, type, drag, pick and fill in small desktop apps | `bench-web` (Linux desktop with bench-ui) |
+| `cua-bench-kicad` | 25 | Expert KiCad schematic edits, scored by netlist | `ghcr.io/trycua/linux` |
+| `cua-bench-workflows` | 2 (52 variants) | Multi-step OpenShot and Unity workflows | `ghcr.io/trycua/linux` |
+
+Every task runs on a full desktop sandbox. Tasks that open their own app (the
+`cua-bench-basic` widgets) start it as a pywebview window on that desktop; the
+agent sees the screen and drives mouse and keyboard, never a DOM. A taskset
+name resolves through the index bundled with `cb` to a pinned git commit,
+fetched once into `~/.cua/cbregistry`.
+
+`cua-bench-kicad` and `cua-bench-workflows` install their app with `sudo apt`
+during setup, which a local gVisor sandbox does not allow: run them locally
+with `--runtime runc`. The workflows have no oracle; check them with `--noop`
+or an agent.
+
+```bash test="cli-shape" id="bench-registry-kicad"
+cb run cua-bench-kicad --task-filter 154d0750 --runtime runc
+```
+
+## 2. Run it
+
+```bash test="cli-shape" id="bench-registry-oracle"
+cb run cua-bench-basic --task-filter click-button --max-variants 1
+```
+
+With no agent, `cb run` runs each task's oracle: a quick check that the
+taskset works on your machine (`reward=1`). Then give it an agent:
+
+```bash test="cli-shape" id="bench-registry-agent"
+cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 4
+```
+
+| Flag | Does |
+| --- | --- |
+| `<name>@<version>` | Pins a taskset version (`cua-bench-basic@1.0`); a plain name is the newest. |
+| `--task-filter` | Glob over task names (`'click*,drag*'`). |
+| `--max-variants N` | First N variants of each task. |
+| `-j N` | Variants running at once. |
+| `--attempts N` | Runs every variant N times; `summary.json` reports pass@k. |
+| `--dry-run` | Prints each variant's image, kind and backend; starts nothing. |
+
+`--on local` (the default) runs sandboxes on this machine (Docker, gVisor when
+installed; check with `cua runtime doctor`).
+
+Agents: `cua-agent` (any model the [Cua agent](/cua-sdk) supports) or your own
+with `--agent-import-path module:Class`. `--model` needs that provider's API
+key in the environment.
+
+## 3. Read the results
+
+```bash test="cli-shape" id="bench-registry-results"
+cb run list
+cb run info <run-id>
+```
+
+Each run writes `summary.json` (mean reward, pass@k) and one directory per
+variant with `result.json`, `run.log` and the agent's `trajectory.json`
+(ATIF, with screenshots), under `~/.local/share/cua-bench/runs`. Every key is
+in [Results](/cua-bench/reference/results).
+
+## Try a task by hand
+
+`cb interact` opens one task's desktop, waits while you solve it, then scores
+it:
+
+```bash test="cli-shape" id="bench-registry-interact"
+cb interact click-button --dataset cua-bench-basic
+```
+
+## Your own registry
+
+`CUA_BENCH_REGISTRY` points `cb` at another index (a path or URL). Each entry
+pins a directory of tasks to a commit; `image` names the desktop image for
+tasks that set none:
+
+```json test="config" id="bench-registry-index"
+{
+  "datasets": [
+    {
+      "name": "my-tasks",
+      "version": "1.0",
+      "description": "Our internal desktop tasks",
+      "git_url": "https://github.com/acme/bench-tasks.git",
+      "git_commit_id": "0123456789abcdef0123456789abcdef01234567",
+      "path": "tasks",
+      "image": "BENCH_WEB"
+    }
+  ]
+}
+```
+
+`cb dataset list` shows its entries; Harbor-format entries (a `tasks` list
+pinned per task) are fetched as-is. To write tasks for it, see
+[Write a task](/cua-bench/guides/write-a-task).
+
+## Next
+
+- [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks):
+  OSWorld-Verified, MiniWoB++, WebVoyager, Online-Mind2Web, WebGym and the
+  grounding sets, through adapters.
+- [`cb run` reference](/cua-bench/reference/cli/run)

@@ -1,0 +1,525 @@
+name: "CD: cua-spacesd"
+
+# Builds the cua-spacesd release assets for tag `cua-spacesd-v<version>`
+# (created by release-please, component `cua-spacesd`). Asset names and
+# layouts are fixed by their consumers; packaging/release/package.sh documents
+# the mapping. Per platform:
+#
+#   cua-spacesd-<triple>.tar.gz     linux x86_64/aarch64, macOS (universal
+#                                      binary under both darwin triples)
+#   cua-spacesd-<triple>.zip        windows x86_64 (cua-spacesd.exe)
+#   cua-spacesd-<os>-<arch>.tar.gz  cua-host (`cua host setup`) and
+#                                      libs/images/linux
+#   cua-spacesd-<triple>[.exe]      bare binary (packaging/install.sh/.ps1)
+#   cua-spacesd-macos-universal.app.zip  "Cua Spacesd.app" (signed and
+#                                      notarized when the secrets exist)
+#   <asset>.sha256 for each, plus SHA256SUMS
+#
+# Archives hold the binary, LICENSE and THIRD_PARTY_NOTICES.md at the root.
+# Linux builds in debian:11 (glibc 2.31 floor, OpenSSL vendored statically via
+# the workspace `native-tls/vendored` feature). A publishing run on trycua/cua
+# requires macOS Developer ID signing + notarization and Windows Authenticode
+# (Azure Artifact Signing through the `cua-driver-release-signing`
+# environment) and fails without them; a dry run may ship ad-hoc signed /
+# unsigned artifacts. On any other repository (trycua/cua-staging) a missing
+# secret gives ad-hoc signed / unsigned assets, published as a prerelease
+# whose title and notes say so. The release (a Release Please draft) is
+# published once every asset is attached, with a keyless Sigstore bundle per
+# asset.
+#
+# A manual dispatch is a dry run by default (artifacts only). With
+# dry_run=false it rebuilds an existing `cua-spacesd-v<version>` tag and
+# uploads to its release (recovery for a failed tag run).
+
+on:
+  push:
+    tags:
+      - "cua-spacesd-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (without the cua-spacesd-v prefix)"
+        required: true
+      dry_run:
+        description: "Build only; set false to rebuild the existing tag and upload to its release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-cua-spacesd-${{ github.ref }}-${{ inputs.version || '' }}
+  cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  # Registries and the fail-closed signing gates are for trycua/cua only.
+  CANONICAL: ${{ github.repository == 'trycua/cua' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      ref: ${{ steps.v.outputs.ref }}
+      publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/cua-spacesd-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-spacesd-v}"
+            REF="$GITHUB_REF"
+            PUBLISH=true
+          else
+            VERSION="${INPUT_VERSION#v}"
+            if [[ "$INPUT_DRY_RUN" == "false" ]]; then
+              REF="refs/tags/cua-spacesd-v$VERSION"
+              PUBLISH=true
+            else
+              REF="$GITHUB_SHA"
+              PUBLISH=false
+            fi
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid version $VERSION" >&2; exit 1
+          fi
+          PRERELEASE=false
+          # Off trycua/cua every release is a prerelease (never "latest").
+          [[ "$VERSION" == *-* || "$CANONICAL" != true ]] && PRERELEASE=true
+          {
+            echo "version=$VERSION"
+            echo "tag=cua-spacesd-v$VERSION"
+            echo "ref=$REF"
+            echo "publish=$PUBLISH"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "cua-spacesd $VERSION from $REF (publish=$PUBLISH, prerelease=$PRERELEASE)"
+
+  # The binary reports the Cargo workspace version, so a published build must
+  # come from a tree whose VERSION / Cargo.toml match the tag.
+  check-version:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - name: Tag matches VERSION and the Cargo workspace
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          FILE_VERSION="$(tr -d '[:space:]' < libs/cua-spacesd/VERSION)"
+          CARGO_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' libs/cua-spacesd/Cargo.toml)"
+          echo "tag=$VERSION VERSION=$FILE_VERSION Cargo.toml=$CARGO_VERSION"
+          test "$FILE_VERSION" = "$VERSION"
+          test "$CARGO_VERSION" = "$VERSION"
+
+  linux:
+    needs: version
+    name: linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    container: debian:11
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # debian:11 is bare. Without git, actions/checkout downloads the tree
+      # through the REST API, which is all the build needs.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - name: Install build dependencies
+        run: bash libs/cua-spacesd/packaging/release/debian-build-deps.sh
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+          key: release-${{ matrix.target }}
+      - name: Build
+        working-directory: libs/cua-spacesd
+        run: cargo build --locked --release --target ${{ matrix.target }} -p cua-spacesd --bin cua-spacesd
+      - name: Check glibc floor and static OpenSSL
+        working-directory: libs/cua-spacesd
+        run: bash packaging/release/check-linux-binary.sh target/${{ matrix.target }}/release/cua-spacesd 2.31
+      - name: Package
+        working-directory: libs/cua-spacesd
+        run: |
+          bash packaging/release/package.sh --binary target/${{ matrix.target }}/release/cua-spacesd \
+            --target ${{ matrix.target }} --out "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-spacesd-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    name: macos universal
+    # macOS 26: the ScreenCaptureKit dependency needs that SDK.
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      # Hoisted so step conditions never read `secrets` directly.
+      APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+      CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+      DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+      TEAM_ID: ${{ secrets.TEAM_ID }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+      KEYCHAIN_PASSWORD: temporary-cd-keychain-pwd
+      BUNDLE_ID: com.trycua.cua-env-driver
+      PUBLISH: ${{ needs.version.outputs.publish }}
+      # A publishing run on trycua/cua never ships unsigned assets.
+      REQUIRE_SIGNING: ${{ needs.version.outputs.publish == 'true' && github.repository == 'trycua/cua' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+          key: release-darwin-universal
+      - name: Build arm64 and x86_64
+        working-directory: libs/cua-spacesd
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --locked --release --target "$target" -p cua-spacesd --bin cua-spacesd
+          done
+      - name: Universal binary (lipo)
+        working-directory: libs/cua-spacesd
+        run: |
+          set -euo pipefail
+          mkdir -p target/universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/cua-spacesd \
+            target/x86_64-apple-darwin/release/cua-spacesd \
+            -output target/universal/cua-spacesd
+          lipo -info target/universal/cua-spacesd
+          # .cargo/config.toml links the Swift runtime rpath for both slices.
+          otool -l target/universal/cua-spacesd | grep -A2 LC_RPATH | grep -q /usr/lib/swift
+
+      - name: Detect signing configuration
+        id: signing
+        run: |
+          if [ -n "$APPLICATION_CERT_BASE64" ] && [ -n "$DEVELOPER_NAME" ] && [ -n "$TEAM_ID" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Developer ID secrets; shipping ad-hoc signed macOS assets."
+          fi
+          if [ -n "$APPLICATION_CERT_BASE64" ] && [ -n "$APPLE_ID" ] && [ -n "$APP_SPECIFIC_PASSWORD" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+          fi
+          # A trycua/cua release never ships ad-hoc signed or unnotarized.
+          if [ "$REQUIRE_SIGNING" = true ]; then
+            for name in APPLICATION_CERT_BASE64 CERT_PASSWORD DEVELOPER_NAME TEAM_ID APPLE_ID APP_SPECIFIC_PASSWORD; do
+              if [ -z "${!name}" ]; then
+                echo "::error::refusing to publish unsigned macOS assets: $name is not set"
+                exit 1
+              fi
+            done
+          fi
+      - name: Import code-signing certificate
+        if: steps.signing.outputs.sign == 'true'
+        run: |
+          set -euo pipefail
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -l build.keychain
+          echo "$APPLICATION_CERT_BASE64" | base64 --decode > application.p12
+          security import application.p12 -k build.keychain -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign > /dev/null 2>&1
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain > /dev/null 2>&1
+          rm application.p12
+          test "$(security find-identity -v -p codesigning build.keychain | grep -c 'Developer ID Application')" -ge 1
+
+      - name: Sign the bare binary and build Cua Spacesd.app
+        working-directory: libs/cua-spacesd
+        env:
+          SIGN: ${{ steps.signing.outputs.sign }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          BIN=target/universal/cua-spacesd
+          if [ "$SIGN" = true ]; then
+            IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
+            codesign --force --timestamp --options runtime --identifier "$BUNDLE_ID" \
+              --sign "$IDENTITY" "$BIN"
+            export CUA_ENV_CODESIGN_IDENTITY="$IDENTITY" CUA_ENV_CODESIGN_HARDENED=1
+          else
+            codesign --force --identifier "$BUNDLE_ID" --sign - "$BIN"
+          fi
+          codesign --verify --strict --verbose=2 "$BIN"
+          # The bundle wraps a copy of the same universal binary.
+          CUA_SPACESD_PREBUILT="$BIN" CUA_ENV_BUNDLE_ID="$BUNDLE_ID" \
+            CUA_ENV_BUNDLE_VERSION="$VERSION" scripts/build-macos-app.sh
+          codesign -dv --verbose=2 "target/macos/Cua Spacesd.app" 2>&1 | grep -E 'Identifier|TeamIdentifier|flags'
+
+      - name: Notarize (binary + app) and staple the app
+        if: steps.signing.outputs.notarize == 'true' && steps.signing.outputs.sign == 'true'
+        working-directory: libs/cua-spacesd
+        run: |
+          set -euo pipefail
+          mkdir -p target/notarize
+          cp target/universal/cua-spacesd target/notarize/
+          ditto "target/macos/Cua Spacesd.app" "target/notarize/Cua Spacesd.app"
+          ditto -c -k --keepParent target/notarize target/notarize.zip
+          xcrun notarytool submit target/notarize.zip \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_SPECIFIC_PASSWORD" \
+            --wait --timeout 30m
+          # Bare Mach-O binaries cannot be stapled; Gatekeeper checks their
+          # ticket online. The bundle gets the ticket stapled.
+          xcrun stapler staple "target/macos/Cua Spacesd.app"
+          xcrun stapler validate "target/macos/Cua Spacesd.app"
+
+      - name: Package
+        working-directory: libs/cua-spacesd
+        env:
+          SIGN: ${{ steps.signing.outputs.sign }}
+          NOTARIZE: ${{ steps.signing.outputs.notarize }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/signing"
+          if [ "$SIGN" = true ] && [ "$NOTARIZE" = true ]; then
+            echo "macos-universal: Developer ID signed and notarized" > "$RUNNER_TEMP/signing/macos.txt"
+          else
+            echo "macos-universal: UNSIGNED (ad-hoc signed, not notarized)" > "$RUNNER_TEMP/signing/macos.txt"
+          fi
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            bash packaging/release/package.sh --binary target/universal/cua-spacesd \
+              --target "$target" --out "$GITHUB_WORKSPACE/dist"
+          done
+          APP_ZIP=cua-spacesd-macos-universal.app.zip
+          ditto -c -k --keepParent "target/macos/Cua Spacesd.app" "$GITHUB_WORKSPACE/dist/$APP_ZIP"
+          (cd "$GITHUB_WORKSPACE/dist" && printf '%s  %s\n' "$(shasum -a 256 "$APP_ZIP" | awk '{print $1}')" "$APP_ZIP" > "$APP_ZIP.sha256")
+          ls -l "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-spacesd-macos-universal
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signing-macos
+          path: ${{ runner.temp }}/signing/macos.txt
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    name: windows x86_64
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # The Azure Artifact Signing vars live in this environment (as for the
+    # Cua Driver release); without it they read empty and signing is skipped.
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      PUBLISH: ${{ needs.version.outputs.publish }}
+      # Static CRT: guests need no VC++ redistributable. Set per target so the
+      # workspace .cargo/config.toml rustflags are not overridden.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: "-C target-feature=+crt-static"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+          key: release-x86_64-pc-windows-msvc
+      - name: Require Authenticode for a published release
+        if: env.PUBLISH == 'true' && github.repository == 'trycua/cua' && (vars.AZURE_CLIENT_ID == '' || vars.AZURE_ARTIFACT_SIGNING_ENDPOINT == '')
+        run: |
+          echo "::error::refusing to publish an unsigned cua-spacesd.exe: the Azure Artifact Signing vars are not set in the cua-driver-release-signing environment"
+          exit 1
+      - name: Build
+        working-directory: libs/cua-spacesd
+        run: cargo build --locked --release --target "$TARGET" -p cua-spacesd --bin cua-spacesd
+      # Authenticode via Azure Artifact Signing (same account as Cua Driver),
+      # only when the repository variables are configured.
+      - name: Azure login for Artifact Signing
+        if: vars.AZURE_CLIENT_ID != '' && vars.AZURE_ARTIFACT_SIGNING_ENDPOINT != ''
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign cua-spacesd.exe
+        if: vars.AZURE_CLIENT_ID != '' && vars.AZURE_ARTIFACT_SIGNING_ENDPOINT != ''
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files: |
+            ${{ github.workspace }}\libs\cua-spacesd\target\x86_64-pc-windows-msvc\release\cua-spacesd.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Cua Spacesd
+          description-url: https://cua.ai
+      - name: Verify Authenticode signature
+        if: vars.AZURE_CLIENT_ID != '' && vars.AZURE_ARTIFACT_SIGNING_ENDPOINT != ''
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature -FilePath "libs/cua-spacesd/target/$env:TARGET/release/cua-spacesd.exe"
+          $sig | Format-List Status, StatusMessage, SignerCertificate
+          if ($sig.Status -ne 'Valid') { throw "invalid Authenticode signature: $($sig.StatusMessage)" }
+      - name: Smoke test
+        working-directory: libs/cua-spacesd
+        run: '"target/$TARGET/release/cua-spacesd.exe" --version'
+      - name: Package
+        working-directory: libs/cua-spacesd
+        run: |
+          bash packaging/release/package.sh --binary "target/$TARGET/release/cua-spacesd.exe" \
+            --target "$TARGET" --out "$GITHUB_WORKSPACE/dist"
+      - name: Signing status
+        env:
+          AZURE: ${{ vars.AZURE_CLIENT_ID != '' && vars.AZURE_ARTIFACT_SIGNING_ENDPOINT != '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/signing"
+          if [ "$AZURE" = true ]; then
+            echo "windows-x86_64: Authenticode signed (Azure Artifact Signing)" > "$RUNNER_TEMP/signing/windows.txt"
+          else
+            echo "windows-x86_64: UNSIGNED (no Authenticode; Azure Artifact Signing vars are not set)" > "$RUNNER_TEMP/signing/windows.txt"
+            echo "::warning::cua-spacesd.exe is UNSIGNED (Azure Artifact Signing vars are not set)"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-spacesd-${{ env.TARGET }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signing-windows
+          path: ${{ runner.temp }}/signing/windows.txt
+          if-no-files-found: error
+
+  release:
+    needs: [version, check-version, linux, macos, windows]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Keyless Sigstore signing of the release assets.
+      id-token: write
+    steps:
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: cua-spacesd-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: signing-*
+          path: signing
+          merge-multiple: true
+      - name: Verify checksums and write SHA256SUMS
+        working-directory: release
+        run: |
+          set -euo pipefail
+          for sum in *.sha256; do sha256sum -c "$sum"; done
+          find . -maxdepth 1 -type f ! -name '*.sha256' -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+          for f in SHA256SUMS $(awk '{print $2}' SHA256SUMS); do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
+          done
+      - name: Upload to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # release-please creates a draft release with the tag; a hand-pushed
+          # tag gets a new release here.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            FLAGS=()
+            [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease)
+            gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "cua-spacesd $VERSION" --notes "cua-spacesd $VERSION release assets." \
+              "${FLAGS[@]}"
+          fi
+          # Release Please's draft keeps its assets private (downloads 404);
+          # publish it now that every asset is attached. Staging builds and
+          # X.Y.Z-suffix versions are prereleases, never latest.
+          FLAGS=(--draft=false)
+          [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease --latest=false)
+          if [ "$CANONICAL" != true ] || grep -q UNSIGNED signing/*.txt; then
+            label="staging"; [ "$CANONICAL" = true ] && label="test"
+            # Name the unsigned platforms: "UNSIGNED: windows-x64".
+            unsigned="$(grep -h UNSIGNED signing/*.txt | cut -d: -f1 | sort | paste -sd, - | sed 's/,/, /g')"
+            [ -n "$unsigned" ] && label="$label, UNSIGNED: $unsigned"
+            {
+              echo "**$GITHUB_REPOSITORY prerelease ($label).** Built by cd-cua-spacesd.yml at $GITHUB_REF ($GITHUB_SHA)."
+              echo
+              echo "Signing:"
+              echo "- linux: no OS code signing (Sigstore bundle only)"
+              sed 's/^/- /' signing/*.txt
+            } > notes.md
+            FLAGS+=(--title "cua-spacesd $VERSION ($label)" --notes-file notes.md)
+          fi
+          gh release edit "$TAG" "${FLAGS[@]}" --repo "$GITHUB_REPOSITORY"

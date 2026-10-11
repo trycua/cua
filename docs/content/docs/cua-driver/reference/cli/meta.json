@@ -1,0 +1,14 @@
+{
+  "title": "CLI",
+  "pages": [
+    "index",
+    "mcp",
+    "daemon",
+    "permissions",
+    "recording",
+    "history",
+    "config",
+    "extensions",
+    "updates"
+  ]
+}

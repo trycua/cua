@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/signed-catalog.schema.json",
+  "title": "Cua extension-manager signed catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload", "signature_algorithm", "signature"],
+  "properties": {
+    "payload": { "$ref": "./catalog-input.schema.json" },
+    "signature_algorithm": { "const": "ed25519" },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" }
+  }
+}

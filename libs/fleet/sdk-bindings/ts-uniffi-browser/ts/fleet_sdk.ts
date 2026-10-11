@@ -33,6 +33,26 @@ const uniffiIsDebug =
 // Public interface members begin here.
 
 /**
+ * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+ * that carries the cua-env-driver token for a claimed sandbox.
+ */
+export function claimEnvTokenKey(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_claim_env_token_key(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The label key a fleet's claims share, for callers that filter or clean up
  * with raw Kubernetes tooling instead of `list_fleet_claims`.
  */
@@ -79,6 +99,25 @@ export function poolDisplayStatus(pool: Pool): PoolDisplayStatus {
             /*caller:*/ (callStatus) => {
                 return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_pool_display_status(
         FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The name prefix every tenant registry pull Secret must carry.
+ */
+export function registrySecretNamePrefix(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -338,7 +377,17 @@ export type CreateClaimRequest = {
      * helpers (for example fleet fan-out) rely on this to tag related claims
      * so they can be listed back by label within a namespace.
      */
-    labels?: Map<string, string>
+    labels?: Map<string, string>,
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    secretFiles?: Map<string, string>
 }
 
 /**
@@ -347,7 +396,8 @@ export type CreateClaimRequest = {
 export const CreateClaimRequest = (() => {
     const defaults = () => ({
         name: undefined,
-        labels: undefined
+        labels: undefined,
+        secretFiles: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<CreateClaimRequest, ReturnType<typeof defaults>>(defaults);
@@ -367,7 +417,8 @@ const FfiConverterTypeCreateClaimRequest = (() => {
                 pool: FfiConverterTypePool.read(from),
                 spec: FfiConverterOptionalTypeClaimSpec.read(from),
                 name: FfiConverterOptionalString.read(from),
-                labels: FfiConverterOptionalMapStringString.read(from)
+                labels: FfiConverterOptionalMapStringString.read(from),
+                secretFiles: FfiConverterOptionalMapStringString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -375,12 +426,14 @@ const FfiConverterTypeCreateClaimRequest = (() => {
             FfiConverterOptionalTypeClaimSpec.write(value.spec, into);
             FfiConverterOptionalString.write(value.name, into);
             FfiConverterOptionalMapStringString.write(value.labels, into);
+            FfiConverterOptionalMapStringString.write(value.secretFiles, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypePool.allocationSize(value.pool) +
              FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec) +
              FfiConverterOptionalString.allocationSize(value.name) +
-             FfiConverterOptionalMapStringString.allocationSize(value.labels);
+             FfiConverterOptionalMapStringString.allocationSize(value.labels) +
+             FfiConverterOptionalMapStringString.allocationSize(value.secretFiles);
 
         }
     };
@@ -424,6 +477,78 @@ const FfiConverterTypeCreatePoolRequest = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.namespace) +
              FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Credentials for one registry, stored as a `cua-registry-*` pull Secret.
+ */
+export type CreateRegistrySecretRequest = {
+    /**
+     * Pool namespace the Secret is created in. It must already exist (the
+     * pool's namespace, created by `create_pool`, or by `create_namespace`).
+     */
+    namespace: string,
+    /**
+     * Full Secret name, `cua-registry-<dns-label>`.
+     */
+    name: string,
+    /**
+     * Registry host the credentials are for, as image refs spell it, e.g.
+     * `ghcr.io`, `registry.example.com:5000` or `docker.io`.
+     */
+    registry: string,
+    username: string,
+    /**
+     * Password or access token. Never serialized by `Debug`.
+     */
+    password: string
+}
+
+/**
+ * Generated factory for {@link CreateRegistrySecretRequest} record objects.
+ */
+export const CreateRegistrySecretRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CreateRegistrySecretRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CreateRegistrySecretRequest>,
+    });
+})();
+
+const FfiConverterTypeCreateRegistrySecretRequest = (() => {
+    type TypeName = CreateRegistrySecretRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                registry: FfiConverterString.read(from),
+                username: FfiConverterString.read(from),
+                password: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.registry, into);
+            FfiConverterString.write(value.username, into);
+            FfiConverterString.write(value.password, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.registry) +
+             FfiConverterString.allocationSize(value.username) +
+             FfiConverterString.allocationSize(value.password);
 
         }
     };
@@ -1518,6 +1643,139 @@ const FfiConverterTypePoolDisplayStatus = (() => {
             return FfiConverterTypePoolDisplayStatusKind.allocationSize(value.kind) +
              FfiConverterString.allocationSize(value.label) +
              FfiConverterString.allocationSize(value.indicator);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A created registry pull Secret. Carries no credential: Secrets are
+ * write-only through the gateway.
+ */
+export type RegistrySecret = {
+    namespace: string,
+    name: string,
+    registry: string
+}
+
+/**
+ * Generated factory for {@link RegistrySecret} record objects.
+ */
+export const RegistrySecret = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RegistrySecret, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RegistrySecret>,
+    });
+})();
+
+const FfiConverterTypeRegistrySecret = (() => {
+    type TypeName = RegistrySecret;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                registry: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.registry, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.registry);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A registry ref pinned by the gateway (`GET /api/images/resolve`).
+ */
+export type ResolvedImage = {
+    /**
+     * The ref as requested.
+     */
+    reference: string,
+    /**
+     * The ref actually resolved: for a canonical image and runtime
+     * `kubevirt` this is the containerDisk sibling (`…:24.04-disk`).
+     */
+    resolvedRef: string,
+    /**
+     * `repo@sha256:…` of the manifest (or index) to run.
+     */
+    pinnedRef: string,
+    digest: string,
+    /**
+     * `rootfs` (docker/gVisor), `containerdisk` (KubeVirt) or `unknown`.
+     */
+    variant: string,
+    /**
+     * The linux/amd64 child manifest digest when the ref is an index.
+     */
+    platformDigest?: string,
+    mediaType: string
+}
+
+/**
+ * Generated factory for {@link ResolvedImage} record objects.
+ */
+export const ResolvedImage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ResolvedImage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ResolvedImage>,
+    });
+})();
+
+const FfiConverterTypeResolvedImage = (() => {
+    type TypeName = ResolvedImage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                reference: FfiConverterString.read(from),
+                resolvedRef: FfiConverterString.read(from),
+                pinnedRef: FfiConverterString.read(from),
+                digest: FfiConverterString.read(from),
+                variant: FfiConverterString.read(from),
+                platformDigest: FfiConverterOptionalString.read(from),
+                mediaType: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.reference, into);
+            FfiConverterString.write(value.resolvedRef, into);
+            FfiConverterString.write(value.pinnedRef, into);
+            FfiConverterString.write(value.digest, into);
+            FfiConverterString.write(value.variant, into);
+            FfiConverterOptionalString.write(value.platformDigest, into);
+            FfiConverterString.write(value.mediaType, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.reference) +
+             FfiConverterString.allocationSize(value.resolvedRef) +
+             FfiConverterString.allocationSize(value.pinnedRef) +
+             FfiConverterString.allocationSize(value.digest) +
+             FfiConverterString.allocationSize(value.variant) +
+             FfiConverterOptionalString.allocationSize(value.platformDigest) +
+             FfiConverterString.allocationSize(value.mediaType);
 
         }
     };
@@ -2932,6 +3190,7 @@ export interface CreateClaimRequestBuilderLike {
     labels(value: Map<string, string>): CreateClaimRequestBuilderLike;
     name(value: string): CreateClaimRequestBuilderLike;
     pool(value: Pool): CreateClaimRequestBuilderLike;
+    secretFiles(value: Map<string, string>): CreateClaimRequestBuilderLike;
     spec(value: ClaimSpec): CreateClaimRequestBuilderLike;
 }
 /**
@@ -3010,6 +3269,18 @@ export class CreateClaimRequestBuilder extends UniffiAbstractObject implements C
                 return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
                 uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
         FfiConverterTypePool.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    secretFiles(value: Map<string, string>): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+                uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterMapStringString.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -3263,6 +3534,201 @@ const uniffiTypeCreatePoolRequestBuilderObjectFactory: UniffiObjectFactory<Creat
     },
 }})();
 const FfiConverterTypeCreatePoolRequestBuilder = new FfiConverterObject(uniffiTypeCreatePoolRequestBuilderObjectFactory);
+
+export interface CreateRegistrySecretRequestBuilderLike {
+
+    build() /*throws*/: CreateRegistrySecretRequest;
+    name(value: string): CreateRegistrySecretRequestBuilderLike;
+    namespace(value: string): CreateRegistrySecretRequestBuilderLike;
+    password(value: string): CreateRegistrySecretRequestBuilderLike;
+    registry(value: string): CreateRegistrySecretRequestBuilderLike;
+    username(value: string): CreateRegistrySecretRequestBuilderLike;
+}
+/**
+ * @deprecated Use `CreateRegistrySecretRequestBuilderLike` instead.
+ */
+export type CreateRegistrySecretRequestBuilderInterface = CreateRegistrySecretRequestBuilderLike;
+
+
+export class CreateRegistrySecretRequestBuilder extends UniffiAbstractObject implements CreateRegistrySecretRequestBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "CreateRegistrySecretRequestBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.bless(pointer);
+    }
+
+
+
+
+    build(): CreateRegistrySecretRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCreateRegistrySecretRequest.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(
+                uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): CreateRegistrySecretRequestBuilderLike {
+    return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(
+                uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    namespace(value: string): CreateRegistrySecretRequestBuilderLike {
+    return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(
+                uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    password(value: string): CreateRegistrySecretRequestBuilderLike {
+    return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(
+                uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    registry(value: string): CreateRegistrySecretRequestBuilderLike {
+    return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(
+                uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    username(value: string): CreateRegistrySecretRequestBuilderLike {
+    return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(
+                uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.pointer(this);
+            uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CreateRegistrySecretRequestBuilder {
+        return uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory: UniffiObjectFactory<CreateRegistrySecretRequestBuilderLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): CreateRegistrySecretRequestBuilderLike {
+        const instance = Object.create(CreateRegistrySecretRequestBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "CreateRegistrySecretRequestBuilder";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: CreateRegistrySecretRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: CreateRegistrySecretRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is CreateRegistrySecretRequestBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CreateRegistrySecretRequestBuilder";
+    },
+}})();
+const FfiConverterTypeCreateRegistrySecretRequestBuilder = new FfiConverterObject(uniffiTypeCreateRegistrySecretRequestBuilderObjectFactory);
 
 export interface CreateSignedServiceUrlRequestBuilderLike {
 
@@ -3794,13 +4260,25 @@ export interface CyclopsClientLike {
     createImage(namespace: string, manifest: PreservedJsonLike, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PreservedJsonLike>;
     createNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Namespace>;
     createPool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
+/**
+ * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+ * On a name conflict the old Secret is deleted and the new one created,
+ * since the gateway admits no Secret update.
+ */
+    createRegistrySecret(request: CreateRegistrySecretRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RegistrySecret>;
     createSignedServiceUrl(request: CreateSignedServiceUrlRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SignedServiceUrl>;
     createTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
     createUserApiKey(request: CreateUserApiKeyRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<NewUserApiKey>;
+/**
+ * Delete the claim and, when it references a claim-scoped Secret
+ * (`secret_files`), that Secret too. The pool-operator also owner-refs
+ * the Secret to the claim, so garbage collection is the backstop.
+ */
     deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deletePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteRegistrySecret(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteUserApiKey(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     getClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
@@ -3834,6 +4312,12 @@ export interface CyclopsClientLike {
  * can be mutated through the SDK.
  */
     renewClaim(claim: Claim, shutdownTime: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+/**
+ * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+ * `kubevirt`, `macos`) selects the variant for canonical cua images:
+ * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+ */
+    resolveImage(reference: string, runtime: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ResolvedImage>;
     revokeSignedServiceUrl(signedServiceUrl: SignedServiceUrl, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 /**
@@ -4126,6 +4610,35 @@ private constructor(pointer: UniffiHandle) {
         );
     }
 
+/**
+ * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+ * On a name conflict the old Secret is deleted and the new one created,
+ * since the gateway admits no Secret update.
+ */
+    async createRegistrySecret(request: CreateRegistrySecretRequest, asyncOpts_?: { signal: AbortSignal }): Promise<RegistrySecret> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreateRegistrySecretRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeRegistrySecret.lift.bind(FfiConverterTypeRegistrySecret),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
     async createSignedServiceUrl(request: CreateSignedServiceUrlRequest, asyncOpts_?: { signal: AbortSignal }): Promise<SignedServiceUrl> /*throws*/ {
     return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
@@ -4198,6 +4711,11 @@ private constructor(pointer: UniffiHandle) {
         );
     }
 
+/**
+ * Delete the claim and, when it references a claim-scoped Secret
+ * (`secret_files`), that Secret too. The pool-operator also owner-refs
+ * the Secret to the claim, so garbage collection is the backstop.
+ */
     async deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
@@ -4261,6 +4779,25 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(
                     uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deleteRegistrySecret(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
@@ -4728,6 +5265,35 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+/**
+ * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+ * `kubevirt`, `macos`) selects the variant for canonical cua images:
+ * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+ */
+    async resolveImage(reference: string, runtime: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<ResolvedImage> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(reference, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(runtime, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeResolvedImage.lift.bind(FfiConverterTypeResolvedImage),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -5861,6 +6427,9 @@ function uniffiEnsureInitialized() {
     if (bindingsContractVersion !== scaffoldingContractVersion) {
         throw new UniffiInternalError.ContractVersionMismatch(scaffoldingContractVersion, bindingsContractVersion);
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_claim_env_token_key() !== 8887) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_claim_env_token_key");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_fleet_label_key() !== 5219) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_fleet_label_key");
     }
@@ -5869,6 +6438,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_pool_display_status() !== 8587) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_pool_display_status");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix() !== 63379) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() !== 48761) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_removed_pool_display_status");
@@ -5897,6 +6469,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() !== 7405) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool");
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() !== 54115) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() !== 28263) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec");
     }
@@ -5911,6 +6486,27 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() !== 7566) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new() !== 33724) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build() !== 37137) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name() !== 24925) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace() !== 5201) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password() !== 1991) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry() !== 58635) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username() !== 20465) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new() !== 16004) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new");
@@ -5996,6 +6592,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() !== 48557) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool");
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret() !== 5524) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() !== 17810) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url");
     }
@@ -6005,7 +6604,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() !== 9174) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key");
     }
-    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 20460) {
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 52233) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() !== 24680) {
@@ -6016,6 +6615,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() !== 31235) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret() !== 778) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() !== 54852) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template");
@@ -6073,6 +6675,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() !== 17505) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image() !== 1395) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url() !== 59989) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url");
@@ -6179,6 +6784,8 @@ export default Object.freeze({
     FfiConverterTypeCreateClaimRequestBuilder,
     FfiConverterTypeCreatePoolRequest,
     FfiConverterTypeCreatePoolRequestBuilder,
+    FfiConverterTypeCreateRegistrySecretRequest,
+    FfiConverterTypeCreateRegistrySecretRequestBuilder,
     FfiConverterTypeCreateSignedServiceUrlRequest,
     FfiConverterTypeCreateSignedServiceUrlRequestBuilder,
     FfiConverterTypeCreateTemplateRequest,
@@ -6208,6 +6815,8 @@ export default Object.freeze({
     FfiConverterTypePoolDisplayStatus,
     FfiConverterTypePoolDisplayStatusKind,
     FfiConverterTypePresignedPut,
+    FfiConverterTypeRegistrySecret,
+    FfiConverterTypeResolvedImage,
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
     FfiConverterTypeSdkBuildError,

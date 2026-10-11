@@ -4,6 +4,29 @@ import { randomUUID } from 'node:crypto';
 import { cuaVersionHeaders } from '@trycua/core';
 import type { AgentRequest, AgentResponse, ConnectionType, AgentClientOptions } from './types';
 
+/**
+ * The model name as telemetry sends it: `provider/model` stays, but a local
+ * path, URL or custom deployment (anything path-like, with a scheme, or
+ * longer than 64 characters) becomes `<provider>/custom` or `custom`.
+ */
+export function telemetryModel(model: string | undefined): string {
+  const m = (model ?? '').trim();
+  if (!m) return 'unknown';
+  const provider = m.includes('/') ? m.split('/')[0] : '';
+  const pathLike =
+    m.includes('://') ||
+    m.includes('\\') ||
+    m.startsWith('/') ||
+    m.startsWith('~') ||
+    m.split('/').length > 2;
+  if (pathLike || m.length > 64 || !/^[A-Za-z0-9._:@\/-]+$/.test(m)) {
+    return /^[a-z0-9_-]{1,32}$/.test(provider) && !m.includes('://')
+      ? `${provider}/custom`
+      : 'custom';
+  }
+  return m;
+}
+
 export class AgentClient {
   private url: string;
   private connectionType: ConnectionType;
@@ -56,7 +79,7 @@ export class AgentClient {
     this.telemetry.recordEvent('agent_request_start', {
       session_id: this.sessionId,
       request_id: requestId,
-      model: request.model,
+      model: telemetryModel(request.model),
       connection_type: this.connectionType,
       has_computer_kwargs: !!request.computer_kwargs,
       has_agent_kwargs: !!request.agent_kwargs,
@@ -80,7 +103,7 @@ export class AgentClient {
       this.telemetry.recordEvent('agent_request_end', {
         session_id: this.sessionId,
         request_id: requestId,
-        model: request.model,
+        model: telemetryModel(request.model),
         duration_ms: Date.now() - startTime,
         status: response.status,
         num_messages: response.output?.length ?? 0,
@@ -92,17 +115,17 @@ export class AgentClient {
 
       return response;
     } catch (error) {
-      // Emit agent_request_error event on failure
+      // Emit agent_request_error event on failure. Only the classified error
+      // type is sent; the raw message can contain URLs, paths or prompt text.
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorType = this.classifyError(errorMessage);
 
       this.telemetry.recordEvent('agent_request_error', {
         session_id: this.sessionId,
         request_id: requestId,
-        model: request.model,
+        model: telemetryModel(request.model),
         duration_ms: Date.now() - startTime,
         error_type: errorType,
-        error_message: errorMessage.slice(0, 200), // Truncate for safety
       });
 
       throw error;

@@ -23,6 +23,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -48,6 +51,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Large images (XFCE, on the KiCad base) filled the runner's disk and
+      # killed the runner itself mid-build.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+
       - name: Prepare platform tag
         id: platform
         run: |
@@ -55,15 +64,37 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # Images that install a published cua-spacesd build it from the pinned
+      # release. Until that version is published on trycua/cua (a pull
+      # request that bumps it), build without it; the release builds in
+      # cd-container-* always install it and fail if it is missing.
+      - name: Resolve the cua-spacesd source
+        id: spacesd
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKERFILE: ${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^ARG CUA_SPACESD_VERSION=\([0-9][0-9A-Za-z.+-]*\)$/\1/p' "$DOCKERFILE" | head -n 1)
+          if [ -z "$version" ]; then
+            echo "build_args=" >> "$GITHUB_OUTPUT"
+          elif gh release view "cua-spacesd-v$version" --repo trycua/cua >/dev/null 2>&1; then
+            echo "build_args=CUA_SPACESD_SOURCE=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::cua-spacesd-v$version is not published on trycua/cua yet; building without cua-spacesd"
+            echo "build_args=CUA_SPACESD_SOURCE=none" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./${{ inputs.context_dir }}
           file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
           push: false
           platforms: ${{ matrix.platform }}
+          build-args: ${{ steps.spacesd.outputs.build_args }}
 
       - name: Verify build
         run: |

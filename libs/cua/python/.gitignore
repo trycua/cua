@@ -1,0 +1,10 @@
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+src/cua/*.dylib
+src/cua/*.so
+src/cua/*.dll
+src/cua/bin/

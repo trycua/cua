@@ -1,15 +1,38 @@
 #![cfg(target_os = "linux")]
 
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
-use platform_linux::input::{send_key, send_key_at, send_key_xtest, send_type_text};
+use platform_linux::input::{
+    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_xtest,
+};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
-fn input_window(conn: &RustConnection, parent: Window, x: i16, y: i16) -> Result<Window> {
+/// Connects to the test display while one connection stays open for the
+/// whole test binary. An X server started without `-noreset` (plain
+/// `xvfb-run`) resets when its last client disconnects and drops a connection
+/// that arrives during the reset, so without this the connection setup of the
+/// test that runs after another one closed everything could read EOF or
+/// ECONNRESET.
+fn connect() -> Result<(RustConnection, usize)> {
+    static KEEP_DISPLAY: OnceLock<RustConnection> = OnceLock::new();
+    if KEEP_DISPLAY.get().is_none() {
+        let _ = KEEP_DISPLAY.set(x11rb::connect(None)?.0);
+    }
+    Ok(x11rb::connect(None)?)
+}
+
+fn event_window(
+    conn: &RustConnection,
+    parent: Window,
+    x: i16,
+    y: i16,
+    event_mask: EventMask,
+) -> Result<Window> {
     let window = conn.generate_id()?;
     conn.create_window(
         x11rb::COPY_DEPTH_FROM_PARENT,
@@ -24,12 +47,25 @@ fn input_window(conn: &RustConnection, parent: Window, x: i16, y: i16) -> Result
         0,
         &CreateWindowAux::new()
             .override_redirect(1)
-            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+            .event_mask(event_mask),
     )?
     .check()?;
     conn.map_window(window)?.check()?;
     let attributes = conn.get_window_attributes(window)?.reply()?;
     assert_eq!(attributes.map_state, MapState::VIEWABLE);
+    assert_eq!(attributes.your_event_mask, event_mask);
+    Ok(window)
+}
+
+fn input_window(conn: &RustConnection, parent: Window, x: i16, y: i16) -> Result<Window> {
+    let window = event_window(
+        conn,
+        parent,
+        x,
+        y,
+        EventMask::KEY_PRESS | EventMask::KEY_RELEASE,
+    )?;
+    let attributes = conn.get_window_attributes(window)?.reply()?;
     assert!(attributes.your_event_mask.contains(EventMask::KEY_PRESS));
     assert!(attributes.your_event_mask.contains(EventMask::KEY_RELEASE));
     Ok(window)
@@ -62,12 +98,111 @@ fn assert_key(conn: &RustConnection, event: &KeyPressEvent, keysym: u32) -> Resu
     Ok(())
 }
 
+fn assert_no_button_events(conn: &RustConnection, label: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < deadline {
+        match conn.poll_for_event()? {
+            Some(Event::ButtonPress(event)) => {
+                bail!("{label} unexpectedly received ButtonPress: {event:?}")
+            }
+            Some(Event::ButtonRelease(event)) => {
+                bail!("{label} unexpectedly received ButtonRelease: {event:?}")
+            }
+            Some(Event::Error(error)) => bail!("{label} X11 error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    Ok(())
+}
+
+fn spare_keycodes(conn: &RustConnection) -> Result<Vec<u8>> {
+    let setup = conn.setup();
+    let (min, max) = (setup.min_keycode, setup.max_keycode);
+    let mapping = conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
+    let per = usize::from(mapping.keysyms_per_keycode);
+    Ok(mapping
+        .keysyms
+        .chunks(per)
+        .enumerate()
+        .filter(|(_, keysyms)| keysyms.iter().all(|&keysym| keysym == 0))
+        .map(|(index, _)| min + index as u8)
+        .collect())
+}
+
+fn focused_input_window(conn: &RustConnection, screen: usize) -> Result<Window> {
+    let window = input_window(conn, conn.setup().roots[screen].root, 0, 0)?;
+    conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)?;
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, window);
+    Ok(window)
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display"]
+fn background_click_delivers_complete_sequence_to_press_recipient_without_focus_change(
+) -> Result<()> {
+    let (owner, screen) = connect()?;
+    let root = owner.setup().roots[screen].root;
+    let target = event_window(&owner, root, 0, 0, EventMask::NO_EVENT)?;
+    let leaf = event_window(&owner, target, 20, 20, EventMask::NO_EVENT)?;
+    let sentinel = event_window(&owner, root, 400, 0, EventMask::NO_EVENT)?;
+
+    let (press_observer, _) = connect()?;
+    press_observer
+        .change_window_attributes(
+            target,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::BUTTON_PRESS),
+        )?
+        .check()?;
+    let (release_observer, _) = connect()?;
+    release_observer
+        .change_window_attributes(
+            leaf,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::BUTTON_RELEASE),
+        )?
+        .check()?;
+
+    owner.set_input_focus(InputFocus::PARENT, sentinel, x11rb::CURRENT_TIME)?;
+    assert_eq!(owner.get_input_focus()?.reply()?.focus, sentinel);
+
+    send_click(u64::from(target), 30, 30, 1, 1)?;
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut events = Vec::new();
+    while events.len() < 2 {
+        if Instant::now() >= deadline {
+            bail!("received {} of 2 button events", events.len());
+        }
+        match press_observer.poll_for_event()? {
+            Some(Event::ButtonPress(event)) => events.push((true, event)),
+            Some(Event::ButtonRelease(event)) => events.push((false, event)),
+            Some(Event::Error(error)) => bail!("X11 press observer error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+
+    assert!(events[0].0 && !events[1].0);
+    for (_, event) in &events {
+        assert_eq!(event.event, target);
+        assert_ne!(event.event, leaf);
+        assert_eq!((event.event_x, event.event_y), (30, 30));
+        assert_ne!(
+            event.response_type & 0x80,
+            0,
+            "expected XSendEvent delivery"
+        );
+    }
+    assert_no_button_events(&release_observer, "release observer")?;
+    assert_no_button_events(&owner, "owner")?;
+    assert_eq!(owner.get_input_focus()?.reply()?.focus, sentinel);
+    Ok(())
+}
+
 /// Run on a disposable display: these tests change keyboard focus.
 /// xvfb-run -a cargo test -p platform-linux --test key_input_x11 -- --ignored --test-threads=1
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_key_taps_have_a_delivered_hold_interval() -> Result<()> {
-    let (conn, screen) = x11rb::connect(None)?;
+    let (conn, screen) = connect()?;
     let window = input_window(&conn, conn.setup().roots[screen].root, 0, 0)?;
     conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)?;
     assert_eq!(conn.get_input_focus()?.reply()?.focus, window);
@@ -111,7 +246,7 @@ fn xtest_key_taps_have_a_delivered_hold_interval() -> Result<()> {
 #[test]
 #[ignore = "requires an isolated X11 display"]
 fn background_keys_deliver_complete_sequences_without_changing_focus() -> Result<()> {
-    let (conn, screen) = x11rb::connect(None)?;
+    let (conn, screen) = connect()?;
     let root = conn.setup().roots[screen].root;
     let target = input_window(&conn, root, 0, 0)?;
     let child = input_window(&conn, target, 20, 20)?;
@@ -165,5 +300,20 @@ fn background_keys_deliver_complete_sequences_without_changing_focus() -> Result
         assert_key(&conn, &pair[0].1, keysym)?;
     }
     assert_eq!(conn.get_input_focus()?.reply()?.focus, sentinel);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_the_spare_keycodes_it_borrows() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    assert!(!before.is_empty(), "the test display has no spare keycode");
+    for text in ["\u{4f60}", "\u{597d}", "\u{4e16}"] {
+        send_type_text_xtest(text)?;
+        keyboard_events(&conn, 2)?;
+        assert_eq!(spare_keycodes(&conn)?, before, "after typing {text}");
+    }
     Ok(())
 }

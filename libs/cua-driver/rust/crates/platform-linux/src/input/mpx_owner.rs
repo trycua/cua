@@ -12,11 +12,7 @@ pub(super) struct Owner {
 }
 
 fn start_ticks(stat: &str) -> io::Result<u64> {
-    // comm can contain spaces and closing parentheses. Fields following its
-    // final ')' begin with state (field 3); starttime is field 22.
-    stat.rsplit_once(')')
-        .and_then(|(_, tail)| tail.split_whitespace().nth(19))
-        .and_then(|value| value.parse().ok())
+    crate::proc_fs::process_start_time_from_stat(stat)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid proc stat"))
 }
 
@@ -197,19 +193,6 @@ mod tests {
         let owner = owner();
         assert!(owner.stale_with(&owner, |_| Err(io::ErrorKind::NotFound.into()), |_| true));
         assert!(owner.stale_with(&owner, |_| Ok(999), |_| panic!("must not probe")));
-    }
-
-    #[test]
-    fn proc_stat_comm_delimiters_do_not_shift_starttime() {
-        let tail = (3..=21)
-            .map(|n| n.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(
-            start_ticks(&format!("123 (name with ) parentheses) {tail} 98765 23")).unwrap(),
-            98765
-        );
-        assert!(start_ticks("bad").is_err());
     }
 
     #[test]

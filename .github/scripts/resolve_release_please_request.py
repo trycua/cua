@@ -11,9 +11,13 @@ from typing import Any
 
 
 COMPONENT_PATHS = {
+    "cua-perception": "libs/cua-driver/rust/crates/cua-perception",
     "cua-driver-rs": "libs/cua-driver",
     "lume": "libs/lume",
     "sandbox": "libs/python/cua-sandbox",
+    "cua-spacesd": "libs/cua-spacesd",
+    "cua-sdk": "libs/cua",
+    "cua-spaces": "apps/cua-spaces-macos",
 }
 SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 BUMP_TYPES = {"automatic", "patch", "minor", "major"}

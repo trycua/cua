@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "default",
+  "description": "The main window and the picture-in-picture windows: core IPC (the app's own commands and webview drag-drop events) and dragging the window by its toolbars.",
+  "windows": [
+    "main",
+    "pip-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-theme"
+  ]
+}

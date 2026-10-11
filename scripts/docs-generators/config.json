@@ -6,89 +6,176 @@
       "name": "Cua Driver",
       "language": "rust",
       "sourcePath": "libs/cua-driver/rust/crates",
-      "docsOutputPath": "docs/content/docs/reference/cua-driver",
+      "docsOutputPath": "docs/content/docs/cua-driver/reference",
       "generatorScript": "scripts/docs-generators/cua-driver.ts",
       "watchPaths": [
         "libs/cua-driver/rust/crates/**/*.rs",
         "libs/cua-driver/rust/Cargo.toml",
         "libs/cua-driver/rust/Cargo.lock",
-        "scripts/docs-generators/cua-driver-policy.test.ts"
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/headers/cua-driver/**",
+        "scripts/docs-generators/cua-driver-policy.test.ts",
+        "scripts/docs-generators/cli-specs/cua-driver.json",
+        "scripts/docs-generators/cli-specs/cua-driver-mcp-*.json",
+        "docs/content/docs/cua-driver/reference/**"
       ],
       "buildCommand": "cargo build -p cua-driver --release",
       "buildDirectory": "libs/cua-driver/rust",
       "extractionMethod": "dump-docs",
       "outputs": [
         {
-          "type": "mcp",
-          "outputFile": "mcp-tools.mdx",
-          "platform": { "host": "darwin", "name": "macOS" },
-          "extractCommand": "target/release/cua-driver dump-docs --type mcp"
-        },
-        {
-          "type": "mcp",
-          "outputFile": "mcp-tools-linux.mdx",
-          "platform": { "host": "linux", "name": "Linux" },
-          "extractCommand": "target/release/cua-driver dump-docs --type mcp"
-        },
-        {
-          "type": "mcp",
-          "outputFile": "mcp-tools-windows.mdx",
-          "platform": { "host": "win32", "name": "Windows" },
-          "extractCommand": "target/release/cua-driver.exe dump-docs --type mcp"
+          "type": "index",
+          "outputFile": "index.mdx",
+          "extractCommand": "${CARGO_TARGET_DIR:-target}/release/cua-driver dump-docs --type all --pretty"
         },
         {
           "type": "cli",
-          "outputFile": "cli-reference.mdx",
-          "extractCommand": "target/release/cua-driver dump-docs --type cli"
+          "outputFile": "cli/index.mdx",
+          "extractCommand": "${CARGO_TARGET_DIR:-target}/release/cua-driver dump-docs --type cli"
+        },
+        {
+          "type": "mcp",
+          "outputFile": "mcp-tools/index.mdx",
+          "extractCommand": "${CARGO_TARGET_DIR:-target}/release/cua-driver dump-docs --type mcp (plus the committed cli-specs/cua-driver-mcp-<platform>.json of the other platforms)"
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
         }
       ],
       "enabled": true,
-      "notes": "Generates shared cli-reference.mdx and the host-owned mcp-tools.mdx (macOS), mcp-tools-linux.mdx, or mcp-tools-windows.mdx from the Rust binary's `dump-docs`. MCP tool docs come straight from the live tool registry; CLI docs come from a hand-maintained `cli_docs_json()` literal in crates/cua-driver/src/cli.rs (the CLI is hand-parsed, not clap, so there is nothing to introspect yet — introspecting it is a tracked follow-up). Curated cross-cutting content lives in the sibling non-generated files mcp-tool-notes.mdx and macos-permissions.mdx."
+      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group) and reference/mcp-tools/ (one page per tool category) with the shared renderers in lib/. The CLI comes from the hand-maintained cli_docs_json() in crates/cua-driver/src/cli.rs (host independent). The MCP registry differs per OS: each host refreshes (or, with --check, verifies) its own snapshot cli-specs/cua-driver-mcp-<macos|linux|windows>.json and every page renders from the three committed snapshots, so the pages are identical on every host. Curated headers: scripts/docs-generators/headers/cua-driver/."
     },
     "lume": {
       "name": "Lume VM Manager",
       "language": "swift",
       "sourcePath": "libs/lume/src",
-      "docsOutputPath": "docs/content/docs/reference/lume",
+      "docsOutputPath": "docs/content/docs/lume/reference",
       "generatorScript": "scripts/docs-generators/lume.ts",
       "watchPaths": [
         "libs/lume/src/Commands/**/*.swift",
         "libs/lume/src/Server/**/*.swift",
         "libs/lume/src/Utils/CommandDocExtractor.swift",
-        "libs/lume/src/Server/APIDocExtractor.swift"
+        "libs/lume/src/Server/APIDocExtractor.swift",
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/headers/lume/**",
+        "scripts/docs-generators/cli-specs/lume.json",
+        "docs/content/docs/lume/reference/**"
       ],
       "buildCommand": "swift build -c release",
       "buildDirectory": "libs/lume",
       "extractionMethod": "dump-docs",
       "outputs": [
         {
+          "type": "index",
+          "outputFile": "index.mdx",
+          "extractCommand": ".build/release/lume dump-docs --type all --pretty"
+        },
+        {
           "type": "cli",
-          "outputFile": "cli-reference.mdx",
+          "outputFile": "cli/index.mdx",
           "extractCommand": ".build/release/lume dump-docs --type cli"
         },
         {
           "type": "api",
           "outputFile": "http-api.mdx",
           "extractCommand": ".build/release/lume dump-docs --type api"
+        },
+        {
+          "type": "mcp",
+          "outputFile": "mcp-tools.mdx",
+          "extractCommand": ".build/release/lume dump-docs --type mcp"
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
         }
       ],
       "enabled": true,
-      "notes": "Generates cli-reference.mdx + http-api.mdx from the Swift binary's `dump-docs` output. These files live under the Diátaxis Reference tree; task-oriented Lume docs belong under how-to-guides/lume."
+      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group), http-api.mdx and mcp-tools.mdx from `lume dump-docs --type all` with the shared renderers in lib/."
+    },
+    "cua-bench": {
+      "name": "Cua Bench (cb CLI, task and result schemas)",
+      "language": "python",
+      "sourcePath": "libs/cua-bench/cua_bench",
+      "docsOutputPath": "docs/content/docs/cua-bench/reference",
+      "generatorScript": "scripts/docs-generators/cua-bench.ts",
+      "watchPaths": [
+        "libs/cua-bench/cua_bench/cli/**",
+        "libs/cua-bench/cua_bench/core.py",
+        "libs/cua-bench/cua_bench/decorators.py",
+        "libs/cua-bench/cua_bench/types.py",
+        "libs/cua-bench/cua_bench/results.py",
+        "libs/cua-bench/cua_bench/runner/batch_runner.py",
+        "libs/cua-bench/cua_bench/computers/base.py",
+        "libs/cua-bench/cua_bench/computers/remote.py",
+        "libs/cua-bench/cua_bench/tests/golden/*_schema.json",
+        "libs/cua-bench/example_tasks/hello_file_env/main.py",
+        "libs/cua-bench/pyproject.toml",
+        "libs/cua-bench/uv.lock",
+        "scripts/docs-generators/extract_cb_docs.py",
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/headers/cua-bench/**",
+        "scripts/docs-generators/cli-specs/cb.json",
+        "docs/content/docs/cua-bench/reference/**"
+      ],
+      "buildCommand": null,
+      "buildDirectory": "libs/cua-bench",
+      "extractionMethod": "argparse-introspection",
+      "outputs": [
+        {
+          "type": "index",
+          "outputFile": "index.mdx",
+          "extractCommand": "uv run --frozen --python 3.12 --project libs/cua-bench python scripts/docs-generators/extract_cb_docs.py"
+        },
+        {
+          "type": "cli",
+          "outputFile": "cli/index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "task-definition.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "results.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "Imports cua_bench in its project environment (uv) and introspects `build_parser()` (every command, flag and epilog example) plus the task contract (cb.Task, DesktopSetupConfig, the decorators, the session API, actions) and the result models (JobResult, HarborTrialFields, Summary), with field docs from `#:` comments. The result and summary key sets are checked against the export goldens in cua_bench/tests/golden."
     },
     "sandbox": {
       "name": "Sandbox package and image facts",
       "language": "typescript",
       "sourcePath": "libs/python/cua-sandbox",
-      "docsOutputPath": "docs/content/docs/reference/sandbox-sdk",
+      "docsOutputPath": "docs/content/docs/cua-sdk/reference",
       "generatorScript": "scripts/docs-generators/sandbox.ts",
       "watchPaths": [
-        "libs/python/cua/pyproject.toml",
-        "libs/python/computer-server/pyproject.toml",
+        "libs/cua/python/pyproject.toml",
         "libs/typescript/fleet/package.json",
         "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json",
         "scripts/docs-generators/sandbox-facts.json",
         "scripts/docs-generators/sandbox-facts.schema.json",
-        "scripts/docs-generators/sandbox.test.ts"
+        "libs/images/sandbox-images.json",
+        "libs/images/bench/*/lock.json",
+        "docs/content/docs/cua-sdk/quickstart.mdx",
+        "docs/content/docs/start-here/sandbox-images.mdx",
+        "scripts/docs-generators/sandbox.test.ts",
+        "scripts/docs-generators/headers/cua-sdk/runtime-support.md",
+        "scripts/docs-generators/headers/cua-sdk/os-image-catalog.md",
+        "scripts/docs-generators/image-software.ts",
+        "libs/images/software/*.json",
+        "scripts/docs-generators/lib/mdx.ts"
       ],
       "buildCommand": null,
       "buildDirectory": ".",
@@ -103,131 +190,709 @@
           "type": "reference",
           "outputFile": "os-image-catalog.mdx",
           "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "image-software.mdx",
+          "extractCommand": null
         }
       ],
       "enabled": true,
-      "notes": "Generates package versions and client image mappings from public source manifests, then combines them with schema-checked deployment qualification facts."
+      "notes": "Generates runtime-support.mdx, os-image-catalog.mdx and image-software.mdx (the per-tier inventories under libs/images/software): the curated bodies in headers/cua-sdk/<page>.md with their GENERATED regions filled from public source manifests and schema-checked deployment qualification facts."
     },
     "cua-cli": {
-      "name": "Cua CLI",
-      "language": "typescript",
-      "sourcePath": "libs/typescript/cua-cli/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/cli-playbook",
+      "name": "cua CLI and MCP server",
+      "language": "rust",
+      "sourcePath": "libs/cua/crates/cua-cli",
+      "docsOutputPath": "docs/content/docs/cua-cli/reference",
       "generatorScript": "scripts/docs-generators/cua-cli.ts",
-      "watchPaths": ["libs/typescript/cua-cli/src/**/*.ts"],
-      "buildCommand": null,
-      "buildDirectory": "libs/typescript/cua-cli",
-      "extractionMethod": "yargs-parse",
+      "watchPaths": [
+        "libs/cua/crates/cua-cli/**",
+        "libs/cua/crates/cua-spaces-contract/src/**",
+        "libs/cua/spaces-contract/manifest.json",
+        "libs/cua/VERSION",
+        "libs/cua/Cargo.lock",
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/headers/cua-cli/**",
+        "scripts/docs-generators/cua-cli.test.ts",
+        "scripts/docs-generators/cli-specs/cua.json",
+        "docs/content/docs/cua-cli/reference/**"
+      ],
+      "buildCommand": "cargo build -p cua-cli",
+      "buildDirectory": "libs/cua",
+      "extractionMethod": "dump-docs",
       "outputs": [
+        {
+          "type": "index",
+          "outputFile": "index.mdx",
+          "extractCommand": "${CARGO_TARGET_DIR:-target}/debug/cua dump-docs --type all"
+        },
         {
           "type": "cli",
-          "outputFile": "commands.mdx",
+          "outputFile": "cli/index.mdx",
+          "extractCommand": "${CARGO_TARGET_DIR:-target}/debug/cua dump-docs --type cli"
+        },
+        {
+          "type": "mcp",
+          "outputFile": "mcp-tools/index.mdx",
+          "extractCommand": "${CARGO_TARGET_DIR:-target}/debug/cua dump-docs --type mcp"
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
           "extractCommand": null
         }
       ],
-      "enabled": false,
-      "notes": "Requires yargs introspection or AST parsing - to be implemented"
+      "enabled": true,
+      "notes": "Renders reference/index.mdx, reference/cli/ (one page per command group) and reference/mcp-tools/ (one page per tool group) from the hidden `cua dump-docs` (the clap definition and the MCP tool list) with the shared renderers in lib/, plus scripts/docs-generators/cli-specs/cua.json, the docs CLI-shape lane's oracle. Examples come from each command's clap `after_help` (a cua-cli test parses every one)."
     },
-    "mcp-server": {
-      "name": "MCP Server",
-      "language": "python",
-      "sourcePath": "libs/python/mcp-server/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/mcp-server",
-      "generatorScript": "scripts/docs-generators/mcp-server.ts",
-      "watchPaths": ["libs/python/mcp-server/src/**/*.py"],
-      "buildCommand": null,
-      "buildDirectory": "libs/python/mcp-server",
-      "extractionMethod": "mcp-introspection",
+    "cua-sdk": {
+      "name": "Cua SDK object reference (UniFFI)",
+      "language": "rust",
+      "sourcePath": "libs/cua/crates/cua-sdk",
+      "docsOutputPath": "docs/content/docs/cua-sdk/reference",
+      "generatorScript": "scripts/docs-generators/cua-sdk.ts",
+      "watchPaths": [
+        "libs/cua/crates/cua-sdk/src/native/**",
+        "libs/cua/crates/cua-sdk/uniffi.toml",
+        "libs/cua/crates/cua-bindgen/**",
+        "libs/cua/VERSION",
+        "libs/cua/python/src/cua/_native.py",
+        "libs/cua/typescript/src/native/cua_sdk.ts",
+        "libs/cua/swift/Sources/CuaSDK/CuaSDK.swift",
+        "libs/cua/kotlin/src/main/kotlin/ai/cua/sdk/cua_sdk.kt",
+        "scripts/docs-generators/cua-sdk.test.ts",
+        "scripts/docs-generators/lib/mdx.ts",
+        "libs/cua/crates/cua-sdk/src/lib.rs",
+        "libs/cua/crates/cua-sdk/src/types.rs",
+        "scripts/docs-generators/headers/cua-sdk/*.md",
+        "scripts/docs-generators/examples/cua-sdk/*",
+        "libs/cua/crates/cua-spaces-ffi/src/**",
+        "libs/cua/crates/cua-spaces-ffi/uniffi.toml",
+        "libs/spaces-app-swift/Sources/CuaSpacesFFI/CuaSpacesFFI.swift"
+      ],
+      "buildCommand": "cargo build --locked -p cua-sdk -p cua-spaces-ffi -p cua-bindgen",
+      "buildDirectory": "libs/cua",
+      "extractionMethod": "uniffi-metadata",
       "outputs": [
         {
-          "type": "tools",
-          "outputFile": "tools.mdx",
+          "type": "api",
+          "outputFile": "index.mdx",
+          "extractCommand": "target/debug/cua-bindgen docs --library target/debug/libcua_sdk.<so|dylib> (and --library target/debug/libcua_spaces_ffi.<so|dylib> --namespace cua_spaces_ffi)"
+        },
+        {
+          "type": "api",
+          "outputFile": "cua.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "sandbox/index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "sandbox/lifecycle.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "sandbox/options.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "image.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "services.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spacesd/index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spacesd/shell.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spacesd/files.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spacesd/computer.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spacesd/media.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "fleet/index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "fleet/claims.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "fleet/images.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "local.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/space.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/streams.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/agents.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/teleport.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/teleport-host.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces/host.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "auth.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "agent-setup.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "errors.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "types.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "meta.json",
           "extractCommand": null
         }
       ],
-      "enabled": false,
-      "notes": "Requires MCP tool introspection - to be implemented"
+      "enabled": true,
+      "notes": "One page per object (PAGES in cua-sdk.ts) with Python/TypeScript/Swift/Kotlin/Rust signature tabs, plus the reference index, Errors, Types and the reference meta.json. Curated prose: headers/cua-sdk/<page>.md. Examples: examples/cua-sdk/<Target>.<ext>, each tagged with its docs lane and run from the page by the docs-blocks suite. Names are cross-checked against the committed bindings (with uniffi.toml renames) and the Rust source. The `spaces` pages (host teleport, app teleport, the Spaces app core) document the Cua Spaces app export (the `cua_spaces_ffi` namespace of libcua_spaces_ffi, source-available, FSL-1.1-MIT) with Swift and Rust tabs only, cross-checked against libs/spaces-app-swift/Sources/CuaSpacesFFI/CuaSpacesFFI.swift and the cua-spaces-ffi source."
     },
-    "python-sdk": {
-      "name": "Python SDKs (Computer + Agent)",
+    "cua-sdk-python": {
+      "name": "Python hand-written layers (cua, cua-sandbox)",
       "language": "python",
-      "sourcePath": "libs/python",
-      "docsOutputPath": "docs/content/docs/cua/reference",
+      "sourcePath": "libs/python/cua-sandbox/cua_sandbox",
+      "docsOutputPath": "docs/content/docs",
       "generatorScript": "scripts/docs-generators/python-sdk.ts",
-      "watchPaths": ["libs/python/computer/computer/**/*.py", "libs/python/agent/agent/**/*.py"],
+      "watchPaths": [
+        "libs/cua/python/src/cua/*.py",
+        "scripts/docs-generators/extract_python_docs.py",
+        "scripts/docs-generators/requirements.txt",
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/prose-style.ts",
+        "scripts/docs-generators/python-sdk.test.ts",
+        "libs/python/cua-sandbox/cua_sandbox/**/*.py",
+        "scripts/docs-generators/headers/cua-sdk/python/*.md",
+        "scripts/docs-generators/examples/cua-sdk/python/*"
+      ],
       "buildCommand": null,
-      "buildDirectory": "libs/python",
+      "buildDirectory": ".",
       "extractionMethod": "griffe",
       "outputs": [
         {
           "type": "api",
-          "outputFile": "computer-sdk/api.mdx",
-          "extractCommand": "python3 scripts/docs-generators/extract_python_docs.py"
+          "outputFile": "cua-sdk/reference/python/index.mdx",
+          "extractCommand": "uv run --no-project --with-requirements scripts/docs-generators/requirements.txt python scripts/docs-generators/extract_python_docs.py"
         },
         {
           "type": "api",
-          "outputFile": "agent-sdk/api.mdx",
-          "extractCommand": "python3 scripts/docs-generators/extract_python_docs.py"
-        }
-      ],
-      "enabled": false,
-      "notes": "Disabled while these SDK docs are not part of the public docs nav; prevents docs:generate from resurrecting the old docs/content/docs/cua/reference tree."
-    },
-    "computer-sdk-typescript": {
-      "name": "Computer SDK (TypeScript)",
-      "language": "typescript",
-      "sourcePath": "libs/typescript/computer/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/computer-sdk",
-      "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
-      "watchPaths": ["libs/typescript/computer/src/**/*.ts"],
-      "extractionMethod": "typedoc",
-      "outputs": [
+          "outputFile": "cua-sdk/reference/python/sandbox.mdx",
+          "extractCommand": null
+        },
         {
           "type": "api",
-          "outputFile": "typescript-api.mdx",
+          "outputFile": "cua-sdk/reference/python/image.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "cua-sdk/reference/python/pool.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "cua-sdk/reference/python/interfaces.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "cua-sdk/reference/python/services.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "cua-sdk/reference/python/runtimes.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "cua-sdk/reference/python/configuration.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "cua-sdk/reference/python/meta.json",
           "extractCommand": null
         }
       ],
-      "enabled": false,
-      "notes": "Requires TypeDoc or ts-morph introspection - to be implemented"
+      "enabled": true,
+      "notes": "Static griffe (pinned in requirements.txt, run with uv) over the hand-written cua modules (cua._native excluded: the object pages cover it) and the public cua_sandbox API, into the Python high-level API group. Curated prose: headers/cua-sdk/python; tested examples: examples/cua-sdk/python. Fails when a cua_sandbox.__all__ name has no reference entry."
     },
-    "agent-sdk-typescript": {
-      "name": "Agent SDK (TypeScript)",
+    "cua-sdk-ts": {
+      "name": "TypeScript hand-written layer (@trycua/cua)",
       "language": "typescript",
-      "sourcePath": "libs/typescript/agent/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/agent-sdk",
+      "sourcePath": "libs/cua/typescript/src",
+      "docsOutputPath": "docs/content/docs/cua-sdk/reference/typescript",
       "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
-      "watchPaths": ["libs/typescript/agent/src/**/*.ts"],
-      "extractionMethod": "typedoc",
-      "outputs": [
-        {
-          "type": "api",
-          "outputFile": "typescript-api.mdx",
-          "extractCommand": null
-        }
+      "watchPaths": [
+        "libs/cua/typescript/src/**/*.ts",
+        "libs/cua/typescript/package.json",
+        "libs/cua/typescript/package-lock.json",
+        "libs/cua/typescript/tsconfig.json",
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/prose-style.ts",
+        "scripts/docs-generators/typescript-sdk.test.ts",
+        "scripts/docs-generators/headers/cua-sdk/typescript/*.md"
       ],
-      "enabled": false,
-      "notes": "Requires TypeDoc or ts-morph introspection - to be implemented"
-    },
-    "cuabot": {
-      "name": "Cua-Bot",
-      "language": "typescript",
-      "sourcePath": "libs/cuabot/src",
-      "docsOutputPath": "docs/content/docs/cuabot/reference",
-      "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
-      "watchPaths": ["libs/cuabot/src/**/*.ts"],
-      "buildCommand": null,
-      "buildDirectory": "libs/cuabot",
-      "extractionMethod": "regex-parse",
+      "buildCommand": "npm ci --ignore-scripts",
+      "buildDirectory": "libs/cua/typescript",
+      "extractionMethod": "typedoc",
       "outputs": [
         {
           "type": "api",
           "outputFile": "index.mdx",
           "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces-transport.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "api",
+          "outputFile": "spaces-host.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
         }
       ],
-      "enabled": false,
-      "notes": "Disabled while cuabot docs are not part of the public docs nav; prevents docs:generate from resurrecting docs/content/docs/cuabot/reference."
+      "enabled": true,
+      "notes": "typedoc + typedoc-plugin-markdown (pinned in docs/package.json) over src/index.ts, spaces/index.ts, spaces/transport/index.ts and spaces/host.ts; declarations from src/native (UniFFI glue) are dropped. Needs `npm ci --ignore-scripts` in libs/cua/typescript first."
+    },
+    "cua-rust": {
+      "name": "Rust crates (rustdoc JSON)",
+      "language": "rust",
+      "sourcePath": "libs/cua/crates/cua-sdk",
+      "docsOutputPath": "docs/content/docs/cua-sdk/reference/rust",
+      "generatorScript": "scripts/docs-generators/rust-crates.ts",
+      "watchPaths": [
+        "libs/cua/crates/cua-spacesd-client/src/**",
+        "libs/cua/crates/cua-fleet/src/**",
+        "libs/cua/crates/cua-sandbox-core/src/**",
+        "libs/cua/crates/cua-spaces/src/**",
+        "libs/cua/crates/*/Cargo.toml",
+        "libs/cua/Cargo.toml",
+        "libs/cua/Cargo.lock",
+        "libs/cua/VERSION",
+        "scripts/docs-generators/rustdoc-json/**",
+        "scripts/docs-generators/rust-crates.test.ts",
+        "scripts/docs-generators/fixtures/rust-crates-dump.json",
+        "scripts/docs-generators/headers/cua-sdk/rust/*.md",
+        "docs/content/docs/cua-sdk/reference/index.mdx",
+        "docs/content/docs/cua-sdk/reference/cua.mdx",
+        "docs/content/docs/cua-sdk/reference/sandbox/index.mdx",
+        "docs/content/docs/cua-sdk/reference/sandbox/lifecycle.mdx",
+        "docs/content/docs/cua-sdk/reference/sandbox/options.mdx",
+        "docs/content/docs/cua-sdk/reference/image.mdx",
+        "docs/content/docs/cua-sdk/reference/services.mdx",
+        "docs/content/docs/cua-sdk/reference/spacesd/index.mdx",
+        "docs/content/docs/cua-sdk/reference/spacesd/shell.mdx",
+        "docs/content/docs/cua-sdk/reference/spacesd/files.mdx",
+        "docs/content/docs/cua-sdk/reference/spacesd/computer.mdx",
+        "docs/content/docs/cua-sdk/reference/spacesd/media.mdx",
+        "docs/content/docs/cua-sdk/reference/fleet/index.mdx",
+        "docs/content/docs/cua-sdk/reference/fleet/claims.mdx",
+        "docs/content/docs/cua-sdk/reference/fleet/images.mdx",
+        "docs/content/docs/cua-sdk/reference/local.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/index.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/space.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/streams.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/agents.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/teleport.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/teleport-apps.mdx",
+        "docs/content/docs/cua-sdk/reference/spaces/host.mdx",
+        "docs/content/docs/cua-sdk/reference/auth.mdx",
+        "docs/content/docs/cua-sdk/reference/agent-setup.mdx",
+        "docs/content/docs/cua-sdk/reference/errors.mdx",
+        "docs/content/docs/cua-sdk/reference/types.mdx"
+      ],
+      "buildCommand": null,
+      "buildDirectory": "scripts/docs-generators/rustdoc-json",
+      "extractionMethod": "rustdoc-json",
+      "outputs": [
+        {
+          "type": "reference",
+          "outputFile": "index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-sdk.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-spacesd-client.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-fleet.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-sandbox-core.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-spaces.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-spaces-client.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "cua-spaces-agents-mcp.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "Builds rustdoc JSON for the public crates with the nightly pinned in scripts/docs-generators/rustdoc-json/rust-toolchain.toml, then renders one page per crate (cua-spaces: three) and the Rust crates index (headers/cua-sdk/rust/index.md). The cua-sdk items the bindings export link to the Cua SDK object pages (read at generation time), whose Rust tabs document them."
+    },
+    "cua-proto": {
+      "name": "cua gRPC contracts (spacesd and daemon)",
+      "language": "protobuf",
+      "sourcePath": "libs/cua/proto",
+      "docsOutputPath": "docs/content/docs/cua-sdk/reference/protocol",
+      "generatorScript": "scripts/docs-generators/proto.ts",
+      "watchPaths": [
+        "libs/cua/proto/**",
+        "libs/cua/crates/cua-proto/src/lib.rs",
+        "libs/cua/VERSION",
+        "scripts/docs-generators/proto.test.ts",
+        "scripts/docs-generators/lib/**",
+        "scripts/docs-generators/headers/cua-sdk/protocol/*.md"
+      ],
+      "buildCommand": null,
+      "buildDirectory": "libs/cua/proto",
+      "extractionMethod": "buf-build-json",
+      "outputs": [
+        {
+          "type": "reference",
+          "outputFile": "index.mdx",
+          "extractCommand": "buf build libs/cua/proto -o -#format=json"
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-system.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-common.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-process.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-filesystem.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-computer.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-windows.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-stream.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "env-teleport-tunnel.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "daemon-sandboxes.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "daemon-runtimes.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "daemon-spaces.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "Renders the cua.env.v1 (cua-spacesd) and cua.daemon.v1 (cua daemon) contracts from a buf FileDescriptorSet (JSON, with SourceCodeInfo). gRPC-Web fallbacks, metadata keys and the protocol revision come from cua-proto's lib.rs. Needs buf on PATH (CI pins 1.73.0) or BUF=/path/to/buf."
+    },
+    "fleet": {
+      "name": "Cua Fleets (REST resources, SDK handle, Terraform)",
+      "language": "rust",
+      "sourcePath": "libs/cua/crates/cua-fleet",
+      "docsOutputPath": "docs/content/docs/fleets/reference",
+      "generatorScript": "scripts/docs-generators/fleet.ts",
+      "watchPaths": [
+        "libs/cua/crates/cua-fleet/**",
+        "libs/cua/crates/cua-image/schema/**",
+        "libs/cua/crates/cua-sdk/src/native/fleet.rs",
+        "libs/cua/crates/cua-daemon/src/lib.rs",
+        "libs/cua/VERSION",
+        "libs/fleet/sdk/src/**",
+        "libs/fleet/sdk-schema/src/**",
+        "libs/fleet/backend/docs/swagger.json",
+        "libs/fleet/terraform-provider-fleets/main.go",
+        "libs/fleet/terraform-provider-fleets/docs/**",
+        "libs/fleet/terraform-provider-fleets/internal/provider/**",
+        "docs/content/docs/cua-sdk/reference/api/fleet.mdx",
+        "docs/content/docs/fleets/guides/**",
+        "scripts/docs-generators/fleet-descriptions.json",
+        "scripts/docs-generators/fleet.test.ts",
+        "scripts/docs-generators/lib/**"
+      ],
+      "buildCommand": "cargo run -q --locked -p cua-fleet --example fleet-docs-dump",
+      "buildDirectory": "libs/cua",
+      "extractionMethod": "source-and-dump",
+      "outputs": [
+        {
+          "type": "reference",
+          "outputFile": "index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "pool.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "template.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "claim.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "sandbox.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "secret.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "service-url.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "image.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "namespace.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "api-key.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "terraform.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "errors.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "No OpenAPI covers the Fleet resources (Kubernetes custom resources behind the gateway's /api/k8s proxy), so each fact comes from the nearest authoritative artifact: object fields from the osgym.cua.ai CRDs (cyclops-sdk-schema, via the cua-fleet fleet-docs-dump example) and cua-image's checked-in Image schema; REST routes, methods and statuses from the Fleet Rust client (libs/fleet/sdk/src); other endpoints and error responses from the gateway swagger; SDK rows from the UniFFI Fleet handle, linked to the Cua SDK reference; Terraform from the provider's generated schema, CRD mapping and registry docs; the Terraform example from the tested guide block main-tf. fleet-descriptions.json holds public descriptions for fields whose read-only source text describes Fleet internals. FLEET_DOCS_DUMP=<file> skips the cargo build."
+    },
+    "spaces": {
+      "name": "Cua Spaces (MCP contract)",
+      "language": "rust",
+      "sourcePath": "libs/cua/crates/cua-spaces-contract",
+      "docsOutputPath": "docs/content/docs/spaces/reference",
+      "generatorScript": "scripts/docs-generators/spaces.ts",
+      "watchPaths": [
+        "libs/cua/spaces-contract/manifest.json",
+        "libs/cua/crates/cua-spaces-contract/src/**",
+        "libs/cua/crates/cua-spaces/src/mcp/mod.rs",
+        "libs/cua/crates/cua-cli/src/mcp.rs",
+        "scripts/docs-generators/spaces.test.ts",
+        "scripts/docs-generators/lib/**"
+      ],
+      "buildCommand": null,
+      "buildDirectory": ".",
+      "extractionMethod": "contract-manifest",
+      "outputs": [
+        {
+          "type": "reference",
+          "outputFile": "index.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "lifecycle.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "commands-and-files.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "streams-and-display.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "services.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "agents.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "teleport.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "hotspot.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "errors.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "nav",
+          "outputFile": "meta.json",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "Renders the Spaces contract (libs/cua/spaces-contract/manifest.json, generated by cua-spaces-contract-gen and --check gated): one page per category with each tool's parameters, result, errors and approval, plus an errors page. The tool-error envelope and JSON-RPC codes are read from cua-spaces src/mcp/mod.rs and the permission rule from cua-cli src/mcp.rs; a change to either fails the generator. This is the canonical Spaces tool reference; the cua-cli MCP page covers the sandbox, computer and skills tools."
     }
   }
 }

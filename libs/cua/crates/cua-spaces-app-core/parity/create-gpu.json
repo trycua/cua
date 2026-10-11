@@ -1,0 +1,59 @@
+{
+  "name": "create-gpu",
+  "about": "The Resources step's GPU row: a macOS VM on Lume offers GPU acceleration (Experimental) with Learn more; checked, the plan passes it and the Summary says so; a Linux container on this Mac has no GPU (no row, nothing passed); where the host cannot, the row is disabled with the reason and nothing is passed.",
+  "now": 1800000000000,
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": false,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": [
+      "docker",
+      "lume"
+    ],
+    "maxCpus": 8,
+    "hostArch": "arm64",
+    "gpus": [
+      {
+        "runtime": "lume",
+        "id": "paravirtual",
+        "label": "GPU acceleration",
+        "experimental": true,
+        "supported": true,
+        "reason": null,
+        "learnMore": "https://cua.ai/docs/lume/guides/gpu-passthrough"
+      }
+    ]
+  },
+  "wizard": [
+    {
+      "type": "choose-os",
+      "os": "macos"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-gpu",
+      "on": true
+    },
+    {
+      "type": "choose-os",
+      "os": "linux"
+    },
+    {
+      "type": "choose-os",
+      "os": "macos"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "next"
+    }
+  ],
+  "createError": "no macOS image is configured",
+  "rows": [],
+  "roster": [],
+  "query": ""
+}

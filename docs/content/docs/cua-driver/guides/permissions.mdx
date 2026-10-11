@@ -1,0 +1,279 @@
+---
+title: Set permissions
+description: Choose a permission mode, narrow it with a capability manifest, and restrict tools with YAML or Rego policies.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Every call, from the CLI, MCP, the SDK, or a daemon, passes the same
+authorization check inside the runtime before it touches the desktop. The
+trusted launcher configures it at startup; an agent cannot change it from a
+tool call, and a running daemon cannot be reconfigured (restart it).
+
+Every call must pass all of these layers, and each can only narrow:
+
+1. Hard invariants, such as self-targeting and protected-host checks.
+2. The built-in tool and risk map.
+3. Administrator policy, `CUA_DRIVER_MANAGED_POLICY_FILE`.
+4. User policy, `CUA_DRIVER_POLICY_FILE`.
+5. The permission mode.
+6. The capability manifest, when configured.
+7. A launch grant or host decision for a residual boundary.
+
+## Choose a mode
+
+| Mode | Use it for | Behavior |
+| --- | --- | --- |
+| `standard` (default) | Local CLI and MCP use | Observation, input, isolated browsers, recording, and validated file transfer run without prompts. Attaching to a logged-in browser profile still needs a grant. |
+| `bounded` | Unattended agents, gateways, embedded apps | A capability manifest is required. In-scope work is silent; everything else is denied. |
+| `unrestricted` | Disposable or fully trusted machines | Cua approval checks are bypassed. No protection against prompt injection. |
+
+```bash test="cli-shape" id="cua-driver-serve-bounded"
+cua-driver serve \
+  --permission-mode bounded \
+  --capability-manifest ~/cua-session.yaml \
+  --approve-capability-manifest
+```
+
+```bash test="cli-shape" id="cua-driver-serve-unrestricted"
+cua-driver serve --dangerously-bypass-approvals
+```
+
+`--permission-mode unrestricted` alone fails closed. Add the two manifest flags
+to `standard` or `unrestricted` to narrow them too. On macOS, pass the flags
+after `serve` in `open -n -g -a CuaDriver --args serve …` and use an absolute
+manifest path.
+
+What `standard` allows:
+
+| Operation | Standard |
+| --- | --- |
+| Observe windows, apps, and the desktop; click, type, scroll, drag | Allow |
+| Driver-owned isolated browser; read page content | Allow |
+| Upload, download, screenshot, record to validated paths | Allow |
+| Terminate a process this runtime launched | Allow (fingerprint rechecked) |
+| Attach to a logged-in Chromium profile | Needs `--grant existing-profile` or host approval |
+| Terminate a foreign process; raise an OS permission prompt from a tool; legacy page mutations; unknown risky operations | Deny |
+
+### Without CLI flags
+
+`cua-driver mcp` on Windows and Linux, the Windows autostart task, and
+embedding hosts read the same settings from the environment:
+
+| Flag | Environment variable |
+| --- | --- |
+| `--permission-mode <mode>` | `CUA_DRIVER_PERMISSION_MODE=<mode>` |
+| `--capability-manifest <path>` | `CUA_DRIVER_CAPABILITY_MANIFEST_FILE=<path>` |
+| `--approve-capability-manifest` | `CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED=1` |
+| `--dangerously-bypass-approvals` | `CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1` |
+
+`unrestricted` needs both the mode and the bypass variable; `bounded` needs the
+manifest and its approval. A missing half fails startup instead of falling back
+to `standard`. Anyone who can set these variables sets the mode: protect them
+like the unit file or task that carries them. To keep a mode across reboots,
+see [Pin a permission mode](/cua-driver/guides/operate#pin-a-permission-mode).
+
+## Write a capability manifest
+
+A manifest is deny by default: a tool must be in `allow.tools` and every
+resource it touches must match. It narrows any mode and never widens one.
+
+```yaml test="config" id="yaml-config-manifest"
+version: 3
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - launch_app
+    - get_window_state
+    - click
+    - type_text
+    - press_key
+    - kill_app
+
+resources:
+  apps:
+    - executable: /usr/bin/example-editor   # macOS: bundle_id: com.example.Editor
+      launch: true
+      windows: all
+      terminate: driver_launched
+
+  files:
+    read:
+      - dir: /data/input
+        recursive: true
+    write:
+      - dir: /data/output
+        recursive: true
+
+  desktop:
+    display: false
+```
+
+- Apps: `bundle_id` on macOS, an absolute `executable` on Windows and Linux.
+  `terminate: driver_launched` only kills a process this runtime started.
+- Files: roots are compared by canonical path component; `recursive: false`
+  allows direct children only.
+- `desktop.display: true` allows full-display capture and screen-coordinate
+  input. Keep it `false` unless needed.
+- `expires_after` and `idle_timeout` are optional, but required in `bounded`.
+- Version 1 and 2 manifests still load; their `ask.tools` entries are denied.
+
+<Callout type="warn">
+  A manifest that lists `resources.browser.origins` may only use the typed `browser_*` tools.
+  Generic input and observation (`click`, `type_text`, `get_window_state`, `get_desktop_state`,
+  `page`, and similar) see whatever tab is open, so the runtime refuses to start with both. Run
+  browser work and desktop work in two runtimes, and scope the desktop one away from the browser
+  with `desktop.display: false`. A standard runtime without a manifest can type into any window,
+  which defeats another runtime's origin list.
+</Callout>
+
+A browser-only manifest:
+
+```yaml test="config" id="yaml-config-browser"
+version: 3
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    - start_session
+    - end_session
+    - launch_app
+    - list_windows
+    - browser_prepare
+    - get_browser_state
+    - browser_navigate
+    - browser_click
+    - browser_type
+    - browser_download
+
+resources:
+  browser:
+    profiles:
+      - kind: isolated        # or existing_profile for a logged-in profile
+    origins:
+      - https://app.example.com
+
+  desktop:
+    display: false
+```
+
+Test it before unattended use: an allowed call succeeds silently, the same tool
+against another app, origin, or path returns
+`bounded_resource_outside_manifest`, and an unlisted tool returns
+`permission_denied`. To point an MCP client at the bounded daemon:
+
+```json test="config" id="json-config" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "cua": {
+      "command": "cua-driver",
+      "args": ["mcp", "--socket", "/path/to/cua-driver.sock"]
+    }
+  }
+}
+```
+
+## Revoke
+
+```bash test="cli-shape" id="cua-driver-revoke"
+cua-driver revoke --session research-1
+cua-driver revoke --all
+```
+
+Ending a session removes its grants, browser bindings, recordings, and cursor;
+its label stays retired until `start_session` declares it again. `revoke --all`
+suspends the whole runtime (calls return `authorization_suspended`) until you
+restart it.
+
+## Restrict tools with a policy
+
+A policy file limits which tools an agent may call and with which arguments.
+It is deny by default once set, loaded once at startup, and a missing or
+invalid file stops the daemon from starting.
+
+```yaml test="config" id="yaml-config-policy"
+allow:
+  tools:                       # allowed with any arguments
+    - screenshot
+    - get_window_state
+    - list_apps
+    - list_windows
+    - click
+    - press_key
+    - wait
+  rules:                       # allowed when every constraint passes
+    - tool: type_text
+      constraints:
+        text:
+          max_length: 500
+          pattern: "^[\\x20-\\x7E\\n\\t]*$"
+    - tool: scroll
+      constraints:
+        amount:
+          min: -20
+          max: 20
+    - tool: launch_app
+      constraints:
+        bundle_id:
+          allowed: ["com.apple.Safari", "com.google.Chrome"]
+deny:
+  tools:                       # checked first
+    - shell_execute
+```
+
+Evaluation: `deny.tools` → `allow.tools` → any matching `allow.rules` entry →
+deny. Constraint checks are `min`, `max`, `max_length`, `pattern` (RE2 syntax),
+and `allowed`. `allow` and `deny` also accept a flat list of names.
+`type_text_chars` is normalized to `type_text`.
+
+```bash test="cli-shape" id="cua-driver-serve"
+CUA_DRIVER_POLICY_FILE=~/.cua-driver/policy.yaml cua-driver serve
+```
+
+```bash test="cli-shape" id="cua-driver-call"
+cua-driver call shell_execute '{"command":"echo hello"}'
+# Error: tool 'shell_execute' is explicitly denied
+```
+
+For programmable rules, point the variable at a `.rego` file, or a directory
+of `.rego` files loaded in filename order. The rule `data.cua.policy.allow`
+must be a boolean; `undefined` denies. The input is
+`{"server": "cua-driver", "tool": "<name>", "arguments": {…}}`:
+
+```rego skip="pseudo"
+package cua.policy
+
+import rego.v1
+
+safe_tools := {"screenshot", "get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
+
+allow if {
+    input.tool in safe_tools
+}
+
+allow if {
+    input.tool == "type_text"
+    count(input.arguments.text) <= 500
+}
+```
+
+A managed policy (`CUA_DRIVER_MANAGED_POLICY_FILE`) uses the same formats; a
+call must pass both. `cua-driver status` shows a hash of each loaded policy.
+Policies decide which calls run. They do not filter responses, rate-limit, or
+authenticate callers, and code running inside the runtime's process can bypass
+them. A browser `browser_navigate` host allowlist also cannot stop a page from
+redirecting after a click.
+
+## Host authorization
+
+An embedding app can install a `DriverAuthorizationHost` callback to decide
+residual `standard` boundaries itself, and a `DriverActivityObserver` for
+content-free events (see [Use the SDK](/cua-driver/guides/use-the-sdk#constructors)).
+Without a grant or callback, a residual boundary returns
+`authorization_required`; Cua never shows its own modal. Same-user code and
+malware on the same desktop are outside this boundary.

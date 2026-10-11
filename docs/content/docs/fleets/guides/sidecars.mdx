@@ -1,0 +1,61 @@
+---
+title: Add sidecars on Fleet
+description: Put sidecar containers in a pool's template, and how Fleet runs them next to container and VM sandboxes.
+---
+
+Sidecars are extra containers next to a sandbox, reached by name: the sandbox
+reaches `db:6379`, a sidecar reaches the sandbox at `main`. The API is the same
+locally and in the cloud ([Add sidecar containers](/cua-sdk/guides/sidecars));
+this page covers what Fleet does with them.
+
+## In a pool template
+
+Sidecars are part of a pool's `SandboxSpec`, so every claim gets them:
+
+```python test="docs" id="pool-sidecars" prelude="fakefleet,pool-name"
+import os
+
+from cua_sandbox import Container, Image, Pool, PoolOptions, SandboxSpec, tcp
+
+pool = await Pool.apply(
+    os.environ["CUA_POOL_NAME"],
+    SandboxSpec(
+        image=Image.from_registry("python:3.12-slim"),
+        command=["sleep", "infinity"],
+        sidecars=[Container("redis:7-alpine", ports=[6379], name="db")],
+        services={"db": 6379},
+        wait_for=tcp("db"),
+    ),
+    PoolOptions(replicas=1),
+)
+await pool.delete()
+```
+
+`Sandbox.create(..., sidecars=[...], local=False)` does the same on a managed
+pool. Sidecars passed with `CloudOptions(pool=...)` are compared with the
+template like other fields (`PoolSpecMismatch` on a difference).
+
+## How Fleet runs them
+
+| Sandbox | Sidecars run in | Name resolution |
+| --- | --- | --- |
+| Container image (gVisor) | The sandbox's pod | By name or `localhost` |
+| VM image (KubeVirt) | A companion gVisor pod | The guest's `/etc/hosts` names each sidecar (Linux with cloud-init); only declared `ports` are reachable |
+| VM without cloud-init (Windows) | A companion gVisor pod | `<sandbox>-sidecars.<namespace>.svc.cluster.local` |
+
+`runtime="runc"` is a local setting; the cloud ignores it.
+
+## Limits
+
+- At most 8 sidecars per sandbox.
+- With sidecars, the service names `main`, `sidecars` and `sc` are reserved;
+  a service with one of them is rejected.
+- A private sidecar image on the sandbox image's registry uses the same
+  registry secret, on both runtimes.
+
+## Terraform
+
+`cua fleet pool export NAME --terraform` writes each sidecar as a `sidecar {}`
+block of `fleets_pool` (`name`, `image`, `args`, `ports`, `cpu`, `memory`).
+Those blocks need a `trycua/fleets` provider newer than 0.3.0
+([Terraform](/fleets/guides/terraform#export-an-existing-pool)).

@@ -40,8 +40,20 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../../Skills/cua-driver/RECORDING.md"),
     ),
     (
+        "RUNTIME.md",
+        include_str!("../../../Skills/cua-driver/RUNTIME.md"),
+    ),
+    (
         "SKILL.md",
         include_str!("../../../Skills/cua-driver/SKILL.md"),
+    ),
+    (
+        "VISUAL.md",
+        include_str!("../../../Skills/cua-driver/VISUAL.md"),
+    ),
+    (
+        "WORKFLOW.md",
+        include_str!("../../../Skills/cua-driver/WORKFLOW.md"),
     ),
     (
         "WINDOWS.md",
@@ -221,7 +233,7 @@ mod tests {
         );
         let manifest = entry["resources"].as_array().unwrap();
         let resources = call("resources/list", Some(json!({})));
-        assert_eq!(manifest.len(), 8);
+        assert_eq!(manifest.len(), FILES.len());
         assert_eq!(
             resources["resources"].as_array().unwrap().len(),
             manifest.len()
@@ -243,12 +255,27 @@ mod tests {
                 text.as_bytes()
             );
         }
+        let skill = FILES
+            .iter()
+            .find_map(|(name, text)| (*name == "SKILL.md").then_some(*text))
+            .unwrap();
+        let linked_resources = skill.split("](").skip(1).filter_map(|link| {
+            let target = link.split_once(')')?.0.split('#').next()?;
+            (!target.contains("://") && target.ends_with(".md")).then_some(target)
+        });
+        for name in linked_resources {
+            let uri = format!("{URI_PREFIX}{name}");
+            assert_eq!(
+                call("resources/read", Some(json!({"uri": uri})))["contents"][0]["uri"],
+                uri
+            );
+        }
     }
 
     #[test]
     fn full_frontmatter_preserves_nested_metadata_and_scalar_types() {
         let source = include_str!("../../../Skills/cua-driver/SKILL.md");
-        let yaml = source.splitn(3, "---").nth(1).unwrap();
+        let yaml = source.split("---").nth(1).unwrap();
         let expected: Value = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(pack().entry["frontmatter"], expected);
         assert!(expected["version"].is_string());

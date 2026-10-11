@@ -16,12 +16,29 @@ int main() {
         "foreground_physical_pointer", "foreground_pointer_target", "foreground_seat_resource",
         "foreground_pointer_resources", "foreground_keyboard_resources", "foreground_keyboard_depressed",
         "foreground_keyboard_latched", "foreground_keyboard_locked", "foreground_keyboard_group",
+        "foreground_keyboard_caps_lock", "foreground_keyboard_numlock_keypad",
     };
-    static_assert(labels.size() == static_cast<unsigned>(ForegroundFailureReason::keyboard_group) + 1);
+    static_assert(labels.size() == static_cast<unsigned>(ForegroundFailureReason::keyboard_numlock_keypad) + 1);
     for (unsigned i = 0; i < labels.size(); ++i)
         check(ForegroundFailure{static_cast<ForegroundFailureReason>(i)}.detail() == labels[i]);
     check(ForegroundFailure::code(false) == "primary_target_busy");
     check(ForegroundFailure::code(true) == "foreground_partial_unknown");
+    // Locks stay on. Only a Num Lock mask resolved through the live keymap is
+    // admitted to the chord check; Caps Lock and any other lock refuse with
+    // their own reasons. Omarchy turns Num Lock on by default.
+    constexpr std::uint32_t num = 0x10, caps = 0x2;
+    const std::array<std::uint32_t, 4> num_lock{0, 0, num, 0};
+    check(foreground_key_modifier_failure(num_lock) == ForegroundFailureReason::keyboard_locked);
+    check(foreground_key_modifier_failure(num_lock, num, caps) == ForegroundFailureReason::none);
+    check(foreground_key_modifier_failure({0, 0, caps, 0}, num, caps) == ForegroundFailureReason::keyboard_caps_lock);
+    check(foreground_key_modifier_failure({0, 0, caps | num, 0}, num, caps) ==
+        ForegroundFailureReason::keyboard_caps_lock);
+    check(foreground_key_modifier_failure({0, 0, 0x80 | num, 0}, num, caps) == ForegroundFailureReason::keyboard_locked);
+    check(foreground_key_modifier_failure({0, 0, 0x80, 0}, 0, caps) == ForegroundFailureReason::keyboard_locked);
+    check(foreground_key_modifier_failure({1, 0, num, 0}, num, caps) == ForegroundFailureReason::keyboard_depressed);
+    check(foreground_key_modifier_failure({0, 1, num, 0}, num, caps) == ForegroundFailureReason::keyboard_latched);
+    check(foreground_key_modifier_failure({0, 0, num, 1}, num, caps) == ForegroundFailureReason::keyboard_group);
+    check(foreground_key_modifier_failure({0, 0, 0, 0}, num, caps) == ForegroundFailureReason::none);
 
     // Exhaust every guard combination against the original admission predicates.
     for (unsigned bits = 0; bits < 1024; ++bits) {

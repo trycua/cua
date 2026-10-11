@@ -1,0 +1,6338 @@
+{
+ "schema": "cua.jev_use_provider_request_golden_v1",
+ "language": "python",
+ "runs": {
+  "page/windows-page-1-python": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "be0bdd31f3b11cbe",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "00f3ee95dc3813ad",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page/linux-page-3-python": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "be0bdd31f3b11cbe",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "00f3ee95dc3813ad",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page/linux-page-7-typescript": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "be0bdd31f3b11cbe",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "00f3ee95dc3813ad",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page/linux-page-2-python": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_auto/windows-page-1-python": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "be0bdd31f3b11cbe",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "00f3ee95dc3813ad",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_auto/linux-page-3-python": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "be0bdd31f3b11cbe",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "00f3ee95dc3813ad",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_auto/linux-page-7-typescript": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "be0bdd31f3b11cbe",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "00f3ee95dc3813ad",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_auto/linux-page-2-python": [
+   {
+    "step": 1,
+    "request": "6b7824e66e1328bf",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "871e01954513c7d7",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_always/windows-page-1-python": [
+   {
+    "step": 1,
+    "request": "7d7f17000d74bdb5",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "64ad866cbb7de3a0",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "55fa0c6279c5998f",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "7ed26ecebd151c79",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_always/linux-page-3-python": [
+   {
+    "step": 1,
+    "request": "7d7f17000d74bdb5",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "64ad866cbb7de3a0",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "55fa0c6279c5998f",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "7ed26ecebd151c79",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_always/linux-page-7-typescript": [
+   {
+    "step": 1,
+    "request": "7d7f17000d74bdb5",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "64ad866cbb7de3a0",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 3,
+    "request": "55fa0c6279c5998f",
+    "candidates": "d229b9dd4f676e88"
+   },
+   {
+    "step": 4,
+    "request": "7ed26ecebd151c79",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "page_capture_bound_always/linux-page-2-python": [
+   {
+    "step": 1,
+    "request": "7d7f17000d74bdb5",
+    "candidates": "ec571c9800d7b4e8"
+   },
+   {
+    "step": 2,
+    "request": "64ad866cbb7de3a0",
+    "candidates": "d229b9dd4f676e88"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "7b92846b88b799cd",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_auto/linux_typescript_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 4,
+    "request": "f76646d52770d00e",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "7b92846b88b799cd",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_auto/linux_typescript_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "7b92846b88b799cd",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_auto/windows_python_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 4,
+    "request": "8f69d7cab750cca9",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_auto/windows_typescript_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_auto/windows_python_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_auto/windows_typescript_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 4,
+    "request": "8f69d7cab750cca9",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_post_4255_regression_1": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "ae88c22f9ca831ad",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "2b38e5d032f55588",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "c11f02c7d592f865",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_post_4255_regression_2": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "ae88c22f9ca831ad",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "2b38e5d032f55588",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "c11f02c7d592f865",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_post_4255_regression_3": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "ae88c22f9ca831ad",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "2b38e5d032f55588",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "c11f02c7d592f865",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_post_4255_regression_4": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "ae88c22f9ca831ad",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "2b38e5d032f55588",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "c11f02c7d592f865",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_auto/linux_python_post_4255_regression_5": [
+   {
+    "step": 1,
+    "request": "c76f8a530fa915f0",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "ae88c22f9ca831ad",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "2b38e5d032f55588",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "c11f02c7d592f865",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "7b92846b88b799cd",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_always/linux_typescript_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 4,
+    "request": "f76646d52770d00e",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "7b92846b88b799cd",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_always/linux_typescript_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "7b92846b88b799cd",
+    "candidates": "0a86001ae911a77b"
+   }
+  ],
+  "visual_capture_bound_always/windows_python_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 4,
+    "request": "8f69d7cab750cca9",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_always/windows_typescript_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_always/windows_python_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_always/windows_typescript_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "0d32ec5c61a4a8b5",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 3,
+    "request": "40216332a214fafb",
+    "candidates": "d11ea8f49c30445a"
+   },
+   {
+    "step": 4,
+    "request": "8f69d7cab750cca9",
+    "candidates": "d11ea8f49c30445a"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_post_4255_regression_1": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1702e777270e55d9",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "13ad158a26367929",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "b3bd04ea455a1283",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_post_4255_regression_2": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1702e777270e55d9",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "13ad158a26367929",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "b3bd04ea455a1283",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_post_4255_regression_3": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1702e777270e55d9",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "13ad158a26367929",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "b3bd04ea455a1283",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_post_4255_regression_4": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1702e777270e55d9",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "13ad158a26367929",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "b3bd04ea455a1283",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_always/linux_python_post_4255_regression_5": [
+   {
+    "step": 1,
+    "request": "b645dd31d80e6d4b",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1702e777270e55d9",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "13ad158a26367929",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "b3bd04ea455a1283",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "566457a742192f26",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/linux_typescript_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "d5821263e5bced53",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 4,
+    "request": "a415ac151c2ee8a0",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "566457a742192f26",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/linux_typescript_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "566457a742192f26",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/windows_python_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "d5821263e5bced53",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 4,
+    "request": "1114de9dcd19be4c",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/windows_typescript_pre_4255_a": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "d5821263e5bced53",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/windows_python_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "d5821263e5bced53",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/windows_typescript_pre_4255_b": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "1dc3f220096db95a",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 3,
+    "request": "d5821263e5bced53",
+    "candidates": "daba6141ff108d4e"
+   },
+   {
+    "step": 4,
+    "request": "1114de9dcd19be4c",
+    "candidates": "daba6141ff108d4e"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_post_4255_regression_1": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "e6d4d6a95565d28c",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "20599cb6821eb742",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "8a03f8eedacfd33e",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_post_4255_regression_2": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "e6d4d6a95565d28c",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "20599cb6821eb742",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "8a03f8eedacfd33e",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_post_4255_regression_3": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "e6d4d6a95565d28c",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "20599cb6821eb742",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "8a03f8eedacfd33e",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_post_4255_regression_4": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "e6d4d6a95565d28c",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "20599cb6821eb742",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "8a03f8eedacfd33e",
+    "candidates": "70875f146d859b36"
+   }
+  ],
+  "visual_capture_bound_off/linux_python_post_4255_regression_5": [
+   {
+    "step": 1,
+    "request": "8dfe7fa95bf30864",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 2,
+    "request": "e6d4d6a95565d28c",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 3,
+    "request": "20599cb6821eb742",
+    "candidates": "70875f146d859b36"
+   },
+   {
+    "step": 4,
+    "request": "8a03f8eedacfd33e",
+    "candidates": "70875f146d859b36"
+   }
+  ]
+ },
+ "single_requests": {
+  "page_other_value": {
+   "request": "900887082b50ecd6",
+   "candidates": "ec571c9800d7b4e8"
+  },
+  "page_after_with_visual": {
+   "request": "9d507ebbaad75a8e",
+   "candidates": "d229b9dd4f676e88"
+  },
+  "page_after_no_button": {
+   "request": "77f2b9531e52e341",
+   "candidates": "daba6141ff108d4e"
+  },
+  "page_after_no_button_visual_path": {
+   "request": "2a0f4a3e90da5dab",
+   "candidates": "daba6141ff108d4e"
+  },
+  "no_form_refs": {
+   "request": "3905fd10ee1e16ae",
+   "candidates": "daba6141ff108d4e"
+  },
+  "visual_after_no_capture_bound_click": {
+   "request": "4a5f5196307c7a85",
+   "candidates": "daba6141ff108d4e"
+  },
+  "visual_after_without_submit_region": {
+   "request": "966403408348763b",
+   "candidates": "daba6141ff108d4e"
+  },
+  "visual_after_duplicate_submit_region": {
+   "request": "38460b37f9ee6b63",
+   "candidates": "daba6141ff108d4e"
+  },
+  "visual_after_foreground": {
+   "request": "3cd06681ec4e772d",
+   "candidates": "0a86001ae911a77b"
+  },
+  "visual_after_other_value": {
+   "request": "c6a54b6b1940bb00",
+   "candidates": "3c210f06a8903bc9"
+  }
+ },
+ "requests": {
+  "6b7824e66e1328bf": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - button \"Submit\" [focusable=true]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "871e01954513c7d7": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "be0bdd31f3b11cbe": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "00f3ee95dc3813ad": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "7d7f17000d74bdb5": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - button \"Submit\" [focusable=true]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "64ad866cbb7de3a0": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "55fa0c6279c5998f": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "7ed26ecebd151c79": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "c76f8a530fa915f0": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_check_pending"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "0d32ec5c61a4a8b5": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Submit the form by clicking the unique validated visual Submit region. The observed form state reports that the verification field already contains the required token.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "7b92846b88b799cd": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "submit-form",
+      "outcome": "Driver refused background delivery (background_unavailable); no click happened and a foreground Submit candidate is offered next"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form-foreground": "Submit the form by clicking the unique validated visual Submit region with foreground delivery, which activates the browser window, because Driver refused background delivery for the previous visual click.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "40216332a214fafb": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Submit the form by clicking the unique validated visual Submit region. The observed form state reports that the verification field already contains the required token.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "f76646d52770d00e": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "submit-form",
+      "outcome": "Driver refused background delivery (background_unavailable); no click happened and a foreground Submit candidate is offered next"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form-foreground": "Submit the form by clicking the unique validated visual Submit region with foreground delivery, which activates the browser window, because Driver refused background delivery for the previous visual click.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "8f69d7cab750cca9": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Submit the form by clicking the unique validated visual Submit region. The observed form state reports that the verification field already contains the required token.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "ae88c22f9ca831ad": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_check_pending"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "2b38e5d032f55588": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_check_pending"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "c11f02c7d592f865": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_check_pending"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "b645dd31d80e6d4b": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "1702e777270e55d9": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "13ad158a26367929": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "b3bd04ea455a1283": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "8dfe7fa95bf30864": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "1dc3f220096db95a": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "566457a742192f26": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "Driver refused background delivery (background_unavailable); no click happened and a foreground Submit candidate is offered next"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "d5821263e5bced53": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "a415ac151c2ee8a0": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "Driver refused background delivery (background_unavailable); no click happened and a foreground Submit candidate is offered next"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "1114de9dcd19be4c": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "type-verification-value",
+      "outcome": "typed the required token into the verification field"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "e6d4d6a95565d28c": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "20599cb6821eb742": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "8a03f8eedacfd33e": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "empty",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - statictext \"Submit\"\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": [
+     {
+      "step": 1,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 2,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     },
+     {
+      "step": 3,
+      "selected_id": "reobserve",
+      "outcome": "took no action and requested a fresh observation"
+     }
+    ]
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "900887082b50ecd6": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_other_value",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - button \"Submit\" [focusable=true]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "9d507ebbaad75a8e": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "available"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "77f2b9531e52e341": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "2a0f4a3e90da5dab": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:8799/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_check_pending"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "3905fd10ee1e16ae": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": null,
+     "form": {
+      "verification_field": "not_found",
+      "submit_button": "not_in_page_structure"
+     },
+     "outline": null,
+     "visual": null
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "4a5f5196307c7a85": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "966403408348763b": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_found_visually"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "38460b37f9ee6b63": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "not_found_visually"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       },
+       {
+        "id": "dup",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "3cd06681ec4e772d": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_required_token",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "submit-form-foreground": "Submit the form by clicking the unique validated visual Submit region with foreground delivery, which activates the browser window, because Driver refused background delivery for the previous visual click.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  },
+  "c6a54b6b1940bb00": {
+   "state": {
+    "goal": "Enter the required verification token into the verification field, then submit the form.",
+    "observation": {
+     "page": {
+      "title": "about:blank",
+      "url": "http://127.0.0.1:41605/"
+     },
+     "form": {
+      "verification_field": "contains_other_value",
+      "submit_button": "visual_only"
+     },
+     "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n    - textbox \"verification value\": [verification token] [editable=\"plaintext\",focusable=true,focused=true,required=true]\n      - generic [editable=\"plaintext\"]\n    - statictext \"Submit\"\n  - status\n        - statictext \"[verification token]\" [editable=\"plaintext\"]\n    - statictext \"status=waiting\"",
+     "visual": {
+      "schema": "cua.visual_regions_v1",
+      "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+      "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a",
+      "source": {
+       "kind": "window",
+       "pid": 2539,
+       "window_id": 52428804
+      },
+      "regions": [
+       {
+        "id": "text-9",
+        "kind": "text",
+        "text": "×",
+        "label": null,
+        "confidence": 0.8168784976005554,
+        "interactive": false,
+        "bounds": {
+         "x": 252,
+         "y": 10,
+         "width": 18,
+         "height": 19
+        }
+       },
+       {
+        "id": "text-11",
+        "kind": "text",
+        "text": "+",
+        "label": null,
+        "confidence": 0.8311772346496582,
+        "interactive": false,
+        "bounds": {
+         "x": 288,
+         "y": 13,
+         "width": 14,
+         "height": 14
+        }
+       },
+       {
+        "id": "icon-15",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8110984563827515,
+        "interactive": false,
+        "bounds": {
+         "x": 10,
+         "y": 45,
+         "width": 34,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-17",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8079566955566406,
+        "interactive": false,
+        "bounds": {
+         "x": 83,
+         "y": 46,
+         "width": 32,
+         "height": 36
+        }
+       },
+       {
+        "id": "icon-18",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.8043645024299622,
+        "interactive": false,
+        "bounds": {
+         "x": 47,
+         "y": 46,
+         "width": 31,
+         "height": 34
+        }
+       },
+       {
+        "id": "text-26",
+        "kind": "text",
+        "text": "←",
+        "label": null,
+        "confidence": 0.8558894395828247,
+        "interactive": false,
+        "bounds": {
+         "x": 17,
+         "y": 54,
+         "width": 20,
+         "height": 18
+        }
+       },
+       {
+        "id": "text-28",
+        "kind": "text",
+        "text": "Cua",
+        "label": null,
+        "confidence": 0.8023205995559692,
+        "interactive": false,
+        "bounds": {
+         "x": 175,
+         "y": 389,
+         "width": 118,
+         "height": 47
+        }
+       },
+       {
+        "id": "text-29",
+        "kind": "text",
+        "text": "TypeSafe Jev",
+        "label": null,
+        "confidence": 0.8917925357818604,
+        "interactive": false,
+        "bounds": {
+         "x": 471,
+         "y": 389,
+         "width": 302,
+         "height": 52
+        }
+       },
+       {
+        "id": "text-30",
+        "kind": "text",
+        "text": "Driver +",
+        "label": null,
+        "confidence": 0.865290641784668,
+        "interactive": false,
+        "bounds": {
+         "x": 270,
+         "y": 390,
+         "width": 207,
+         "height": 46
+        }
+       },
+       {
+        "id": "icon-33",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9488332271575928,
+        "interactive": false,
+        "bounds": {
+         "x": 637,
+         "y": 561,
+         "width": 132,
+         "height": 63
+        }
+       },
+       {
+        "id": "icon-34",
+        "kind": "icon",
+        "text": null,
+        "label": "icon-class-0",
+        "confidence": 0.9535441398620604,
+        "interactive": false,
+        "bounds": {
+         "x": 172,
+         "y": 562,
+         "width": 449,
+         "height": 65
+        }
+       },
+       {
+        "id": "text-35",
+        "kind": "text",
+        "text": "[verification token]",
+        "label": null,
+        "confidence": 0.8249707818031311,
+        "interactive": false,
+        "bounds": {
+         "x": 188,
+         "y": 575,
+         "width": 149,
+         "height": 35
+        }
+       },
+       {
+        "id": "text-36",
+        "kind": "text",
+        "text": "Submit",
+        "label": null,
+        "confidence": 0.8971455097198486,
+        "interactive": false,
+        "bounds": {
+         "x": 662,
+         "y": 575,
+         "width": 85,
+         "height": 32
+        }
+       }
+      ]
+     }
+    },
+    "history": []
+   },
+   "questions": {
+    "driver_action": {
+     "instructions": "Which complete executable action should Cua Driver run next?",
+     "criteria": {
+      "type-verification-value": "Type the required verification token into the verification field, replacing its current contents.",
+      "reobserve": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+      "abstain": "Stop without acting if none of the proposed actions is safe for the observed state."
+     }
+    }
+   }
+  }
+ },
+ "candidate_tables": {
+  "ec571c9800d7b4e8": [
+   {
+    "id": "type-verification-value",
+    "description": "Type the required verification token into the verification field, replacing its current contents.",
+    "tool": "browser_type",
+    "arguments": {
+     "target_id": "bt-40b005f3-6f85-41d7-a7d5-47f158a19dc6",
+     "tab_id": "tab-e66e7ea2-0fe8-4606-9495-c81518229489",
+     "ref": "p3:0",
+     "text": "jev-guide-live",
+     "replace": true
+    },
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ],
+  "d229b9dd4f676e88": [
+   {
+    "id": "submit-form",
+    "description": "Click the form's Submit button. The observed form state reports that the verification field already contains the required token, so the form is ready to submit.",
+    "tool": "browser_click",
+    "arguments": {
+     "target_id": "bt-40b005f3-6f85-41d7-a7d5-47f158a19dc6",
+     "tab_id": "tab-e66e7ea2-0fe8-4606-9495-c81518229489",
+     "ref": "p4:2",
+     "input_route": "dom_event"
+    },
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ],
+  "70875f146d859b36": [
+   {
+    "id": "type-verification-value",
+    "description": "Type the required verification token into the verification field, replacing its current contents.",
+    "tool": "browser_type",
+    "arguments": {
+     "target_id": "bt-aeb40534-c16c-4da9-9567-aee3d2d4958a",
+     "tab_id": "tab-11edc8ea-1185-4d45-be26-6df2f7082d7e",
+     "ref": "p1:0",
+     "text": "jev-guide-live",
+     "replace": true
+    },
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ],
+  "d11ea8f49c30445a": [
+   {
+    "id": "submit-form",
+    "description": "Submit the form by clicking the unique validated visual Submit region. The observed form state reports that the verification field already contains the required token.",
+    "tool": "click",
+    "arguments": {
+     "pid": 2539,
+     "window_id": 52428804,
+     "x": 704.5,
+     "y": 591.0,
+     "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+     "delivery_mode": "background"
+    },
+    "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+    "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a"
+   },
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ],
+  "0a86001ae911a77b": [
+   {
+    "id": "submit-form-foreground",
+    "description": "Submit the form by clicking the unique validated visual Submit region with foreground delivery, which activates the browser window, because Driver refused background delivery for the previous visual click.",
+    "tool": "click",
+    "arguments": {
+     "pid": 2539,
+     "window_id": 52428804,
+     "x": 704.5,
+     "y": 591.0,
+     "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+     "delivery_mode": "foreground"
+    },
+    "capture_id": "capture_8a22ffd72f02467f9ff0f0b6de791b6e_0000000000000000",
+    "screenshot_reference": "png-sha256:2be15022cfea6b1c45bf72902bd4db54075cec6748d1defec5ecd1d75cc9259a"
+   },
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ],
+  "daba6141ff108d4e": [
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ],
+  "3c210f06a8903bc9": [
+   {
+    "id": "type-verification-value",
+    "description": "Type the required verification token into the verification field, replacing its current contents.",
+    "tool": "browser_type",
+    "arguments": {
+     "target_id": "bt-aeb40534-c16c-4da9-9567-aee3d2d4958a",
+     "tab_id": "tab-11edc8ea-1185-4d45-be26-6df2f7082d7e",
+     "ref": "p2:1",
+     "text": "jev-guide-live",
+     "replace": true
+    },
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "reobserve",
+    "description": "Take no action and obtain a fresh Driver observation, because the current observation is stale or contradicts the reported form state. A Submit control that is visual-only, or whose visual check is still pending, is not a reason to reobserve: the runner parses visual regions for Submit once no page-structure action remains.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   },
+   {
+    "id": "abstain",
+    "description": "Stop without acting if none of the proposed actions is safe for the observed state.",
+    "tool": null,
+    "arguments": {},
+    "capture_id": null,
+    "screenshot_reference": null
+   }
+  ]
+ }
+}

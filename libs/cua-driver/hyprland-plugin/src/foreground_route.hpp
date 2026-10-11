@@ -25,6 +25,7 @@ enum class ForegroundFailureReason {
     session_unavailable, unsupported_layout, lease_expired, physical_keyboard,
     keyboard_state, physical_pointer, pointer_target, seat_resource, pointer_resources,
     keyboard_resources, keyboard_depressed, keyboard_latched, keyboard_locked, keyboard_group,
+    keyboard_caps_lock, keyboard_numlock_keypad,
 };
 
 struct ForegroundFailure {
@@ -59,6 +60,8 @@ struct ForegroundFailure {
         case ForegroundFailureReason::keyboard_latched: return "foreground_keyboard_latched";
         case ForegroundFailureReason::keyboard_locked: return "foreground_keyboard_locked";
         case ForegroundFailureReason::keyboard_group: return "foreground_keyboard_group";
+        case ForegroundFailureReason::keyboard_caps_lock: return "foreground_keyboard_caps_lock";
+        case ForegroundFailureReason::keyboard_numlock_keypad: return "foreground_keyboard_numlock_keypad";
         }
         return "foreground_unknown";
     }
@@ -78,11 +81,17 @@ struct ForegroundSeatBindings {
     bool unique() const { return primary_candidates == 1; }
 };
 
-inline ForegroundFailureReason foreground_key_modifier_failure(const std::array<std::uint32_t, 4>& modifiers) {
-    // The KEY mapping assumes a neutral US state, including layout group zero.
+// Foreground delivery never changes the human keyboard's modifiers or locks.
+// The KEY mapping assumes a neutral US state with layout group zero, except for
+// a Num Lock mask the caller resolved through the live keymap. Caps Lock and
+// every other lock refuse; the chord check decides what Num Lock may change.
+inline ForegroundFailureReason foreground_key_modifier_failure(const std::array<std::uint32_t, 4>& modifiers,
+                                                                 std::uint32_t allowed_locked = 0,
+                                                                 std::uint32_t caps_locked = 0) {
     if (modifiers[0]) return ForegroundFailureReason::keyboard_depressed;
     if (modifiers[1]) return ForegroundFailureReason::keyboard_latched;
-    if (modifiers[2]) return ForegroundFailureReason::keyboard_locked;
+    if (modifiers[2] & caps_locked) return ForegroundFailureReason::keyboard_caps_lock;
+    if (modifiers[2] & ~allowed_locked) return ForegroundFailureReason::keyboard_locked;
     if (modifiers[3]) return ForegroundFailureReason::keyboard_group;
     return ForegroundFailureReason::none;
 }

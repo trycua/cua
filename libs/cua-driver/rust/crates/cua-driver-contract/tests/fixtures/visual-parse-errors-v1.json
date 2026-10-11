@@ -1,0 +1,18 @@
+[
+  { "code": "not_installed", "message": "extension is not installed", "retryable": false },
+  { "code": "capture_not_found", "message": "capture was not found", "retryable": true },
+  { "code": "capture_expired", "message": "capture expired", "retryable": true },
+  { "code": "capture_stale", "message": "capture is stale", "retryable": true },
+  { "code": "capture_generation_mismatch", "message": "capture generation changed", "retryable": true },
+  { "code": "unsupported_target", "message": "target is unsupported", "retryable": false },
+  { "code": "unsupported_platform", "message": "platform is unsupported", "retryable": false },
+  { "code": "incompatible_protocol", "message": "worker protocol is incompatible", "retryable": false },
+  { "code": "invalid_frame", "message": "capture frame is invalid", "retryable": false, "detail": "dimension mismatch" },
+  { "code": "worker_launch_failed", "message": "worker failed to launch", "retryable": true },
+  { "code": "worker_crashed", "message": "worker crashed", "retryable": true },
+  { "code": "worker_cancelled", "message": "worker request was cancelled", "retryable": true },
+  { "code": "timeout", "message": "parse timed out", "retryable": true },
+  { "code": "resource_limit_exceeded", "message": "resource limit was exceeded", "retryable": false },
+  { "code": "artifact_invalid", "message": "installed artifact is invalid", "retryable": false },
+  { "code": "inference_failed", "message": "inference failed", "retryable": true }
+]

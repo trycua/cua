@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission d1c655da-ce1c-446d-bee2-1e8cde8a62cc."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Modify the overall gain of the circuit by changing R10 to 2.80kOhm.''',
-            metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
+            description="""Modify the overall gain of the circuit by changing R10 to 2.80kOhm.""",
+            metadata={"difficulty": "medium", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -36,7 +37,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_InstrumentationAmp_circuit/kicad_InstrumentationAmp_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_InstrumentationAmp_circuit/kicad_InstrumentationAmp_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

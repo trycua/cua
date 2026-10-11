@@ -100,15 +100,11 @@ mod tests {
             .contains("absolute"));
     }
 
+    /// Needs an X server; CI runs it under `xvfb-run` in ci-rust-linux.yml.
     #[test]
-    fn native_clipboard_round_trips_text_when_ci_has_a_display() {
-        if std::env::var_os("CI").is_none() {
-            return;
-        }
+    #[ignore = "requires an X11 display (run under xvfb-run)"]
+    fn native_clipboard_round_trips_text_on_x11() {
         let backend = LinuxClipboard::new();
-        if backend.available_formats().is_err() {
-            return;
-        }
         backend
             .write_text("cua-driver clipboard test".into())
             .unwrap();

@@ -83,8 +83,9 @@ published-version pointers.
 
 Release Please owns independent Cua Driver and Lume stable versions in
 [`release-please-config.json`](../release-please-config.json). Cua Driver's
-cross-platform workflow builds candidates on a tag and publishes only after an
-explicit dispatch. Lume signs, notarizes, and publishes after a stable tag.
+cross-platform workflow builds candidates on a stable tag and publishes from
+that same tag run after its automatic desktop E2E gate passes. Lume signs,
+notarizes, and publishes after a stable tag.
 
 The Driver's fielded Rust update checker accepts any SemVer tag under
 `cua-driver-rs-v`. The Lume shell installer has historically used a broad

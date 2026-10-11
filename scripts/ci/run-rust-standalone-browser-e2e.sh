@@ -112,7 +112,10 @@ else
     standalone_browser_dialogs
   )
   if [[ "${HOST_OS}" == Linux ]]; then
-    tests+=(standalone_browser_dialog_background_refusal)
+    tests+=(
+      standalone_browser_dialog_background_refusal
+      standalone_browser_capture_bound_pixel_click_background_refusal
+    )
   fi
   tests+=(
     standalone_browser_download
@@ -128,6 +131,7 @@ else
     standalone_browser_pointer_actions
     standalone_browser_prepare_isolated
     standalone_browser_roundtrip
+    standalone_browser_same_title_tabs
     standalone_browser_semantic_state
     standalone_browser_stale_ref
     standalone_browser_trust_gated_dom_click
@@ -135,12 +139,16 @@ else
     standalone_browser_upload
     standalone_browser_window_collision
   )
+  if [[ "${HOST_OS}" == Darwin ]]; then
+    # macOS-only native-chrome keyboard regressions.
+    tests+=(standalone_browser_native_omnibox_select_all)
+  fi
 fi
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
   set +e
-  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver \
+  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver-e2e \
     ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
     --ignored --exact --nocapture --test-threads=1) \

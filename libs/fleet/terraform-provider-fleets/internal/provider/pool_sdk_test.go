@@ -26,6 +26,13 @@ func examplePoolModel() poolResourceModel {
 		Firmware:           types.StringValue("bios"),
 		Services:           types.SetNull(types.ObjectType{AttrTypes: serviceObjectType()}),
 		Autoscaling:        types.ObjectNull(autoscalingObjectType()),
+		Command:            types.ListNull(types.StringType),
+		ClaimSecrets:       types.BoolNull(),
+		// Lifecycle attributes default to null: what a pool created before
+		// they existed reads back as.
+		TTLSecondsAfterCreated: types.Int64Null(),
+		IdleTTLSeconds:         types.Int64Null(),
+		TTLPolicy:              types.StringNull(),
 	}
 }
 

@@ -335,11 +335,13 @@ fn resources_use_canonical_schema_specs_and_statuses() {
             spec,
             name,
             labels,
+            secret_files,
         } = request;
         assert_pool_types(pool);
         let _: Option<ClaimSpec> = spec;
         let _: Option<String> = name;
         let _: Option<HashMap<String, String>> = labels;
+        let _: Option<HashMap<String, String>> = secret_files;
     }
 
     let _: fn(Claim) = assert_claim_types;
@@ -366,6 +368,7 @@ fn resources_support_equality_and_kubernetes_camel_case_json() {
         spec: Some(claim.spec.clone()),
         name: None,
         labels: None,
+        secret_files: None,
     };
 
     assert_eq!(pool, pool.clone());

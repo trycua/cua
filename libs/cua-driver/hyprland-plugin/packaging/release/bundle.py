@@ -31,6 +31,7 @@ src/input_client_deadline.hpp
 src/input_experiment.cpp
 src/input_experiment.hpp
 src/input_grant.hpp
+src/keymap_equivalence.hpp
 src/owned_socket_path.hpp
 src/passive_pointer_target.hpp
 src/plugin.cpp
@@ -40,14 +41,18 @@ src/protocol.cpp
 src/seat_lifetime.hpp
 src/session.cpp
 src/status.cpp
+tests/agent_key_repeat_test.py
 tests/cmake-api/CMakeLists.txt
 tests/cmake-api/include/src/plugins/PluginAPI.hpp
 tests/desktop_fault_policy_fixture.cpp
 tests/desktop_fault_policy_test.py
 tests/drag_geometry_test.cpp
 tests/foreground_route_test.cpp
+tests/foreground_modifiers_test.py
 tests/input_grant_test.cpp
 tests/input_client_deadline_test.cpp
+tests/keyboard_layout_test.cpp
+tests/keymap_equivalence_test.cpp
 tests/mock-hyprland/mock.hpp
 tests/mock-hyprland/src/config/values/types/BoolValue.hpp
 tests/mock-hyprland/src/plugins/PluginAPI.hpp

@@ -1,0 +1,35 @@
+{
+  "name": "launch-at-login",
+  "about": "Launch at login: the first run's Done page with its checkbox (ticked by default, unticked, ticked again); Settings, General's toggle for each status the system reports (enabled, not registered, waiting for approval, not found), while a change runs, after a failed change, and off on a machine that provides Spaces or runs persistent agents; and what the app does at launch.",
+  "onboarding": [
+    { "type": "start" },
+    { "type": "signin-done" },
+    { "type": "agents-done", "configured": [] },
+    { "type": "presentation-done" },
+    { "type": "drive-continue" },
+    { "type": "mode-chosen", "mode": "client" },
+    { "type": "launch-at-login-toggled", "on": false },
+    { "type": "launch-at-login-toggled", "on": true }
+  ],
+  "settings": [
+    { "step": "enabled", "loginItem": { "status": "enabled" } },
+    { "step": "not registered", "loginItem": { "status": "notRegistered" } },
+    { "step": "requires approval", "loginItem": { "status": "requiresApproval" } },
+    { "step": "not found", "loginItem": { "status": "notFound" } },
+    { "step": "turning on", "loginItem": { "status": "notRegistered", "busy": true } },
+    { "step": "failed", "loginItem": { "status": "notRegistered", "error": "Operation not permitted" } },
+    { "step": "off, provides Spaces", "loginItem": { "status": "notRegistered", "providesSpaces": true } },
+    { "step": "off, runs agents", "loginItem": { "status": "notRegistered", "runsAgents": true } },
+    { "step": "off, both", "loginItem": { "status": "notRegistered", "providesSpaces": true, "runsAgents": true } },
+    { "step": "on, both", "loginItem": { "status": "enabled", "providesSpaces": true, "runsAgents": true } }
+  ],
+  "launches": [
+    { "step": "first run not finished", "choice": null, "onboarded": false, "serves": true, "status": "notRegistered" },
+    { "step": "chosen on", "choice": true, "onboarded": true, "serves": false, "status": "enabled" },
+    { "step": "chosen off on a serving machine", "choice": false, "onboarded": true, "serves": true, "status": "notRegistered" },
+    { "step": "unchosen, serving", "choice": null, "onboarded": true, "serves": true, "status": "notRegistered" },
+    { "step": "unchosen, not serving", "choice": null, "onboarded": true, "serves": false, "status": "notRegistered" },
+    { "step": "unchosen, already on", "choice": null, "onboarded": true, "serves": false, "status": "requiresApproval" },
+    { "step": "unchosen, serving, not found", "choice": null, "onboarded": true, "serves": true, "status": "notFound" }
+  ]
+}

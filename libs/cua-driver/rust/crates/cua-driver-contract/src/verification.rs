@@ -51,8 +51,8 @@ fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "string", "minLength": 1 })
 }
 
-fn true_only_boolean_schema(_: &mut SchemaGenerator) -> Schema {
-    json_schema!({ "type": "boolean", "enum": [true] })
+fn boolean_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "boolean" })
 }
 
 fn nullable_string_schema(_: &mut SchemaGenerator) -> Schema {
@@ -125,7 +125,7 @@ pub struct ElementPredicate {
     /// cannot be proven. `false` is rejected instead of returning an
     /// indefinitely-unknown predicate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "true_only_boolean_schema")]
+    #[schemars(schema_with = "boolean_schema")]
     pub exists: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_equals: Option<String>,
@@ -250,6 +250,7 @@ pub fn contracts() -> Vec<ToolContract> {
         cursor_semantics: None,
         input_schema: VerifyStateInput::input_schema(),
         success_output_schema: Some(VerifyStateOutput::output_schema()),
+        error_output_schema: None,
         output_validator: crate::validate_typed_output::<VerifyStateOutput>,
     }]
 }

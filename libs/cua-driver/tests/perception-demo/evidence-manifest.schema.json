@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cua.ai/schemas/visual-perception-demo-evidence-v3.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "platform", "raw_evidence_sha256", "fixture", "runtime", "observation", "environment", "result", "recording", "artifacts"],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sha40": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$"},
+    "dimensions": {
+      "type": "object", "additionalProperties": false, "required": ["width", "height"],
+      "properties": {"width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}}
+    },
+    "model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "id", "revision", "original_sha256", "converted_sha256", "license"],
+      "properties": {
+        "role": {"enum": ["icon-detect", "ocr-detect", "ocr-recognize"]},
+        "id": {"$ref": "#/$defs/safeId"}, "revision": {"$ref": "#/$defs/safeId"},
+        "original_sha256": {"$ref": "#/$defs/sha256"}, "converted_sha256": {"$ref": "#/$defs/sha256"},
+        "license": {"$ref": "#/$defs/safeId"}
+      }
+    }
+  },
+  "properties": {
+    "schema": {"const": "cua-visual-perception-demo-evidence/v3"},
+    "platform": {"enum": ["windows", "linux-x11", "macos"]},
+    "raw_evidence_sha256": {"$ref": "#/$defs/sha256"},
+    "fixture": {
+      "type": "object", "additionalProperties": false, "required": ["id", "oracle"],
+      "properties": {
+        "id": {"const": "visual-only-canvas/v1"},
+        "oracle": {
+          "type": "object", "additionalProperties": false,
+          "required": ["source", "initial_ready", "selected", "action_count", "result"],
+          "properties": {
+            "source": {"const": "fixture-journal"}, "initial_ready": {"const": true},
+            "selected": {"enum": ["save", "send", "cancel"]},
+            "action_count": {"type": "integer", "minimum": 1, "maximum": 8}, "result": {"const": "passed"}
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object", "additionalProperties": false, "required": ["driver", "perception", "chooser"],
+      "properties": {
+        "driver": {
+          "type": "object", "additionalProperties": false, "required": ["source_sha", "version", "binary_sha256", "build"],
+          "properties": {
+            "source_sha": {"$ref": "#/$defs/sha40"}, "version": {"$ref": "#/$defs/safeId"}, "binary_sha256": {"$ref": "#/$defs/sha256"},
+            "build": {
+              "type": "object", "additionalProperties": false,
+              "required": ["profile", "target", "sealed_artifact_manifest_sha256", "sealed_extension_manifest_sha256"],
+              "properties": {
+                "profile": {"$ref": "#/$defs/safeId"}, "target": {"$ref": "#/$defs/safeId"},
+                "sealed_artifact_manifest_sha256": {"$ref": "#/$defs/sha256"},
+                "sealed_extension_manifest_sha256": {"$ref": "#/$defs/sha256"}
+              }
+            }
+          }
+        },
+        "perception": {
+          "type": "object", "additionalProperties": false,
+          "required": ["extension_id", "extension_version", "trust", "publisher_id", "publisher_key_id", "catalog_version", "signature_algorithm", "signed_extension_archive_sha256", "signing_key_sha256", "signed_catalog_sha256", "protocol_version", "worker_sha256", "self_test", "models", "onnx_runtime", "parser_model_id"],
+          "properties": {
+            "extension_id": {"const": "cua-perception"}, "extension_version": {"$ref": "#/$defs/safeId"},
+            "trust": {"const": "review-only-publisher-verified"}, "publisher_id": {"$ref": "#/$defs/safeId"}, "publisher_key_id": {"$ref": "#/$defs/safeId"},
+            "catalog_version": {"type": "integer", "minimum": 1}, "signature_algorithm": {"const": "ed25519"},
+            "signed_extension_archive_sha256": {"$ref": "#/$defs/sha256"}, "signing_key_sha256": {"$ref": "#/$defs/sha256"}, "signed_catalog_sha256": {"$ref": "#/$defs/sha256"},
+            "protocol_version": {"type": "integer", "minimum": 1}, "worker_sha256": {"$ref": "#/$defs/sha256"},
+            "self_test": {
+              "type": "object", "additionalProperties": false, "required": ["status", "mismatch_rejection", "evidence_sha256"],
+              "properties": {"status": {"const": "passed"}, "mismatch_rejection": {"const": true}, "evidence_sha256": {"$ref": "#/$defs/sha256"}}
+            },
+            "models": {
+              "type": "array", "minItems": 3, "maxItems": 3, "items": false,
+              "prefixItems": [
+                {"allOf": [{"$ref": "#/$defs/model"}, {"properties": {"role": {"const": "icon-detect"}}}]},
+                {"allOf": [{"$ref": "#/$defs/model"}, {"properties": {"role": {"const": "ocr-detect"}}}]},
+                {"allOf": [{"$ref": "#/$defs/model"}, {"properties": {"role": {"const": "ocr-recognize"}}}]}
+              ]
+            },
+            "onnx_runtime": {
+              "type": "object", "additionalProperties": false, "required": ["revision", "sha256", "license"],
+              "properties": {"revision": {"$ref": "#/$defs/safeId"}, "sha256": {"$ref": "#/$defs/sha256"}, "license": {"$ref": "#/$defs/safeId"}}
+            },
+            "parser_model_id": {"$ref": "#/$defs/safeId"}
+          }
+        },
+        "chooser": {
+          "type": "object", "additionalProperties": false, "required": ["mode", "provider", "model_id", "adapter_source_sha", "source_sha"],
+          "properties": {
+            "mode": {"enum": ["mock", "live"]}, "provider": {"enum": ["fixture", "typesafe"]},
+            "model_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9._:/-]{1,96}$"},
+            "adapter_source_sha": {"$ref": "#/$defs/sha40"}, "source_sha": {"$ref": "#/$defs/sha40"}
+          }
+        }
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["session_label", "input_scope", "capture_kind", "capture_source", "dimensions", "acted_capture_id_sha256", "fresh_capture_id_sha256", "capture_trace_sha256", "candidates"],
+      "properties": {
+        "session_label": {"$ref": "#/$defs/safeId"}, "input_scope": {"enum": ["window", "desktop"]},
+        "capture_kind": {"enum": ["get_window_state", "get_desktop_state"]}, "capture_source": {"const": "driver-screenshot"},
+        "dimensions": {"$ref": "#/$defs/dimensions"},
+        "acted_capture_id_sha256": {"$ref": "#/$defs/sha256"}, "fresh_capture_id_sha256": {"$ref": "#/$defs/sha256"},
+        "capture_trace_sha256": {"$ref": "#/$defs/sha256"},
+        "candidates": {
+          "type": "array", "minItems": 2, "maxItems": 18,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "description"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"},
+              "description": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f]+$"}
+            }
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object", "additionalProperties": false, "required": ["os", "desktop_session", "runner_identity_class", "delivery_mode"],
+      "properties": {
+        "os": {
+          "type": "object", "additionalProperties": false, "required": ["name", "version", "arch"],
+          "properties": {"name": {"$ref": "#/$defs/safeId"}, "version": {"$ref": "#/$defs/safeId"}, "arch": {"$ref": "#/$defs/safeId"}}
+        },
+        "desktop_session": {"$ref": "#/$defs/safeId"}, "runner_identity_class": {"$ref": "#/$defs/safeId"},
+        "delivery_mode": {"enum": ["foreground", "background"]}
+      }
+    },
+    "result": {
+      "type": "object", "additionalProperties": false, "required": ["status", "selected_candidate", "background_desktop_refused", "capture_preserved_after_refusal", "stale_capture_refused"],
+      "properties": {
+        "status": {"const": "passed"}, "selected_candidate": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"},
+        "background_desktop_refused": {"type": ["boolean", "null"]},
+        "capture_preserved_after_refusal": {"type": ["boolean", "null"]},
+        "stale_capture_refused": {"const": true}
+      }
+    },
+    "recording": {
+      "type": "object", "additionalProperties": false,
+      "required": ["original_dimensions", "delivered_dimensions", "frame_rate", "cursor", "edit_operations", "shots", "final_sha256", "size_bytes"],
+      "properties": {
+        "original_dimensions": {"$ref": "#/$defs/dimensions"}, "delivered_dimensions": {"$ref": "#/$defs/dimensions"},
+        "frame_rate": {
+          "type": "object", "additionalProperties": false, "required": ["numerator", "denominator"],
+          "properties": {"numerator": {"type": "integer", "minimum": 1}, "denominator": {"type": "integer", "minimum": 1}}
+        },
+        "cursor": {
+          "type": "object", "additionalProperties": false, "required": ["agent_overlay", "system_cursor"],
+          "properties": {"agent_overlay": {"const": false}, "system_cursor": {"const": "recorder-default"}}
+        },
+        "edit_operations": {
+          "type": "array", "minItems": 1, "maxItems": 1,
+          "items": {"type": "object", "additionalProperties": false, "required": ["operation", "speed"], "properties": {"operation": {"const": "none"}, "speed": {"const": "1x"}}}
+        },
+        "shots": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["source_sha256", "start_ms", "end_ms"],
+            "properties": {"source_sha256": {"$ref": "#/$defs/sha256"}, "start_ms": {"type": "integer", "minimum": 0}, "end_ms": {"type": "integer", "minimum": 1}}
+          }
+        },
+        "final_sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1, "maximum": 104857600}
+      }
+    },
+    "artifacts": {
+      "type": "array", "minItems": 1, "maxItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["kind", "path", "sha256", "size_bytes"],
+        "properties": {"kind": {"const": "video"}, "path": {"const": "recording.mp4"}, "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1, "maximum": 104857600}}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "observation": {"properties": {"input_scope": {"const": "window"}, "capture_kind": {"const": "get_window_state"}}},
+            "environment": {"properties": {"delivery_mode": {"const": "background"}}},
+            "result": {"properties": {"background_desktop_refused": {"const": null}, "capture_preserved_after_refusal": {"const": null}}}
+          }
+        },
+        {
+          "properties": {
+            "observation": {"properties": {"input_scope": {"const": "desktop"}, "capture_kind": {"const": "get_desktop_state"}}},
+            "environment": {"properties": {"delivery_mode": {"const": "foreground"}}},
+            "result": {"properties": {"background_desktop_refused": {"const": true}, "capture_preserved_after_refusal": {"const": true}}}
+          }
+        }
+      ]
+    }
+  ]
+}

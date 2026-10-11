@@ -1,0 +1,85 @@
+{
+  "image": "ghcr.io/trycua/bench-osworld@sha256:7c2d180ba38562c7fce0bc65566b820bf38a5b4012b3aa4879eff225d3b9f750",
+  "rows": [
+    {
+      "variant": "container",
+      "mode": "oracle",
+      "task": null,
+      "status": "completed",
+      "reward": 1.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:7c2d180ba38562c7fce0bc65566b820bf38a5b4012b3aa4879eff225d3b9f750",
+      "image_variant": "rootfs",
+      "error": ""
+    },
+    {
+      "variant": "container",
+      "mode": "oracle",
+      "task": null,
+      "status": "completed",
+      "reward": 1.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:7c2d180ba38562c7fce0bc65566b820bf38a5b4012b3aa4879eff225d3b9f750",
+      "image_variant": "rootfs",
+      "error": ""
+    },
+    {
+      "variant": "container",
+      "mode": "noop",
+      "task": null,
+      "status": "completed",
+      "reward": 0.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:7c2d180ba38562c7fce0bc65566b820bf38a5b4012b3aa4879eff225d3b9f750",
+      "image_variant": "rootfs",
+      "error": ""
+    },
+    {
+      "variant": "container",
+      "mode": "noop",
+      "task": null,
+      "status": "completed",
+      "reward": 0.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:7c2d180ba38562c7fce0bc65566b820bf38a5b4012b3aa4879eff225d3b9f750",
+      "image_variant": "rootfs",
+      "error": ""
+    },
+    {
+      "variant": "vm",
+      "mode": "oracle",
+      "task": null,
+      "status": "completed",
+      "reward": 1.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:4a2c84569f92962f1df188b3b2811e2a70ec7de3d747df5b5428fea3cbc87555",
+      "image_variant": "containerdisk",
+      "error": ""
+    },
+    {
+      "variant": "vm",
+      "mode": "oracle",
+      "task": null,
+      "status": "completed",
+      "reward": 1.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:4a2c84569f92962f1df188b3b2811e2a70ec7de3d747df5b5428fea3cbc87555",
+      "image_variant": "containerdisk",
+      "error": ""
+    },
+    {
+      "variant": "vm",
+      "mode": "noop",
+      "task": null,
+      "status": "completed",
+      "reward": 0.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:4a2c84569f92962f1df188b3b2811e2a70ec7de3d747df5b5428fea3cbc87555",
+      "image_variant": "containerdisk",
+      "error": ""
+    },
+    {
+      "variant": "vm",
+      "mode": "noop",
+      "task": null,
+      "status": "completed",
+      "reward": 0.0,
+      "image_digest": "ghcr.io/trycua/bench-osworld@sha256:4a2c84569f92962f1df188b3b2811e2a70ec7de3d747df5b5428fea3cbc87555",
+      "image_variant": "containerdisk",
+      "error": ""
+    }
+  ]
+}

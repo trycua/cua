@@ -1,0 +1,4 @@
+.build/
+.swiftpm/
+Tests/CuaSpacesMacTests/Snapshots/*.actual.png
+CuaSpacesMac.xcodeproj/

@@ -34,9 +34,7 @@ fn def() -> &'static ToolDef {
                 "text":          { "type": "string",  "description": "Text to type." },
                 "delay_ms":      { "type": "integer", "description": "Milliseconds between characters (default 30)." },
                 "window_id":     { "type": "integer", "description": "Window ID for element focus. Optional when element_token is supplied." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "type_chars_only": { "type": "boolean", "description": "Skip AX focus, type directly. Default false." }
             },
             "additionalProperties": false
@@ -69,18 +67,8 @@ impl Tool for TypeTextCharsTool {
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
-        // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "type_text_chars",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };

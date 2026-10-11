@@ -1,0 +1,76 @@
+---
+title: 'Infinite canvas: every window on one canvas'
+description: 'A SwiftUI example on the Cua Spaces SDK: a hotkey opens a zoomable canvas of live windows from macOS, Linux and Omarchy Spaces, with agent and coworker cursors and agent threads.'
+keywords:
+  - infinite canvas
+  - Cua Spaces example
+  - window streaming
+  - presence cursors
+---
+
+Infinite canvas puts every window of every Space on one zoomable canvas. A hotkey opens it, and each window is a live tile you can move, resize, zoom into and use.
+
+![Infinite canvas: macOS, Linux and Omarchy windows, an agent thread and the stats card](/img/infinite-canvas/infinite-canvas.png)
+
+## Features
+
+- Global hotkey (⌥Space by default) opens and closes a full-screen canvas.
+- Trackpad pan, pinch and scroll zoom; ⌘0 fits every window.
+- One H.264 stream per window, hardware-decoded straight into the tile.
+- Level of detail: small and off-screen tiles ask the Space for fewer frames and fewer pixels; a tile you zoom into gets a keyframe.
+- Click a tile to give it your keyboard and pointer.
+- Agent cursors from each Space's presence, drawn with Cua Driver's cursor theme.
+- Coworker cursors: other people on the Space, each in their color.
+- Agent threads as canvas windows: send a message, watch the agent work in the tiles.
+- A thread's cursor waits in its title and glides out when the agent starts.
+- Real app icons from each Space, an OS mark per tile, a minimap and a stats card.
+- 59 tests and a benchmark target.
+
+## Run it
+
+From a clone of [trycua/cua](https://github.com/trycua/cua), on macOS 26:
+
+```bash skip="no-runner"
+(cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+cd samples/infinite-canvas-swift
+swift build -c release
+.build/release/infinite-canvas --spaces spaces.json --show
+```
+
+`spaces.json` lists the Spaces to show (any machine running cua-spacesd):
+
+```json skip="no-runner"
+{
+  "spaces": [
+    {"label": "Linux", "os": "linux", "url": "127.0.0.1:3211", "token": "…", "maxWindows": 4}
+  ],
+  "threads": ["Linux"]
+}
+```
+
+A local Linux Space for it:
+
+```bash skip="no-runner"
+TOKEN=$(openssl rand -hex 16)
+docker run -d --name canvas-space --memory=4g -e CUA_ENV_TOKEN=$TOKEN \
+  -p 127.0.0.1:3211:3211 ghcr.io/trycua/linux:24.04
+```
+
+Tests and the benchmark:
+
+```bash skip="no-runner"
+scripts/test.sh
+swift build -c release --product canvas-bench && .build/release/canvas-bench --tiles 8
+```
+
+## Source
+
+[samples/infinite-canvas-swift](https://github.com/trycua/cua/tree/main/samples/infinite-canvas-swift): SwiftUI and AppKit on `Cua`, `CuaSpaces`, `CuaSpacesStreaming` and `CuaSpacesTeleport`.
+
+## How each part works
+
+| Part | Guide |
+|------|-------|
+| Window streams and presence | [Stream a desktop](/spaces/guides/stream-a-desktop) |
+| Agent threads | [Use from an agent](/spaces/guides/use-from-an-agent#run-an-agent-inside-a-space) |
+| Adding Spaces by address | [Add a Space](/spaces/guides/add-a-space) |

@@ -780,6 +780,8 @@ public protocol CreateClaimRequestBuilderProtocol: AnyObject, Sendable {
 
     func pool(value: Pool)  -> CreateClaimRequestBuilder
 
+    func secretFiles(value: [String: String])  -> CreateClaimRequestBuilder
+
     func spec(value: ClaimSpec)  -> CreateClaimRequestBuilder
 
 }
@@ -874,6 +876,15 @@ open func pool(value: Pool) -> CreateClaimRequestBuilder  {
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
             self.uniffiCloneHandle(),
         FfiConverterTypePool_lower(value),$0
+    )
+})
+}
+
+open func secretFiles(value: [String: String]) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+            self.uniffiCloneHandle(),
+        FfiConverterDictionaryStringString.lower(value),$0
     )
 })
 }
@@ -1075,6 +1086,184 @@ public func FfiConverterTypeCreatePoolRequestBuilder_lift(_ handle: UInt64) thro
 #endif
 public func FfiConverterTypeCreatePoolRequestBuilder_lower(_ value: CreatePoolRequestBuilder) -> UInt64 {
     return FfiConverterTypeCreatePoolRequestBuilder.lower(value)
+}
+
+
+
+
+
+
+public protocol CreateRegistrySecretRequestBuilderProtocol: AnyObject, Sendable {
+
+    func build() throws  -> CreateRegistrySecretRequest
+
+    func name(value: String)  -> CreateRegistrySecretRequestBuilder
+
+    func namespace(value: String)  -> CreateRegistrySecretRequestBuilder
+
+    func password(value: String)  -> CreateRegistrySecretRequestBuilder
+
+    func registry(value: String)  -> CreateRegistrySecretRequestBuilder
+
+    func username(value: String)  -> CreateRegistrySecretRequestBuilder
+
+}
+open class CreateRegistrySecretRequestBuilder: CreateRegistrySecretRequestBuilderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(self.handle, $0) }
+    }
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(handle, $0) }
+    }
+
+
+
+
+open func build()throws  -> CreateRegistrySecretRequest  {
+    return try  FfiConverterTypeCreateRegistrySecretRequest_lift(try rustCallWithError(FfiConverterTypeSdkBuildError_lift) {
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func name(value: String) -> CreateRegistrySecretRequestBuilder  {
+    return try!  FfiConverterTypeCreateRegistrySecretRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func namespace(value: String) -> CreateRegistrySecretRequestBuilder  {
+    return try!  FfiConverterTypeCreateRegistrySecretRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func password(value: String) -> CreateRegistrySecretRequestBuilder  {
+    return try!  FfiConverterTypeCreateRegistrySecretRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func registry(value: String) -> CreateRegistrySecretRequestBuilder  {
+    return try!  FfiConverterTypeCreateRegistrySecretRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+open func username(value: String) -> CreateRegistrySecretRequestBuilder  {
+    return try!  FfiConverterTypeCreateRegistrySecretRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(value),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateRegistrySecretRequestBuilder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CreateRegistrySecretRequestBuilder
+
+    public static func lift(_ handle: UInt64) throws -> CreateRegistrySecretRequestBuilder {
+        return CreateRegistrySecretRequestBuilder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CreateRegistrySecretRequestBuilder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateRegistrySecretRequestBuilder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CreateRegistrySecretRequestBuilder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateRegistrySecretRequestBuilder_lift(_ handle: UInt64) throws -> CreateRegistrySecretRequestBuilder {
+    return try FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateRegistrySecretRequestBuilder_lower(_ value: CreateRegistrySecretRequestBuilder) -> UInt64 {
+    return FfiConverterTypeCreateRegistrySecretRequestBuilder.lower(value)
 }
 
 
@@ -1554,6 +1743,11 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func createClaim(request: CreateClaimRequest) async throws  -> Claim
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     func deleteClaim(claim: Claim) async throws
 
     func getClaim(claim: Claim) async throws  -> Claim
@@ -1635,6 +1829,22 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
     func reconcilePool(request: CreatePoolRequest) async throws  -> Pool
 
     func updatePool(pool: Pool) async throws  -> Pool
+
+    /**
+     * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+     * On a name conflict the old Secret is deleted and the new one created,
+     * since the gateway admits no Secret update.
+     */
+    func createRegistrySecret(request: CreateRegistrySecretRequest) async throws  -> RegistrySecret
+
+    func deleteRegistrySecret(namespace: String, name: String) async throws
+
+    /**
+     * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+     * `kubevirt`, `macos`) selects the variant for canonical cua images:
+     * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+     */
+    func resolveImage(reference: String, runtime: String?) async throws  -> ResolvedImage
 
     func serviceRequest(sandbox: Sandbox, service: String, path: String, request: HttpRequest) async throws  -> HttpResponse
 
@@ -1806,6 +2016,11 @@ open func createClaim(request: CreateClaimRequest)async throws  -> Claim  {
         )
 }
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
 open func deleteClaim(claim: Claim)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -2244,6 +2459,67 @@ open func updatePool(pool: Pool)async throws  -> Pool  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePool_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+     * On a name conflict the old Secret is deleted and the new one created,
+     * since the gateway admits no Secret update.
+     */
+open func createRegistrySecret(request: CreateRegistrySecretRequest)async throws  -> RegistrySecret  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeCreateRegistrySecretRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRegistrySecret_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+open func deleteRegistrySecret(namespace: String, name: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_void,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_void,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+     * `kubevirt`, `macos`) selects the variant for canonical cua images:
+     * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+     */
+open func resolveImage(reference: String, runtime: String?)async throws  -> ResolvedImage  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(reference),FfiConverterOptionString.lower(runtime)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeResolvedImage_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -3499,6 +3775,16 @@ public struct CreateClaimRequest: Equatable, Hashable {
      * so they can be listed back by label within a namespace.
      */
     public var labels: [String: String]?
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    public var secretFiles: [String: String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -3512,11 +3798,21 @@ public struct CreateClaimRequest: Equatable, Hashable {
          * Labels stamped onto the created claim's metadata verbatim. Grouping
          * helpers (for example fleet fan-out) rely on this to tag related claims
          * so they can be listed back by label within a namespace.
-         */labels: [String: String]? = nil) {
+         */labels: [String: String]? = nil,
+        /**
+         * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+         * 0600) once the claim binds, without restarting it. The key
+         * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+         * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+         * that the claim references by `spec.secretRef`; `delete_claim` removes
+         * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+         * never serialized with the request nor printed by `Debug`.
+         */secretFiles: [String: String]? = nil) {
         self.pool = pool
         self.spec = spec
         self.name = name
         self.labels = labels
+        self.secretFiles = secretFiles
     }
 
 
@@ -3538,7 +3834,8 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
                 pool: FfiConverterTypePool.read(from: &buf),
                 spec: FfiConverterOptionTypeClaimSpec.read(from: &buf),
                 name: FfiConverterOptionString.read(from: &buf),
-                labels: FfiConverterOptionDictionaryStringString.read(from: &buf)
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                secretFiles: FfiConverterOptionDictionaryStringString.read(from: &buf)
         )
     }
 
@@ -3547,6 +3844,7 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
         FfiConverterOptionTypeClaimSpec.write(value.spec, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.secretFiles, into: &buf)
     }
 }
 
@@ -3617,6 +3915,103 @@ public func FfiConverterTypeCreatePoolRequest_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeCreatePoolRequest_lower(_ value: CreatePoolRequest) -> RustBuffer {
     return FfiConverterTypeCreatePoolRequest.lower(value)
+}
+
+
+/**
+ * Credentials for one registry, stored as a `cua-registry-*` pull Secret.
+ */
+public struct CreateRegistrySecretRequest: Equatable, Hashable {
+    /**
+     * Pool namespace the Secret is created in. It must already exist (the
+     * pool's namespace, created by `create_pool`, or by `create_namespace`).
+     */
+    public var namespace: String
+    /**
+     * Full Secret name, `cua-registry-<dns-label>`.
+     */
+    public var name: String
+    /**
+     * Registry host the credentials are for, as image refs spell it, e.g.
+     * `ghcr.io`, `registry.example.com:5000` or `docker.io`.
+     */
+    public var registry: String
+    public var username: String
+    /**
+     * Password or access token. Never serialized by `Debug`.
+     */
+    public var password: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Pool namespace the Secret is created in. It must already exist (the
+         * pool's namespace, created by `create_pool`, or by `create_namespace`).
+         */namespace: String,
+        /**
+         * Full Secret name, `cua-registry-<dns-label>`.
+         */name: String,
+        /**
+         * Registry host the credentials are for, as image refs spell it, e.g.
+         * `ghcr.io`, `registry.example.com:5000` or `docker.io`.
+         */registry: String, username: String,
+        /**
+         * Password or access token. Never serialized by `Debug`.
+         */password: String) {
+        self.namespace = namespace
+        self.name = name
+        self.registry = registry
+        self.username = username
+        self.password = password
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CreateRegistrySecretRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCreateRegistrySecretRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CreateRegistrySecretRequest {
+        return
+            try CreateRegistrySecretRequest(
+                namespace: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                registry: FfiConverterString.read(from: &buf),
+                username: FfiConverterString.read(from: &buf),
+                password: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CreateRegistrySecretRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.namespace, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.registry, into: &buf)
+        FfiConverterString.write(value.username, into: &buf)
+        FfiConverterString.write(value.password, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateRegistrySecretRequest_lift(_ buf: RustBuffer) throws -> CreateRegistrySecretRequest {
+    return try FfiConverterTypeCreateRegistrySecretRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCreateRegistrySecretRequest_lower(_ value: CreateRegistrySecretRequest) -> RustBuffer {
+    return FfiConverterTypeCreateRegistrySecretRequest.lower(value)
 }
 
 
@@ -4789,6 +5184,177 @@ public func FfiConverterTypePresignedPut_lift(_ buf: RustBuffer) throws -> Presi
 #endif
 public func FfiConverterTypePresignedPut_lower(_ value: PresignedPut) -> RustBuffer {
     return FfiConverterTypePresignedPut.lower(value)
+}
+
+
+/**
+ * A created registry pull Secret. Carries no credential: Secrets are
+ * write-only through the gateway.
+ */
+public struct RegistrySecret: Equatable, Hashable {
+    public var namespace: String
+    public var name: String
+    public var registry: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(namespace: String, name: String, registry: String) {
+        self.namespace = namespace
+        self.name = name
+        self.registry = registry
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RegistrySecret: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRegistrySecret: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RegistrySecret {
+        return
+            try RegistrySecret(
+                namespace: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                registry: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RegistrySecret, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.namespace, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.registry, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRegistrySecret_lift(_ buf: RustBuffer) throws -> RegistrySecret {
+    return try FfiConverterTypeRegistrySecret.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRegistrySecret_lower(_ value: RegistrySecret) -> RustBuffer {
+    return FfiConverterTypeRegistrySecret.lower(value)
+}
+
+
+/**
+ * A registry ref pinned by the gateway (`GET /api/images/resolve`).
+ */
+public struct ResolvedImage: Equatable, Hashable {
+    /**
+     * The ref as requested.
+     */
+    public var reference: String
+    /**
+     * The ref actually resolved: for a canonical image and runtime
+     * `kubevirt` this is the containerDisk sibling (`…:24.04-disk`).
+     */
+    public var resolvedRef: String
+    /**
+     * `repo@sha256:…` of the manifest (or index) to run.
+     */
+    public var pinnedRef: String
+    public var digest: String
+    /**
+     * `rootfs` (docker/gVisor), `containerdisk` (KubeVirt) or `unknown`.
+     */
+    public var variant: String
+    /**
+     * The linux/amd64 child manifest digest when the ref is an index.
+     */
+    public var platformDigest: String?
+    public var mediaType: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The ref as requested.
+         */reference: String,
+        /**
+         * The ref actually resolved: for a canonical image and runtime
+         * `kubevirt` this is the containerDisk sibling (`…:24.04-disk`).
+         */resolvedRef: String,
+        /**
+         * `repo@sha256:…` of the manifest (or index) to run.
+         */pinnedRef: String, digest: String,
+        /**
+         * `rootfs` (docker/gVisor), `containerdisk` (KubeVirt) or `unknown`.
+         */variant: String,
+        /**
+         * The linux/amd64 child manifest digest when the ref is an index.
+         */platformDigest: String?, mediaType: String) {
+        self.reference = reference
+        self.resolvedRef = resolvedRef
+        self.pinnedRef = pinnedRef
+        self.digest = digest
+        self.variant = variant
+        self.platformDigest = platformDigest
+        self.mediaType = mediaType
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ResolvedImage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeResolvedImage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ResolvedImage {
+        return
+            try ResolvedImage(
+                reference: FfiConverterString.read(from: &buf),
+                resolvedRef: FfiConverterString.read(from: &buf),
+                pinnedRef: FfiConverterString.read(from: &buf),
+                digest: FfiConverterString.read(from: &buf),
+                variant: FfiConverterString.read(from: &buf),
+                platformDigest: FfiConverterOptionString.read(from: &buf),
+                mediaType: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ResolvedImage, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reference, into: &buf)
+        FfiConverterString.write(value.resolvedRef, into: &buf)
+        FfiConverterString.write(value.pinnedRef, into: &buf)
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterString.write(value.variant, into: &buf)
+        FfiConverterOptionString.write(value.platformDigest, into: &buf)
+        FfiConverterString.write(value.mediaType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeResolvedImage_lift(_ buf: RustBuffer) throws -> ResolvedImage {
+    return try FfiConverterTypeResolvedImage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeResolvedImage_lower(_ value: ResolvedImage) -> RustBuffer {
+    return FfiConverterTypeResolvedImage.lower(value)
 }
 
 
@@ -6356,12 +6922,31 @@ public func uniffiForeignFutureHandleCountFleetSdk() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
 /**
+ * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+ * that carries the cua-env-driver token for a claimed sandbox.
+ */
+public func claimEnvTokenKey() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_claim_env_token_key($0
+    )
+})
+}
+/**
  * The label key a fleet's claims share, for callers that filter or clean up
  * with raw Kubernetes tooling instead of `list_fleet_claims`.
  */
 public func fleetLabelKey() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_cyclops_sdk_fn_func_fleet_label_key($0
+    )
+})
+}
+/**
+ * The name prefix every tenant registry pull Secret must carry.
+ */
+public func registrySecretNamePrefix() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix($0
     )
 })
 }
@@ -6412,7 +6997,13 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix() != 63379) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094) {
@@ -6433,7 +7024,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460) {
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760) {
@@ -6505,6 +7096,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret() != 5524) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret() != 778) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image() != 1395) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6547,6 +7147,24 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build() != 37137) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name() != 24925) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace() != 5201) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password() != 1991) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry() != 58635) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username() != 20465) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6563,6 +7181,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263) {
@@ -6686,6 +7307,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new() != 33724) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() != 10967) {

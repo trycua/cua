@@ -1,0 +1,772 @@
+{
+  "flow": "teleport-review",
+  "frames": [
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [],
+        "selectedId": null,
+        "sensitive": [],
+        "step": "loading"
+      },
+      "picker": "initial"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [],
+        "selectedId": null,
+        "sensitive": [],
+        "step": "loading"
+      },
+      "picker": "choose"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "loaded"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Not available: Figma"
+        ],
+        "selectedId": null,
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "query"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Not available: Figma"
+        ],
+        "selectedId": null,
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "choose"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "query"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "select"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_only",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "options"
+      },
+      "picker": "choose"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_only",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "options"
+      },
+      "picker": "move"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "options"
+      },
+      "picker": "move"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "planning"
+      },
+      "picker": "plan"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "planned"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "confirm"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "acknowledge"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "confirm"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "acknowledge-relay-plaintext"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "running"
+      },
+      "picker": "confirm"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 333,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "running"
+      },
+      "picker": "progress"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 500,
+        "planSensitive": [],
+        "report": null,
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "running"
+      },
+      "picker": "progress"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 500,
+        "planSensitive": [],
+        "report": "slack",
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "install:Slack 4.41.105",
+            "state:Workspace settings",
+            "secret:Sign-in cookies (secret)"
+          ],
+          "leavesText": "15 MB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": true,
+          "title": "Teleport Slack to Aurora",
+          "warnings": [
+            "Slack signs out on this Mac while the Space holds the session.",
+            "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?"
+          ]
+        },
+        "sections": [
+          "Recent: Slack",
+          "Apps: Visual Studio Code",
+          "Not available: Figma"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "done"
+      },
+      "picker": "finished"
+    },
+    {
+      "consent": {
+        "acknowledgeRelayPlaintext": true,
+        "acknowledgeSensitive": true,
+        "approved": true,
+        "saveToKeyvault": false
+      }
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": true,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers",
+          "start-dwell:300"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "3",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "hover-enter"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "2 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-linux]",
+          "Builder [os-linux] (no drop)"
+        ]
+      },
+      "notch": "dwell-elapsed"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers",
+          "start-close:400"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "2 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-linux]",
+          "Builder [os-linux] (no drop)"
+        ]
+      },
+      "notch": "hover-exit"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "3",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "close-elapsed"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "capture:7"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Teleport to Cua",
+        "open": false,
+        "permission": null,
+        "phase": "prompt",
+        "prompt": "Teleport to Cua",
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "drag start"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Teleport to Cua",
+        "open": false,
+        "permission": null,
+        "phase": "prompt",
+        "prompt": "Teleport to Cua",
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "drag ghost-ready"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": true,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "2 Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": "Drop Slack on a Space",
+        "tab": null,
+        "tiles": [
+          "Aurora [os-linux]",
+          "Builder [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drag enter-notch"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": true,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "2 Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": "Drop Slack on a Space",
+        "tab": null,
+        "tiles": [
+          "Aurora [os-linux] (targeted)",
+          "Builder [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drag over"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "commit:local:aurora"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "3",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "drag drop"
+    }
+  ]
+}

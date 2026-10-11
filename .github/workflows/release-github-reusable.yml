@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       release_name:
-        description: "Release display name (e.g., cua-computer v0.5.0)"
+        description: "Release display name (e.g., cua-sandbox v0.8.0)"
         required: true
         type: string
       source_sha:
@@ -172,7 +172,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.tag_name }}
           name: ${{ inputs.release_name }}

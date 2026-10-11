@@ -1,0 +1,38 @@
+{
+  "image": "ghcr.io/trycua/linux:24.04",
+  "os": "linux",
+  "version": "24.04",
+  "tier": "full",
+  "recorded_from": "2026-09-28, container/arm64, published 24.04 (sha256:f5306ce8), doctor report of its arm64 child",
+  "apps": {
+    "chromium": "Chromium 154.0.8037.57",
+    "firefox": "Mozilla Firefox 156.0.1",
+    "python3": "Python 3.12.3"
+  },
+  "tools": {
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "cmake": "cmake version 3.28.3",
+    "curl": "curl 8.5.0",
+    "docker": "Docker version 29.8.1, build 4a63305",
+    "fd": "fdfind 9.0.0",
+    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "gh": "gh version 2.101.0 (2026-09-15)",
+    "git": "git version 2.43.0",
+    "git-lfs": "git-lfs/3.4.1 (GitHub; linux arm64; go 1.22.2)",
+    "go": "go version go1.27.1 linux/arm64",
+    "jq": "jq-1.7",
+    "make": "GNU Make 4.3",
+    "ninja": "1.11.1",
+    "node": "v24.21.0",
+    "pkg-config": "1.8.1",
+    "pnpm": "12.6.0",
+    "python3": "Python 3.12.3",
+    "ripgrep": "ripgrep 14.1.0",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "rustup": "rustup 1.29.1 (d95a37b6a 2026-08-13)",
+    "unzip": "UnZip 6.00 of 20 April 2009, by Debian. Original by Info-ZIP.",
+    "uv": "uv 0.12.19 (aarch64-unknown-linux-gnu)",
+    "zip": "This is Zip 3.0 (July 5th 2008), by Info-ZIP."
+  },
+  "simulator_runtimes": []
+}

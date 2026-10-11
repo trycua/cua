@@ -1,0 +1,129 @@
+---
+title: Attach to or run cua-spacesd
+description: Use any machine that runs cua-spacesd as a sandbox, run and configure cua-spacesd yourself, and publish it through the relay.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+cua-spacesd serves the desktop, shell, files and media of a machine
+([Control the desktop](/cua-sdk/guides/desktop)). This page covers attaching
+to one you did not create and running it yourself.
+
+## Attach to any spacesd
+
+Any machine that runs spacesd can be used as a sandbox: a container you started,
+a machine on your LAN, or one behind the relay. You need its address and env
+token. Nothing is created or deleted.
+
+```bash skip="third-party-cli"
+export CUA_ENV_TOKEN=$(openssl rand -hex 24)
+docker run -d --name envbox --shm-size=512m -e CUA_ENV_TOKEN \
+  -p 127.0.0.1:3211:3211 ghcr.io/trycua/linux:24.04
+```
+
+```bash test="cli-shape" id="cua-spacesd-caps"
+cua spacesd caps http://127.0.0.1:3211      # version, OS, features
+cua spacesd shell http://127.0.0.1:3211
+cua sb create --on direct:127.0.0.1:3211 --token "$CUA_ENV_TOKEN" --name envbox
+cua sb rm envbox          # forgets the record; the machine keeps running
+```
+
+In Python, `Sandbox.connect(url="http://127.0.0.1:3211", token=...)` returns a
+regular `Sandbox`; in TypeScript, `embedded().spacesd(url, token)` returns the
+typed spacesd client.
+
+Addresses can be direct (`http://10.0.0.5:3211`), a cloud sandbox's `env`
+service URL, or a relay URL (`https://<relay>/m/<machine-id>`). To run spacesd
+on a machine, see [Run spacesd yourself](#run-spacesd-yourself); its RPCs are in the
+[protocol reference](/cua-sdk/reference/protocol).
+
+<Callout type="warn">
+  The env token grants full control of the machine. Keep it out of URLs and
+  logs, and bind spacesd to loopback or a private network unless it sits behind
+  the relay or the cloud gateway.
+</Callout>
+
+## Run spacesd yourself
+
+On a machine you own, `cua host setup` installs spacesd as a service
+([Unattended access](/spaces/guides/unattended-access)). To run the binary by
+hand:
+
+```bash skip="no-runner"
+CUA_ENV_TOKEN=... cua-spacesd            # same as `cua-spacesd serve`
+cua-spacesd --print-config               # effective config, never the token
+```
+
+| Flag | Env | Default |
+| --- | --- | --- |
+| `--listen` | `CUA_ENV_LISTEN` | `0.0.0.0:<port>` with a token, `127.0.0.1:<port>` without |
+| `--port` | `CUA_ENV_PORT` | `3211` (gRPC, gRPC-Web and HTTP routes) |
+| `--quic-port` | `CUA_ENV_QUIC_PORT` | `3212` (QUIC media; `0` disables it) |
+| `--token-file` | `CUA_ENV_TOKEN_FILE` | `/run/cua/env-token` |
+| `--data-dir` | `CUA_ENV_DATA_DIR` | `~/.cua/spacesd` |
+| `--downloads-dir` | `CUA_ENV_DOWNLOADS_DIR` | `~/Downloads` (teleport destination) |
+| `--scrollback-bytes` | `CUA_ENV_SCROLLBACK_BYTES` | 8 MiB per process |
+| `--allow-guest-power` | `CUA_ENV_ALLOW_GUEST_POWER` | off |
+| `--no-mcp`, `--no-driver`, `--no-desktop` | `CUA_ENV_NO_MCP`, `CUA_ENV_NO_DRIVER`, `CUA_ENV_NO_DESKTOP` | all on |
+
+A non-loopback bind without a token is refused. Logs go to stderr
+(`CUA_ENV_LOG`, default `info`). Other subcommands: `join`, `token-sync`
+(Unix), `doctor` and `build-info`; `cua-spacesd --help` lists every flag.
+
+### Viewer architecture
+
+One web app and protocol (crate `cua-spacesd-html5`), served two ways:
+
+| Mode | Where | Serves |
+| --- | --- | --- |
+| Embedded | cua-spacesd, `/viewer/` on port `3211` | the viewer of that machine |
+| Standalone | `cua viewer` (loopback), or the `cua-spacesd-html5` binary for gateways | a list of sandboxes and the same page per sandbox at `/s/<id>/viewer/`, piping gRPC-Web, `/media` and `/files` to each sandbox and adding only transport credentials |
+
+The page itself is public; every call it makes is authorized by the viewer
+ticket. The viewer ships with Cua Spaces (source-available, FSL-1.1-MIT): the
+`cua` in the Spaces apps runs `cua viewer`, and the open source `cua` hands the
+command to it.
+
+### Tokens
+
+spacesd takes the first non-empty token from `--token`, `CUA_ENV_TOKEN`, then
+`--token-file`. Clients send it as `authorization: Bearer <token>` or
+`x-cua-env-authorization` (the Fleet gateway keeps `authorization` for itself).
+
+| Mode | Behavior |
+| --- | --- |
+| `SystemService.Init` | An authenticated caller rotates the token and sets env, user, working directory and CA bundle |
+| `--await-token-file` | Token only from the file, polled every 500 ms; until it appears only `GetCapabilities` and `Health` answer. Changing or emptying the file rotates or revokes every session |
+| `--insecure-bootstrap` | Tokenless non-loopback bind behind an authenticated gateway: only `GetCapabilities`, `Health` and `Init` answer until the first `Init` sets a token |
+| `token-sync` | Root helper that mirrors a root-only token file to a `0600` file spacesd's user can read |
+
+### Relay (join)
+
+`cua-spacesd join` serves on loopback and publishes the machine through a
+`cua-relay` over one outbound WebSocket, so a machine behind NAT needs no
+inbound port. Clients reach it at `https://<relay>/m/<machine-id>/` (Spaces:
+`relay:<machine-id>`).
+
+```bash skip="no-runner"
+CUA_ENV_TOKEN=... cua-spacesd join --relay wss://relay.example --relay-token-file ~/.cua/relay-token
+```
+
+| Flag | Env | Default |
+| --- | --- | --- |
+| `--relay` | `CUA_ENV_RELAY_URL` | required |
+| `--relay-token`, `--relay-token-file` | `CUA_RELAY_TOKEN`, `CUA_RELAY_TOKEN_FILE` | one is required; the file is re-read before each reconnect |
+| `--machine-id-file` | `CUA_ENV_MACHINE_ID_FILE` | `<data-dir>/id` |
+| `--host-policy` | `CUA_HOST_POLICY` | owner, allowlist and sharing (account mode) |
+| `--relay-jwks` | `CUA_RELAY_JWKS` | pins the relay's signing keys |
+| `--heartbeat-secs` | | `15` |
+
+### Install as a service
+
+`libs/cua-spacesd/packaging/install.sh` (`--binary`, `--version`, `--token`,
+`--token-file`, `--no-service`, `--dry-run`) installs the binary and one of:
+
+| OS | Service | Token and state |
+| --- | --- | --- |
+| Linux | systemd unit `cua-spacesd.service`: `cua-spacesd serve --allow-guest-power`, `Restart=always` | `EnvironmentFile=/etc/cua/spacesd.env`; state in `/var/lib/cua/spacesd` |
+| macOS | LaunchAgent `com.trycua.spacesd` in the GUI session | `~/.cua/spacesd/token`; logs in `~/Library/Logs/cua-spacesd.log` |
+| Windows | Scheduled task `cua-spacesd` at logon, in the interactive session | `%USERPROFILE%\.cua\spacesd\token` |

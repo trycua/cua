@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import { access, readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import * as path from 'node:path';
 import test from 'node:test';
 
 const docs = path.resolve(__dirname, '..');
-const sandbox = path.join(docs, 'content/docs/how-to-guides/sandbox');
+const fleets = path.join(docs, 'content/docs/fleets');
 
 async function page(slug: string) {
-  return readFile(path.join(sandbox, `${slug}.mdx`), 'utf8');
+  return readFile(path.join(fleets, `${slug}.mdx`), 'utf8');
 }
 
 async function mdxFiles(directory: string): Promise<string[]> {
@@ -22,41 +22,41 @@ async function mdxFiles(directory: string): Promise<string[]> {
   return nested.flat();
 }
 
-test('neutral Fleet task pages use persistent Python and TypeScript tabs', async () => {
-  for (const slug of ['create-fleet-capacity', 'claim-a-sandbox']) {
-    const source = await page(slug);
-    assert.match(source, /<Tabs groupId="language" persist items=\{\['Python', 'TypeScript'\]\}>/);
-    assert.match(source, /<Tab value="Python">/);
-    assert.match(source, /<Tab value="TypeScript">/);
-    assert.match(source, /Cua Sandbox SDK/);
-    assert.match(source, /Fleet SDK/);
-    assert.match(source, /not a TypeScript Sandbox SDK/);
-    assert.doesNotMatch(source, /<Tab value="CLI">/);
-  }
+test('the capacity page uses persistent language tabs on the cua SDK', async () => {
+  const source = await page('guides/capacity-and-claims');
+  assert.match(source, /<Tabs groupId="language" persist items=\{\['Python', 'TypeScript'\]\}>/);
+  assert.match(source, /<Tabs groupId="language" persist items=\{\['CLI', 'Python', 'TypeScript'\]\}>/);
+  assert.match(source, /<Tab value="Python">/);
+  assert.match(source, /<Tab value="TypeScript">/);
+  assert.match(source, /@trycua\/cua/);
+  assert.doesNotMatch(source, /computer-server|@trycua\/fleet/);
 });
 
-test('capacity and claim remain separate tasks', async () => {
-  const capacity = await page('create-fleet-capacity');
-  const claim = await page('claim-a-sandbox');
-  assert.match(capacity, /They do\n\+?not claim a Sandbox\./);
-  assert.doesNotMatch(capacity, /CreateClaimRequestBuilder/);
-  assert.match(claim, /Pool\.get/);
-  assert.match(claim, /client\.getPool/);
-  assert.match(claim, /createClaim/);
-  assert.match(claim, /deleteClaim/);
+test('one page creates capacity, claims from it and expires it', async () => {
+  const source = await page('guides/capacity-and-claims');
+  assert.match(source, /Sandbox\.create\(image, local=False\)/);
+  assert.match(source, /Pool\.apply\(\s*os\.environ/);
+  assert.match(source, /Pool\.apply\(\s*fleet,/);
+  assert.doesNotMatch(source, /applyPool|FleetPoolSpec/);
+  assert.match(source, /Sandbox\.ephemeral/);
+  assert.match(source, /cua sb create --on fleet --pool/);
+  assert.match(source, /delete_\(\)/);
+  assert.match(source, /## Expiry/);
+  assert.match(source, /ttl_seconds_after_created/);
 });
 
-test('the Sandbox navigation swaps only the two legacy slugs', async () => {
-  const metadata = JSON.parse(await readFile(path.join(sandbox, 'meta.json'), 'utf8'));
-  const first = metadata.pages.indexOf('create-fleet-capacity');
-  assert.ok(first >= 0);
-  assert.equal(metadata.pages[first + 1], 'claim-a-sandbox');
-  assert.ok(!metadata.pages.includes('create-pool-with-python'));
-  assert.ok(!metadata.pages.includes('create-pool-with-typescript'));
-
-  for (const slug of ['create-pool-with-python', 'create-pool-with-typescript']) {
-    await assert.rejects(access(path.join(sandbox, `${slug}.mdx`)));
-  }
+test('the Fleets guides are the advanced cloud tasks, in order', async () => {
+  const meta = JSON.parse(await readFile(path.join(fleets, 'guides/meta.json'), 'utf8'));
+  assert.deepEqual(meta.pages, [
+    'capacity-and-claims',
+    'warm-pools',
+    'terraform',
+    'images',
+    'sidecars',
+    'claim-secrets',
+    'troubleshoot',
+  ]);
+  for (const slug of meta.pages) await page(`guides/${slug}`);
 });
 
 test('no page retains a legacy language-specific capacity link', async () => {
@@ -71,19 +71,14 @@ test('no page retains a legacy language-specific capacity link', async () => {
   assert.deepEqual(remaining, []);
 });
 
-test('legacy language-specific URLs permanently redirect to neutral capacity', async () => {
+test('legacy capacity URLs permanently redirect to the capacity page', async () => {
   const config = (await import('../next.config.mjs')).default;
-  const redirects = await config.redirects();
+  const redirects = (await config.redirects?.()) ?? [];
   for (const language of ['python', 'typescript']) {
+    const source = `/how-to-guides/sandbox/create-pool-with-${language}`;
     assert.deepEqual(
-      redirects.find(
-        (redirect) => redirect.source === `/how-to-guides/sandbox/create-pool-with-${language}`
-      ),
-      {
-        source: `/how-to-guides/sandbox/create-pool-with-${language}`,
-        destination: '/how-to-guides/sandbox/create-fleet-capacity',
-        permanent: true,
-      }
+      redirects.find((redirect) => redirect.source === source),
+      { source, destination: '/fleets/guides/capacity-and-claims', permanent: true }
     );
   }
 });

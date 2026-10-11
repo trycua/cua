@@ -1,0 +1,2775 @@
+{
+ "abstract": "cua-bench: run computer-use tasks and benchmark datasets on local and cloud sandboxes",
+ "after_help": "Examples:\n  # Run a task with its oracle solution\n  cb run ./tasks/hello_file_env\n\n  # List the tasks in a directory\n  cb task list ./tasks",
+ "commands": [
+  {
+   "abstract": "Run a task or dataset, and manage runs",
+   "after_help": "Examples:\n  # Run a task with its oracle solution\n  cb run ./tasks/hello_file_env\n\n  # Run a dataset with an agent, four variants at once\n  cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 4\n\n  # List runs\n  cb run list",
+   "arguments": [],
+   "discussion": "Run a task (a directory with main.py) or a dataset, with an agent or the task's oracle. `cb run <path>` is shorthand for `cb run task|dataset <path>`.",
+   "flags": [],
+   "hidden": false,
+   "name": "run",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "Run one task variant",
+     "after_help": "Examples:\n  # Run variant 0 with the oracle solution\n  cb run task ./tasks/hello_file_env\n\n  # Run variant 2 with an agent in the cloud\n  cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent --model anthropic/claude-sonnet-4-20250514 --on cloud\n\n  # Show what would run without starting a sandbox\n  cb run ./tasks/hello_file_env --dry-run",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Path to task directory (containing main.py)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "task_path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Run the oracle solution (the default when no agent is given)",
+       "hidden": false,
+       "name": "oracle",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Set up and evaluate with no actions (the null baseline for eval parity)",
+       "hidden": false,
+       "name": "noop",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "cloud: keep one replica ready when the managed pool is first created",
+       "hidden": false,
+       "name": "warm",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Run in the background and return (follow with cb run watch <id>)",
+       "hidden": false,
+       "name": "detach",
+       "repeatable": false,
+       "short_name": "d",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Print each variant's image, kind, variant and backend, then exit without starting a sandbox",
+       "hidden": false,
+       "name": "dry-run",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "name": "wait",
+       "repeatable": false,
+       "short_name": "w",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "task",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "0",
+       "env": null,
+       "help": "Task variant index (default: 0)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "variant-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "session-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Agent to use for evaluation (e.g., cua-agent)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "agent",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Import path for custom agent (e.g., \"path.to.agent:MyCustomAgent\")",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "agent-import-path",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Model to use with the agent (e.g., anthropic/claude-sonnet-4-20250514)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "model",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "100",
+       "env": null,
+       "help": "Maximum number of steps for agent execution (default: 100)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-steps",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "on",
+       "possible_values": [
+        "local",
+        "cloud",
+        "e2b",
+        "daytona",
+        "modal",
+        "cloudflare",
+        "vercel",
+        "morph",
+        "runloop",
+        "fly",
+        "blaxel",
+        "codesandbox",
+        "northflank",
+        "aws",
+        "gcp"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "kind",
+       "possible_values": [
+        "auto",
+        "container",
+        "vm"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "auto | container | vm",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Which engine: gvisor or runc (local containers), qemu or lume (local VMs), gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "runtime",
+       "possible_values": [
+        "auto",
+        "gvisor",
+        "runc",
+        "qemu",
+        "lume",
+        "kubevirt"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "auto | gvisor | runc | qemu | lume | kubevirt",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "image",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "vCPUs per sandbox",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpu",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory per sandbox (e.g. 4096, 4G)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "claim-ttl",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "platform",
+       "possible_values": [
+        "linux-docker",
+        "linux-qemu",
+        "windows-qemu",
+        "android-qemu"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "linux-docker | linux-qemu | windows-qemu | android-qemu",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "provider-type",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Output directory for session results",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "output-dir",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "1",
+       "env": null,
+       "help": "Run every variant this many times (fresh sandbox each); summary.json reports pass@k (default: 1)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "attempts",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "0",
+       "env": null,
+       "help": "Retry a variant that failed before evaluation (sandbox start, connection) up to this many times, with backoff (default: 0)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "retries",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "with",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PATH"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "run-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "After the run, delete all but the N newest runs in the runs directory (default: keep everything; env CUA_BENCH_KEEP_RUNS)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "keep-runs",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "After the run, delete runs older than DAYS (env CUA_BENCH_MAX_AGE_DAYS)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-age",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "number",
+       "value_name": "DAYS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "After the run, delete the oldest runs until the runs directory fits in SIZE, e.g. 20G (env CUA_BENCH_MAX_RESULTS_SIZE)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-results-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "SIZE"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Run every task and variant of a dataset in parallel",
+     "after_help": "Examples:\n  # Run a registry dataset with its oracle solutions\n  cb run dataset cua-bench-basic\n\n  # Run one variant of each matching task, eight at once, in the background\n  cb run ./tasks --task-filter 'click*' --max-variants 1 -j 8 --detach\n\n  # Run every variant three times and report pass@k\n  cb run dataset cua-bench-basic --agent cua-agent --attempts 3",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Path to dataset directory, or dataset name from registry",
+       "hidden": false,
+       "is_optional": false,
+       "name": "dataset_path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Run the oracle solution (the default when no agent is given)",
+       "hidden": false,
+       "name": "oracle",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Set up and evaluate with no actions (the null baseline for eval parity)",
+       "hidden": false,
+       "name": "noop",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "cloud: keep one replica ready when the managed pool is first created",
+       "hidden": false,
+       "name": "warm",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Run in the background and return (follow with cb run watch <id>)",
+       "hidden": false,
+       "name": "detach",
+       "repeatable": false,
+       "short_name": "d",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Print each variant's image, kind, variant and backend, then exit without starting a sandbox",
+       "hidden": false,
+       "name": "dry-run",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "name": "wait",
+       "repeatable": false,
+       "short_name": "w",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "dataset",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "4",
+       "env": null,
+       "help": "Variants running at once; in the cloud also the managed pool's max size (default: 4)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-parallel",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": "j",
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Maximum number of variants to run per task (default: all)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-variants",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Filter tasks by name pattern (glob)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "task-filter",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Agent to use for evaluation (e.g., cua-agent)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "agent",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Import path for custom agent (e.g., \"path.to.agent:MyCustomAgent\")",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "agent-import-path",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Model to use with the agent (e.g., anthropic/claude-sonnet-4-20250514)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "model",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "100",
+       "env": null,
+       "help": "Maximum number of steps for agent execution (default: 100)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-steps",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "on",
+       "possible_values": [
+        "local",
+        "cloud",
+        "e2b",
+        "daytona",
+        "modal",
+        "cloudflare",
+        "vercel",
+        "morph",
+        "runloop",
+        "fly",
+        "blaxel",
+        "codesandbox",
+        "northflank",
+        "aws",
+        "gcp"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "kind",
+       "possible_values": [
+        "auto",
+        "container",
+        "vm"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "auto | container | vm",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Which engine: gvisor or runc (local containers), qemu or lume (local VMs), gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "runtime",
+       "possible_values": [
+        "auto",
+        "gvisor",
+        "runc",
+        "qemu",
+        "lume",
+        "kubevirt"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "auto | gvisor | runc | qemu | lume | kubevirt",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "image",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "vCPUs per sandbox",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpu",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory per sandbox (e.g. 4096, 4G)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "claim-ttl",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "platform",
+       "possible_values": [
+        "linux-docker",
+        "linux-qemu",
+        "windows-qemu",
+        "android-qemu"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "linux-docker | linux-qemu | windows-qemu | android-qemu",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "provider-type",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Output directory for session results",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "output-dir",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "1",
+       "env": null,
+       "help": "Run every variant this many times (fresh sandbox each); summary.json reports pass@k (default: 1)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "attempts",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "0",
+       "env": null,
+       "help": "Retry a variant that failed before evaluation (sandbox start, connection) up to this many times, with backoff (default: 0)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "retries",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "with",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PATH"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "",
+       "hidden": true,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "run-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "After the run, delete all but the N newest runs in the runs directory (default: keep everything; env CUA_BENCH_KEEP_RUNS)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "keep-runs",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "After the run, delete runs older than DAYS (env CUA_BENCH_MAX_AGE_DAYS)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-age",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "number",
+       "value_name": "DAYS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "After the run, delete the oldest runs until the runs directory fits in SIZE, e.g. 20G (env CUA_BENCH_MAX_RESULTS_SIZE)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-results-size",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "SIZE"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "List all runs with status",
+     "after_help": "Examples:\n  # List runs\n  cb run list\n\n  # Include debugging details\n  cb run list --verbose",
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Show verbose debugging information",
+       "hidden": false,
+       "name": "verbose",
+       "repeatable": false,
+       "short_name": "v",
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Show detailed info about a run",
+     "after_help": "Examples:\n  # Show one run\n  cb run info 30c12572",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Run ID to show info for",
+       "hidden": false,
+       "is_optional": false,
+       "name": "run_id",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "info",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Watch a run in real-time with live updates",
+     "after_help": "Examples:\n  # Follow a detached run\n  cb run watch 30c12572",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Run ID to watch",
+       "hidden": false,
+       "is_optional": false,
+       "name": "run_id",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "watch",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Stop a run and release its sandboxes",
+     "after_help": "Examples:\n  # Stop a run\n  cb run stop 30c12572",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Run ID to stop",
+       "hidden": false,
+       "is_optional": false,
+       "name": "run_id",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "stop",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "View combined logs from a run or session",
+     "after_help": "Examples:\n  # Print a run's logs\n  cb run logs 30c12572\n\n  # Print the last 50 lines\n  cb run logs 30c12572 --tail 50",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Run ID or Session ID to view logs for",
+       "hidden": false,
+       "is_optional": false,
+       "name": "identifier",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "logs",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Show only the last N lines",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "tail",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Run a task's setup with its desktop visible, then evaluate",
+   "after_help": "Examples:\n  # Open a task and its display, wait for Enter, then evaluate\n  cb interact ./tasks/hello_file_env\n\n  # Run variant 1 with its oracle and save a screenshot\n  cb interact ./tasks/hello_file_env --variant-id 1 --oracle --screenshot shot.png\n\n  # Resolve a task from a registry dataset\n  cb interact click-button --dataset cua-bench-basic",
+   "arguments": [
+    {
+     "default_value": null,
+     "help": "Path to the task directory, or a task name with --dataset or --dataset-path",
+     "hidden": false,
+     "is_optional": false,
+     "name": "env_path",
+     "possible_values": [],
+     "repeatable": false,
+     "type": "string"
+    }
+   ],
+   "flags": [
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Run the solution after setup",
+     "hidden": false,
+     "name": "oracle",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Open the trace viewer when done",
+     "hidden": false,
+     "name": "view",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Skip the interactive prompt (useful for SSH/CI testing)",
+     "hidden": false,
+     "name": "no-wait",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Print the Display: URL without opening it (also CUA_BENCH_NO_BROWSER=1)",
+     "hidden": false,
+     "name": "no-browser",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "cloud: keep one replica ready when the managed pool is first created",
+     "hidden": false,
+     "name": "warm",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    }
+   ],
+   "hidden": false,
+   "name": "interact",
+   "options": [
+    {
+     "aliases": [],
+     "default_value": "0",
+     "env": null,
+     "help": "Task variant index (default: 0)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "variant-id",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "integer",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Registry dataset to resolve the task from (CUA_REGISTRY_HOME)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "dataset",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Path to dataset directory containing multiple tasks",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "dataset-path",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Maximum number of env.step() calls before stopping",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "max-steps",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "integer",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Save a screenshot to this file",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "screenshot",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Record a trace and save it as a dataset to this path on exit",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "trace-out",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "on",
+     "possible_values": [
+      "local",
+      "cloud",
+      "e2b",
+      "daytona",
+      "modal",
+      "cloudflare",
+      "vercel",
+      "morph",
+      "runloop",
+      "fly",
+      "blaxel",
+      "codesandbox",
+      "northflank",
+      "aws",
+      "gcp"
+     ],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "kind",
+     "possible_values": [
+      "auto",
+      "container",
+      "vm"
+     ],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "auto | container | vm",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Which engine: gvisor or runc (local containers), qemu or lume (local VMs), gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "runtime",
+     "possible_values": [
+      "auto",
+      "gvisor",
+      "runc",
+      "qemu",
+      "lume",
+      "kubevirt"
+     ],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "auto | gvisor | runc | qemu | lume | kubevirt",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "image",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "vCPUs per sandbox",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "cpu",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "integer",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Memory per sandbox (e.g. 4096, 4G)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "memory",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "claim-ttl",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "",
+     "hidden": true,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "platform",
+     "possible_values": [
+      "linux-docker",
+      "linux-qemu",
+      "windows-qemu",
+      "android-qemu"
+     ],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "linux-docker | linux-qemu | windows-qemu | android-qemu",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "",
+     "hidden": true,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "provider-type",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Scaffold custom agents",
+   "after_help": "Examples:\n  # Scaffold an agent in ./my-agent\n  cb agent init my-agent",
+   "arguments": [],
+   "discussion": "Create and manage custom agents for cua-bench.",
+   "flags": [],
+   "hidden": false,
+   "name": "agent",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "Create a new agent from template",
+     "after_help": "Examples:\n  # Scaffold an agent in ./my-agent\n  cb agent init my-agent\n\n  # Scaffold it into another directory\n  cb agent init my-agent --output-dir ./agents/my-agent",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Agent name (e.g., 'my-agent')",
+       "hidden": false,
+       "is_optional": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": "Scaffold a new custom agent with working sample code.",
+     "flags": [],
+     "hidden": false,
+     "name": "init",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Output directory (default: ./<name>)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "output-dir",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": "o",
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Deprecated: cb run executes agents in-process",
+     "after_help": "Examples:\n  # Build an agent image (deprecated)\n  cb agent build ./my-agent --tag my-agent:dev",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Path to agent directory (containing Dockerfile)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": "Build a Docker image for an agent directory containing a Dockerfile.",
+     "flags": [],
+     "hidden": false,
+     "name": "build",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Image tag (default: agent directory name)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "tag",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": "t",
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Deprecated: agent images are no longer used",
+     "after_help": "Examples:\n  # Push an agent image (deprecated)\n  cb agent push my-agent:dev",
+     "arguments": [
+      {
+       "default_value": "cua-bench:latest",
+       "help": "Docker image to push (default: cua-bench:latest)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "image_name",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "discussion": "Push a Docker image through the CUA API proxy with workspace namespacing.",
+     "flags": [],
+     "hidden": false,
+     "name": "push",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Custom API proxy URL (default: https://api.cua.ai)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "registry",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Show available platform configurations",
+   "after_help": "Examples:\n  # List platforms\n  cb platform\n\n  # Show one platform\n  cb platform info linux-docker",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "platform",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "List all available platforms",
+     "after_help": "Examples:\n  # List platforms\n  cb platform list\n\n  # As JSON\n  cb platform list --format json",
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "name": "list",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "table",
+       "env": null,
+       "help": "Output format",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "format",
+       "possible_values": [
+        "table",
+        "json"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "table | json",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Show platform details",
+     "after_help": "Examples:\n  # Show one platform\n  cb platform info windows-qemu",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Platform name (e.g., linux-docker, windows-qemu)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "platform",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "info",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Show the canonical images (the local image store is deprecated)",
+   "after_help": "Examples:\n  # List the canonical images\n  cb image\n\n  # Show one image\n  cb image info linux",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "image",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "List all images",
+     "after_help": "Examples:\n  # List images\n  cb image list\n\n  # List one platform's images as JSON\n  cb image list --platform linux-docker --format json",
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "name": "list",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Filter by platform",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "platform",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "table",
+       "env": null,
+       "help": "Output format",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "format",
+       "possible_values": [
+        "table",
+        "json"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "table | json",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Show image details",
+     "after_help": "Examples:\n  # Show one image\n  cb image info linux",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Image name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "info",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Deprecated: create an image from a platform",
+     "after_help": "Examples:\n  # Create a Linux image (deprecated)\n  cb image create linux-docker --name my-linux",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Platform name (e.g., linux-docker, windows-qemu)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "platform",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Download Windows 11 ISO (~6GB)",
+       "hidden": false,
+       "name": "download-iso",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.)",
+       "hidden": false,
+       "name": "winarena-apps",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Run in background",
+       "hidden": false,
+       "name": "detach",
+       "repeatable": false,
+       "short_name": "d",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Force recreation",
+       "hidden": false,
+       "name": "force",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Don't pull Docker image",
+       "hidden": false,
+       "name": "skip-pull",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Disable KVM acceleration",
+       "hidden": false,
+       "name": "no-kvm",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "create",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Image name (default: same as platform)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Path to ISO file (for QEMU platforms)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "iso",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Override Docker image",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "docker-image",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "ubuntu",
+       "env": null,
+       "help": "Linux distribution",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "distro",
+       "possible_values": [
+        "ubuntu",
+        "fedora"
+       ],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "ubuntu | fedora",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "14",
+       "env": null,
+       "help": "OS version (e.g., 14 for Android, sonoma for macOS)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "version",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "64G",
+       "env": null,
+       "help": "Disk size (default: 64G)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "disk",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "8G",
+       "env": null,
+       "help": "Memory (default: 8G)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "8",
+       "env": null,
+       "help": "CPU cores (default: 8)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpus",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "VNC port (default: auto-allocate from 8006)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "vnc-port",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "API port (default: auto-allocate from 5000)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "api-port",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Deprecated: delete a stored image",
+     "after_help": "Examples:\n  # Delete a stored image (deprecated)\n  cb image delete my-linux --force",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Image name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Skip confirmation",
+       "hidden": false,
+       "name": "force",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "delete",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Deprecated: clone a stored image",
+     "after_help": "Examples:\n  # Clone a stored image (deprecated)\n  cb image clone my-linux my-linux-2",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Source image name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "source",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "Target image name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "target",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Overwrite if target exists",
+       "hidden": false,
+       "name": "force",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "clone",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Deprecated: interactive shell into a stored image",
+     "after_help": "Examples:\n  # Open a shell in a stored image (deprecated)\n  cb image shell my-linux",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Image name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Modify golden image directly (dangerous!)",
+       "hidden": false,
+       "name": "writable",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Run in background",
+       "hidden": false,
+       "name": "detach",
+       "repeatable": false,
+       "short_name": "d",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Disable KVM acceleration",
+       "hidden": false,
+       "name": "no-kvm",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "shell",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "VNC port (default: auto-allocate from 8006)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "vnc-port",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "API port (default: auto-allocate from 5000)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "api-port",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "8G",
+       "env": null,
+       "help": "Memory (default: 8G)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": "8",
+       "env": null,
+       "help": "CPU cores (default: 8)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpus",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Show system status dashboard",
+   "after_help": "Examples:\n  # Show runs, sandboxes and credentials at a glance\n  cb status",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "status",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Inspect and manage task environments",
+   "after_help": "Examples:\n  # List the tasks in a directory\n  cb task list ./tasks\n\n  # Inspect one task\n  cb task info ./tasks/hello_file_env",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "task",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "Show detailed information about a task",
+     "after_help": "Examples:\n  # Inspect a task's variants and lifecycle functions\n  cb task info ./tasks/hello_file_env",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Path to task directory (containing main.py)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "info",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "List tasks in a directory",
+     "after_help": "Examples:\n  # List tasks here\n  cb task list\n\n  # List tasks in a directory\n  cb task list ./tasks",
+     "arguments": [
+      {
+       "default_value": ".",
+       "help": "Path to directory containing tasks (default: current directory)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Scaffold a new task environment",
+     "after_help": "Examples:\n  # Scaffold a task interactively under ./tasks\n  cb task create ./tasks",
+     "arguments": [
+      {
+       "default_value": ".",
+       "help": "Target directory to create the task in (default: current directory)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "create",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Generate a task from a prompt using Claude",
+     "after_help": "Examples:\n  # Generate a task\n  cb task generate '2048 game'\n\n  # Generate into a directory without prompts\n  cb task generate 'Sort a spreadsheet column' ./tasks/sort_column --no-interaction",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Natural language description of the task to generate (e.g., \"2048 game\")",
+       "hidden": false,
+       "is_optional": false,
+       "name": "prompt",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "Output directory (default: named after the prompt)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "output",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Skip interactive prompts and run Claude non-interactively",
+       "hidden": false,
+       "name": "no-interaction",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "generate",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "View and analyze trace datasets",
+   "after_help": "Examples:\n  # Open a run's trace in the browser\n  cb trace view 30c12572\n\n  # Open a run's agent trajectories\n  cb trace traj 30c12572",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "trace",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "View a single trace in browser",
+     "after_help": "Examples:\n  # Open a run's trace\n  cb trace view 30c12572\n\n  # Open one session's trace\n  cb trace view task-30c12572-click-button-v0",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Run ID or session ID (e.g., \"30c12572\" or \"task-30c12572-click-button-v0\")",
+       "hidden": false,
+       "is_optional": false,
+       "name": "identifier",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "view",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "View agent trajectories from a run in cua.ai/trajectory-viewer",
+     "after_help": "Examples:\n  # Open a run's trajectories\n  cb trace traj 30c12572\n\n  # Serve the files on another port\n  cb trace traj 30c12572 --port 9000",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Run ID (e.g., \"30c12572\")",
+       "hidden": false,
+       "is_optional": false,
+       "name": "identifier",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "name": "traj",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "8090",
+       "env": null,
+       "help": "Local file server port (default: 8090)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "port",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": "p",
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Manage datasets and build from outputs",
+   "after_help": "Examples:\n  # List registry datasets\n  cb dataset list\n\n  # Build a training dataset from run outputs\n  cb dataset build ./outputs",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "dataset",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "List available datasets from registry",
+     "after_help": "Examples:\n  # List registry datasets\n  cb dataset list",
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Build a dataset from batch outputs",
+     "after_help": "Examples:\n  # Build an aguvis-stage-1 dataset from run outputs\n  cb dataset build ./outputs\n\n  # Build 100 gui-r1 samples\n  cb dataset build ./outputs 100 --mode gui-r1\n\n  # Push a private dataset to the Hugging Face Hub\n  cb dataset build ./outputs --push-to-hub --repo-id me/cua-clicks --private",
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Path to outputs folder from batch dump (e.g., ./outputs or /tmp/td_output)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "outputs_path",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "Limit number of samples processed (useful for testing)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "max_samples",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "integer"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Push the dataset to the Hugging Face Hub",
+       "hidden": false,
+       "name": "push-to-hub",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "When pushing to hub, create/update the repo as private",
+       "hidden": false,
+       "name": "private",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "build",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "aguvis-stage-1",
+       "env": null,
+       "help": "Processing mode: aguvis-stage-1 (action augmentation) or gui-r1 (low-level click)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "mode",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Dataset name when saving to disk (default: td_<mode>_dataset)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "dataset-name",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Directory to save a JSONL dataset (default: <outputs>/processed if not pushing)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "save-dir",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "HF Hub repository ID (e.g., username/repo). Required with --push-to-hub.",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "repo-id",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Clean up cua-bench run data (and 0.2.x image leftovers)",
+   "after_help": "Examples:\n  # Preview what would be removed\n  cb prune --all --dry-run\n\n  # Remove run logs without asking\n  cb prune --runs --force\n\n  # Keep the 20 newest runs, delete the rest\n  cb prune --runs --keep 20\n\n  # Delete runs older than 30 days\n  cb prune --runs --older-than 30",
+   "arguments": [],
+   "flags": [
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Remove runs and 0.2.x image leftovers",
+     "hidden": false,
+     "name": "all",
+     "repeatable": false,
+     "short_name": "a",
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Remove 0.2.x stored images (deprecated store)",
+     "hidden": false,
+     "name": "images",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Remove 0.2.x task overlays (deprecated store)",
+     "hidden": false,
+     "name": "overlays",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Remove run logs and registry",
+     "hidden": false,
+     "name": "runs",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Deprecated: cua-bench no longer creates Docker resources",
+     "hidden": false,
+     "name": "docker",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Show what would be deleted without deleting",
+     "hidden": false,
+     "name": "dry-run",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Skip confirmation prompts",
+     "hidden": false,
+     "name": "force",
+     "repeatable": false,
+     "short_name": "f",
+     "takes_value": false
+    }
+   ],
+   "hidden": false,
+   "name": "prune",
+   "options": [
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "With --runs: keep the N newest runs and remove only older ones",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "keep",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "integer",
+     "value_name": "N"
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "With --runs: remove only runs older than DAYS",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "older-than",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "number",
+     "value_name": "DAYS"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "List or garbage-collect sandboxes and pools",
+   "after_help": "Examples:\n  # List managed cloud pools and claims\n  cb env ls\n\n  # Delete pools idle for an hour\n  cb env gc --idle 1h",
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "name": "env",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "List managed cloud pools and claims",
+     "after_help": "Examples:\n  # List managed cloud pools and claims\n  cb env ls\n\n  # List local sandboxes\n  cb env ls --local",
+     "aliases": [
+      "list"
+     ],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "List local sandboxes instead",
+       "hidden": false,
+       "name": "local",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "name": "ls",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Delete idle managed pools and stuck claims",
+     "after_help": "Examples:\n  # Delete pools unused for 30 minutes\n  cb env gc\n\n  # Delete pools idle for two hours\n  cb env gc --idle 2h",
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "name": "gc",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "30m",
+       "env": null,
+       "help": "Delete pools unused for this long (default 30m)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "idle",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": null
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Sign in for --on cloud (runs `cua auth login`)",
+   "after_help": "Examples:\n  # Sign in with a browser\n  cb login\n\n  # Print the sign-in URL instead of opening a browser\n  cb login --no-browser",
+   "arguments": [],
+   "flags": [
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Print the sign-in URL only",
+     "hidden": false,
+     "name": "no-browser",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    }
+   ],
+   "hidden": false,
+   "name": "login",
+   "options": [],
+   "subcommands": []
+  }
+ ],
+ "exit_codes": [
+  {
+   "code": 0,
+   "meaning": "Success: every variant completed"
+  },
+  {
+   "code": 1,
+   "meaning": "Failure: a variant failed or was cancelled, or the command could not run"
+  },
+  {
+   "code": 2,
+   "meaning": "Usage error: an unknown command, flag or value"
+  },
+  {
+   "code": 130,
+   "meaning": "Interrupted (Ctrl-C); running variants are cancelled"
+  }
+ ],
+ "global_options": [],
+ "name": "cb",
+ "usage": "cb <COMMAND> [OPTIONS]",
+ "version": "0.3.0"
+}

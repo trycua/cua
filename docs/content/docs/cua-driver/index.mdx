@@ -1,0 +1,66 @@
+---
+title: Cua Driver
+description: Drive native apps on macOS, Windows and Linux in the background.
+landing:
+  cta: Drive a real app
+---
+
+Cua Driver gives an agent the apps on a real computer. It reads each window's
+accessibility tree and screenshot, then clicks, types, scrolls, and drives
+browser tabs, in the background where the operating system allows it. The
+person at the keyboard keeps their focus and cursor; the agent gets its own
+cursor overlay.
+
+Use it from any agent through **MCP** (`cua-driver mcp`), from a shell through
+the **CLI** (`cua-driver call <tool>`), or inside your own app through the
+Python and TypeScript **SDK** (`CuaDriver.create()`).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/e9344780-e780-46e7-bcce-91f61eda9599"
+  poster="/media/workflow-demos/highlights-poster.jpg"
+  title="Real desktop workflows with GPT-6 Astra + Cua Driver"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Selected interactions from QGIS, Preview, GIMP, and Inkscape, with the recorded agent cursor and
+  action captions.
+</VideoDemo>
+
+Recorded on macOS with GPT-6 Astra + Cua Driver; selected gestures at 1x, with
+setup and waits cut. Try them in [Recipes](/cua-driver/guides/recipes).
+
+## Platforms
+
+| Platform      | Requirements                                                         | Automation APIs                                   | Status                           |
+| ------------- | -------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------- |
+| macOS         | macOS 14+, Apple Silicon or Intel; Accessibility and Screen Recording | Accessibility (AX), ScreenCaptureKit, Quartz      | Supported                        |
+| Windows       | Windows 10/11 or Server, interactive desktop session                 | UI Automation, Win32 input and window messages    | Supported                        |
+| Linux X11     | x86_64 desktop session, AT-SPI 2                                     | AT-SPI, X11/EWMH, XTest                           | Supported with toolkit limits    |
+| Linux Wayland | x86_64 desktop session, AT-SPI 2                                     | AT-SPI, compositor-specific capture and input     | Supported with compositor limits |
+
+See [Platform support](/cua-driver/concepts/platform-support) for proven
+surfaces and limits.
+
+## Choose an integration
+
+Pick by who owns the runtime: the process that holds the OS permissions,
+sessions, and browser connections.
+
+| You are building                                    | Use                                                                          | Runtime owner                                        |
+| --------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
+| An agent or harness (Claude Code, Codex, Cursor, …) | [MCP](/cua-driver/guides/connect-your-agent): `cua-driver mcp`               | The MCP process; on macOS, the `CuaDriver.app` daemon |
+| An agent that can only run shell commands           | [CLI](/cua-driver/reference/cli): `cua-driver call <tool>`                   | The `cua-driver serve` daemon                        |
+| An app with built-in computer use                   | [SDK](/cua-driver/guides/use-the-sdk): `CuaDriver.create()`                  | Your app process                                     |
+| A signed desktop app that serves an external agent  | [App-hosted service](/cua-driver/guides/use-the-sdk#expose-mcp-from-a-desktop-app) | The permission-owning desktop app               |
+| Several clients sharing one desktop                 | `cua-driver serve --socket <path>` plus `cua-driver mcp --socket <path>`     | The daemon                                           |
+
+Inside a [Cua Sandbox](/cua-sdk) you do not install Cua Driver: the sandbox's
+guest service bundles its tools.
+
+## Next
+
+- [Quickstart](/cua-driver/quickstart): install and drive your first app.
+- [Connect your agent](/cua-driver/guides/connect-your-agent): every supported harness.
+- [How Cua Driver works](/cua-driver/concepts/how-cua-driver-works): background delivery, targets, and sessions.

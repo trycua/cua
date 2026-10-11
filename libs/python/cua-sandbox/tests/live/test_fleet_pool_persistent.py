@@ -11,12 +11,18 @@ import pytest
 from cua_sandbox import Image, Pool, Sandbox, WarmPoolAutoscaling
 
 from tests.live.fleet_e2e_support import (
+    KUBEVIRT_ENV_SKIP,
+    assert_env_template_contract,
     assert_template_contract,
     build_fleet_client,
     build_pool_namespace_name,
+    check_service_reachable,
+    check_spacesd,
     collect_resource_inventory,
+    env_image,
     has_oauth_credentials,
     is_pool_missing_error,
+    namespace_prefix_ok,
     wait_claims_absent,
     write_summary,
 )
@@ -51,8 +57,10 @@ def selected_pool_namespace(mode: str) -> str:
         lane,
         os.environ.get("CUA_LIVE_E2E_EVENT", os.environ.get("GITHUB_EVENT_NAME", "manual")),
     )
-    if not namespace.startswith(f"cua-live-pool-{mode}-"):
-        raise ValueError(f"{MODE_ENV[mode]} must start with cua-live-pool-{mode}-")
+    if not namespace_prefix_ok(namespace, f"cua-live-pool-{mode}-", f"cua-e2e-pool-{mode}-"):
+        raise ValueError(
+            f"{MODE_ENV[mode]} must start with cua-live-pool-{mode}- or cua-e2e-pool-{mode}-"
+        )
     if len(namespace) > 63 or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", namespace) is None:
         raise ValueError(f"{MODE_ENV[mode]} must be a DNS-1123 label of at most 63 characters")
     return namespace
@@ -68,15 +76,18 @@ async def run_fleet_pool_live(mode: str) -> None:
     lane = os.environ.get("CUA_LIVE_E2E_LANE", "local")
     namespace = selected_pool_namespace(mode)
     artifact_dir = Path(os.environ.get("CUA_LIVE_E2E_ARTIFACT_DIR", "/tmp/cua-live-e2e"))
+    spacesd_image = env_image()
     summary = {
         "lane": lane,
         "mode": mode,
         "namespace": namespace,
-        "image": IMAGE,
+        "image": spacesd_image or IMAGE,
+        "guest_daemon": "cua-spacesd" if spacesd_image else "image-provided server:8000",
         "source_sha": os.environ.get("CUA_LIVE_E2E_SOURCE_SHA") or os.environ.get("GITHUB_SHA"),
         "packages": {
             "cua-sandbox": version("cua-sandbox"),
             "cua-fleet": version("cua-fleet"),
+            "cua": version("cua"),
         },
         "module_origins": {
             "cua_sandbox": str(Path(cua_sandbox.__file__).resolve()),
@@ -116,11 +127,15 @@ async def run_fleet_pool_live(mode: str) -> None:
 
         apply_started = time.monotonic()
         pool = await Pool.apply(
-            Image.from_registry(IMAGE),
+            Image.from_registry(spacesd_image or IMAGE),
             name=namespace,
             replicas=1,
             cpu=POOL_CPU,
             memory_mb=POOL_MEMORY_MB,
+            # The pinned image serves its own daemon on 8000; declaring it as
+            # the `server` service makes it the readiness probe. The env image
+            # takes the daemon-agnostic default (`env` on 3211, no probe).
+            services=None if spacesd_image else {"server": 8000},
             autoscaling=None if mode == "warm" else cold_autoscaling(),
         )
         pool_applied = True
@@ -128,14 +143,19 @@ async def run_fleet_pool_live(mode: str) -> None:
         assert pool.name == namespace, f"pool name {pool.name!r} must equal namespace {namespace!r}"
 
         template = await fleet.get_template(namespace, namespace)
-        assert_template_contract(template, expected_port=8000)
+        if spacesd_image is None:
+            assert_template_contract(template, expected_port=8000)
+        else:
+            assert_env_template_contract(template)
 
         claim_started = time.monotonic()
         async with Sandbox.ephemeral(
             pool=namespace,
             name=namespace,
+            service="env" if spacesd_image else "server",
             time_to_start=WARM_TIME_TO_START if mode == "warm" else COLD_TIME_TO_START,
             telemetry_enabled=False,
+            local=False,
         ) as sandbox:
             sandbox_yielded = True
             claim_seconds = time.monotonic() - claim_started
@@ -150,10 +170,9 @@ async def run_fleet_pool_live(mode: str) -> None:
                     isinstance(sandbox.name, str) and sandbox.name
                 ), "sandbox name must be a non-empty string"
                 if sandbox_claim_name is not None:
-                    assert sandbox_claim_name == namespace, (
-                        f"claim name {sandbox_claim_name!r} must equal "
-                        f"requested name {namespace!r}"
-                    )
+                    assert (
+                        sandbox_claim_name == namespace
+                    ), f"claim name {sandbox_claim_name!r} must equal requested name {namespace!r}"
                 if sandbox_pool_name is not None:
                     assert (
                         sandbox_pool_name == namespace
@@ -171,24 +190,10 @@ async def run_fleet_pool_live(mode: str) -> None:
                         f"expected under {WARM_BIND_SLA_SECONDS}s"
                     )
 
-                width, height = await sandbox.screen.size()
-                summary["screen"] = {"width": width, "height": height}
-                assert (width, height) == (1024, 768)
-
-                screenshot = await sandbox.screenshot()
-                artifact_dir.mkdir(parents=True, exist_ok=True)
-                (artifact_dir / f"screen-pool-{mode}.png").write_bytes(screenshot)
-                assert screenshot.startswith(b"\x89PNG\r\n\x1a\n")
-                assert len(screenshot) > 1000
-
-                result = await sandbox.shell.run("uname -s")
-                summary["shell"] = {
-                    "success": result.success,
-                    "stdout": result.stdout.strip(),
-                    "stderr": result.stderr.strip(),
-                }
-                assert result.success
-                assert result.stdout.strip() == "Linux"
+                if spacesd_image is None:
+                    await check_service_reachable(sandbox, "server", summary)
+                else:
+                    await check_spacesd(sandbox, summary, artifact_dir, f"pool-{mode}")
             except BaseException as error:
                 primary_error = error
                 summary["error"] = {"type": type(error).__name__}
@@ -277,8 +282,12 @@ async def run_fleet_pool_live(mode: str) -> None:
 
 
 async def test_fleet_pool_warm_live() -> None:
+    if env_image() is not None:
+        pytest.skip(KUBEVIRT_ENV_SKIP)
     await run_fleet_pool_live("warm")
 
 
 async def test_fleet_pool_cold_live() -> None:
+    if env_image() is not None:
+        pytest.skip(KUBEVIRT_ENV_SKIP)
     await run_fleet_pool_live("cold")

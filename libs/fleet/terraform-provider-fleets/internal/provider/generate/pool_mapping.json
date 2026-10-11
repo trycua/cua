@@ -98,6 +98,46 @@
       "description": "JSON object for the VMI livenessProbe."
     },
     {
+      "name": "command",
+      "go_name": "Command",
+      "value_type": "string_list",
+      "mode": "optional",
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.command"
+    },
+    {
+      "name": "claim_secrets",
+      "go_name": "ClaimSecrets",
+      "value_type": "bool",
+      "mode": "optional",
+      "cr": "template",
+      "crd_path": "spec.vmTemplate.claimSecrets"
+    },
+    {
+      "name": "ttl_seconds_after_created",
+      "go_name": "TTLSecondsAfterCreated",
+      "value_type": "int64",
+      "mode": "optional",
+      "cr": "warmpool",
+      "crd_path": "spec.ttlSecondsAfterCreated"
+    },
+    {
+      "name": "idle_ttl_seconds",
+      "go_name": "IdleTTLSeconds",
+      "value_type": "int64",
+      "mode": "optional",
+      "cr": "warmpool",
+      "crd_path": "spec.idleTtlSeconds"
+    },
+    {
+      "name": "ttl_policy",
+      "go_name": "TTLPolicy",
+      "value_type": "string",
+      "mode": "optional",
+      "cr": "warmpool",
+      "crd_path": "spec.ttlPolicy"
+    },
+    {
       "name": "template_name",
       "go_name": "TemplateName",
       "value_type": "string",

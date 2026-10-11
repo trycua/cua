@@ -42,6 +42,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
@@ -57,7 +58,7 @@
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Acts on a given agent when its parent skills dir already exists. For
-//! Claude Code and Codex, whose fresh installs may not create that directory,
+//! Claude Code, Codex, and Pi, whose fresh installs may not create that directory,
 //! the explicit `skills install` verb also creates it when the client's own
 //! home directory proves that client is installed. Never clobbers an existing
 //! `<agent_skills>/cua-driver` link — preserves dev users' hand-rolled symlinks.
@@ -78,10 +79,13 @@ const LEGACY_SKILL_PACK_NAME: &str = "cua-driver-rs";
 const SKILL_FILES: &[&str] = &[
     "README.md",
     "SKILL.md",
+    "WORKFLOW.md",
+    "RUNTIME.md",
     "WINDOWS.md",
     "MACOS.md",
     "LINUX.md",
     "BROWSER.md",
+    "VISUAL.md",
     "RECORDING.md",
     "EMBEDDING.md",
 ];
@@ -212,6 +216,14 @@ const AGENTS: &[Agent] = &[
         label: "Codex",
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".codex"),
+    },
+    Agent {
+        label: "Pi",
+        // Pi discovers both ~/.pi/agent/skills and ~/.agents/skills. Reuse the
+        // latter so Pi + Codex converge on one managed cua-driver link instead
+        // of making Pi report a duplicate skill-name collision.
+        parent: AgentParent::Home(".agents/skills"),
+        install_marker: Some(".pi/agent"),
     },
     Agent {
         label: "Prime Agent",
@@ -1016,6 +1028,54 @@ mod tests {
     }
 
     #[test]
+    fn pi_target_matches_its_native_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Pi")
+            .expect("Pi must remain a supported skill target");
+
+        assert!(matches!(target.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(target.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn codex_and_pi_share_one_managed_global_skill_directory() {
+        let codex = AGENTS.iter().find(|agent| agent.label == "Codex").unwrap();
+        let pi = AGENTS.iter().find(|agent| agent.label == "Pi").unwrap();
+
+        assert!(matches!(codex.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(pi.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(codex.install_marker, Some(".codex")));
+        assert!(matches!(pi.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn pi_marker_creates_shared_link_and_codex_reuses_it() {
+        let home = tempdir().unwrap();
+        let parent = home.path().join(".agents/skills");
+        let pi_marker = home.path().join(".pi/agent");
+        let local_skill = home.path().join(".cua-driver/skills/cua-driver");
+
+        std::fs::create_dir_all(&pi_marker).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+
+        assert_eq!(
+            link_agent_paths("Pi", &parent, Some(&pi_marker), &local_skill).unwrap(),
+            LinkStatus::Created
+        );
+        assert!(parent.join("cua-driver").exists());
+
+        // Codex and Pi intentionally share ~/.agents/skills. Once Pi has
+        // created the managed link, the Codex path must converge on that same
+        // link rather than creating or replacing another skill entry.
+        assert_eq!(
+            link_agent_paths("Codex", &parent, None, &local_skill).unwrap(),
+            LinkStatus::Existing
+        );
+        assert!(parent.join("cua-driver").exists());
+    }
+
+    #[test]
     fn prime_agent_target_matches_its_native_global_skill_directory() {
         let target = AGENTS
             .iter()
@@ -1159,6 +1219,21 @@ mod tests {
         );
     }
 
+    fn core_guidance() -> String {
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Skills/cua-driver");
+        ["SKILL.md", "WORKFLOW.md", "RUNTIME.md"]
+            .iter()
+            .map(|file| {
+                std::fs::read_to_string(skill_dir.join(file))
+                    .unwrap_or_else(|error| panic!("failed to read {file}: {error}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     #[test]
     fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1169,7 +1244,7 @@ mod tests {
             "screen_recording_capturable` is `null",
             "direct_capture_status` is `\"not_checked\"",
             "include_screenshot:false",
-            "element-indexed AX actions",
+            "`element_token` AX actions",
         ] {
             assert!(
                 macos.contains(required),
@@ -1180,9 +1255,7 @@ mod tests {
 
     #[test]
     fn bundled_skill_keeps_filesystem_outcome_ladder_and_gui_proof_boundaries() {
-        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
 
         for required in [
             "headless filesystem or command capability",
@@ -1202,8 +1275,7 @@ mod tests {
     #[test]
     fn bundled_skill_keeps_semantic_clipboard_outcome_ladder() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
         let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
             .expect("canonical browser skill must be readable");
 
@@ -1221,7 +1293,7 @@ mod tests {
         for required in [
             "exact page content on the system clipboard",
             "passive headings and text nodes are evidence sources",
-            "foreground escalation rules in `SKILL.md`",
+            "foreground escalation rules in [RUNTIME.md]",
         ] {
             assert!(
                 browser.contains(required),
@@ -1277,28 +1349,57 @@ mod tests {
     }
 
     #[test]
-    fn extracted_skill_pack_keeps_history_consultation_policy() {
+    fn extracted_skill_pack_keeps_canonical_skill_bytes() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let canonical = std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
-        let bytes = build_tarball(&[(
-            "cua-driver-rs-v0.19.3-skills/SKILL.md",
-            canonical.as_slice(),
-        )]);
+        let files = SKILL_FILES
+            .iter()
+            .map(|name| {
+                (
+                    format!("cua-driver-skills/{name}"),
+                    std::fs::read(crate_dir.join("../../Skills/cua-driver").join(name))
+                        .expect("canonical skill file must be readable"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let entries = files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+            .collect::<Vec<_>>();
+        let bytes = build_tarball(&entries);
         let dest = tempdir().unwrap();
 
         extract_tar_gz(&bytes, dest.path(), false).unwrap();
 
         let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
             .expect("extracted skill must be readable");
-        assert_history_consultation_policy(&packaged, "extracted skill pack");
+        // The canonical guidance phrases are owned by the bundled_skill_* tests;
+        // extraction must deliver those exact bytes.
+        assert_eq!(
+            packaged.as_bytes(),
+            std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+                .unwrap()
+                .as_slice(),
+            "extracted SKILL.md must equal the canonical skill"
+        );
+        for reference in ["WORKFLOW.md", "RUNTIME.md"] {
+            assert!(
+                packaged.contains(&format!("]({reference})")),
+                "entrypoint must route to bundled {reference}"
+            );
+            let expected =
+                std::fs::read(crate_dir.join("../../Skills/cua-driver").join(reference)).unwrap();
+            assert_eq!(
+                std::fs::read(dest.path().join(reference)).unwrap(),
+                expected,
+                "host-filtered install must retain the complete {reference}"
+            );
+        }
     }
 
     #[test]
     fn bundled_skill_keeps_sessions_and_authorization_as_separate_concepts() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
         let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
             .expect("canonical browser skill must be readable");
 
@@ -1347,8 +1448,7 @@ mod tests {
     #[test]
     fn bundled_skill_keeps_agent_control_non_interfering_by_default() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
         let linux = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/LINUX.md"))
             .expect("canonical Linux skill must be readable");
 
@@ -1466,6 +1566,7 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
             ("cua-driver-rs-v0.2.20-skills/RECORDING.md", b"R"),
             ("cua-driver-rs-v0.2.20-skills/BROWSER.md", b"B"),
+            ("cua-driver-rs-v0.2.20-skills/VISUAL.md", b"V"),
             ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md", b"E"),
         ]);
         let dest = tempdir().unwrap();
@@ -1476,6 +1577,7 @@ mod tests {
             "SKILL.md",
             "RECORDING.md",
             "BROWSER.md",
+            "VISUAL.md",
             "EMBEDDING.md",
         ] {
             assert!(

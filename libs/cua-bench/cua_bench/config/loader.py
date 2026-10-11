@@ -27,31 +27,42 @@ class ConfigLoader:
         self._config: CuaConfig | None = None
         self._agents: AgentsConfig | None = None
 
+    def is_project_config_dir(self, path: Path) -> bool:
+        """Whether ``path`` is a project's ``.cua/`` (it holds config.yaml or
+        agents.yaml). A bare ``.cua/`` (such as the cua CLI's state dir) is not."""
+        return path.is_dir() and (
+            (path / self.CONFIG_FILE_NAME).is_file() or (path / self.AGENTS_FILE_NAME).is_file()
+        )
+
     def find_config_dir(self) -> Path | None:
-        """Walk up directory tree to find .cua/ directory.
+        """Walk up from ``search_path`` to the nearest project ``.cua/``.
+
+        The search stops below the home directory: ``~/.cua`` is the cua CLI's
+        state directory, never a project config, and nothing above ``$HOME``
+        belongs to the project either. Outside ``$HOME`` it walks to the root.
 
         Returns:
-            Path to .cua/ directory if found, None otherwise.
+            Path to the ``.cua/`` directory if found, None otherwise.
         """
         if self._config_dir is not None:
             return self._config_dir
 
         current = self.search_path.resolve()
+        try:
+            home: Path | None = Path.home().resolve()
+        except (KeyError, RuntimeError):  # no resolvable home directory
+            home = None
 
-        while current != current.parent:
+        while True:
+            if home is not None and current == home:
+                return None
             config_dir = current / self.CONFIG_DIR_NAME
-            if config_dir.is_dir():
+            if self.is_project_config_dir(config_dir):
                 self._config_dir = config_dir
                 return config_dir
+            if current == current.parent:
+                return None
             current = current.parent
-
-        # Check root
-        config_dir = current / self.CONFIG_DIR_NAME
-        if config_dir.is_dir():
-            self._config_dir = config_dir
-            return config_dir
-
-        return None
 
     def load_config(self) -> CuaConfig | None:
         """Load .cua/config.yaml if it exists.

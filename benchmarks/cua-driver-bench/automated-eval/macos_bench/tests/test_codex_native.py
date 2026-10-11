@@ -70,9 +70,7 @@ class HomeTest(unittest.TestCase):
         self.assertEqual(server["args"], ARM_B["mcpServers"]["codex-cu"]["args"])
         self.assertEqual(server["enabled_tools"], ["js", "js_reset"])
         self.assertEqual(server["env"]["CUA_REPL_ENABLED_SURFACES"], "computer")
-        self.assertEqual(
-            server["env"]["CODEX_HOME"], env["CODEX_HOME"]
-        )  # the trial's home, not the VM user's
+        self.assertEqual(server["env"]["CODEX_HOME"], "/Users/lume/.codex")  # unchanged from arm B
         self.assertEqual(server["env"]["X"], "1")
         self.assertEqual(env["PATH"], cxn.CLOSED_PATH)
 

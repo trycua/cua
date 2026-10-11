@@ -1653,6 +1653,7 @@ def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str
     )
     summary = claude_events.summarize(claude_events.read_events(stream))
     text = (summary.get("final_text") or "").strip()
+<<<<<<< ours
     ok = (
         result.get("result_seen")
         and text.upper().startswith("OK")
@@ -1665,6 +1666,12 @@ def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str
             f"reply={text[:40]!r} tools={summary['tool_calls']['total']} usage={result.get('codex_usage')}",
         )
     )
+=======
+    # the shared system prompt asks for DONE at the end, so either answer is a working turn
+    ok = result.get("result_seen") and text.upper().startswith(("OK", "DONE")) and not summary["tool_calls"]["total"]
+    out.append((f"init check {arm} (codex app-server, {cxn.MODEL})", "pass" if ok else "fail",
+                f"reply={text[:40]!r} tools={summary['tool_calls']['total']} usage={result.get('codex_usage')}"))
+>>>>>>> theirs
     return out
 
 
@@ -2528,7 +2535,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         (ctx.run_dir / "preflight.json").write_text(json.dumps(checks, indent=2) + "\n", "utf-8")
         failed = [c for c in checks if c[1] == "fail"]
         known = ctx.quota is not None and ctx.quota.get("seven_day") is not None
-        if not known and not args.allow_unknown_quota and args.claude_bin is None:
+        native_only = all(a in cxn.ARMS for a in ctx.arm_names)  # Amendment 20: no Claude seat in use
+        if not known and not native_only and not args.allow_unknown_quota and args.claude_bin is None:
             failed.append(
                 (
                     "quota reading",

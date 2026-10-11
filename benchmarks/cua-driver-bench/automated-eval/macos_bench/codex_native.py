@@ -128,9 +128,9 @@ def server_entry(mcp_json: Path) -> dict[str, Any]:
 def config_toml(
     entry: dict[str, Any], model: str, effort: str, instructions: str, codex_home: Path
 ) -> str:
-    env = dict(entry["env"])
-    if "CODEX_HOME" in env:
-        env["CODEX_HOME"] = str(codex_home)  # the trial's own home, not the VM user's
+    env = dict(
+        entry["env"]
+    )  # unchanged from arm B: Sky's service and pipe live under the user's own home
     lines = [
         f"model = {_q(model)}",
         'model_provider = "litellm"',
@@ -177,7 +177,9 @@ def render_home(
         config_toml(server_entry(mcp_json), model, effort, instructions, codex_home), "utf-8"
     )
     return {
-        "HOME": str(home),
+        # HOME stays the user's, as for the Claude-driven arms (Sky's native pipe is found from it); only Codex's
+        # own config, sessions and caches move to the trial's CODEX_HOME.
+        "HOME": os.environ.get("HOME", str(home)),
         "CODEX_HOME": str(codex_home),
         "PATH": CLOSED_PATH,
         "TMPDIR": str(home / "tmp"),

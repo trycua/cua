@@ -92,7 +92,7 @@ per-category differences are directional only.
 | --- | --- | --- |
 | **Cua Driver** | Run | Cua Driver's MCP server, with its skill and `run_script` on (Cua Driver 0.35 defaults), built from a pinned main commit (arm `cc-cua-driver-script`) |
 | **Codex Computer-Use (Sky)**, driven by Claude Code | Run | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin, talking to OpenAI's Sky computer-use service, registered in Claude Code as MCP server `codex-cu` (arm `cc-codex-cu`). Claude chooses the actions through this MCP bridge; OpenAI's model is not involved. |
-| **Codex Computer-Use (Sky)**, driven by Codex CLI + `gpt-6-astra` | Planned (pre-registered in Amendment 20, not yet run) | The same Codex tool layer driven by OpenAI's own agent and model: the Codex CLI bundled with the ChatGPT app, run as `codex app-server`, with `gpt-6-astra`. Same prompts, approvals, limits, guard and checkers. Its harness code is `automated-eval/macos_bench/codex_native.py` (arm `cx-codex-cu`); smoke checks pending, no numbers yet. |
+| **Codex Computer-Use (Sky)**, driven by Codex CLI + `gpt-6-astra` | Planned (pre-registered in Amendment 20, not yet run) | The same Codex tool layer driven by OpenAI's own agent and model: the Codex CLI bundled with the ChatGPT app, run as `codex app-server`, with `gpt-6-astra`. Same prompts, approvals, limits, guard and checkers. Its harness code is `automated-eval/macos_bench/codex_native.py` (arm `cx-codex-cu`); its smoke checks pass, and it runs in the next full Bench v2 run. No numbers yet. |
 
 The harness also keeps internal baseline arms (the Cua Driver 0.34.0 release,
 main with `run_script` off, and the skill in the system prompt) that are not

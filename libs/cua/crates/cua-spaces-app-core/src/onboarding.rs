@@ -16,7 +16,7 @@ use crate::drive_settings::{
     storage_reduce, storage_section,
 };
 use crate::experiments::Experiments;
-use crate::installer::CliInstallPlan;
+use crate::installer::{CliInstallPlan, InstallMethod};
 use crate::model::SpaceOs;
 use crate::settings::{SettingsOption, SettingsRow, TelemetryInput};
 
@@ -86,8 +86,6 @@ pub fn steps(s: &OnboardingState) -> Vec<OnboardingStep> {
         .collect()
 }
 
-/// The Command line page shows: the shell's plan carries a bundled `cua`
-/// that is not installed yet.
 fn cli_shown(s: &OnboardingState) -> bool {
     s.cli_plan
         .as_ref()
@@ -478,6 +476,9 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
             n.cli_plan = Some(plan.clone());
             if plan.up_to_date {
                 n.cli_target = Some(plan.target.clone());
+            }
+            if s.step != Welcome && !cli_shown(s) && cli_shown(&n) {
+                n.step = Cli;
             }
         }
         (Cli, OnboardingAction::CliToggled { on }) => n.cli_install = *on,
@@ -1130,16 +1131,20 @@ pub fn installed_at_text(target: &str) -> String {
 /// The Command line page's switch for `plan`: the PATH part only when its
 /// bin dir is not on PATH, and the files Continue writes.
 pub fn cli_checkbox(plan: &CliInstallPlan, on: bool) -> OnboardingCheckbox {
+    let verb = match plan.method {
+        Some(InstallMethod::Symlink) => "Links",
+        _ => "Copies",
+    };
     let (label, note) = if plan.on_path {
         (
             "Install the cua command",
-            format!("Copies cua to {}.", plan.target),
+            format!("{verb} cua to {}.", plan.target),
         )
     } else {
         (
             "Install the cua command and add it to your PATH",
             format!(
-                "Copies cua to {} and adds {} to PATH in {}.",
+                "{verb} cua to {} and adds {} to PATH in {}.",
                 plan.target,
                 plan.bin_dir,
                 plan.path_profile.as_deref().unwrap_or("your shell profile")
@@ -1502,9 +1507,6 @@ mod tests {
         }
     }
 
-    /// The bundled `cua` is installed only after the Command line page,
-    /// with its switch on: it shows after Welcome only while the plan needs
-    /// an install, says which files it writes, and Skip installs nothing.
     #[test]
     fn the_command_line_page_asks_before_installing() {
         let planned = reduce(
@@ -1573,6 +1575,46 @@ mod tests {
             },
         );
         assert_eq!(current.cli_target.as_deref(), Some("/h/.local/bin/cua"));
+        let linked = CliInstallPlan {
+            method: Some(InstallMethod::Symlink),
+            ..plan(false, true)
+        };
+        assert_eq!(
+            cli_checkbox(&linked, true).note,
+            "Links cua to /h/.local/bin/cua."
+        );
+    }
+
+    #[test]
+    fn a_plan_that_arrives_after_get_started_still_shows_the_command_line_page() {
+        let started = reduce(&initial(None, None), &OnboardingAction::Start);
+        assert_eq!(started.step, OnboardingStep::Signin);
+        let s = reduce(
+            &started,
+            &OnboardingAction::CliPlanned {
+                plan: plan(false, false),
+            },
+        );
+        assert_eq!(s.step, OnboardingStep::Cli);
+        assert!(view(&s).cli.expect("the switch").checked);
+        assert_eq!(
+            reduce(&s, &OnboardingAction::CliDone { install: true }).step,
+            OnboardingStep::Signin
+        );
+        let again = reduce(
+            &s,
+            &OnboardingAction::CliPlanned {
+                plan: plan(false, false),
+            },
+        );
+        assert_eq!(again.step, OnboardingStep::Cli);
+        let current = reduce(
+            &started,
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
+            },
+        );
+        assert_eq!(current.step, OnboardingStep::Signin);
     }
 
     #[test]

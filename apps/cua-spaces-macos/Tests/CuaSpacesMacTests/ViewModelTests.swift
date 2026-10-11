@@ -732,7 +732,8 @@ struct ViewModelTests {
     /// The new Space is in the list, the notch and the selection the moment
     /// Create is pressed, follows the SDK's progress, and hands over to the
     /// registry row when ready; nothing waits on the create to show it.
-    @Test func createShowsTheSpaceAtOnceAndFollowsItsProgress() async throws {
+    @Test(arguments: [false, true])
+    func createShowsTheSpaceAtOnceAndFollowsItsProgress(openWhenReady: Bool) async throws {
         let backend = FixtureSpacesBackend()
         backend.holdCreates = true
         // Held after the pull; `ready` comes on release.
@@ -750,8 +751,10 @@ struct ViewModelTests {
         w.send(.next)
         w.send(.next)
         w.send(.setName(name: "fresh"))
+        w.send(.setOpenWhenReady(on: openWhenReady))
         w.send(.next)
         let plan = w.view.plan
+        #expect(plan.openDesktop == openWhenReady)
         model.create(plan)
         // Synchronously, before the create has done anything.
         let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.name == "fresh" })
@@ -777,7 +780,9 @@ struct ViewModelTests {
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
-        try await waitUntil { opened == (plan.openDesktop ? ["local:fresh"] : []) }
+        try await waitUntil { opened == (openWhenReady ? ["local:fresh"] : []) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(opened == (openWhenReady ? ["local:fresh"] : []))
     }
 
     /// A failed create stays on its row with the reason until it is removed.

@@ -1291,6 +1291,8 @@ Registered here by its own dated line before its first trial, on the main commit
 
 The background run goes first, then the foreground run, in the same VM, with nothing else running in the VM. Everything else is as in A16.3. The report states the CDB-G04 limit of A17.2.
 
+**A17.3 outcome (11 Oct 2026, 09:09Z).** 300 final trials, 0 infrastructure exclusions; seats 1, then 7, then 4 through the watchdog; the token was deleted with sync and \`cdb-v2\` was stopped. Background completion: Cua Driver 21/50, Codex 17/50, helper 6/50. Foreground success: 40/50, 30/50 and 16/50. Trials with a focus steal in the background: 2, 6 and 20; swallowed user keystrokes: 55, 503 and 439. The report is \`research/cua-driver-bench/2026-10-11_bench-v2-rerun-report.md\`; follow-ups are CUA-1341 and CUA-1342.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

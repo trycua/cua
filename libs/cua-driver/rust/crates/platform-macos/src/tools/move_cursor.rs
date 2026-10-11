@@ -195,12 +195,25 @@ impl MoveCursorTool {
             } else {
                 format!(" \"{}\"", reveal.label)
             };
+            let revealed = reveal.revealed_new_controls();
+            let outcome = if revealed {
+                format!(
+                    "Revealed the hover-only controls of {}{label} through AXShowAlternateUI \
+                     ({} new element(s)), without the real pointer, focus or raise. Call \
+                     get_window_state to see them; hovering elsewhere hides them again.",
+                    reveal.role,
+                    reveal.elements_after.saturating_sub(reveal.elements_before)
+                )
+            } else {
+                format!(
+                    "Sent AXShowAlternateUI to {}{label}, the background hover route, but no new \
+                     control appeared in its accessibility tree, so it may have no hover-only \
+                     controls. The real pointer did not move.",
+                    reveal.role
+                )
+            };
             return ToolResult::text(format!(
-                "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}). Revealed \
-                 the hover-only controls of {}{label} through AXShowAlternateUI, without the real \
-                 pointer, focus or raise. Call get_window_state to see them; hovering elsewhere \
-                 hides them again.",
-                reveal.role
+                "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}). {outcome}"
             ))
             .with_structured(serde_json::json!({
                 "scope": "window",
@@ -209,7 +222,8 @@ impl MoveCursorTool {
                 "hover_delivered": true,
                 "hover_route": "ax_alternate_ui",
                 "alternate_ui_visible": reveal.visible,
-                "effect": if reveal.visible == Some(true) { "confirmed" } else { "unverifiable" }
+                "new_elements": reveal.elements_after.saturating_sub(reveal.elements_before),
+                "effect": if revealed { "confirmed" } else { "unverifiable" }
             }));
         }
         if tokio::task::spawn_blocking(move || crate::browser::ElectronJs::is_electron(pid))

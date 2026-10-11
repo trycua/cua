@@ -29,6 +29,8 @@ const ANCESTOR_DEPTH: usize = 6;
 const AX_TIMEOUT_S: f32 = 0.25;
 const SHOW_ALTERNATE: &str = "AXShowAlternateUI";
 const SHOW_DEFAULT: &str = "AXShowDefaultUI";
+/// How deep to count the target's subtree when checking for new controls.
+const SUBTREE_DEPTH: usize = 4;
 
 /// The element whose alternate UI the last hover revealed: (pid, retained
 /// AXUIElementRef as usize). Moving the hover elsewhere restores its default
@@ -42,6 +44,10 @@ pub struct AxReveal {
     pub label: String,
     /// `AXAlternateUIVisible` read back after the action, when the app exposes it.
     pub visible: Option<bool>,
+    /// Elements in the target's subtree before and after the action. More
+    /// after means hover-only controls appeared.
+    pub elements_before: usize,
+    pub elements_after: usize,
 }
 
 /// Whether an element's advertised actions let the AX route reveal its
@@ -62,6 +68,7 @@ pub fn reveal_alternate_ui(pid: i32, window_id: u32, x: f64, y: f64) -> Option<A
             return None;
         };
         restore_default_ui(Some(target));
+        let elements_before = subtree_size(target, SUBTREE_DEPTH);
         if perform_action(target, SHOW_ALTERNATE) != kAXErrorSuccess {
             CFRelease(target as CFTypeRef);
             return None;
@@ -70,6 +77,11 @@ pub fn reveal_alternate_ui(pid: i32, window_id: u32, x: f64, y: f64) -> Option<A
             role: copy_string_attr(target, "AXRole").unwrap_or_default(),
             label: first_label(target),
             visible: copy_bool_attr(target, "AXAlternateUIVisible"),
+            elements_before,
+            elements_after: {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                subtree_size(target, SUBTREE_DEPTH)
+            },
         };
         let mut slot = REVEALED.lock().unwrap_or_else(|e| e.into_inner());
         match *slot {
@@ -168,6 +180,27 @@ unsafe fn text_of(element: AXUIElementRef) -> String {
         .unwrap_or_default()
 }
 
+/// Number of elements under `element`, `depth` levels deep (bounded).
+unsafe fn subtree_size(element: AXUIElementRef, depth: usize) -> usize {
+    if depth == 0 {
+        return 0;
+    }
+    let mut n = 0;
+    for child in copy_children(element) {
+        n += 1 + subtree_size(child, depth - 1);
+        CFRelease(child as CFTypeRef);
+    }
+    n
+}
+
+impl AxReveal {
+    /// Whether the action made new controls appear (or the app says its
+    /// alternate UI is visible).
+    pub fn revealed_new_controls(&self) -> bool {
+        self.elements_after > self.elements_before || self.visible == Some(true)
+    }
+}
+
 /// Main-process JavaScript that hovers the renderer of the BrowserWindow whose
 /// native window number is `window_id`, at window-local point (`x`, `y`) in
 /// points. Returns a JSON string: `{"ok":true,"x":..,"y":..}` or
@@ -207,6 +240,21 @@ pub fn electron_hover_delivered(reply: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reveal_counts_only_when_controls_appear_or_the_app_says_so() {
+        let r = |before, after, visible| AxReveal {
+            role: "AXRow".into(),
+            label: String::new(),
+            visible,
+            elements_before: before,
+            elements_after: after,
+        };
+        assert!(r(3, 4, None).revealed_new_controls());
+        assert!(r(3, 3, Some(true)).revealed_new_controls());
+        assert!(!r(3, 3, None).revealed_new_controls());
+        assert!(!r(3, 3, Some(false)).revealed_new_controls());
+    }
 
     #[test]
     fn only_show_alternate_ui_qualifies_an_element() {

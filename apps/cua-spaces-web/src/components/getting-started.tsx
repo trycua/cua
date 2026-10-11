@@ -42,7 +42,7 @@ export const ADD_MACHINE_HREF = "/machines?add=1";
 
 const COPY: Record<ChecklistStep, { title: string; detail: string; action: string }> = {
   add_machine: { title: "Add a machine", detail: "Connect a Mac, Linux or Windows computer you own.", action: "Add machine" },
-  create_space: { title: "Create a Space", detail: "A computer for one task, on one of your machines.", action: "New Space" },
+  create_space: { title: "Create a Space", detail: "A computer for one task, on one of your machines.", action: "Create" },
   teleport: { title: "Teleport an app", detail: "Move a signed-in app into a Space.", action: "Teleport" },
   share: { title: "Share a Space", detail: "Let a teammate watch or work in it.", action: "Share" },
   run_agent: { title: "Run an agent", detail: "Give an agent a Space to work in.", action: "Open Agents" },

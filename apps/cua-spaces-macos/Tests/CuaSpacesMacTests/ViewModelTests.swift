@@ -742,6 +742,8 @@ struct ViewModelTests {
             SpaceCreateProgress(phase: "ready", fraction: nil, detail: ""),
         ]
         let model = makeModel(backend)
+        var opened: [String] = []
+        model.openSpaceWindow = { opened.append($0) }
         await model.refresh()
         await model.openNewSpace()
         let w = model.wizard
@@ -775,6 +777,7 @@ struct ViewModelTests {
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
+        try await waitUntil { opened == (plan.openDesktop ? ["local:fresh"] : []) }
     }
 
     /// A failed create stays on its row with the reason until it is removed.

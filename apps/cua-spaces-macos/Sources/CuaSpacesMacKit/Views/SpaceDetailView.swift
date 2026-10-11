@@ -253,10 +253,8 @@ struct SpaceDetailView: View {
     }
 
     @ToolbarContentBuilder private func toolbar(_ detail: AppSpaceDetail) -> some ToolbarContent {
-        ToolbarItemGroup {
-            ForEach(Array(detail.actions.enumerated()), id: \.offset) { _, action in
-                actionButton(action)
-            }
+        ForEach(Array(detail.actions.enumerated()), id: \.offset) { _, action in
+            ToolbarItem { actionButton(action) }
         }
     }
 

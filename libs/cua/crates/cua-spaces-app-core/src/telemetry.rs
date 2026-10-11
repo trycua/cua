@@ -489,13 +489,24 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             _ => vec![],
         },
         CreateAction::Fail {
-            id, error_variant, ..
+            id,
+            error,
+            error_variant,
         } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
                 vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), error_variant, now_ms)]
+                // The cause the app reads from the error's text (Local
+                // Network, Apple's VM limit, disk) is more specific than
+                // the shell's enum case, which is often `Runtime` or none.
+                let variant = crate::spaces::creating::failure_variant(
+                    error,
+                    Some(&p.phase),
+                    p.gpu,
+                    error_variant,
+                );
+                vec![create_event(p, "error", stalled(p), variant, now_ms)]
             }
             _ => vec![],
         },
@@ -1163,6 +1174,34 @@ mod tests {
             TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
                 if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
+        // A cause the app reads from the text wins over the shell's generic case.
+        for (error, shell, want) in [
+            (
+                "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
+                "Runtime",
+                "LocalNetwork",
+            ),
+            (
+                "lume: The number of virtual machines exceeds the limit",
+                "",
+                "VmLimit",
+            ),
+            ("something else at /Users/alice", "Runtime", "Runtime"),
+        ] {
+            let failed = creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: error.into(),
+                    error_variant: shell.into(),
+                },
+                5_000,
+            );
+            assert!(matches!(
+                &failed[0],
+                TelemetrySignal::SpaceCreate { error_variant, .. } if error_variant == want
+            ));
+        }
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
         let st = CreatesState {

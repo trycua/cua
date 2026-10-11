@@ -989,6 +989,23 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
         d,
     );
     assert_eq!(disk.props["error_kind"], "insufficient_disk");
+    // The causes the Spaces app reads from a failure's text.
+    for (variant, kind) in [("LocalNetwork", "local_network"), ("VmLimit", "vm_limit")] {
+        let e = events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os: "macos",
+                kind: "vm",
+                last_phase: "waiting_for_services",
+                stalled: false,
+                gpu: false,
+                error_variant: variant,
+            },
+            Outcome::Error,
+            d,
+        );
+        assert_eq!(e.props["error_kind"], kind);
+    }
     let stalled = events::space_create(
         &events::SpaceCreate {
             on: "local",

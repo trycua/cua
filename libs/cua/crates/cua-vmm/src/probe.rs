@@ -17,9 +17,19 @@ const HOLD_OPEN: Duration = Duration::from_millis(400);
 /// "network unreachable") before [`wait_all`] gives up with
 /// [`unreachable_error`] instead of waiting out its whole budget. A guest
 /// that just got its address can be briefly unroutable; one that stays so
-/// is blocked from this process (on macOS: Local Network privacy) and
-/// never becomes reachable by waiting.
-pub const UNREACHABLE_GRACE: Duration = Duration::from_secs(20);
+/// is blocked from this process (on macOS: Local Network privacy).
+///
+/// On macOS the block lifts as soon as the person clicks Allow on the
+/// "find devices on local networks" prompt (which macOS shows on the first
+/// connection, during this very wait) or turns the app on in System
+/// Settings, so the wait is long enough to do that: with 20 s, a macOS
+/// Space create in the Spaces app could fail while the prompt was still on
+/// screen.
+pub const UNREACHABLE_GRACE: Duration = if cfg!(target_os = "macos") {
+    Duration::from_secs(120)
+} else {
+    Duration::from_secs(20)
+};
 
 /// One probe attempt.
 #[derive(Debug)]

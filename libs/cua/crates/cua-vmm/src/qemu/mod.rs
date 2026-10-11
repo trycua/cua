@@ -279,11 +279,18 @@ impl QemuRuntime {
         ))
     }
 
-    fn accel_for(&self, arch: Arch) -> String {
-        self.cfg
-            .accel
-            .clone()
-            .unwrap_or_else(|| host::qemu_accel(arch).to_string())
+    fn accel_for(&self, arch: Arch, kvm: &std::io::Result<()>) -> Result<String> {
+        if let Some(accel) = &self.cfg.accel {
+            return Ok(accel.clone());
+        }
+        let accel = host::qemu_accel(host::HostOs::current(), arch, kvm)?;
+        if let Err(e) = kvm
+            && accel == "tcg"
+            && arch == Arch::host()
+        {
+            tracing::warn!("{}", host::kvm_hint(e));
+        }
+        Ok(accel.to_string())
     }
 
     async fn resolve_source(
@@ -465,7 +472,7 @@ impl QemuRuntime {
         } else {
             None
         };
-        st.accel = self.accel_for(st.arch);
+        st.accel = self.accel_for(st.arch, &host::kvm_usable())?;
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network;
@@ -1436,6 +1443,31 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("DiskResolver"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_launch_refuses_unopenable_kvm_and_falls_back_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = rt(tmp.path());
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        let err = r.accel_for(Arch::host(), &denied).unwrap_err().to_string();
+        assert!(err.contains("permission denied"), "{err}");
+        assert!(err.contains("sudo usermod -aG kvm"), "{err}");
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[test]
+    fn explicit_tcg_override_is_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            accel: Some("tcg".into()),
+            ..Default::default()
+        });
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        assert_eq!(r.accel_for(Arch::host(), &denied).unwrap(), "tcg");
     }
 
     /// Records the credentials each resolve got.

@@ -25,8 +25,8 @@ use windows::Win32::UI::Accessibility::{
     TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
     UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
     UIA_ExpandCollapsePatternId, UIA_HelpTextPropertyId, UIA_InvokePatternId,
-    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
-    UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
+    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+    UIA_NamePropertyId, UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
     UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TextPatternId,
     UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId,
     UIA_ValueValuePropertyId,
@@ -63,6 +63,10 @@ pub struct UiaNode {
     pub enabled: Option<bool>,
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
+    /// UIA `IsPassword`: `Some(true)` for a password field, `Some(false)` for
+    /// an element that accepts text and is not one, `None` when unknown or
+    /// not applicable (non-text elements, MSAA fallback).
+    pub is_password: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
     /// MSAA path) as usize. Retained — `Snapshots` Drop releases it via
     /// the `kind`-appropriate vtable.
@@ -714,6 +718,7 @@ unsafe fn node_cache_request(
         UIA_HelpTextPropertyId,
         UIA_IsEnabledPropertyId,
         UIA_IsOffscreenPropertyId,
+        UIA_IsPasswordPropertyId,
         UIA_BoundingRectanglePropertyId,
         UIA_ToggleToggleStatePropertyId,
         UIA_SelectionItemIsSelectedPropertyId,
@@ -855,6 +860,14 @@ fn emit_cached_node(
     // macOS: enablement is state the caller needs to read, not a reason to hide
     // the row. The token writers refuse it (`tools::impl_::refuse_if_disabled`).
     let actions = detect_cached_actions(element, &control_type);
+    let is_password = text_entry_is_password(
+        read_cached_bool(element, UIA_IsPasswordPropertyId),
+        &actions,
+    );
+    // Providers are expected to blank Value on password fields, but that is a
+    // convention, not something UIA enforces. Never echo it once the element
+    // says it is a password field.
+    let value = redact_password_value(value, is_password);
     let is_actionable = !actions.is_empty();
     let has_content = name
         .as_deref()
@@ -886,6 +899,7 @@ fn emit_cached_node(
                 actions: actions.clone(),
                 enabled,
                 selected,
+                is_password,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -906,6 +920,7 @@ fn emit_cached_node(
                 actions: vec![],
                 enabled,
                 selected,
+                is_password,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
@@ -921,6 +936,35 @@ fn emit_cached_node(
         nodes.push(node);
     }
     (control_type, emitted_parent)
+}
+
+/// Keep `IsPassword` where it carries information: always when it is true,
+/// and as an explicit `false` only on elements that accept text input, so a
+/// consumer can tell "not a password field" from "unknown" without every
+/// button in the tree carrying the field.
+pub(crate) fn text_entry_is_password(
+    is_password: Option<bool>,
+    actions: &[String],
+) -> Option<bool> {
+    match is_password {
+        Some(true) => Some(true),
+        Some(false) if actions.iter().any(|a| a == "set_value" || a == "text") => Some(false),
+        _ => None,
+    }
+}
+
+/// Drop an element's value when it reports itself as a password field, so a
+/// provider that does not blank Value cannot leak the secret through `value`,
+/// the label fallback, or the Markdown row.
+pub(crate) fn redact_password_value(
+    value: Option<String>,
+    is_password: Option<bool>,
+) -> Option<String> {
+    if is_password == Some(true) {
+        None
+    } else {
+        value
+    }
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {
@@ -1140,6 +1184,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if node.enabled == Some(false) {
             attrs.push("enabled=false".to_owned());
         }
+        if node.is_password == Some(true) {
+            attrs.push("password".to_owned());
+        }
         if !node.actions.is_empty() {
             attrs.push(format!("actions=[{}]", node.actions.join(",")));
         }
@@ -1186,6 +1233,7 @@ mod tests {
             actions: vec!["toggle".into()],
             enabled: Some(false),
             selected: Some(false),
+            is_password: None,
             element_ptr: 0,
             center_x: 0,
             center_y: 0,

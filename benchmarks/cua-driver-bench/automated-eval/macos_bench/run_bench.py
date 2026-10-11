@@ -737,7 +737,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         # whether Chrome/Electron got the force-accessibility switch (no shipped arm sets it)
         "force_accessibility": ca.force_accessibility(arm),
         # Amendment 11: the helper arm's identity (Desktop version, helper and adapter hashes, offered actions)
-        "claude_cu_helper": cu_helper_row_identity(ctx) if arm in ca.CU_HELPER_ARMS else None,
+        "claude_cu_helper": cu_helper_row_identity(ctx)
+        if cxn.SOURCE_ARM.get(arm, arm) in ca.CU_HELPER_ARMS
+        else None,
         # Amendment 20: the native Codex arm's identity (Codex CLI build, model, effort)
         "codex_native": ctx.versions.get("codex_native") if arm in cxn.ARMS else None,
     }
@@ -969,11 +971,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if cdb is not None:
             cdb.stop_apps()
         pilot.sweep_processes(str(trial_dir))
-        if arm in ca.CU_HELPER_ARMS:
+        helper_arm = cxn.SOURCE_ARM.get(
+            arm, arm
+        )  # A23: the helper under Codex CLI uses the same build
+        if helper_arm in ca.CU_HELPER_ARMS:
             # the adapter and its helper end with claude's process group; a survivor could post input later
             row["cu_helper_leftover_killed"] = pilot.sweep_processes(
-                str(ca.CU_HELPER_BUILDS[arm].helper)
-            ) + (pilot.sweep_processes(str(ca.CU_HELPER_BUILDS[arm].adapter)))
+                str(ca.CU_HELPER_BUILDS[helper_arm].helper)
+            ) + (pilot.sweep_processes(str(ca.CU_HELPER_BUILDS[helper_arm].adapter)))
         kill_bench_apps()
         reset_needs_apps(needs)
         saved = strip_stream_file(stream_path)
@@ -2053,7 +2058,10 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             ctx, native_arm, with_models and not offline
         ):
             add(name, status, detail)
-    for helper_arm in [a for a in ca.CU_HELPER_ARMS if a in ctx.arm_names]:
+    helper_sources = {
+        cxn.SOURCE_ARM.get(a, a) for a in ctx.arm_names
+    }  # A23: also for cx-claude-cu-helper
+    for helper_arm in [a for a in ca.CU_HELPER_ARMS if a in helper_sources]:
         observed = ca.cu_helper_observed(ca.CU_HELPER_BUILDS[helper_arm])
         ctx.versions.setdefault("claude_cu_helper", {}).update(observed)
         for name, status, detail in ca.check_cu_helper_pins(pins, observed):

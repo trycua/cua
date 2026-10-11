@@ -90,21 +90,22 @@ per-category differences are directional only.
 
 ## Setups
 
-Amendment 23 runs the tools that work under both harnesses under both, so that
+Amendment 23 runs every tool under both harnesses (a 2 x 3 matrix), so that
 the agent harness and model are not confounded with the tool layer:
 
 | Harness and model | Setups (arm ids) |
 | --- | --- |
 | Claude Code + Claude Sonnet 5.5 | Cua Driver (`cc-cua-driver-script`); Codex Computer-Use (Sky) (`cc-codex-cu`); Claude Computer-Use (Desktop helper) (`cc-claude-cu-helper`) |
-| Codex CLI + gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending) | Cua Driver (`cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`) |
+| Codex CLI + gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending) | Cua Driver (`cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`); Claude Computer-Use (Desktop helper) (`cx-claude-cu-helper`) |
 
 | Setup | Status | What the agent drives |
 | --- | --- | --- |
 | **Cua Driver**, driven by Claude Code | Run | Cua Driver's MCP server, with its skill and `run_script` on (Cua Driver 0.35 defaults), built from a pinned main commit (arm `cc-cua-driver-script`) |
 | **Codex Computer-Use (Sky)**, driven by Claude Code | Run | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin, talking to OpenAI's Sky computer-use service, registered in Claude Code as MCP server `codex-cu` (arm `cc-codex-cu`). Claude chooses the actions through this MCP bridge; OpenAI's model is not involved. |
-| **Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure** | Run | The `app-cu-helper` binary of Claude Desktop 2.31226.0, used unmodified in place, behind Cua's small MCP adapter ([`tools/claude_cu_helper/`](automated-eval/macos_bench/tools/claude_cu_helper)), registered in Claude Code as MCP server `claude-cu-helper` (arm `cc-claude-cu-helper`). The adapter adds a window list and window screenshots; all input goes through the helper. Claude Code only: it is Claude Desktop's own tool. |
+| **Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure** | Run | The `app-cu-helper` binary of Claude Desktop 2.31226.0, used unmodified in place, behind Cua's small MCP adapter ([`tools/claude_cu_helper/`](automated-eval/macos_bench/tools/claude_cu_helper)), registered in Claude Code as MCP server `claude-cu-helper` (arm `cc-claude-cu-helper`). The adapter adds a window list and window screenshots; all input goes through the helper. |
 | **Cua Driver**, driven by Codex CLI | Planned (Amendment 23, not yet run) | The same Cua Driver build, daemon, MCP entry and system prompt as `cc-cua-driver-script`, driven by the Codex CLI bundled with the ChatGPT app, run as `codex app-server` (arm `cx-cua-driver`). No skill files: without a shell or file tool Codex cannot read one. No numbers yet. |
 | **Codex Computer-Use (Sky)**, driven by Codex CLI | Planned (Amendments 20 and 23, not yet run) | The same Codex tool layer driven by OpenAI's own agent and model, with the same prompts, approvals, limits, guard and checkers (arm `cx-codex-cu`). No numbers yet. |
+| **Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure**, driven by Codex CLI | Planned (Amendment 23, not yet run) | The same helper, adapter and MCP entry as `cc-claude-cu-helper`, driven by the Codex CLI (arm `cx-claude-cu-helper`). No numbers yet. |
 
 The Codex CLI setups share `automated-eval/macos_bench/codex_native.py`. Their
 model is gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending); GPT-6.1 Sol is not
@@ -177,7 +178,7 @@ for app in "$CDB_BENCH_WORK"/taskpack/tasks/shared/*/apps/*; do (cd "$app" && np
   launching it, and builds `winlist` and `cu-disclaim` from source. Then give
   `app-cu-helper` Accessibility in System Settings. No Claude Desktop binary,
   app code or asset is included in this repository; only Cua's adapter is.
-* **Codex CLI setups** (arms `cx-codex-cu`, `cx-cua-driver`). Nothing extra to install: they use the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the MCP config of the matching Claude Code setup (`cc-codex-cu` or `cc-cua-driver-script`). Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint that serves the model (default `http://127.0.0.1:4000/v1`); `CDB_CODEX_MODEL` overrides the default `gpt-6-astra`. The pinned CLI build is in `pins.json` (`codex_native`).
+* **Codex CLI setups** (arms `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper`). Nothing extra to install beyond the matching Claude Code setup: they use the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the MCP config of the matching Claude Code setup (`cc-codex-cu`, `cc-cua-driver-script` or `cc-claude-cu-helper`). Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint that serves the model (default `http://127.0.0.1:4000/v1`); `CDB_CODEX_MODEL` overrides the default `gpt-6-astra`. The pinned CLI build is in `pins.json` (`codex_native`).
 
 **Terms checks (open).** Two questions have not been reviewed:
 

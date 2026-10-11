@@ -40,6 +40,10 @@ ARM_LABELS = {
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
     "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI",  # Amendment 20; the rows' model is appended
     "cx-cua-driver": "Cua Driver, driven by Codex CLI",  # Amendment 23; the rows' model is appended
+    "cx-claude-cu-helper": (  # Amendment 23; the rows' model is appended
+        "Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal"
+        " adapter; an internal interface, not an Anthropic-supported procedure; driven by Codex CLI"
+    ),
     "cc-claude-cu-helper": (
         "Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal"
         " adapter; an internal interface, not an Anthropic-supported procedure"

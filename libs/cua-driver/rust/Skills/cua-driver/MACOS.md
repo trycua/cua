@@ -310,6 +310,18 @@ chosen with `click` on the `AXMenuItem` (or in one call with
 `set_value` on the popup). Keyboard navigation of such a menu with
 `press_key` is not the route; pick the item by element.
 
+### Apps that activate themselves
+
+Some apps activate themselves in answer to input, even in the background:
+Chrome when `cmd+L` focuses its address bar, GnuCash on a double-click in
+its account tree. No client can stop that. After a background
+action Cua Driver checks WindowServer's front process and, if the target
+made itself frontmost, re-activates the user's app and hands its window
+key focus back within a few tens of milliseconds. Prefer routes that do
+not ask the app to come forward: `set_value` on the address field or
+`browser_navigate` instead of `cmd+L`, and `AXOpen` through
+`double_click` on an element instead of a pixel double-click.
+
 ### `delivery_mode` on the pointer family (macOS)
 
 `click`, `double_click`, `right_click`, `drag`, and `scroll` accept

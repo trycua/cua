@@ -1396,7 +1396,10 @@ Three more tasks, written from scratch on 11 Oct 2026 under A18.4's rules, in a 
 
 Unchanged and not opened. Its re-seal (CUA-1284) waits for CUA-1200 and CUA-1281 to CUA-1283 to close, as that issue says. The new visible tasks use some of the same apps as the held-out tasks (Chrome, LibreOffice, Finder, Preview, Notes, Reminders, TextEdit) for different work; the held-out set stays independent at the task level, not the app level.
 
-### A18.9 Left for the owner's judgement
+### A18.9 Left for the owner's judgement, and his decisions (11 Oct 2026)
+
+Decided by the owner on 11 Oct 2026, before any scored trial: WF-07 keeps the heading toggle as written; NA-07 now requires `poster-draft.png` to stay a 1200 x 800 PNG (the brief says so, and the export step quits Preview with saving before the evaluator, so Preview's own autosave timing cannot change the verdict); IR-06 stays strict. Item 4 (runs per task) is still open.
+
 
 1. **WF-07:** a column's "select all" toggle sits in the column heading; a heading click that toggles the whole column may surprise a careful user. Kept as written.
 2. **NA-07:** the checker does not require `poster-draft.png` to keep its full size (Preview may save a resize into the original). Kept lenient.

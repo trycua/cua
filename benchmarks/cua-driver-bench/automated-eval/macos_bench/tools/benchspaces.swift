@@ -1,5 +1,8 @@
 // BenchSpaces: deterministic desktop-Space layout for the off-Space tasks (Amendment 18, OS-*).
 //
+// Built as BenchSpaces.app (ai.cua.benchspaces) so its Accessibility grant is its own, not Terminal's; the
+// harness starts it with `open -W -g -n -a BenchSpaces.app --args --out FILE <command>`.
+//
 //   benchspaces list                         JSON: spaces in Mission Control order, the active one, and their types
 //   benchspaces window-spaces WID [WID...]   JSON: the Space ids each window is on
 //   benchspaces goto N                       make the N-th Space (1-based, Mission Control order) active, the way a
@@ -41,9 +44,20 @@ func spaces() -> (all: [Space], current: UInt64) {
     return (out, current)
 }
 
+var outPath: String? = nil  // --out PATH: also write the JSON there (the bundle is started by `open`, which drops stdout)
+
 func printJSON(_ value: Any) {
     let data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
     print(String(data: data, encoding: .utf8)!)
+    if let path = outPath { try? data.write(to: URL(fileURLWithPath: path)) }
+}
+
+func finish(_ ok: Bool, _ value: [String: Any]) -> Never {
+    var out = value
+    out["ok"] = ok
+    out["rc"] = ok ? 0 : 1
+    printJSON(out)
+    exit(ok ? 0 : 1)
 }
 
 func listJSON() -> [String: Any] {
@@ -107,20 +121,24 @@ func fullscreen(pid: pid_t, title: String) -> Bool {
 @main
 struct BenchSpaces {
     static func main() {
-        let args = Array(CommandLine.arguments.dropFirst())
+        var args = Array(CommandLine.arguments.dropFirst())
+        if args.count >= 2 && args[0] == "--out" { outPath = args[1]; args.removeFirst(2) }
         switch args.first {
+        case "request-access":
+            // VM provisioning only: list this bundle under Accessibility so it can be switched on once.
+            let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            finish(AXIsProcessTrustedWithOptions(opts), listJSON())
+        case "trusted":
+            finish(AXIsProcessTrusted(), listJSON())
         case "list":
-            printJSON(listJSON())
+            finish(true, listJSON())
         case "window-spaces":
             let ids = args.dropFirst().compactMap { UInt32($0) }.map { NSNumber(value: $0) }
             let got = CGSCopySpacesForWindows(CGSMainConnectionID(), 0x7, ids as CFArray) as? [NSNumber] ?? []
             printJSON(["windows": ids.map { $0.intValue }, "spaces": got.map { $0.uint64Value }])
         case "goto":
             guard args.count == 2, let n = Int(args[1]) else { exit(2) }
-            let ok = goto(n)
-            var out = listJSON(); out["ok"] = ok
-            printJSON(out)
-            exit(ok ? 0 : 1)
+            finish(goto(n), listJSON())
         case "add-desktop":
             // VM provisioning only (A18.6): open Mission Control and press its "add desktop" button at X Y.
             guard args.count == 3, let x = Double(args[1]), let y = Double(args[2]) else { exit(2) }
@@ -134,14 +152,10 @@ struct BenchSpaces {
             }
             press(53)  // Escape closes Mission Control
             usleep(800_000)
-            var out = listJSON(); out["ok"] = spaces().all.filter { $0.type == 0 }.count > before
-            printJSON(out)
+            finish(spaces().all.filter { $0.type == 0 }.count > before, listJSON())
         case "fullscreen":
             guard args.count >= 2, let pid = pid_t(args[1]) else { exit(2) }
-            let ok = fullscreen(pid: pid, title: args.count > 2 ? args[2] : "")
-            var out = listJSON(); out["ok"] = ok
-            printJSON(out)
-            exit(ok ? 0 : 1)
+            finish(fullscreen(pid: pid, title: args.count > 2 ? args[2] : ""), listJSON())
         default:
             FileHandle.standardError.write("usage: benchspaces list | window-spaces WID... | goto N | fullscreen PID TITLE\n".data(using: .utf8)!)
             exit(2)

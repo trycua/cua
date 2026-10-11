@@ -45,7 +45,7 @@
       "v2/na04-committee-get-info": "edfa8b16f2277ea9e606e5ff10e3818195de6770392545d88c4bfefc3191f938",
       "v2/na05-fridge-rota-reminders": "0a296c7fd80ac07df17ea1391760892dd4d42c876d3edb6809f98f3188f69e66",
       "v2/na06-tasting-panel-notes": "d8138150bcf7e709683444c53d2e0bbf3137852e83a2569012c18d86cd138f3d",
-      "v2/na07-poster-export-preview": "49f5c0a7028c5435ec326616238782141d90171fb590279434b1ad8e47a7083f",
+      "v2/na07-poster-export-preview": "016ce1c48922140624ea316e5d4faa9822319dec84d1e216944f1fb7b1299d32",
       "v2/pr01-kanban-drag": "c85c24e8a4dcd922afaf34a66b1b74da448061d0fa97b4db3ffe87275e5f9452",
       "v2/pr02-hall-seating-canvas": "ce80f5729aab02397d09806a471d7fd017b2f949c29fb4b6b2eff8b35ac8253e",
       "v2/pr03-chart-hover-readout": "40f44028da365169dd36c4e8f359cf300e31bcee8216d0f81cb414b8f7f311e9",
@@ -61,7 +61,7 @@
       "v2/os02-allotment-reminders-other-space": "f1835a292250e188642630fd1bc8e58fe4c20c84868357e1eaa7ca2c7419cba7",
       "v2/os03-quiz-scores-fullscreen": "6eec8c9daa73d162eb5d15f1d7f49d122e202125a32578a241ce5689bb31d19d"
     },
-    "v2_tasks_revision": "5032431cf8f2b570b22082e0758d979864c05692",
+    "v2_tasks_revision": "edb1f9317a012e564eaf1973d1bb19aad0e30cea",
     "v2_kit_tree_sha256": "211160f30a9aed737d628542ce24befa988b8b5593711da016ee44ea9aee8b34"
   },
   "cua_main": {

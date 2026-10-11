@@ -26,16 +26,27 @@ class SpaceError(RuntimeError):
 
 
 def tool(build_dir: Path) -> Path:
-    return Path(build_dir) / "benchspaces"
+    return Path(build_dir) / "BenchSpaces.app"
 
 
 def run(build_dir: Path, *args: str, timeout: float = 40) -> dict[str, Any]:
-    done = subprocess.run([str(tool(build_dir)), *args], capture_output=True, text=True, timeout=timeout)
-    try:
-        data = json.loads(done.stdout.strip().splitlines()[-1]) if done.stdout.strip() else {}
-    except ValueError:
-        data = {}
-    data["rc"] = done.returncode
+    """Start the helper through LaunchServices, so it runs with its own Accessibility grant, and read its JSON."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="benchspaces-") as tmp:
+        out = Path(tmp) / "out.json"
+        done = subprocess.run(
+            ["/usr/bin/open", "-W", "-g", "-n", "-a", str(tool(build_dir)), "--args", "--out", str(out), *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        try:
+            data = json.loads(out.read_text()) if out.exists() else {}
+        except ValueError:
+            data = {}
+    data.setdefault("rc", 1 if not data else data.get("rc", 0))
+    if done.returncode != 0:
+        data["open_rc"] = done.returncode
+        data["rc"] = data.get("rc") or done.returncode
     if done.stderr.strip():
         data["stderr"] = done.stderr.strip()[-300:]
     return data

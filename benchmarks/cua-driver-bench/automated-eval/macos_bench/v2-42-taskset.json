@@ -1,7 +1,7 @@
 {
   "repo": "trycua/cua-driver-bench (private)",
   "branch": "bench/v2-40",
-  "revision": "5032431cf8f2b570b22082e0758d979864c05692",
+  "revision": "edb1f9317a012e564eaf1973d1bb19aad0e30cea",
   "scheme": "sha256 tree digest, cdb_adapter.tree_sha256",
   "kit": "211160f30a9aed737d628542ce24befa988b8b5593711da016ee44ea9aee8b34",
   "tasks": {
@@ -87,7 +87,7 @@
     },
     "NA-07": {
       "pack_task": "v2/na07-poster-export-preview",
-      "tree_sha256": "49f5c0a7028c5435ec326616238782141d90171fb590279434b1ad8e47a7083f"
+      "tree_sha256": "016ce1c48922140624ea316e5d4faa9822319dec84d1e216944f1fb7b1299d32"
     },
     "OS-01": {
       "pack_task": "v2/os01-tool-library-other-space",

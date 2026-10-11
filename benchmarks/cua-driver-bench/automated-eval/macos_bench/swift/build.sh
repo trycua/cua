@@ -56,11 +56,30 @@ PLIST
 build_app BenchSentinel ai.cua.benchsentinel "Bench Sentinel"
 build_app BenchLab ai.cua.benchlab "BenchLab"
 
-# Amendment 18 (off-Space tasks): the Space layout helper, a plain ad-hoc signed command-line tool.
+# Amendment 18 (off-Space tasks): the Space layout helper as its own app bundle, so its Accessibility grant in
+# the VM is its own (never Terminal's).
+spaces_app="$out/BenchSpaces.app"
+rm -rf "$spaces_app" && mkdir -p "$spaces_app/Contents/MacOS"
 tmpbin="$(mktemp -t mbbuild)"
 xcrun swiftc -O -parse-as-library -swift-version 5 -target arm64-apple-macosx26.0 \
   "$here/../tools/benchspaces.swift" -o "$tmpbin"
-mv "$tmpbin" "$out/benchspaces"
-chmod +x "$out/benchspaces"
-codesign --force --sign - --timestamp=none "$out/benchspaces" >/dev/null 2>&1 || true
-echo "$out/benchspaces"
+mv "$tmpbin" "$spaces_app/Contents/MacOS/BenchSpaces"
+chmod +x "$spaces_app/Contents/MacOS/BenchSpaces"
+cat > "$spaces_app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>ai.cua.benchspaces</string>
+  <key>CFBundleName</key><string>BenchSpaces</string>
+  <key>CFBundleExecutable</key><string>BenchSpaces</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
+</dict>
+</plist>
+PLIST
+codesign --force --sign - --timestamp=none "$spaces_app" >/dev/null 2>&1 || { echo "codesign failed for $spaces_app" >&2; exit 1; }
+echo "$spaces_app"

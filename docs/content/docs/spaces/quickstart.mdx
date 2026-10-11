@@ -1,17 +1,22 @@
 ---
 title: Quickstart
-description: 'Install the Cua Spaces app and the cua CLI, run a local Space in Docker, and register it from code.'
+description: 'Install the cua CLI and, on macOS, the Cua Spaces app, run a local Space in Docker, and register it from code.'
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Install Cua, run a Linux desktop locally, and register it as your first Space.
+Install the cua CLI (and the macOS-only Cua Spaces app), run a Linux desktop
+locally, and register it as your first Space.
 
 ## Prerequisites
 
 - macOS, Linux or Windows. The Cua Spaces app for macOS needs macOS 26 or
   later.
 - Docker, for the local Space.
+
+For CLI-managed local Linux Spaces, use Docker (gVisor `runsc`, when installed, adds
+isolation) or QEMU. QEMU needs read/write access to `/dev/kvm` for hardware
+acceleration of same-architecture guests. The managed runtime is macOS-only.
 
 ## Run
 
@@ -29,9 +34,9 @@ Install Cua, run a Linux desktop locally, and register it as your first Space.
 </Tabs>
 
 In a terminal it first shows a checklist: the `cua` CLI, the Cua Spaces app
-(on by default on macOS; pass `--select spaces` on Linux, `-Select spaces` on
-Windows), the cua-driver MCP and skill for your agents, and hosting this
-machine. Then it signs you in and offers to set up your AI coding agents.
+(macOS only, selected by default there), the cua-driver MCP and skill for your
+agents, and hosting this machine. On Linux and Windows the Spaces app is skipped.
+Then it signs you in and offers to set up your AI coding agents.
 Flags: `--select ITEMS`, `--only ITEMS`, `--cli-only`, `--app-only`,
 `--mode host|client`, `--version X`, `--no-onboarding`, `--dry-run`, `--yes`
 (`-Select`, `-CliOnly`, ... on Windows). GUI installers are on

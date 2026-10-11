@@ -94,7 +94,7 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
 /// layer filter on enumeration and off identity lookup is what lets
 /// `get_window_state` tell "no such window" apart from "exists, but is not a
 /// layer-0 window" (issue #2237).
-fn all_windows_any_layer() -> Vec<WindowInfo> {
+pub(crate) fn all_windows_any_layer() -> Vec<WindowInfo> {
     enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer).windows
 }
 

@@ -181,7 +181,7 @@ jobs:
           # Windows native packages must load without the VC++ redistributable.
           RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
         run: |
-          cargo build --locked --release -p cua-sdk -p cua-cli --target ${{ matrix.target }}
+          cargo build --locked --release -p cua-sdk -p cua-cli --features cua-cli/byoc --target ${{ matrix.target }}
           npm --prefix typescript ci --ignore-scripts
           node scripts/build-node-runtime.mjs --target ${{ matrix.target }} \
             --output "native/${{ matrix.label }}/cua_node_runtime.node"

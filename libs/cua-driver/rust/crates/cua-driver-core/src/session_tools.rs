@@ -600,7 +600,7 @@ mod tests {
         let structured = result.structured_content.as_ref().unwrap();
         assert_eq!(structured["cursor_motion"]["style"], "magnetic");
         assert_eq!(structured["cursor_motion"]["timing"], "fitts");
-        assert_eq!(structured["cursor_motion"]["effects"]["trail"], true);
+        assert_eq!(structured["cursor_motion"]["effects"]["trail"], "on");
         EndSessionTool.invoke(json!({"session": id})).await;
 
         // Optional: absent unless the call set it.

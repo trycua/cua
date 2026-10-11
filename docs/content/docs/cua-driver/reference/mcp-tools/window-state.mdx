@@ -223,7 +223,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="parse_visual_regions--capture_id"></span>`capture_id` | `string` | required | `capture_id` of a screenshot returned by get_window_state or get_desktop_state. |
 | <span id="parse_visual_regions--options"></span>`options` | `object` | `{}` | Optional, model-neutral controls for one bounded parse. |
-| <span id="parse_visual_regions--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. |
+| <span id="parse_visual_regions--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. Items: 1 to 2. |
 | <span id="parse_visual_regions--options-max_regions"></span>`options.max_regions` | `integer` |  | Return at most this many regions. Minimum: 1. |
 | <span id="parse_visual_regions--options-min_confidence"></span>`options.min_confidence` | `number` |  | Drop regions below this confidence (0 to 1). Range: 0 to 1. |
 | <span id="parse_visual_regions--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |

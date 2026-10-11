@@ -99,7 +99,11 @@ Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, en
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="press_key--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="press_key--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="press_key--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="press_key--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="press_key--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="press_key--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="press_key--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 
 **Example arguments**
 
@@ -189,7 +193,11 @@ Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier keys u
 | --- | --- | --- | --- |
 | <span id="hotkey--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="hotkey--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="hotkey--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="hotkey--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="hotkey--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="hotkey--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="hotkey--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="hotkey--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 
 **Example arguments**
 

@@ -6,30 +6,30 @@
 //! change, and closing or saving keeps the old content on disk (Bench v2
 //! DS-07). Key events do go through the edit model.
 //!
-//! After an AX write that changed a document's text, this checks the document
-//! window's edited mark (`AXEdited` on its close button). When the mark is
-//! still clear, it sends one net-zero edit as key events (a space and a
-//! backspace at the end of the text), which marks the document edited without
-//! changing its content, and reads the mark again.
+//! After an AX write that changed the text of a document window (one with an
+//! `AXDocument` URL), this sends one net-zero edit as key events (a space and
+//! a backspace), which registers the change with the document without
+//! changing its content, and checks that the text did not move. There is no
+//! accessibility readback of the edited state: `AXEdited` on the close button
+//! stays false for autosave-in-place documents even after a typed edit (VM
+//! check, TextEdit, 11 Oct 2026); TextEdit's autosave writing the new text is
+//! the evidence.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::ax::bindings::{
-    copy_bool_attr, copy_element_attr, copy_string_attr, AXUIElementRef,
-    AXUIElementSetAttributeValue,
+    copy_element_attr, copy_string_attr, AXUIElementRef, AXUIElementSetAttributeValue,
 };
 
 /// What the document's edited mark showed after an AX text write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentEdited {
-    /// The element is not in a document window (no `AXEdited` on its close
-    /// button), so there is nothing to save.
+    /// The element is not in a document window, so there is nothing to save.
     NotADocument,
-    /// The document was already marked edited.
-    AlreadyEdited,
-    /// The driver marked it edited with a net-zero key edit.
+    /// The driver sent a net-zero key edit and the text did not move.
     Marked,
-    /// It is still not marked edited. A save may keep the old content.
+    /// The key edit could not be sent to this window, or the text moved. A
+    /// save may keep the old content.
     NotMarked,
 }
 
@@ -37,9 +37,10 @@ impl DocumentEdited {
     /// A sentence for the tool result, or nothing when there is nothing to say.
     pub fn note(self) -> &'static str {
         match self {
-            DocumentEdited::NotADocument | DocumentEdited::AlreadyEdited => "",
+            DocumentEdited::NotADocument => "",
             DocumentEdited::Marked => {
-                " The document is marked edited, so it autosaves and a save keeps the new text."
+                " A net-zero key edit (space, backspace) was sent so the document registers the \
+                 change and saves it; an accessibility write alone does not."
             }
             DocumentEdited::NotMarked => {
                 " Warning: the document is not marked edited, so saving or closing it may keep \
@@ -54,7 +55,7 @@ impl DocumentEdited {
         match self {
             DocumentEdited::NotADocument => None,
             DocumentEdited::NotMarked => Some(false),
-            DocumentEdited::AlreadyEdited | DocumentEdited::Marked => Some(true),
+            DocumentEdited::Marked => Some(true),
         }
     }
 }
@@ -71,18 +72,18 @@ struct CfRange {
     length: isize,
 }
 
-/// The document window's edited mark, `None` when it has none.
+/// Whether `element` sits in a document window (its window has an
+/// `AXDocument` URL).
 ///
 /// # Safety
 /// `element` must be a live `AXUIElementRef`.
-unsafe fn edited_mark(element: AXUIElementRef) -> Option<bool> {
-    let window = copy_element_attr(element, "AXWindow")?;
-    let close = copy_element_attr(window, "AXCloseButton");
+unsafe fn in_document_window(element: AXUIElementRef) -> bool {
+    let Some(window) = copy_element_attr(element, "AXWindow") else {
+        return false;
+    };
+    let document = copy_string_attr(window, "AXDocument");
     core_foundation::base::CFRelease(window as _);
-    let close = close?;
-    let edited = copy_bool_attr(close, "AXEdited");
-    core_foundation::base::CFRelease(close as _);
-    edited
+    document.is_some_and(|url| !url.is_empty())
 }
 
 /// Whether the app's key window (its `AXFocusedWindow`) is the element's
@@ -112,10 +113,8 @@ pub unsafe fn ensure_marked_after_ax_write(
     element: AXUIElementRef,
     caret_to_end: bool,
 ) -> DocumentEdited {
-    match edited_mark(element) {
-        None => return DocumentEdited::NotADocument,
-        Some(true) => return DocumentEdited::AlreadyEdited,
-        Some(false) => {}
+    if !in_document_window(element) {
+        return DocumentEdited::NotADocument;
     }
     if !keys_reach_element_window(pid, element) {
         return DocumentEdited::NotMarked;
@@ -130,20 +129,12 @@ pub unsafe fn ensure_marked_after_ax_write(
     {
         return DocumentEdited::NotMarked;
     }
-    let deadline = Instant::now() + Duration::from_millis(600);
-    loop {
-        if edited_mark(element) == Some(true) {
-            // The two keys must cancel out; if the text moved, say so.
-            return if copy_string_attr(element, "AXValue") == before {
-                DocumentEdited::Marked
-            } else {
-                DocumentEdited::NotMarked
-            };
-        }
-        if Instant::now() >= deadline {
-            return DocumentEdited::NotMarked;
-        }
-        std::thread::sleep(Duration::from_millis(40));
+    // Let the two keys land, then check they cancelled out.
+    std::thread::sleep(Duration::from_millis(150));
+    if copy_string_attr(element, "AXValue") == before {
+        DocumentEdited::Marked
+    } else {
+        DocumentEdited::NotMarked
     }
 }
 
@@ -175,8 +166,7 @@ mod tests {
     #[test]
     fn only_a_document_left_unedited_gets_a_warning() {
         assert_eq!(DocumentEdited::NotADocument.note(), "");
-        assert_eq!(DocumentEdited::AlreadyEdited.note(), "");
-        assert!(DocumentEdited::Marked.note().contains("marked edited"));
+        assert!(DocumentEdited::Marked.note().contains("net-zero key edit"));
         assert!(DocumentEdited::NotMarked
             .note()
             .contains("may keep the old content"));

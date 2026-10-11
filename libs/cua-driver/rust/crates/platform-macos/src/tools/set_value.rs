@@ -224,7 +224,7 @@ impl Tool for SetValueTool {
                     "effect": if verified { "confirmed" } else { "unverifiable" },
                 });
                 if let Some(edited) = outcome.document_edited {
-                    structured["document_edited"] = serde_json::json!(edited);
+                    structured["document_key_edit_sent"] = serde_json::json!(edited);
                 }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({

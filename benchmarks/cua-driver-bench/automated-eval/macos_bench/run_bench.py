@@ -2601,6 +2601,10 @@ def cmd_gate_check(args: argparse.Namespace) -> int:
             f"latest known: {json.dumps({k: latest.get(k) for k in ('ts', 'five_hour', 'seven_day', 'status', 'source')})}"
         )
     if decision["action"] == "gated":
+        arm_names = [args.only_arm] if args.only_arm else list(args.arms)
+        if arm_names and all(a in cxn.ARMS for a in arm_names):  # Amendment 20: no Claude seat in use
+            print("quota gate not applied: only native Codex arms, which use no Claude seat")
+            return 0
         print("RUN GATED: not starting. The seven-day figure only grows until its window resets.")
         return 3
     return 0

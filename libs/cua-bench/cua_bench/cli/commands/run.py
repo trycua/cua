@@ -14,7 +14,6 @@ Usage:
 
 import asyncio
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -23,6 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
+from cua_bench.reward import DEFAULT_SUCCESS_THRESHOLD, try_parse_reward
 from cua_bench.runner.docker_utils import allocate_ports, generate_task_id
 
 # Telemetry imports (optional)
@@ -149,13 +149,9 @@ async def _cmd_list_async(args) -> int:
                     # Fallback: extract from logs
                     try:
                         logs = await docker_provider.get_session_logs(session_id, tail=100)
-                        match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                        if match:
-                            reward_str = match.group(1)
-                            try:
-                                rewards.append(float(reward_str))
-                            except ValueError:
-                                pass
+                        parsed_reward = try_parse_reward(logs)
+                        if parsed_reward is not None:
+                            rewards.append(parsed_reward)
                     except Exception:
                         pass
             elif status == "failed":
@@ -235,7 +231,7 @@ async def _cmd_list_async(args) -> int:
         reward_str = row["avg_reward"]
         if reward_str != "-":
             reward_val = row["avg_reward_val"]
-            if reward_val >= 0.5:
+            if reward_val >= DEFAULT_SUCCESS_THRESHOLD:
                 reward_colored = f"{GREEN}{reward_str:<{max_avg_reward}}{RESET}"
             else:
                 reward_colored = f"{RED}{reward_str:<{max_avg_reward}}{RESET}"
@@ -381,7 +377,7 @@ async def _cmd_watch_async(
             if reward != "-":
                 try:
                     reward_val = float(reward)
-                    reward_style = "green" if reward_val >= 0.5 else "red"
+                    reward_style = "green" if reward_val >= DEFAULT_SUCCESS_THRESHOLD else "red"
                 except ValueError:
                     reward_style = "white"
             else:
@@ -490,13 +486,10 @@ async def _cmd_watch_async(
                 if status == "completed":
                     try:
                         logs = await docker_provider.get_session_logs(session_id, tail=100)
-                        match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                        if match:
-                            reward = match.group(1)
-                            try:
-                                rewards.append(float(reward))
-                            except ValueError:
-                                pass
+                        parsed_reward = try_parse_reward(logs)
+                        if parsed_reward is not None:
+                            reward = f"{parsed_reward:g}"
+                            rewards.append(parsed_reward)
                     except Exception:
                         pass
                 elif status == "failed":
@@ -789,13 +782,10 @@ async def _cmd_info_async(args) -> int:
         if status == "completed":
             try:
                 logs = await docker_provider.get_session_logs(session_id, tail=100)
-                match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                if match:
-                    reward = match.group(1)
-                    try:
-                        rewards.append(float(reward))
-                    except ValueError:
-                        pass
+                parsed_reward = try_parse_reward(logs)
+                if parsed_reward is not None:
+                    reward = f"{parsed_reward:g}"
+                    rewards.append(parsed_reward)
             except Exception:
                 pass
         elif status == "failed":
@@ -827,7 +817,7 @@ async def _cmd_info_async(args) -> int:
     print(f"Progress: {completed_count}/{total_count}")
     if rewards:
         avg_reward = sum(rewards) / len(rewards)
-        reward_color = GREEN if avg_reward >= 0.5 else RED
+        reward_color = GREEN if avg_reward >= DEFAULT_SUCCESS_THRESHOLD else RED
         print(f"Avg Reward: {reward_color}{avg_reward:.3f}{RESET}")
     print(f"\nOutput: {run_output_dir}")
     print(f"Logs:   {run_output_dir}/run.log")
@@ -860,7 +850,7 @@ async def _cmd_info_async(args) -> int:
         if reward != "-":
             try:
                 reward_val = float(reward)
-                if reward_val >= 0.5:
+                if reward_val >= DEFAULT_SUCCESS_THRESHOLD:
                     reward_display = f"{GREEN}{reward:<10}{RESET}"
                 else:
                     reward_display = f"{RED}{reward:<10}{RESET}"
@@ -1623,16 +1613,10 @@ async def _cmd_run_dataset_async(args) -> int:
                 reward_str = "?"
                 reward_color = ""
                 if result.agent_logs:
-                    import re
-
-                    match = re.search(r"Evaluation result: \[([^\]]+)\]", result.agent_logs)
-                    if match:
-                        reward_str = match.group(1)
-                        try:
-                            reward_val = float(reward_str)
-                            reward_color = GREEN if reward_val >= 0.5 else RED
-                        except ValueError:
-                            pass
+                    parsed_reward = try_parse_reward(result.agent_logs)
+                    if parsed_reward is not None:
+                        reward_str = f"{parsed_reward:g}"
+                        reward_color = GREEN if parsed_reward >= DEFAULT_SUCCESS_THRESHOLD else RED
 
                 # Update session status
                 final_status = "completed" if result.success else "failed"

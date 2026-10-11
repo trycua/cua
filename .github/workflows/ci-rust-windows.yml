@@ -128,6 +128,12 @@ jobs:
         env:
           CUA_PROXY_RECOVERY_IDLE_SECONDS: ${{ inputs.proxy_idle_seconds || 1 }}
         run: cargo test -p cua-driver --test protocol_proxy_recovery_test --locked -- --nocapture
+      # A real daemon on a private named pipe with its own pid file (#4689).
+      - name: Run daemon status pid-file regression
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_DRIVER_STDERR: "1"
+        run: cargo test -p cua-driver --test status_pid_file_cli_test --locked
       - name: Test sentinel setup barrier
         run: node --test libs/cua-driver/tests/fixtures/apps/cross-platform/electron/preload.test.js
       - name: Run named-pipe readiness regression

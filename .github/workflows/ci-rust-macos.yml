@@ -80,6 +80,12 @@ jobs:
         run: |
           cargo build --locked -p cua-driver
           cargo test --locked -p cua-driver --test protocol_schema_test
+      # macOS has its own `status` dispatcher; this is its only runner (#4689).
+      - name: Run daemon status pid-file regression on macOS
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_DRIVER_STDERR: "1"
+        run: cargo test --locked -p cua-driver --test status_pid_file_cli_test
       # Desktop E2E suites are #[ignore] and run in the Lume harness. Their
       # hermetic oracle and parser tests run here as a whole crate, including
       # the macOS-gated ones that have no other runner: the harness's FIFO

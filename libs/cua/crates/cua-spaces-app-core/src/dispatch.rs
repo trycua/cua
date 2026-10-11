@@ -271,6 +271,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.storage",
     "telemetry.share",
     "telemetry.enroll",
+    "telemetry.checklist",
     "telemetry.experimentsChanged",
     "telemetry.experimentsOn",
     "settings.withStorage",
@@ -1018,6 +1019,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("action")?,
         )),
         "telemetry.enroll" => out(telemetry::enroll(&a.get("state")?, &a.get("action")?)),
+        "telemetry.checklist" => out(telemetry::checklist(&a.get::<String>("event")?)),
         "telemetry.experimentsChanged" => out(telemetry::experiments_changed(
             &a.get::<Option<experiments::Experiments>>("before")?
                 .unwrap_or_default(),

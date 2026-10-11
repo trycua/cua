@@ -202,6 +202,32 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+// ---- Getting started -----------------------------------------------------------
+
+/// The getting-started checklist's steps, in the order it lists them.
+pub const CHECKLIST_STEPS: &[&str] = &[
+    "add_machine",
+    "create_space",
+    "teleport",
+    "share",
+    "run_agent",
+];
+
+/// What happens to the checklist itself.
+const CHECKLIST_EVENTS: &[&str] = &["shown", "completed", "dismissed", "reopened"];
+
+/// One getting-started checklist event as `cua_onboarding_step`
+/// `checklist_<event>`: `shown` (first time on screen), one of
+/// [`CHECKLIST_STEPS`] (that step done, once per install), `completed`
+/// (every step done), `dismissed` or `reopened`. Anything else: nothing.
+pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
+    if CHECKLIST_STEPS.contains(&event) || CHECKLIST_EVENTS.contains(&event) {
+        vec![step(&format!("checklist_{event}"), true)]
+    } else {
+        vec![]
+    }
+}
+
 // ---- First run ---------------------------------------------------------------
 
 /// A page's telemetry name.
@@ -850,6 +876,34 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checklist_events_are_fixed_steps_in_the_schema() {
+        let all: Vec<&str> = CHECKLIST_STEPS
+            .iter()
+            .chain(CHECKLIST_EVENTS)
+            .copied()
+            .collect();
+        for e in &all {
+            assert_eq!(steps_of(&checklist(e)), [format!("checklist_{e}")]);
+            #[cfg(feature = "telemetry")]
+            assert!(
+                cua_telemetry::schema::ONBOARDING_STEPS
+                    .contains(&format!("checklist_{e}").as_str()),
+                "checklist_{e} is not in cua-telemetry's step vocabulary"
+            );
+        }
+        for bad in [
+            "",
+            "Share",
+            "checklist_share",
+            "me@example.com",
+            "/Users/x",
+            "share ",
+        ] {
+            assert!(checklist(bad).is_empty(), "{bad:?} accepted");
+        }
+    }
     use crate::drive_settings::DriveMountInput;
     use crate::model::{SpaceOs, SpaceProvider};
     use crate::onboarding::{initial, reduce};

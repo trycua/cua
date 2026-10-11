@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 
 import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaces, useSpaceThumbnail, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
+import { GettingStarted } from "@/components/getting-started";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { SpaceCanvas } from "@/components/space-canvas";
@@ -56,6 +57,7 @@ function SpacesPage() {
           </Button>
         }
       />
+      <GettingStarted />
       <div className="mb-4">
         <Segmented aria-label="Filter by state" value={filter} options={FILTERS} onValueChange={setFilter} />
       </div>

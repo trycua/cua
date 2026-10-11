@@ -155,6 +155,8 @@ static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
 static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
+/// Popups that each session's last click opened.
+static MPX_CLICK_POPUPS: OnceLock<Mutex<HashMap<String, Vec<u64>>>> = OnceLock::new();
 /// A session's retained master pair is removed after this much inactivity;
 /// `end_session` and the startup reaper cover the explicit and crash cases.
 /// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
@@ -165,6 +167,12 @@ static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
 /// `end_session`; the startup reaper reclaims anything it misses.
 const MPX_IDLE_TTL: Duration = Duration::from_secs(1800);
 const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(60);
+/// An ended session's master pair outlives the popups its last click opened by
+/// this long. GTK 3 keeps unreferenced pointers to a master device in its grab
+/// and event state; removing the master while its menu is open, or while the
+/// app is still handling the menu's close, crashes GTK in
+/// `gtk_widget_device_is_shadowed` or `gdk_device_get_source`.
+const MPX_POPUP_QUIET: Duration = Duration::from_millis(250);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
@@ -187,6 +195,10 @@ fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
 
 fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
     MPX_LAST_USE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mpx_click_popups() -> &'static Mutex<HashMap<String, Vec<u64>>> {
+    MPX_CLICK_POPUPS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
@@ -214,7 +226,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
                 };
                 for cursor_id in stale {
                     tracing::info!(cursor_id, "removing idle MPX master pair");
-                    forget_master_pointer(&cursor_id);
+                    forget_master_pointer_locked(&cursor_id);
                 }
             })
             .ok();
@@ -715,7 +727,73 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
+    let _op = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    forget_master_pointer_locked(cursor_id);
+}
+
+fn forget_master_pointer_locked(cursor_id: &str) {
     mpx_last_use().lock().unwrap().remove(cursor_id);
+    let popups = mpx_click_popups()
+        .lock()
+        .unwrap()
+        .remove(cursor_id)
+        .unwrap_or_default();
+    if popups_mapped(&popups) {
+        forget_after_popups(cursor_id.to_owned(), popups);
+        return;
+    }
+    remove_master_pair(cursor_id);
+}
+
+fn popups_mapped(popups: &[u64]) -> bool {
+    if popups.is_empty() {
+        return false;
+    }
+    let Ok(display) = open_display() else {
+        return false;
+    };
+    let mapped = popups
+        .iter()
+        .any(|&popup| popup_info(display, popup as x11::xlib::Window).is_some());
+    unsafe { x11::xlib::XCloseDisplay(display) };
+    mapped
+}
+
+/// Remove an ended session's master pair [`MPX_POPUP_QUIET`] after `popups`
+/// close, or after [`MPX_IDLE_TTL`]; a session that is used again keeps it.
+fn forget_after_popups(cursor_id: String, popups: Vec<u64>) {
+    let started = std::time::Instant::now();
+    let revived = |cursor_id: &str| mpx_last_use().lock().unwrap().contains_key(cursor_id);
+    std::thread::Builder::new()
+        .name("cua-mpx-popup-wait".into())
+        .spawn(move || loop {
+            sleep(Duration::from_millis(100));
+            {
+                let _op = MPX_OP_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if revived(&cursor_id) {
+                    return;
+                }
+                if started.elapsed() < MPX_IDLE_TTL && popups_mapped(&popups) {
+                    continue;
+                }
+            }
+            sleep(MPX_POPUP_QUIET);
+            let _op = MPX_OP_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !revived(&cursor_id) {
+                remove_master_pair(&cursor_id);
+            }
+            return;
+        })
+        .ok();
+}
+
+fn remove_master_pair(cursor_id: &str) {
     // Drop the uinput slaves first: closing the fds unplugs them, so the master
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
@@ -2627,6 +2705,10 @@ pub fn send_virtual_pointer_click(
             click.y,
         );
         effect.retargeted_to = retargeted_to;
+        mpx_click_popups().lock().unwrap().insert(
+            cursor_id.to_owned(),
+            effect.popups.iter().map(|popup| popup.window).collect(),
+        );
         Ok(effect)
     })();
 

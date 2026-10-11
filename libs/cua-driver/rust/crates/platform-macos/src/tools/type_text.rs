@@ -1528,6 +1528,13 @@ fn type_text_blocking(
         // unsafe even though no synthesis has run yet.
         let unchanged_web_readback = ax_progress == Some(TypedProgress::Unchanged)
             && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id);
+        // An AX insert bypasses NSTextView's edit model, so a document is
+        // not marked edited and would never save the new text (DS-07).
+        let document = if ax_progress == Some(TypedProgress::Complete) {
+            unsafe { crate::document_edit::ensure_marked_after_ax_write(pid, element, false) }
+        } else {
+            crate::document_edit::DocumentEdited::NotADocument
+        };
         if owns {
             unsafe {
                 CFRelease(element as _);
@@ -1536,7 +1543,10 @@ fn type_text_blocking(
         if ax_progress == Some(TypedProgress::Complete) {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
-                detail: format!(" into{idx_str} {role} \"{title}\""),
+                detail: format!(
+                    " into{idx_str} {role} \"{title}\"{}",
+                    document.note().trim_end_matches('.')
+                ),
                 path: PATH_AX,
                 verified: true,
                 delivered_chars: Some(text.chars().count()),

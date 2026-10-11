@@ -23,6 +23,8 @@ pub mod browser;
 pub mod capture;
 #[cfg(target_os = "macos")]
 pub mod cursor;
+
+pub mod document_edit;
 #[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]

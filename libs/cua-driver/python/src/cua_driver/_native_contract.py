@@ -8021,7 +8021,7 @@ class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowElement:
-    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
+    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], is_password:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
         self.element_index = element_index
         self.role = role
         self.depth = depth
@@ -8031,6 +8031,7 @@ class WindowElement:
         self.value_description = value_description
         self.enabled = enabled
         self.selected = selected
+        self.is_password = is_password
         self.in_web_content = in_web_content
         self.actions = actions
         self.parent_index = parent_index
@@ -8042,7 +8043,7 @@ class WindowElement:
 
 
     def __str__(self):
-        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
+        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, is_password={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.is_password, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
     def __eq__(self, other):
         if self.element_index != other.element_index:
             return False
@@ -8061,6 +8062,8 @@ class WindowElement:
         if self.enabled != other.enabled:
             return False
         if self.selected != other.selected:
+            return False
+        if self.is_password != other.is_password:
             return False
         if self.in_web_content != other.in_web_content:
             return False
@@ -8089,6 +8092,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
             value_description=_UniffiFfiConverterOptionalString.read(buf),
             enabled=_UniffiFfiConverterOptionalBoolean.read(buf),
             selected=_UniffiFfiConverterOptionalBoolean.read(buf),
+            is_password=_UniffiFfiConverterOptionalBoolean.read(buf),
             in_web_content=_UniffiFfiConverterOptionalBoolean.read(buf),
             actions=_UniffiFfiConverterOptionalSequenceString.read(buf),
             parent_index=_UniffiFfiConverterOptionalUInt64.read(buf),
@@ -8108,6 +8112,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.value_description)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.enabled)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.selected)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.is_password)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.in_web_content)
         _UniffiFfiConverterOptionalSequenceString.check_lower(value.actions)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.parent_index)
@@ -8126,6 +8131,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.value_description, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.enabled, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.selected, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.is_password, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.in_web_content, buf)
         _UniffiFfiConverterOptionalSequenceString.write(value.actions, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.parent_index, buf)

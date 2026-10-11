@@ -126,8 +126,8 @@ class CuaDriverUnderCodexTest(unittest.TestCase):
         self.assertIn("not an Anthropic-supported procedure", cxn.LABELS["cx-claude-cu-helper"])
         self.assertIn("cx-claude-cu-helper", arms.ALL_ARMS)
         self.assertIn("cx-cua-driver", arms.ALL_ARMS)
-        self.assertEqual(cxn.MODEL, "gpt-6-astra")  # until gpt-6.1-sol is served (A23.1)
-        self.assertEqual(cxn.EFFORT, "medium")
+        self.assertEqual(cxn.MODEL, "gpt-6.1-sol")  # A23.1
+        self.assertEqual(cxn.EFFORT, "low")
 
     def test_translator_names_the_cua_server(self) -> None:
         out = cxn.Translator("cua").feed("thread/started", {"thread": {"id": "t"}})

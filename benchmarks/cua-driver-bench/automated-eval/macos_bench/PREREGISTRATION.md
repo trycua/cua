@@ -1585,13 +1585,13 @@ The A17.3 rerun (v2rr-ba) is re-expressed under A22 over the criteria it measure
 
 (Columns count background trials with that disturbance; n/m = not measured in that run.) All ten of Cua Driver's pointer movements are on the hover tasks MB-10 and MB-11 (CUA-1342).
 
-## Amendment 23 (11 Oct 2026, before the next full Bench v2 run): Codex CLI as a second harness for all three tools (model TBD: GPT-6.1 Sol if accessible, else gpt-6-astra), and the Claude helper made public
+## Amendment 23 (11 Oct 2026, before the next full Bench v2 run): Codex CLI + GPT-6.1 Sol as a second harness for all three tools, and the Claude helper made public
 
 Written and committed before any trial it governs. Three decisions of the owner on 11 Oct 2026. Nothing else of A14 to A22 changes.
 
-### A23.1 The model of the Codex-CLI setups: TBD, GPT-6.1 Sol if accessible, else gpt-6-astra
+### A23.1 The model of the Codex-CLI setups: GPT-6.1 Sol
 
-The owner asked for **GPT-6.1 Sol** for the Codex-CLI setups. **Model: TBD: GPT-6.1 Sol if accessible, else gpt-6-astra.** Checked 11 Oct 2026: the model gateway the harness uses lists gpt-6-astra, gpt-6-luna, gpt-5.6-sol/terra/luna, gpt-5.5 and gpt-5.6-codex, and rejects `gpt-6.1-sol` ("Invalid model name"); the host's Codex CLI 0.156.1 catalog has no gpt-6.1 model. (The Codex CLI bundled in the pinned ChatGPT app, codex-cli 0.160.0, does list a `gpt-6.1-sol` entry with default effort `low`, but nothing serves it to us.) Until it is accessible, the Codex-CLI setups use **gpt-6-astra at its catalog default effort (`medium`)**, the model of the A20 smoke. If GPT-6.1 Sol becomes accessible (served through the gateway, checked twice minutes apart) before the full run, the switch is registered by its own dated line and re-smoked at n = 1 (A23.4) before the full run; it is never changed mid-run. The model and effort are recorded in every row and named in the setup's label ("…, driven by Codex CLI + GPT-6 Astra").
+All three Codex-CLI setups use **GPT-6.1 Sol**, model id **`gpt-6.1-sol`** (display name "GPT-6.1-Sol" in the catalog bundled with the pinned codex-cli 0.160.0), at its catalog default effort **`low`**, as the Claude arms use Claude's default. **Route:** the harness's OpenAI-compatible LiteLLM gateway, model group `gpt-6.1-sol`, which routes to the owner's ChatGPT seats (an Azure deployment also serves it; the `openai-api` route returns `billing_not_active` and is not used). Verified 11 Oct 2026 by two `codex exec -m gpt-6.1-sol` turns about a minute apart through the pinned CLI and this gateway (both answered). The model, effort and route are pinned in `pins.json` `codex_native` and recorded in every row; the preflight checks the gateway lists the model. A20's smoke used gpt-6-astra (`medium`) and stays a plumbing result. The model is never changed mid-run.
 
 ### A23.2 Codex CLI as a second harness
 
@@ -1600,7 +1600,7 @@ So that agent harness and model are not confounded with the tool layer, every to
 | Harness and model | Setups |
 |---|---|
 | Claude Code, Claude Sonnet 5.5 (as before) | Cua Driver (`cc-cua-driver-script`); Codex Computer-Use (Sky) (`cc-codex-cu`); Claude Computer-Use (Desktop helper) (`cc-claude-cu-helper`) |
-| Codex CLI (`codex app-server`, A20), the A23.1 model | Cua Driver (**new** `cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`); Claude Computer-Use (Desktop helper) (**new** `cx-claude-cu-helper`) |
+| Codex CLI (`codex app-server`, A20), GPT-6.1 Sol (A23.1) | Cua Driver (**new** `cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`); Claude Computer-Use (Desktop helper) (**new** `cx-claude-cu-helper`) |
 
 `cx-cua-driver` runs the same Cua Driver build, daemon and MCP entry as `cc-cua-driver-script` (main at the run's pinned commit, run_script on), registered as server `cua` with all its tools, and the same system prompt text as that arm (the shared prompt plus its run_script addendum) as Codex `developer_instructions`. It has no skill files: without a shell or file tool Codex cannot read a skill, so the Cua Driver skill is not offered (Sky's Codex setups have none either); the server's own instructions remain. Everything else is as in A20.1 to A20.3 (GUI-only route mapping, turns, budgets, no cost figure). Labels: "Cua Driver, driven by Claude Code" / "…, driven by Codex CLI + <model>", and the same suffixes for Codex Computer-Use and the helper.
 
@@ -1618,7 +1618,7 @@ The Claude Computer-Use (Desktop helper) setup and its numbers are no longer int
 |---|---|---|---|---|---|
 | v2cx-s4b, v2cx-s4f | background, then foreground | IR-01, MB-10, CDB-G04 | `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper` | 1 per task, arm and condition (18 trials) | 2026-10-11T16:00Z; helper arm added before it ran |
 
-It runs with the A23.1 model before the full run (gpt-6-astra unless GPT-6.1 Sol has become accessible and its switch line is registered); if the model changes afterwards, it runs again.
+It runs with `gpt-6.1-sol` (A23.1) before the full run.
 
 ## 0. Decisions made before the first trial, and why
 

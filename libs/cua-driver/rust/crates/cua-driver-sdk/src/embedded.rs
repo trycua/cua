@@ -1274,9 +1274,6 @@ mod tests {
 
     #[test]
     fn update_check_preference_is_inherited_and_overridable() {
-        // A host that ships the driver owns its upgrade lifecycle, so it must
-        // be able to turn off the daemon's background release check the same
-        // way it turns off telemetry.
         assert!(allowed_environment_name("CUA_DRIVER_RS_UPDATE_CHECK"));
         assert!(allowed_environment_name("cua_driver_rs_update_check"));
 

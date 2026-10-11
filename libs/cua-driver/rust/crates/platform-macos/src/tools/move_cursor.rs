@@ -29,10 +29,10 @@ fn def() -> &'static ToolDef {
             x/y are window screenshot pixels (as for click) and only the agent cursor moves \
             there; in a background app it also hovers through a route that leaves the real \
             pointer alone where one exists (AXShowAlternateUI on the element under the point, \
-            or an Electron page) and says so. Without a target, moves only the \
-            agent cursor overlay, in screen points. Other macOS hover and tooltips follow the \
-            real pointer, so most background apps see no hover. With scope=desktop, moves the real OS pointer in \
-            native get_desktop_state screenshot coordinates.".into(),
+            or an Electron page) and says so. Without a target, moves only the agent cursor \
+            overlay, in screen points. Other macOS hover and tooltips follow the real pointer, \
+            so most background apps see no hover. With scope=desktop, moves the real OS pointer \
+            in native get_desktop_state screenshot coordinates.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["x", "y"],
@@ -269,9 +269,10 @@ const BACKGROUND_HOVER_NOTE: &str = " The app is in the background, so it sees n
      macOS apps track hover and show tooltips from the real pointer, and nothing under this \
      point offers a background route (no AXShowAlternateUI, not an Electron page). For a web \
      page in Chrome use browser_pointer hover. A control that only appears on hover, or a \
-     tooltip, cannot be revealed without the user's pointer (scope:\"desktop\") or the app in front (bring_to_front); use \
-     either only if the user allows it. Look first for the same command elsewhere: a menu \
-     item, a context menu, a keyboard shortcut, or help text in get_window_state.";
+     tooltip, cannot be revealed without the user's pointer (scope:\"desktop\") or the app in \
+     front (bring_to_front); use either only if the user allows it. Look first for the same \
+     command elsewhere: a menu item, a context menu, a keyboard shortcut, or help text in \
+     get_window_state.";
 
 /// The app that owns the frontmost ordinary window under a desktop point,
 /// when that app is not the active one. The driver's own windows (cursor

@@ -361,5 +361,68 @@ class PointerStillTest(unittest.TestCase):
     def test_foreground_has_no_variant(self) -> None:
         self.assertIsNone(v2.background_condition_score({}, {}, True, "foreground")["background_completion_pointer_still"])
 
+
+
+class MultiplayerTest(unittest.TestCase):
+    """Amendment 22: background completion with the user undisturbed (eight criteria)."""
+
+    CLEAN = {
+        "key_loss": 0,
+        "windows_raised": 0,
+        "keystrokes_leaked": 0,
+        "clicks_leaked": 0,
+        "scrolls_leaked": 0,
+        "user_activity": {"blocked": 0, "text_disruptions": 0, "text_intact_at_end": True},
+        "pointer_max_deviation_px": 0.0,
+        "clipboard_changes": 0,
+        "space_switches": 0,
+        "sheets_shown": 0,
+        "front_changes": 0,
+        "activations_lost": 0,
+        "activations_gained": 0,
+    }
+
+    def test_clean_trial_completes(self) -> None:
+        out = v2.multiplayer_score(dict(self.CLEAN), True, True, "background")
+        self.assertTrue(out["background_completion"])
+        self.assertEqual(out["unmeasured"], [])
+
+    def test_each_disturbance_fails_completion(self) -> None:
+        cases = {
+            "key_focus": {"key_loss": 1},
+            "window_raised": {"windows_raised": 2},
+            "typing": {
+                "user_activity": {"blocked": 1, "text_disruptions": 0, "text_intact_at_end": True}
+            },
+            "pointer": {"pointer_max_deviation_px": 3.0},
+            "clipboard": {"clipboard_changes": 1},
+            "space": {"space_switches": 1},
+            "dialog": {"sheets_shown": 1},
+            "activation": {"activations_gained": 1},
+        }
+        self.assertEqual(set(cases), set(v2.MULTIPLAYER_CRITERIA))
+        for name, change in cases.items():
+            out = v2.multiplayer_score({**self.CLEAN, **change}, True, True, "background")
+            self.assertFalse(out["background_completion"], name)
+            self.assertIs(out["criteria"][name], False, name)
+
+    def test_unmeasured_fails_closed_unless_rescoring(self) -> None:
+        old = {
+            k: v
+            for k, v in self.CLEAN.items()
+            if k not in ("clipboard_changes", "space_switches", "sheets_shown")
+        }
+        self.assertFalse(
+            v2.multiplayer_score(old, True, True, "background")["background_completion"]
+        )
+        rescored = v2.multiplayer_score(old, True, True, "background", rescore=True)
+        self.assertTrue(rescored["background_completion"])
+        self.assertEqual(rescored["unmeasured"], ["clipboard", "dialog", "space"])
+        self.assertEqual(rescored["rule"], "A22 rescored")
+
+    def test_typed_input_landing_in_the_user_window_is_typing_disturbed(self) -> None:
+        out = v2.multiplayer_score({**self.CLEAN, "keystrokes_leaked": 4}, True, True, "background")
+        self.assertIs(out["criteria"]["typing"], False)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1523,6 +1523,45 @@ The data is in `results/v2s5b` on the host.
 
 Registered 11 Oct 2026 before any trial that records it. Every background-condition row also carries `background_completion_pointer_still`: the A15.3 background completion that additionally requires the real pointer not to have moved (`pointer_moved` false; unmeasured counts as moved). `tools/analyze_v2.py` reports its rate next to background completion. The A15.3 metric stays the primary metric until the owner decides A19.5 item 1; if the owner makes the pointer part of the headline, that decision is registered by its own dated line before the next full run, and the A15.3 figure is still reported.
 
+## Amendment 22 (11 Oct 2026, before the next full Bench v2 run): background completion means the user was undisturbed (multi-player rule)
+
+Written and committed before any trial that uses it. **The owner's decision (11 Oct 2026), settling A19.5 item 1:** a pointer jump counts as disturbing the user. His principle is "anything that would prevent multi-player": background completion means the user could have kept working at the same time, undisturbed, as if two people were sharing the computer. From the next full Bench v2 run on, this is the **headline background metric**. It replaces A15.3 as the primary metric of the background condition; the A15.3 figure and A20.7's pointer-still variant are still reported next to it. Nothing else of A14 to A21 changes.
+
+### A22.1 The rule
+
+Background completion = the task passed **and** none of these happened to the user during the agent phase:
+
+| # | Disturbance | Measured by | Since |
+|---|---|---|---|
+| 1 | keyboard focus or key-window loss | BenchSentinel `didResignKey` events (`key_loss`) | A14 |
+| 2 | the target or any other window raised over the user's window | sentinel window order, 20 Hz (`windows_raised`); the setups' own overlay windows stay metadata, as decided in A15 | A14 |
+| 3 | the user's typing lost or redirected | the simulated user's typing: blocked ticks, text disruptions, text intact at the end, and any keystroke, click or scroll that landed in the user's window | A15 |
+| 4 | the real pointer moved | sentinel pointer samples, 20 Hz; any movement above 1 px (the simulated user never moves the pointer) | A14 |
+| 5 | the user's clipboard changed | **new:** `NSPasteboard.general.changeCount` in every sentinel sample (`clipboard_changes`) | A22 |
+| 6 | a desktop Space or full-screen switch | **new:** the sentinel's `activeSpaceDidChange` observer and whether its window is on the active Space, in every sample (`space_switches`) | A22 |
+| 7 | a modal, sheet or dialog appearing on the user's app | **new:** an attached sheet, an app-modal window or any other visible window of the user's app, in every sample (`sheets_shown`) | A22 |
+| 8 | the user's app activated or deactivated | front-app changes away from the user's app (`front_changes`) and the sentinel's `didResignActive` / `didBecomeActive` events (`activations_lost`, **new** `activations_gained`) | A14 / A22 |
+
+All eight are measured from the sentinel build of this commit (`swift/BenchSentinel.swift`); the VM's BenchSentinel is rebuilt from it before the run. In a scored run a criterion that was not measured counts as a disturbance (fail closed). Code: `bench_v2.multiplayer_score`, row field `multiplayer` (per-criterion values), `tools/analyze_v2.py`.
+
+Known limit, stated in the report: criterion 7 sees sheets and dialogs of the user's app itself; a system dialog from another process that covers the user's window counts under criterion 2.
+
+### A22.2 Reporting
+
+Each criterion is its own column: for each setup, the number of background trials in which that disturbance happened, so readers see which kind of interference happened. Per category as well as overall.
+
+### A22.3 The 11 Oct rerun under the new rule (secondary, labelled)
+
+The A17.3 rerun (v2rr-ba) is re-expressed under A22 over the criteria it measured (1, 2, 3, 4 and 8; criteria 5, 6 and 7 did not exist yet, and criterion 8 there uses front-app changes only). It is a labelled secondary figure ("A22 rescored"), never the run's registered result:
+
+| Setup | Background completion, A22 rescored | A15.3 as registered | Key loss | Raised | Typing | Pointer | Clipboard | Space | Dialog | Activation |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Cua Driver | 16/50 | 21/50 | 2 | 10 | 2 | 10 | n/m | n/m | n/m | 2 |
+| Codex Computer-Use (Sky), driven by Claude Code | 17/50 | 17/50 | 6 | 23 | 6 | 0 | n/m | n/m | n/m | 6 |
+| Claude Computer-Use (Desktop helper) | 6/50 | 6/50 | 29 | 22 | 26 | 0 | n/m | n/m | n/m | 20 |
+
+(Columns count background trials with that disturbance; n/m = not measured in that run.) All ten of Cua Driver's pointer movements are on the hover tasks MB-10 and MB-11 (CUA-1342).
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

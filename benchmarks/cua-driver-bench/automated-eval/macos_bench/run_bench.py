@@ -1107,6 +1107,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "raised_by": summary_sentinel.get("raised_by", []),
                 "overlay_owners": summary_sentinel.get("overlay_owners", []),
                 "user_activity": summary_sentinel.get("user_activity"),
+                # Amendment 22: the remaining multi-player measures (None when the sentinel did not record them)
+                "activations_lost": summary_sentinel.get("activations_lost"),
+                "activations_gained": summary_sentinel.get("activations_gained"),
+                "clipboard_changes": summary_sentinel.get("clipboard_changes"),
+                "space_switches": summary_sentinel.get("space_switches"),
+                "sheets_shown": summary_sentinel.get("sheets_shown"),
             },
             "sentinel_frontmost": sentinel_front,
             "gui_only": gui_only,
@@ -1132,6 +1138,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     row["background"] = v2.background_score(row["disturbance"], sentinel_front) if bench_v2 else None
     row["background_condition"] = (
         v2.background_condition_score(row["background"], row["disturbance"], bool(row["passed"]), condition)
+        if bench_v2
+        else None
+    )
+    # A22: the headline background metric, multi-player background completion, with each criterion on its own
+    row["multiplayer"] = (
+        v2.multiplayer_score(row["disturbance"], bool(row["background"]["measured"]), bool(row["passed"]), condition)
         if bench_v2
         else None
     )

@@ -12,6 +12,8 @@ evaluator prefixes with the ``CUA_BENCH_RESULT`` marker:
 The JSON is limited to a top-level ``reward`` or ``score`` key. Arbitrary JSON
 an agent or tool happens to print (a model confidence ``score``, an OCR score,
 an API response) is ignored, so it can never be mistaken for the task reward.
+Evaluators produce the envelope with :func:`emit_result_envelope` and pass their
+raw ``evaluate`` result through :func:`coerce_reward` first.
 When several envelopes are present the last one wins. When no envelope is
 present the legacy ``Evaluation result:`` text form is used. When neither is
 present a clear ``ValueError`` is raised instead of silently returning ``None``
@@ -53,6 +55,37 @@ def _reward_from_payload(payload: Any) -> Optional[float]:
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def coerce_reward(result: Any) -> Optional[float]:
+    """Coerce an evaluation result into a scalar reward, if one is present.
+
+    Evaluation functions return a scalar, a one-element list of scores, or a
+    ``{"reward"/"score": ...}`` mapping. Returns ``None`` when no numeric reward
+    can be recovered (for example a bare boolean success flag).
+    """
+    if isinstance(result, bool):
+        return None
+    if isinstance(result, (int, float)):
+        return float(result)
+    if isinstance(result, dict):
+        return _reward_from_payload(result)
+    if isinstance(result, (list, tuple)):
+        for item in result:
+            value = coerce_reward(item)
+            if value is not None:
+                return value
+    return None
+
+
+def emit_result_envelope(reward: float) -> str:
+    """Format a machine-readable result line for :func:`parse_reward`.
+
+    Returns ``CUA_BENCH_RESULT {"reward": <reward>}``. Evaluators should print
+    this next to the human-readable result so reward extraction no longer
+    depends on log formatting.
+    """
+    return f"{_RESULT_MARKER} {json.dumps({'reward': float(reward)})}"
 
 
 def _decode_marker_payloads(stdout: str) -> Iterator[Any]:

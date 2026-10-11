@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from cua_bench.reward import coerce_reward, emit_result_envelope
+
 # ANSI colors
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -238,6 +240,9 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
             print(f"{CYAN}Running evaluation...{RESET}")
             result = await env.evaluate()
             print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
+            reward = coerce_reward(result)
+            if reward is not None:
+                print(emit_result_envelope(reward))
 
         # Save trace if requested
         if (
@@ -384,6 +389,9 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
             if task_cfg and session:
                 result = await env.evaluate_task_fn(task_cfg, session)
                 print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
+                reward = coerce_reward(result)
+                if reward is not None:
+                    print(emit_result_envelope(reward))
 
         # Cleanup
         print(f"\n{CYAN}Cleaning up environment...{RESET}")

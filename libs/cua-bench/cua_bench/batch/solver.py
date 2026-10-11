@@ -28,6 +28,8 @@ import sys
 import time
 from pathlib import Path
 
+from cua_bench.reward import coerce_reward, emit_result_envelope
+
 # Set HuggingFace cache to writable location to avoid permission issues
 # in containerized environments where /usr/local may not be writable
 os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
@@ -362,6 +364,9 @@ async def main():
         if env.evaluate_task_fn:
             result = await env.evaluate_task_fn(task_cfg, session)
             print(f"✓ Evaluation result: {result}")
+            reward = coerce_reward(result)
+            if reward is not None:
+                print(emit_result_envelope(reward))
 
             # Record evaluation event
             try:

@@ -208,6 +208,7 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
 pub fn page_name(s: OnboardingStep) -> &'static str {
     match s {
         OnboardingStep::Welcome => "welcome",
+        OnboardingStep::Cli => "command_line",
         OnboardingStep::Signin => "signin",
         OnboardingStep::Agents => "agents",
         OnboardingStep::Presentation => "presentation",
@@ -299,6 +300,13 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
 fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static str) {
     match s.step {
         OnboardingStep::Welcome | OnboardingStep::Done => ("completed", "none"),
+        OnboardingStep::Cli => {
+            if s.cli_install {
+                ("completed", "installed")
+            } else {
+                ("skipped", "not_installed")
+            }
+        }
         OnboardingStep::Signin => {
             if s.identity.as_deref().is_some_and(|i| !i.is_empty()) {
                 ("completed", "signed_in")
@@ -1031,6 +1039,38 @@ mod tests {
             pages(&onboarding(&agents, &OnboardingAction::Back)),
             ["agents back none", "signin shown none"]
         );
+    }
+
+    #[test]
+    fn installing_the_command_and_skipping_it_are_told_apart() {
+        let planned = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: crate::installer::CliInstallPlan {
+                    source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                    target: "/Users/alice/.local/bin/cua".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        let s = reduce(&planned, &OnboardingAction::Start);
+        assert_eq!(
+            pages(&onboarding(&planned, &OnboardingAction::Start))[1..],
+            ["welcome completed none", "command_line shown none"]
+        );
+        assert_eq!(
+            pages(&onboarding(
+                &s,
+                &OnboardingAction::CliDone { install: true }
+            )),
+            ["command_line completed installed", "signin shown none"]
+        );
+        let skip = onboarding(&s, &OnboardingAction::CliDone { install: false });
+        assert_eq!(
+            pages(&skip),
+            ["command_line skipped not_installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&skip).unwrap().contains("alice"));
     }
 
     #[test]

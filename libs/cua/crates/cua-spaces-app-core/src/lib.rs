@@ -65,7 +65,6 @@ pub mod driver_preview;
 pub mod errors;
 pub mod experiments;
 pub mod host;
-#[cfg(feature = "installer")]
 pub mod installer;
 pub mod keyvault;
 pub mod login_item;

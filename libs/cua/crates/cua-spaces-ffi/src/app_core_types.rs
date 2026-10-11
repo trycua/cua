@@ -5316,6 +5316,10 @@ pub type AppOnboardingStep = core::onboarding::OnboardingStep;
 pub enum AppOnboardingStep {
     /// Welcome.
     Welcome,
+    /// Install the bundled `cua` and add it to PATH (on unless switched
+    /// off, with Skip). Only while a shell reported a plan that needs it
+    /// ([`OnboardingAction::CliPlanned`]).
+    Cli,
     /// Sign in to Cua.
     Signin,
     /// Coding agents: cua skills and the cua MCP server.
@@ -5370,8 +5374,14 @@ pub type AppOnboardingState = core::onboarding::OnboardingState;
 pub struct AppOnboardingState {
     /// Page.
     pub step: AppOnboardingStep,
-    /// Where `cua` was installed on first launch, when it was.
+    /// Where `cua` was installed, when it was.
     pub cli_target: Option<String>,
+    /// The bundled `cua`'s install plan, as the shell read it (nothing is
+    /// written to read it).
+    pub cli_plan: Option<AppCliInstallPlan>,
+    /// The Command line page's switch (on unless switched off): Continue
+    /// installs, adding the bin dir to PATH when it is not on it.
+    pub cli_install: bool,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
     /// in the notch".
     pub menu_bar: bool,
@@ -5429,10 +5439,28 @@ pub type AppOnboardingAction = core::onboarding::OnboardingAction;
 pub enum AppOnboardingAction {
     /// "Get started".
     Start,
-    /// The app installed its bundled `cua` on first launch (any page).
+    /// The app installed its bundled `cua` (any page).
     CliInstalled {
         /// Where.
         target: Option<String>,
+    },
+    /// The bundled `cua`'s install plan (any page): the Command line page
+    /// shows when it needs installing; a current install counts as
+    /// installed.
+    CliPlanned {
+        /// The plan.
+        plan: AppCliInstallPlan,
+    },
+    /// The Command line page's switch.
+    CliToggled {
+        /// On.
+        on: bool,
+    },
+    /// Continue (`install`: the switch) or Skip (`install` off) from
+    /// Command line. The shell installs only when `install` is on.
+    CliDone {
+        /// Install.
+        install: bool,
     },
     /// A presentation card was picked (it stays on the page).
     PresentationPicked {
@@ -5625,6 +5653,8 @@ pub struct AppOnboardingView {
     pub drive: Option<AppDriveCard>,
     /// Done's "Launch at login" checkbox.
     pub launch_at_login: Option<AppOnboardingCheckbox>,
+    /// The Command line page's switch: what Continue installs, and where.
+    pub cli: Option<AppOnboardingCheckbox>,
 }
 
 /// The Cua Volume page's card: an animated miniature

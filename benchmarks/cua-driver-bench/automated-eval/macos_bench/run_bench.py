@@ -2203,6 +2203,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="v2 (Amendment 15): foreground, or background (a user window keeps focus; the target app is behind it)",
     )
     p.add_argument(
+        "--task-set",
+        choices=list(v2.TASK_SETS),
+        default="v2",
+        help="v2: the registered task list; v2 = the ten A14.6 tasks, v2-42 = Amendment 18's expanded set, v2-new = its 32 new tasks",
+    )
+    p.add_argument(
         "--gui-only-enforce",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -2220,7 +2226,7 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     (run_dir / "trials").mkdir(exist_ok=True)
     tasks = load_tasks(HERE / "probes")
     bench_v2 = bool(getattr(args, "bench_v2", False))
-    defaults = list(v2.V2_TASKS) if bench_v2 else [t for t in tasks if default_task(tasks, t)]
+    defaults = list(v2.TASK_SETS[getattr(args, 'task_set', 'v2')]) if bench_v2 else [t for t in tasks if default_task(tasks, t)]
     selected = args.tasks or ([args.only_task] if args.only_task else defaults)
     if args.only_task and args.tasks is None:
         selected = [args.only_task]
@@ -2401,6 +2407,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "bench_version": v2.BENCH_VERSION if getattr(args, "bench_v2", False) else 1,
         "bench_v2": {
             "categories": v2.CATEGORIES,
+            "task_set": getattr(args, "task_set", "v2"),
             "task_categories": {t: task_spec(ctx.tasks[t]).get("category") for t in ctx.task_ids},
             "gui_only_enforce": getattr(args, "gui_only_enforce", True),
             "condition": getattr(args, "condition", "foreground"),

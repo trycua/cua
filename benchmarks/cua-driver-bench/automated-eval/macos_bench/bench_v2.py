@@ -32,6 +32,8 @@ BENCH_VERSION = 2
 CATEGORIES: dict[str, str] = {  # report order
     "multi_app": "Multi-app workflows",
     "web_forms": "Web apps & forms",
+    "native_apps": "Native macOS apps",  # Amendment 18
+    "documents": "Documents & spreadsheets",  # Amendment 18
     "precision": "Precision interactions",
     "interruptions": "Interruptions & recovery",
 }
@@ -50,6 +52,18 @@ V2_TASKS: tuple[str, ...] = (
     "IR-03",
     "IR-04",
 )
+# Amendment 18: the expanded set (the ten tasks above plus 32 written from scratch on 11 Oct 2026), in
+# schedule order, grouped by category. `run_bench.py run --bench-v2 --task-set v2-42` selects it.
+V2_NEW_TASKS: tuple[str, ...] = (
+    "MA-01", "MA-02", "MA-03", "MA-04",
+    "WF-01", "WF-02", "WF-03", "WF-04", "WF-05", "WF-06", "WF-07", "WF-08",
+    "NA-01", "NA-02", "NA-03", "NA-04", "NA-05", "NA-06", "NA-07",
+    "DS-01", "DS-02", "DS-03", "DS-04", "DS-05", "DS-06", "DS-07",
+    "PR-01", "PR-02", "PR-03",
+    "IR-05", "IR-06", "IR-07",
+)  # fmt: skip
+V2_42_TASKS: tuple[str, ...] = V2_TASKS + V2_NEW_TASKS
+TASK_SETS: dict[str, tuple[str, ...]] = {"v2": V2_TASKS, "v2-42": V2_42_TASKS, "v2-new": V2_NEW_TASKS}
 # v1 tasks that are not in v2, and why (the S/G split is dropped).
 NOT_IN_V2: dict[str, str] = {
     "CDB-S01": "its end state needs a source-code fix and a test; no GUI-only version without changing the pack",

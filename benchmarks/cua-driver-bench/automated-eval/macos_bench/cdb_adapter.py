@@ -90,6 +90,12 @@ def allowed_app_names(spec: dict[str, Any]) -> set[str]:
             names.update({"libreoffice", "soffice"})
         if any("gnucash" in part.lower() for part in app["command"]):
             names.add("gnucash")
+        # Amendment 18: native apps started with `open` name their processes; `open -a Name` names the app.
+        names.update(str(n).lower() for n in app.get("process_names") or [])
+        if app["command"][:2] == ["/usr/bin/open", "-a"] and len(app["command"]) > 2:
+            names.add(str(app["command"][2]).lower())
+        if app.get("kind") == "native" and app.get("role"):
+            names.add(str(app["role"]).lower())
     return names
 
 
@@ -225,6 +231,10 @@ def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
         names += ["soffice", "soffice.bin"]
     if "gnucash" in text.lower():
         names += ["gnucash", "Gnucash"]
+    for app in _descriptor(spec)["apps"]:  # Amendment 18: exact process names a native app declares
+        for name in app.get("process_names") or []:
+            if name not in names:
+                names.append(str(name))
     ports = sorted({int(p) for p in re.findall(r"127\.0\.0\.1:(\d+)", text)})
     return names, ports
 
@@ -366,7 +376,7 @@ class CdbTask:
         return done.stdout.strip() or None
 
     def export_state(self) -> int | None:
-        """Run the descriptor's optional `semantics.export` command (Amendment 12), as the bench user, after the
+        """Run the descriptor's optional `semantics.export` command (Amendment 18), as the bench user, after the
         agent and before the evaluator. It writes app state that only the bench user can read (Notes, Reminders,
         Contacts, system settings) into the workspace, where the evaluator, which may run as another user, reads
         it. Tasks without the field are unaffected."""
@@ -420,7 +430,16 @@ class CdbTask:
             "passed": bool(passed),
             "score": data.get("score"),
             "checks": checks,
-            "diagnostics": {"raw_keys": sorted(data)[:12], "export_rc": export_rc},
+            "diagnostics": {
+                # Amendment 18: a v2 task's own diagnostics (for example `interruption`), in the probes' shape
+                **{
+                    str(k): {"value": v}
+                    for k, v in (data.get("diagnostics") or {}).items()
+                    if isinstance(data.get("diagnostics"), dict)
+                },
+                "raw_keys": sorted(data)[:12],
+                "export_rc": export_rc,
+            },
         }
 
     def stop_apps(self) -> None:

@@ -36,6 +36,22 @@ class CategoriesTest(unittest.TestCase):
             {all_specs[t]["category"] for t in v2.V2_TASKS if t.startswith("IR-")}, {"interruptions"}
         )
 
+    def test_amendment_18_set_is_valid_and_balanced(self) -> None:
+        all_specs = specs()
+        self.assertEqual(v2.validate_tasks(all_specs, list(v2.V2_42_TASKS)), [])
+        self.assertEqual(len(set(v2.V2_42_TASKS)), len(v2.V2_42_TASKS))
+        self.assertEqual(v2.V2_42_TASKS[: len(v2.V2_TASKS)], v2.V2_TASKS)  # the A14.6 order is kept
+        for tid in v2.V2_NEW_TASKS:
+            spec = all_specs[tid]
+            self.assertEqual(spec["kind"], "cdb", tid)
+            self.assertTrue(spec["pack_task"].startswith("v2/"), tid)
+            self.assertFalse(spec.get("coding_tools"), tid)
+        counts: dict[str, int] = {}
+        for tid in v2.V2_42_TASKS:
+            counts[all_specs[tid]["category"]] = counts.get(all_specs[tid]["category"], 0) + 1
+        self.assertEqual(set(counts), set(v2.CATEGORIES))
+        self.assertTrue(all(6 <= n <= 8 for n in counts.values()), counts)
+
     def test_coding_task_and_missing_category_are_refused(self) -> None:
         all_specs = specs()
         problems = v2.validate_tasks(all_specs, ["CDB-S01"])

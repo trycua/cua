@@ -1,0 +1,19 @@
+{
+  "id": "NA-05",
+  "title": "Task na05 of the private CDB task pack (Bench v2, written from scratch 11 Oct 2026)",
+  "group": "V2N",
+  "category": "native_apps",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "v2/na05-fridge-rota-reminders",
+  "coding_tools": false,
+  "dimension_tags": [
+    "native_apps",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true,
+  "amendment": 18
+}

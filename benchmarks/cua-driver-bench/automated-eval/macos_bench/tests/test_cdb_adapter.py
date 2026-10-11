@@ -70,6 +70,45 @@ class AdapterTest(unittest.TestCase):
         self.assertIn("Electron", kill_names)
         self.assertIn("Google Chrome", kill_names)
 
+    def test_task_diagnostics_reach_the_row(self) -> None:  # Amendment 18: IR-05..IR-07 report `interruption`
+        root = Path(self.tmp.name) / "tasks" / "shared" / "syn"
+        (root / "evaluator").mkdir()
+        (root / "evaluator" / "evaluate.py").write_text(
+            "import argparse, json, pathlib\n"
+            "p = argparse.ArgumentParser(); p.add_argument('--workspace'); p.add_argument('--result')\n"
+            "a = p.parse_args()\n"
+            "d = {'passed': True, 'score': 1.0, 'checks': {}, 'diagnostics': {'interruption': {'shown': True, 'handled': True}}}\n"
+            "pathlib.Path(a.result).write_text(json.dumps(d))\n"
+        )
+        artifacts = Path(self.tmp.name) / "art2"
+        artifacts.mkdir()
+        old = os.environ.pop("CDB_EVAL_SUDO", None)
+        try:
+            task = cdb_adapter.CdbTask(self.spec, artifacts)
+            task.workspace = Path(self.tmp.name) / "ws2"
+            task.workspace.mkdir()
+            result = task.evaluate(0)
+        finally:
+            if old is not None:
+                os.environ["CDB_EVAL_SUDO"] = old
+        import bench_v2
+        self.assertEqual(bench_v2.interruption_of(result), {"shown": True, "handled": True})
+
+    def test_native_apps_name_their_processes(self) -> None:  # Amendment 18
+        root = Path(self.tmp.name) / "tasks" / "shared" / "syn"
+        desc = json.loads(json.dumps(DESCRIPTOR))
+        desc["apps"] = [
+            {"id": "cal", "kind": "native", "role": "Calendar", "command": ["/usr/bin/open", "-a", "Calendar"], "process_names": ["Calendar"]},
+            {"id": "finder", "kind": "native", "role": "Finder", "command": ["/usr/bin/open", "${workspace}/x"], "process_names": []},
+        ]
+        (root / "platform" / "launch.macos.json").write_text(json.dumps(desc))
+        names = cdb_adapter.allowed_app_names(self.spec)
+        self.assertIn("calendar", names)
+        self.assertIn("finder", names)
+        kill_names, ports = cdb_adapter.kill_policy(self.spec)
+        self.assertEqual(kill_names, ["Calendar"])  # never Finder: it declares no process to quit
+        self.assertEqual(ports, [])
+
     def test_brief_and_substitution(self) -> None:
         task = cdb_adapter.CdbTask(self.spec, Path(self.tmp.name))
         brief = task.brief()

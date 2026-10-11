@@ -207,6 +207,11 @@ impl Tool for SetValueTool {
         let changes = snapshot.detect_async().await;
 
         match result {
+            Ok(Ok(outcome)) if outcome.not_applied && !ax_echo_surface => {
+                let vcl = crate::input::pointer_toolkit::detect(pid)
+                    == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl);
+                not_applied_result(element_index, vcl)
+            }
             Ok(Ok(mut outcome)) => {
                 apply_surface_trust(&mut outcome, ax_echo_surface);
                 apply_verification_label(&mut outcome);
@@ -327,6 +332,9 @@ struct SetValueOutcome {
     /// `Some(false)` when the element already held the requested value, so the
     /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
     changed: Option<bool>,
+    /// The read-back still showed the old value after a short settle: the app
+    /// took the accessibility write but did not apply it.
+    not_applied: bool,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -366,6 +374,7 @@ fn set_value_blocking(
                 detail,
                 verified: None,
                 changed: None,
+                not_applied: false,
             }
         })
     } else {
@@ -393,13 +402,28 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
-            let after = unsafe { copy_string_attr(element, "AXValue") };
-            let (verified, changed) = classify_write(
+            let mut after = unsafe { copy_string_attr(element, "AXValue") };
+            let (mut verified, mut changed) = classify_write(
                 before.as_deref(),
                 after.as_deref(),
                 value,
                 numeric_target.is_some(),
             );
+            // Some apps apply the write a moment later; give it a short
+            // settle before calling it not applied.
+            for _ in 0..NOT_APPLIED_REREADS {
+                if !write_not_applied(verified, changed) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                after = unsafe { copy_string_attr(element, "AXValue") };
+                (verified, changed) = classify_write(
+                    before.as_deref(),
+                    after.as_deref(),
+                    value,
+                    numeric_target.is_some(),
+                );
+            }
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -410,6 +434,7 @@ fn set_value_blocking(
                 detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
                 verified,
                 changed,
+                not_applied: write_not_applied(verified, changed),
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
@@ -424,6 +449,7 @@ fn set_value_blocking(
                     ),
                     verified,
                     changed,
+                    not_applied: false,
                 })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
@@ -432,6 +458,41 @@ fn set_value_blocking(
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+/// Re-reads (100 ms apart) before an unchanged value counts as not applied.
+const NOT_APPLIED_REREADS: usize = 3;
+
+/// The read-back did not match and the value did not move: the app accepted
+/// the accessibility write (LibreOffice Calc cells do) but did not apply it.
+fn write_not_applied(verified: Option<bool>, changed: Option<bool>) -> bool {
+    verified == Some(false) && changed == Some(false)
+}
+
+/// The refusal for a write the app did not apply. Nothing changed, so a
+/// script must stop here instead of carrying on as if it had.
+fn not_applied_result(element_index: usize, vcl: bool) -> ToolResult {
+    let route = if vcl {
+        "LibreOffice ignores accessibility value writes and drops background pointer \
+         input, so its cells cannot be edited in the background. Editing them needs the \
+         window in front: bring_to_front if the user allows it, then type_text into the \
+         cell. Otherwise stop and report that the edit is blocked."
+    } else {
+        "Try the control's own input route instead: click it, then type_text, or use a \
+         keyboard shortcut. If that needs the window in front, bring_to_front only if the \
+         user allows it."
+    };
+    ToolResult::error(format!(
+        "set_value did not take: element [{element_index}] still shows its old value after \
+         the write. The app accepted the accessibility write but did not apply it, so nothing \
+         changed. {route}"
+    ))
+    .with_structured(serde_json::json!({
+        "code": "write_not_applied",
+        "path": "ax",
+        "verified": false,
+        "effect": "not_applied",
+    }))
 }
 
 /// Decide what a post-write AXValue read proves.
@@ -954,8 +1015,8 @@ fn hex_digit(n: u8) -> char {
 mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
-        is_file_name_cell, is_get_info_name_field, SetValueOutcome, GET_INFO_RENAME_ROUTE,
-        LIST_RENAME_ROUTE,
+        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
+        SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
 
     #[test]
@@ -1042,6 +1103,29 @@ mod tests {
         ] {
             assert!(reason.contains(needed), "missing {needed:?}: {reason}");
         }
+    }
+
+    #[test]
+    fn an_unchanged_read_back_is_not_applied_but_an_idempotent_one_is_fine() {
+        // Read-back still shows the old value: not applied.
+        let (verified, changed) =
+            classify_write(Some("pending"), Some("pending"), "matched", false);
+        assert!(write_not_applied(verified, changed));
+        // Already held the requested value: idempotent, applied.
+        let (verified, changed) =
+            classify_write(Some("matched"), Some("matched"), "matched", false);
+        assert!(!write_not_applied(verified, changed));
+        // The app reformatted the value: it moved, so it is not "not applied".
+        let (verified, changed) = classify_write(Some(""), Some("1,248.60"), "1248.6", false);
+        assert!(!write_not_applied(verified, changed));
+        // Unreadable before or after: cannot tell.
+        let (verified, changed) = classify_write(None, Some("x"), "y", false);
+        assert!(!write_not_applied(verified, changed));
+        let refusal = not_applied_result(4, true);
+        assert_eq!(refusal.is_error, Some(true));
+        let data = refusal.structured_content.unwrap();
+        assert_eq!(data["code"], "write_not_applied");
+        assert_eq!(data["effect"], "not_applied");
     }
 
     #[test]
@@ -1136,6 +1220,7 @@ mod tests {
             detail: "Set value.".to_owned(),
             verified: Some(true),
             changed: Some(true),
+            not_applied: false,
         };
         apply_surface_trust(&mut outcome, true);
         assert_eq!(outcome.verified, Some(false));
@@ -1149,6 +1234,7 @@ mod tests {
             detail: "Set value.".to_owned(),
             verified: Some(true),
             changed: Some(true),
+            not_applied: false,
         };
         apply_surface_trust(&mut outcome, false);
         assert_eq!(outcome.verified, Some(true));
@@ -1162,6 +1248,7 @@ mod tests {
             detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
             verified: Some(false),
             changed: Some(false),
+            not_applied: false,
         };
         apply_verification_label(&mut outcome);
         assert_eq!(

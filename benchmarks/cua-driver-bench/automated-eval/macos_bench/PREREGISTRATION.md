@@ -1403,6 +1403,23 @@ In a clone of `cdb-v2` (main `984e5f9c5`, ChatGPT 26.930.51102). **What it check
 
 `cx-codex-cu` joins the next full Bench v2 run, the one registered after the task set of A18 (CUA-1201) lands, in both conditions and with the same schedule rules as the other setups, and then the held-out run (CUA-1285). No full run of this setup happens before then.
 
+## Amendment 21 (11 Oct 2026, before it runs): re-check v2s5b of the CUA-1341 and CUA-1342 driver fixes (validation only)
+
+Written and committed before smoke v2s5b's first trial. Validation only, never analysed and never mixed into A17.3. No definition of A14 to A20 changes.
+
+### A21.1 The fixes
+
+* trycua/cua PR #4976 (CUA-1341): a pixel `double_click` routes through `click`, and the key-focus guard reverts a background target's self-activation within a few tens of milliseconds. No-model probe: GnuCash double-click steals 3/3 -> 0/3. Chrome `cmd+L` still activates itself, but for 31 to 39 ms (was about 1 s), with 0 lost keystrokes.
+* trycua/cua PR #4977 (CUA-1342 and the background refusals): a window-target `move_cursor` moves only the agent cursor and says that a background app sees no hover. `set_value` fails with `write_not_applied` when the read-back did not move (LibreOffice Calc cells). The drag refusal names non-drag routes first. No-model probe: posted pointer moves never reach AppKit tracking areas, so MB-10 and MB-11 have no background route.
+
+### A21.2 Smoke v2s5b
+
+| Id | Condition | Tasks | Arm | Driver | Harness |
+|---|---|---|---|---|---|
+| v2s5b | background | CDB-G02, CDB-G03, CDB-G04, MB-09, MB-10, MB-11; 3 runs each | AX (`cc-cua-driver-script`) | local merge of the #4976 and #4977 heads, `03a6fc652`, built once in `cdb-v2` | `b74564efd` (A17.3), as staged in `cdb-v2`, for a like-for-like comparison with v2rr-ba; the A19 harness needs the VM pack updated first |
+
+**What it checks:** per trial, focus steals, key loss, swallowed user keystrokes, windows raised and pointer movement, against the same tasks in v2rr-ba (Cua Driver: focus steals 2, key loss 2, pointer moved 10). Background completion and success are reported, not tested. Seat: cswap seat 4 with the watchdog at 0.94, access tokens only, deleted with sync before a graceful shutdown.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

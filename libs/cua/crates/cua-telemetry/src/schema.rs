@@ -151,6 +151,11 @@ pub const ERROR_KINDS: &[&str] = &[
     "internal",
     "ambiguous_sandbox",
     "insufficient_disk",
+    // A Spaces-app create the app explained from the error's text: macOS
+    // Local Network privacy blocked the new VM; Apple's two macOS VMs
+    // were already running.
+    "local_network",
+    "vm_limit",
     "requires_cua_app",
     "cancelled",
     // An agent run: cua_spaces `Error::Agent`, a run that recorded a

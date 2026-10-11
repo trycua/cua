@@ -19,10 +19,10 @@
   "environment": "Lume macOS VM on a Mac Studio host (M3 Ultra), cloned from the cached cua-base image; 6 CPU, 12 GB, 1920x1080; one VM for both arms",
   "cdb_pack": {
     "repo": "trycua/cua-driver-bench (private)",
-    "revision": "16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a",
+    "revision": "dc16b9cdd06e02e6e9218abb1d8bfaf4c644ec74",
     "tree_sha256": {
       "shared/cdb-s01": "73ecca4fe9dde1a3f658c0dee45ad0e6aeffcc52824cab79d0a76d1fa606a47e",
-      "shared/cdb-s02": "96f4a35667e90fb4272405030afc055093cbe2e628b6795099153e2274b83503",
+      "shared/cdb-s02": "53be4a6987b50724385010779d76bca7311ac84509256b1db6c2585adda24ef4",
       "shared/cdb-s03": "9a0615c29150af95e6a133573ea3021f17222ee51480cb150427e90457f678d2",
       "shared/cdb-s04": "240ab1b758603e938b688e4452f78a715bf4443a1df7f58535c20d8e47dc1efe"
     }

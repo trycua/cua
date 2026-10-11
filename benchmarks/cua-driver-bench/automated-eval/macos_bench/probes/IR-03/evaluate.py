@@ -42,8 +42,21 @@ def evaluate(seed: int, state: dict[str, Any], events: list[dict[str, Any]], che
                 others = False
     checks.add("others_unchanged", ok_shape and others, 0.1, "every other title, status and body as at start")
     done = C.events_of(events, "done")
-    done_ok = bool(done) and C.details(done[-1]).get("clean") is True and state.get("dirty") is False
-    checks.add("done_clean", done_ok, 0.1, f"{len(done)} done event(s); dirty at end {state.get('dirty')!r}")
+    saves = C.events_of(events, "save")
+    # Amendment 19: "When both changes are made, press Done" - the last Done must follow the last save.
+    done_after_saves = bool(done) and all(done[-1]["seq"] > e["seq"] for e in saves)
+    done_ok = (
+        bool(done)
+        and C.details(done[-1]).get("clean") is True
+        and state.get("dirty") is False
+        and done_after_saves
+    )
+    checks.add(
+        "done_clean",
+        done_ok,
+        0.1,
+        f"{len(done)} done event(s); dirty at end {state.get('dirty')!r}; last Done after the last save {done_after_saves}",
+    )
     checks.add(
         "state_matches_events",
         (state.get("answers") or []) == answers and state.get("done_count") == len(done),

@@ -864,7 +864,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         agent_started = time.monotonic()
         if bench_v2:  # A14.2: every v2 trial is guarded, CDB or BenchLab
             guard = v2.GuiOnlyGuard(
-                stream_path, frontmost_bundle, enforce=getattr(args, "gui_only_enforce", True)
+                stream_path,
+                frontmost_bundle,
+                enforce=getattr(args, "gui_only_enforce", True),
+                terminal_ttys=v2.terminal_tty_inputs,  # A19: shell input in a background Terminal
             )
             guard.start()
         watcher = (

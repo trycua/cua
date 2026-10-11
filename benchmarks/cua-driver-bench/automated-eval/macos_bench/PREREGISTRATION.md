@@ -1293,6 +1293,62 @@ The background run goes first, then the foreground run, in the same VM, with not
 
 **A17.3 outcome (11 Oct 2026, 09:09Z).** 300 final trials, 0 infrastructure exclusions; seats 1, then 7, then 4 through the watchdog; the token was deleted with sync and \`cdb-v2\` was stopped. Background completion: Cua Driver 21/50, Codex 17/50, helper 6/50. Foreground success: 40/50, 30/50 and 16/50. Trials with a focus steal in the background: 2, 6 and 20; swallowed user keystrokes: 55, 503 and 439. The report is \`research/cua-driver-bench/2026-10-11_bench-v2-rerun-report.md\`; follow-ups are CUA-1341 and CUA-1342.
 
+## Amendment 19 (11 Oct 2026, before the next Bench v2 trial): checker review fixes, and Bench v2 stays macOS-only
+
+Written and committed before any trial that uses the changes below, smoke runs included. The owner approved the review and its fixes on 11 Oct 2026 (Linear CUA-1346). A18 is reserved for the task set of Stream V2-40 (CUA-1201); A20 was registered first and is unaffected.
+
+### A19.1 Scope
+
+**Scope decision (Francesco, 11 Oct 2026): Bench v2 stays macOS-only for now.**
+
+### A19.2 The review
+
+The ten A14.6 tasks were reviewed for ambiguous briefs, checkers that accept a wrong final state or reject a right one, and advantages to any setup. The review read every brief and checker, the pack evaluators of CDB-G02 to G04 at the pinned revision, and the 300 trials of the A17.3 rerun (v2rr-ba, v2rr-fo). A second model (GPT-6 Astra through the Codex CLI, read-only) reviewed the same briefs and checkers independently; each of its findings was checked against the code. The internal review packet lists every finding with its verdict (`research/cua-driver-bench/2026-10-11_v2-task-checker-review-packet.md`). Only clear checker bugs are fixed here: a checker that demonstrably accepts a wrong state or rejects a right one by the brief's own wording. Brief wording is not changed.
+
+### A19.3 Fixes
+
+Each fix applies to every Bench v2 trial run on a harness that contains this amendment, smokes included, for every setup. Earlier runs are not rescored unless their saved final state allows exact rescoring; where it does, the result is given.
+
+1. **GUI-only guard: input to a Terminal shell (A14.2).** In the VM the runner runs in Terminal (`launch_bench.command`), so Terminal is always running, and rule 1 sees it only when it is frontmost. Several other Terminal windows with shells were also on screen. A setup that types into a Terminal window in the background therefore reaches a shell unseen. Evidence: in v2rr-fo `CDB-G04-r2` (Cua Driver), `run_script` first typed a `cat` of a task file into Terminal in the background. The trial became a violation only later, when a second call used foreground delivery and Terminal came to the front. In the background condition, nothing would have caught it. **Change:** the guard also watches Terminal session ttys other than the runner's own and its descendants'. A shell reading typed input moves its tty's access time, and that is a violation, `terminal:input`. A new Terminal session during the agent phase is also a violation, `terminal:new_session` (`bench_v2.terminal_tty_inputs`, `GuiOnlyGuard.sample_terminal`). **Rescoring:** not possible from saved state, because tty times were not recorded. A scan of all 300 v2rr streams finds one tool call that sent input to Terminal, the trial above, which is already a violation. No result changes.
+2. **Background completion fails closed (A15.3).** "Held" needs every measure. A missing window-order measure (`windows_raised` null) counted as zero, and a missing user-activity record counted as text intact. Both now count as not held in the background condition. **Rescoring (exact, from the rows):** all 150 v2rr-ba trials have both measures. No result changes.
+3. **IR-03: Done after the changes.** The brief says "When both changes are made, press Done." The checker accepted Done pressed first, with both changes saved afterwards by switching notes and no later Done. `done_clean` now also needs the last Done to come after the last save. **Rescoring (exact, from the saved state and event logs):** 30 trials, no change.
+4. **CDB-G02: one workbook row per scheduled item.** The pack evaluator keyed the workbook's rows by item and kept the last one, so a stale duplicate row left above the corrected one was hidden and the workbook check passed. The brief asks that the final schedules agree. Each item must now have exactly one row. The fix is in the private pack: commit `dc16b9cdd06e` on branch `cred/checker-fixes` of trycua/cua-driver-bench. It is based on the pinned revision `16a1937`, and only `tasks/shared/cdb-s02` changes (evaluator, its manifest digest and a test). `pins.json` `cdb_pack` now names revision `dc16b9cdd06e02e6e9218abb1d8bfaf4c644ec74` and the new `shared/cdb-s02` tree digest `53be4a6987b5…`; S01, S03 and S04 are unchanged. The preflight verifies these digests ("CDB pack … matches its pinned digest"). The VM's pack and the evaluator's hidden copy must therefore be updated to this revision before the next v2 run, or the preflight fails. **Rescoring (exact, from the saved workspaces):** no v2rr trial has a duplicate session row. No result changes.
+
+The A17.3 results stand as reported.
+
+### A19.4 Before the next scored v2 run
+
+* The next v2 smoke also checks the Terminal watch. A quiet trial must show no `terminal:` violation, and `gui_only.terminal_watched` must be true with `terminal_ttys_at_start` recorded.
+* Close every Terminal window except the runner's before a run. The VM had several left-over "mcp.command" windows with shells, visible to every setup in window lists.
+
+### A19.5 Left for the owner's judgement (not changed)
+
+1. **Pointer movement and background completion.** By A15.3, pointer movement is not part of background completion. All 5 of Cua Driver's MB-10 background completions moved the real pointer about 850 px. If completion also required the pointer to stay put, v2rr background completion would be Cua Driver 16/50, Codex 17/50 and the helper 6/50 (reported: 21, 17, 6). Choose how the public headline treats this.
+2. **MB-11 in the background condition** cannot be completed by any setup without activating BenchLab, because AppKit shows tooltips only for the active app (0/15 in v2rr). Keep it, drop it from the background condition, or report it as a known zero.
+3. **Hover coverage.** Codex Computer-Use has no hover or pointer-move primitive, so MB-10 and MB-11 measure that primitive for it (the existing `coverage_caveat`). This also applies to `cx-codex-cu` (A20).
+4. **Brief and checker wording the brief does not settle (CDB-G02 to G04).** In four places the pack checker requires one specific form where the brief, or the workbook rule it points to, leaves a choice: an evidence-column format (G03), a citation choice (G02), the words of a free-text reason (G02), and whether "cancel" means deleting a calendar event (G02). G04 also fails any change to an unsupported report, evidence included, and any extra file in the workspace. Details are in the internal packet, because the pack is private.
+5. **Task feasibility in the GUI-only form:**
+   * Saving is required but never stated (G02, G03).
+   * LibreOffice starts with a fresh profile and shows first-run dialogs.
+   * GnuCash's fully reconciled state needs its Reconcile window; clicking the register column only marks a split cleared.
+   * The G04 log can be reached only through a `file://` URL in Chrome. All but one trial found it.
+   * CDB-G03 is 0/30 for every setup, so it does not separate them.
+6. **Lenient spots, confirmed but low impact:**
+   * G02 leaves two citations unchecked.
+   * G03 amount matching drops a minus sign.
+   * G03 does not check its header row.
+   * The probes do not check that BenchLab is still open at the end.
+   * IR-04 counts only accepted Sign up presses (blocked presses are by design).
+   * IR-04's `handled` diagnostic counts an overlay left unanswered as not handled.
+
+### A19.6 New tasks
+
+The tasks that A18 adds (CUA-1201) need the same review before their first scored trial.
+
+### A19.7 Harness changes for this amendment
+
+`bench_v2.py` (Terminal watch, fail-closed completion), `run_bench.py` (passes the Terminal watch to the guard), `probes/IR-03/evaluate.py`, `pins.json` (`cdb_pack`). Tests: `tests/test_bench_v2.py` (Terminal watch, unmeasured completion) and `probes/tests/test_interrupts.py` (IR-03 Done first). In the pack: `tasks/shared/cdb-s02/tests/test_cdb_s02.py` (duplicate row).
+
 ## Amendment 20 (11 Oct 2026, before any trial of the setup): Codex Computer-Use (Sky) driven by OpenAI's own agent and model
 
 Written and committed before any trial of arm `cx-codex-cu`, including its smoke. The owner approved it on 11 Oct 2026 (CUA-1347). Until now every headline setup was driven by Claude (Sonnet 5.5 in Claude Code). This amendment adds a setup in which Codex Computer-Use (Sky) is driven by OpenAI's own agent and model, so the comparison is not only "Claude driving everyone". **Scope: Bench v2 stays macOS-only for now** (owner's decision, 11 Oct 2026). No definition of A14 to A17 changes, and no existing arm changes.

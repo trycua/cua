@@ -192,6 +192,43 @@ class IR03(unittest.TestCase):
         self.assertFalse(r["checks"]["others_unchanged"]["passed"])
 
 
+    def test_done_before_the_changes_fails(self) -> None:
+        # Amendment 19: Done pressed first (clean), then both changes saved by switching notes, no Done after.
+        exp = C.derive_irunsaved(42)
+        si, ri = exp["status_index"], exp["rename_index"]
+        other = 3 - si - ri
+        saved = [{"title": t, "status": C.IR_INITIAL_STATUS, "body": f"Working notes for {t}."} for t in exp["titles"]]
+        sim = S.Sim("irunsaved", 42)
+        sim.emit("done", count=1, clean=True)
+        sim.emit("open_note", note=si, title=exp["titles"][si])
+        sim.emit("field_edit", note=si, field="status", value=exp["status"], via="poll")
+        sim.emit("save_prompt_shown", note=si, reason="switch", pending=ri)
+        sim.emit("save_answer", answer="save", note=si, reason="switch")
+        saved[si]["status"] = exp["status"]
+        sim.emit("save", note=si, title=exp["titles"][si], status=exp["status"])
+        sim.emit("open_note", note=ri, title=exp["titles"][ri])
+        sim.emit("field_edit", note=ri, field="title", value=exp["new_title"], via="poll")
+        sim.emit("save_prompt_shown", note=ri, reason="switch", pending=other)
+        sim.emit("save_answer", answer="save", note=ri, reason="switch")
+        saved[ri]["title"] = exp["new_title"]
+        sim.emit("save", note=ri, title=exp["new_title"], status=C.IR_INITIAL_STATUS)
+        sim.emit("open_note", note=other, title=exp["titles"][other])
+        state, events = sim.finish(
+            {
+                "saved": saved, "current": other, "fields": {}, "dirty": False, "prompts": [{}, {}],
+                "answers": ["save", "save"], "done_count": 1, "done_clean": True, "status": "All notes closed",
+            }
+        )
+        r = self.ev(42, state, events)
+        self.assertTrue(r["checks"]["status_saved"]["passed"] and r["checks"]["title_saved"]["passed"])
+        self.assertFalse(r["checks"]["done_clean"]["passed"])
+        self.assertFalse(r["passed"])
+        # the same run with one more Done at the end passes
+        sim.emit("done", count=2, clean=True)
+        state, events = sim.finish(dict(state, done_count=2))
+        self.assertTrue(self.ev(42, state, events)["passed"])
+
+
 # ------------------------------------------------------------------ IR-04
 
 

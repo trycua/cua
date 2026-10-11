@@ -1898,6 +1898,22 @@ impl ToolRegistry {
                 "replacement": "action.target",
             }));
         }
+        if let Some(key) = [
+            crate::script_tool::DISABLE_CONFIG_KEY,
+            crate::script_tool::LEGACY_CONFIG_KEY,
+        ]
+        .into_iter()
+        .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
+        }
 
         if let Some(detail) = unknown_argument {
             return protected_refusal(
@@ -5573,10 +5589,23 @@ resources:
                     "value": true,
                     "session": "config"
                 }),
-                context,
+                context.clone(),
             )
             .await;
         assert_eq!(unknown.is_error, Some(true));
+        for key in ["disable_run_script", "experimental_script"] {
+            for args in [
+                serde_json::json!({"key": key, "value": true}),
+                serde_json::json!({key: true}),
+            ] {
+                let refused = registry
+                    .invoke_with_context("set_config", args.clone(), context.clone())
+                    .await;
+                let structured = refused.structured_content.unwrap();
+                assert_eq!(structured["code"], "config_key_operator_only", "{args}");
+                assert_eq!(structured["key"], key, "{args}");
+            }
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }

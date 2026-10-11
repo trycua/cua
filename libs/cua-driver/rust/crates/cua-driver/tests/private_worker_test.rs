@@ -19,6 +19,26 @@ fn isolated_environment(state: &IsolatedStateRoot) -> Vec<EmbeddedEnvironmentVar
             name: name.into(),
             value: value.to_string_lossy().into_owned(),
         })
+        // Stay off the developer's accessibility bus: no session-status write
+        // and no AT-SPI listener.
+        .chain([EmbeddedEnvironmentVariable {
+            name: "NO_AT_BRIDGE".into(),
+            value: "1".into(),
+        }])
+        .collect()
+}
+
+/// Environment for the opt-in desktop test, which needs the worker's
+/// accessibility listener but must still leave the session status alone.
+#[cfg(target_os = "linux")]
+fn interactive_environment(state: &IsolatedStateRoot) -> Vec<EmbeddedEnvironmentVariable> {
+    isolated_environment(state)
+        .into_iter()
+        .filter(|variable| variable.name != "NO_AT_BRIDGE")
+        .chain([EmbeddedEnvironmentVariable {
+            name: "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE".into(),
+            value: "1".into(),
+        }])
         .collect()
 }
 
@@ -148,7 +168,9 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
     );
 
     let state = IsolatedStateRoot::new().unwrap();
-    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
+    let mut options = worker_options(&state);
+    options.environment = interactive_environment(&state);
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(options).unwrap();
     let standard = driver
         .create_trusted_session(TrustedSessionOptions {
             public_session: "worker-standard-display-scope".into(),

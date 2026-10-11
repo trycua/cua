@@ -50,7 +50,7 @@ use cua_sandbox_core::placement::{Kind, On, Runtime};
 use serde::Deserialize;
 
 use crate::registry::DirectHost;
-use crate::share::RELAY_ATTACH_FEATURE;
+use crate::relay::RELAY_ATTACH_FEATURE;
 use crate::{Error, Result, SpaceCreate, SpaceId, SpaceInfo, Spaces};
 
 /// The spacesd feature a host reports while it provides Spaces.

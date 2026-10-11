@@ -655,7 +655,7 @@ pub trait PresenceDatagrams: Send + Sync + 'static {
         space: &'a Space,
         info: &'a pb::PresenceDatagrams,
         timeout: Duration,
-    ) -> crate::extension::BoxFuture<'a, Result<DatagramChannel>>;
+    ) -> futures_util::future::BoxFuture<'a, Result<DatagramChannel>>;
 }
 
 /// An open presence datagram channel: the uplink and the cursor events.

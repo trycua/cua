@@ -409,7 +409,10 @@ impl Space {
                     ..Default::default()
                 }),
                 disable_video: false,
+                #[cfg(feature = "spaces-presence")]
                 presence_participant_id: self.presence_participant().unwrap_or_default(),
+                #[cfg(not(feature = "spaces-presence"))]
+                presence_participant_id: String::new(),
             })
             .await
             .map_err(cua_spacesd_client::Error::from)?
@@ -606,7 +609,7 @@ pub trait StreamClient: Send + Sync + 'static {
         headers: &'a [(String, String)],
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
-    ) -> crate::extension::BoxFuture<'a, Result<Box<dyn StreamConnection>>>;
+    ) -> futures_util::future::BoxFuture<'a, Result<Box<dyn StreamConnection>>>;
 }
 
 /// One attached media socket (see [`StreamClient`]).
@@ -629,7 +632,7 @@ pub trait StreamConnection: Send + Sync {
     /// Sends a raw client text message.
     fn send_text(&self, json: String) -> Result<()>;
     /// Closes the socket, waiting (bounded) for the delivery thread.
-    fn close(&mut self, wait: Duration) -> crate::extension::BoxFuture<'_, ()>;
+    fn close(&mut self, wait: Duration) -> futures_util::future::BoxFuture<'_, ()>;
 }
 
 static STREAM_CLIENT: OnceLock<Arc<dyn StreamClient>> = OnceLock::new();

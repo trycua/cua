@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // BenchSentinel: a tiny always-there window that stays frontmost and key while an
 // agent works in other apps. It logs focus changes, leaked keys/clicks/scrolls and
 // pointer position as JSONL so a run can be scored for foreground disturbance.

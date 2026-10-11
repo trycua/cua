@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Bench v2 (Amendment 14): GUI-only enforcement, task categories, the background score and the
 interruption fields of a trial row.
 

@@ -1,4 +1,7 @@
 #!/bin/zsh
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 # Grant Accessibility + Screen Recording (system TCC.db) and Automation (user TCC.db) to the main-build app.
 # VM only (SIP is disabled in this VM). Mirrors the grants com.trycua.driver (0.34.0) already has.
 set -e

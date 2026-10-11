@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Amendment 20 (CUA-1347): Codex Computer-Use (Sky) driven by OpenAI's own agent and model.
 
 Arm ``cx-codex-cu`` runs the Codex agent that ships inside the ChatGPT app (``codex-cli/CodexCLI.app``,

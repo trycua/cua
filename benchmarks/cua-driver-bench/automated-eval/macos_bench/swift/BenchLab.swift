@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // BenchLab: one small native AppKit app with six test-bench modes for computer-use
 // probes. Every UI event is appended to --events (JSONL) and the full state is
 // rewritten atomically to --state. The app never writes expected answers: all task

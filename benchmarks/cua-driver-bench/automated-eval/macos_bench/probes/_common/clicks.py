@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Click pairing for canvas modes: mouseDown/mouseUp events into clicks (copied from PROBE-CANVASCLICK)."""
 
 from __future__ import annotations

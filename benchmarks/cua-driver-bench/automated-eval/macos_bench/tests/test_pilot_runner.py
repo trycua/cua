@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Unit tests for the pilot runner pieces that do not need a GUI or a model."""
 
 from __future__ import annotations

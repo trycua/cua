@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Bench v2 report (Amendment 14, A14.7): per arm, overall and per category.
 
     tools/analyze_v2.py RUN_DIR [RUN_DIR ...] [--include-smoke] [--json OUT.json] [--md OUT.md]

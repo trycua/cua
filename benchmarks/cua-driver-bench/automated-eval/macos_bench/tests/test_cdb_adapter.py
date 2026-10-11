@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Tests of the generic CDB adapter with a synthetic pack (no private material, no GUI, no model)."""
 
 from __future__ import annotations

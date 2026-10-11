@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Post-hoc disturbance attribution (descriptive, added after the first trials ran).
 
 The pre-registered disturbance counters come from BenchSentinel. Two things they cannot tell

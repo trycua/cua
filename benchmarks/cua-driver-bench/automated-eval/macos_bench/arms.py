@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Isolated Codex CLI homes for the two comparison arms.
 
 Both arms run the same Codex CLI binary, the same model route, the same

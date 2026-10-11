@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Flow tests for run_bench.execute_trial and the gates, with run_attempt and the pauses faked: retries,
 backoff, exclusion, the quota stop rule, the wall-clock cutoff, the optional budget cap, resume and
 finalize. No GUI, no model."""

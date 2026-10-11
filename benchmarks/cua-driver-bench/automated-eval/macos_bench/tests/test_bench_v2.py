@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Bench v2 (Amendment 14): categories, GUI-only guard, background score, v2 task selection."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Amendment 20 (CUA-1347): the native Codex arm (Codex CLI + gpt-6-astra driving Codex computer use)."""
 
 from __future__ import annotations

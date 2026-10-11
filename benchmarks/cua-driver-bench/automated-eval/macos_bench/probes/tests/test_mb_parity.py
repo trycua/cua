@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Swift/Python parity for the MB-* derivations (needs xcrun swiftc; skipped when it is missing).
 
 Compiles BenchLab with -D BENCHLAB_DUMP and compares `--dump-params` with benchlab_common for 60 seeds.

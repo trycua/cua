@@ -70,11 +70,11 @@
         },
         {
           "path": "fixture/archive-site/package.json",
-          "sha256": "7cd35ca5f8f81e703de4d89f3bceecd559d338eaee830cbf5b9e9e2b238b3608"
+          "sha256": "82a76e1243f64ffc2dc2220031a035a77bf8c11ccbd7b8d9c4f50a3ddfc55562"
         },
         {
           "path": "fixture/archive-site/package-lock.json",
-          "sha256": "a36614027637dceac58932b1d5bf400c2da48bd84b294ac9cffaddfa59ee2f97"
+          "sha256": "b87ec74af811b4d536cc9e4811172cbe29d801357fab3d470e095cb75cdaec2a"
         },
         {
           "path": "fixture/archive-site/server.js",
@@ -106,11 +106,11 @@
         },
         {
           "path": "apps/rillwatch-cases/package.json",
-          "sha256": "df31ed07918e48e9b183da3c40a0a3290567e114c7765c25c1450830691f67f3"
+          "sha256": "0cf18fc4dd112b413a0bda274ff80eed78c19610e9123b38b8a7f6b172397151"
         },
         {
           "path": "apps/rillwatch-cases/package-lock.json",
-          "sha256": "1654116faf4cc75f14bc49db965059dea22f20e08e695e456a1c8a924e64541d"
+          "sha256": "71168934a6a7b4f277fe3e9ce34ddc81c74e35a44eb94343e4efd2450e6180db"
         },
         {
           "path": "apps/rillwatch-cases/renderer/index.html",
@@ -142,11 +142,11 @@
         },
         {
           "path": "apps/margin-lantern-manual/package.json",
-          "sha256": "6995b384d6c7334c4c1642b8c2a7ce5b6896e5218ceff634eb400c56f6a18bda"
+          "sha256": "aa638b1dea8563a1de8c8c15547510fce4aaf4b0de8db689e8834ce8bde79e18"
         },
         {
           "path": "apps/margin-lantern-manual/package-lock.json",
-          "sha256": "b7721533e55ebfcbd185004f9889a353d64c31557eb0b8aa2fbbdc9a6562fe32"
+          "sha256": "b2e78f8517631d0de6188f7de5c66a49f28694b332f9f6e53d0d937409fc7ce0"
         },
         {
           "path": "apps/margin-lantern-manual/renderer/index.html",
@@ -276,7 +276,7 @@
       },
       {
         "path": "evaluator/oracle.json",
-        "sha256": "cc5adc7beb99c7bfe41937404f71d5127679e4a89a9174d1cea198e19a748b02"
+        "sha256": "430149bd80461daf90ff36254a36848e4b9cad2f6e5e8cecf029a179ced90330"
       }
     ],
     "staging": "agent-inaccessible",

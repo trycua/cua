@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Evaluate IR-01: a permission-style sheet between step 1 and step 2 of a form (BenchLab irmodal).
 
 Usage: evaluate.py --seed N --state PATH --events PATH --result OUT.json

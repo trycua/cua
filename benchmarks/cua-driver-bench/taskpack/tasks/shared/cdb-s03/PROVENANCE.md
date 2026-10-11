@@ -43,9 +43,11 @@ thematic (the same app or the same kind of work).
 
 ## Licence
 
-Copyright (c) 2026 Cua AI, Inc. Released under the MIT License as part of
+Copyright (c) 2026 Cua AI, Inc. Released under the Functional Source License, Version 1.1, MIT
+Future License (FSL-1.1-MIT) as part of
 the public Cua Driver Bench task set (see [the task pack README](../../../README.md)).
 This task was first written in Cua's private benchmark repository under a
-proprietary licence; Cua relicensed it for this release. Electron and its
+proprietary licence; Cua relicensed it for this release (under MIT in
+#4973 and #4978, under FSL-1.1-MIT since; see the [bench LICENSE](../../../../LICENSE)). Electron and its
 lockfile-pinned dependencies are external and not vendored (see
 [THIRD_PARTY_NOTICES.md](../../../THIRD_PARTY_NOTICES.md)).

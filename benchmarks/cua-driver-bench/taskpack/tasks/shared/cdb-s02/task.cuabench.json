@@ -86,11 +86,11 @@
         },
         {
           "path": "apps/lighthouse-desk/package.json",
-          "sha256": "db1179b3ec39e6b87ecf43841c0f4e204cf48a366a48170f91a3c41c414a7b7e"
+          "sha256": "e9e03a634c21412e6e8182ef383f178a60b6a998c7434f6759bbe485ad5afb82"
         },
         {
           "path": "apps/lighthouse-desk/package-lock.json",
-          "sha256": "6473c9cec447f93fae8862864f7c0912e124261e0c5153968444146d3426bc87"
+          "sha256": "7f6041f96bff7c2ce118da24d42594ee36b02aa74b064740cd3092d48ab27ccb"
         },
         {
           "path": "apps/lighthouse-desk/renderer/index.html",

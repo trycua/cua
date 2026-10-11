@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Run one `claude -p` trial through the stream-json host protocol.
 
 Both arms use this same host. The Codex computer-use server asks the host for per-app approval

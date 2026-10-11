@@ -15,4 +15,4 @@ log.
   similarity review of the other tasks that day, so that review does not cover
   them. No external source is declared; a similarity check against public
   benchmarks is still to be done.
-* **Licence:** MIT, under the repository [LICENSE](../../../../../../LICENSE.md).
+* **Licence:** FSL-1.1-MIT, under the benchmark's [LICENSE](../../../../LICENSE).

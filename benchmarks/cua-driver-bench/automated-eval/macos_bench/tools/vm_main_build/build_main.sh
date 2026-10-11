@@ -1,4 +1,7 @@
 #!/bin/zsh
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 # Kept for the record (Amendments 3 and 5): the scripts that build, assemble and grant the private main-build app inside the
 # benchmark VM (SIP disabled). Run as the VM user lume, with sudo rights, in this order: build_main.sh, assemble_main.sh, tcc_grant.sh.
 # build Cua Driver from the main snapshot (release config) inside the VM

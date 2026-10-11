@@ -27,10 +27,12 @@ fn def() -> &'static ToolDef {
         name: "move_cursor".into(),
         description: "Move a cursor to (x, y). With target {kind: \"window\", pid, window_id}, \
             x/y are window screenshot pixels (as for click) and only the agent cursor moves \
-            there. Without a target, moves only the agent cursor overlay, in screen points. \
-            Neither sends input: macOS apps track hover and show tooltips from the real pointer, \
-            so a background app sees no hover. With scope=desktop, moves the real OS pointer in \
-            native get_desktop_state screenshot coordinates.".into(),
+            there; in a background app it also hovers through a route that leaves the real \
+            pointer alone where one exists (AXShowAlternateUI on the element under the point, \
+            or an Electron page) and says so. Without a target, moves only the agent cursor \
+            overlay, in screen points. Other macOS hover and tooltips follow the real pointer, \
+            so most background apps see no hover. With scope=desktop, moves the real OS pointer \
+            in native get_desktop_state screenshot coordinates.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["x", "y"],
@@ -167,14 +169,90 @@ impl MoveCursorTool {
         self.state
             .cursor_registry
             .update_position(&cursor_id, screen_x, screen_y);
-        let note = if crate::apps::frontmost_pid() == Some(pid) {
-            ""
-        } else {
-            BACKGROUND_HOVER_NOTE
-        };
+        if crate::apps::frontmost_pid() == Some(pid) {
+            return ToolResult::text(format!(
+                "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}); the real \
+                 pointer did not move."
+            ))
+            .with_structured(serde_json::json!({
+                "scope": "window",
+                "window_id": wid,
+                "screen_point": [screen_x, screen_y],
+                "hover_delivered": false,
+                "effect": "unverifiable"
+            }));
+        }
+        // Background app: try the hover routes that leave the real pointer alone.
+        let ax = tokio::task::spawn_blocking(move || {
+            crate::input::hover::reveal_alternate_ui(pid, wid, screen_x, screen_y)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(reveal) = ax {
+            let label = if reveal.label.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", reveal.label)
+            };
+            let revealed = reveal.revealed_new_controls();
+            let outcome = if revealed {
+                format!(
+                    "Revealed the hover-only controls of {}{label} through AXShowAlternateUI \
+                     ({} new element(s)), without the real pointer, focus or raise. Call \
+                     get_window_state to see them; hovering elsewhere hides them again.",
+                    reveal.role,
+                    reveal.elements_after.saturating_sub(reveal.elements_before)
+                )
+            } else {
+                format!(
+                    "Sent AXShowAlternateUI to {}{label}, the background hover route, but no new \
+                     control appeared in its accessibility tree, so it may have no hover-only \
+                     controls. The real pointer did not move.",
+                    reveal.role
+                )
+            };
+            return ToolResult::text(format!(
+                "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}). {outcome}"
+            ))
+            .with_structured(serde_json::json!({
+                "scope": "window",
+                "window_id": wid,
+                "screen_point": [screen_x, screen_y],
+                "hover_delivered": true,
+                "hover_route": "ax_alternate_ui",
+                "alternate_ui_visible": reveal.visible,
+                "new_elements": reveal.elements_after.saturating_sub(reveal.elements_before),
+                "effect": if revealed { "confirmed" } else { "unverifiable" }
+            }));
+        }
+        if tokio::task::spawn_blocking(move || crate::browser::ElectronJs::is_electron(pid))
+            .await
+            .unwrap_or(false)
+        {
+            let js = crate::input::hover::electron_hover_js(wid, local_x, local_y);
+            if let Ok(reply) = crate::browser::ElectronJs::execute_main(&js, pid).await {
+                if crate::input::hover::electron_hover_delivered(&reply) {
+                    return ToolResult::text(format!(
+                        "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}). \
+                         Hovered the Electron page there with webContents.sendInputEvent, without \
+                         the real pointer, focus or raise. Hover effects in the page update; \
+                         native tooltips do not show."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "scope": "window",
+                        "window_id": wid,
+                        "screen_point": [screen_x, screen_y],
+                        "hover_delivered": true,
+                        "hover_route": "electron_input",
+                        "effect": "unverifiable"
+                    }));
+                }
+            }
+        }
         ToolResult::text(format!(
             "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}); the real \
-             pointer did not move.{note}"
+             pointer did not move.{BACKGROUND_HOVER_NOTE}"
         ))
         .with_structured(serde_json::json!({
             "scope": "window",
@@ -188,11 +266,13 @@ impl MoveCursorTool {
 
 /// What a window-target move does not do for a background app.
 const BACKGROUND_HOVER_NOTE: &str = " The app is in the background, so it sees no hover: \
-     macOS apps track hover and show tooltips from the real pointer, and no background route \
-     reaches them. A control that only appears on hover, or a tooltip, cannot be revealed \
-     without the user's pointer (scope:\"desktop\") or the app in front (bring_to_front); use \
-     either only if the user allows it. Look first for the same command elsewhere: a menu \
-     item, a context menu, a keyboard shortcut, or help text in get_window_state.";
+     macOS apps track hover and show tooltips from the real pointer, and nothing under this \
+     point offers a background route (no AXShowAlternateUI, not an Electron page). For a web \
+     page in Chrome use browser_pointer hover. A control that only appears on hover, or a \
+     tooltip, cannot be revealed without the user's pointer (scope:\"desktop\") or the app in \
+     front (bring_to_front); use either only if the user allows it. Look first for the same \
+     command elsewhere: a menu item, a context menu, a keyboard shortcut, or help text in \
+     get_window_state.";
 
 /// The app that owns the frontmost ordinary window under a desktop point,
 /// when that app is not the active one. The driver's own windows (cursor

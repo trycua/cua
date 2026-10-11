@@ -1276,6 +1276,8 @@ trycua/cua PR #4955 (CUA-1309); the concept and the options measured are in `res
 
 **Round 2 (registered before it runs):** v2s4b2, the same tasks, arm and runs, on `646f8cc72`.
 
+**Round 2 outcome (v2s4b2, 00:43Z–01:30Z, seat 4, 18 trials, 0 infrastructure).** In every trial there was no focus steal, no key loss and no swallowed keystroke (round 1: 13 focus steals in CDB-G02 and CDB-G03). Windows raised: IR-02 0/3, MB-10 0/3, CDB-G02 0/3, CDB-G03 0/3, IR-01 1/3 (a single ≤50 ms flash), CDB-G04 3/3. Background completion: IR-02 3/3, MB-10 3/3, IR-01 2/3, CDB-G02 1/3 and CDB-G03 0/3 (both are task failures), CDB-G04 0/3. **Known limit, CDB-G04:** while the Electron app's `<select>` popup is open, Chromium keeps its window raised, and re-activating the user's app does not reorder it (no-model probe). Codex raises there too. It is reported, not fixed. Small changes before merge, with no re-check needed: restores are capped at three per watch, and a missing menu path on a background app keeps its `menu_path_unavailable` code.
+
 ### A17.3 The rerun
 
 Registered here by its own dated line before its first trial, on the main commit that contains #4955, built once in the VM: both conditions, the three headline setups and the ten A14.6 tasks at 3 + 2 runs, as A16.3. The A16.3 rows stay superseded.

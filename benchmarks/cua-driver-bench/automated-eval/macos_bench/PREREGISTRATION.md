@@ -1505,6 +1505,18 @@ Written and committed before smoke v2s5b's first trial. Validation only, never a
 
 **What it checks:** per trial, focus steals, key loss, swallowed user keystrokes, windows raised and pointer movement, against the same tasks in v2rr-ba (Cua Driver: focus steals 2, key loss 2, pointer moved 10). Background completion and success are reported, not tested. Seat: cswap seat 4 with the watchdog at 0.94, access tokens only, deleted with sync before a graceful shutdown.
 
+**Outcome (v2s5b, 11 Oct 2026, 18 trials, 0 infrastructure exclusions, seat 4 with 7d at 0.64 throughout).** The staged harness's `pins.json` `cua_main` entry was set to the `03a6fc652` build for this smoke and restored afterwards. The seat watchdog did not run, because its VM access needed the SSH key that was removed; usage was checked by hand and never came near 0.94. Results, with v2rr-ba Cua Driver on the same six tasks (5 runs each) in brackets:
+
+* Trials with a focus steal: 0/18 (2/30).
+* Trials with key loss: 0/18 (2/30).
+* Swallowed user keystrokes: 0 (55).
+* Windows raised: 3/18, all CDB-G04, the known Electron `<select>` limit of A17.2 (5/30, all CDB-G04).
+* Background completion: 3/18, MB-10 3/3 (5/30, MB-10 5/5).
+* Pointer moved: 6/18, all MB-10 and MB-11 (10/30). The model still chose `move_cursor` with desktop scope for hover. Pointer movement is not part of background completion (A19.5 item 1).
+* The new refusals were used: `write_not_applied` came back 4 to 10 times in every CDB-G02 and G03 trial, and the drag refusal 2 to 4 times in every MB-09 trial. Those tasks fail as before.
+
+The data is in `results/v2s5b` on the host.
+
 ### A20.7 Background completion with the pointer kept still (reported alongside; headline unchanged)
 
 Registered 11 Oct 2026 before any trial that records it. Every background-condition row also carries `background_completion_pointer_still`: the A15.3 background completion that additionally requires the real pointer not to have moved (`pointer_moved` false; unmeasured counts as moved). `tools/analyze_v2.py` reports its rate next to background completion. The A15.3 metric stays the primary metric until the owner decides A19.5 item 1; if the owner makes the pointer part of the headline, that decision is registered by its own dated line before the next full run, and the A15.3 figure is still reported.

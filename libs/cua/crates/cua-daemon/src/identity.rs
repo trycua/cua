@@ -171,6 +171,18 @@ fn verdict_for(
     // daemon runs a build that is gone.
     let same_file = of(expected).is_some_and(|w| w.executable == executable);
     let theirs = reported_version(version, build_id);
+    // Another executable that is gone, or changed since its daemon started
+    // (its app was removed, or updated or replaced in place, as a Sparkle
+    // update of the SwiftUI app to the Electron app does): the daemon runs a
+    // build that no longer exists. Its code cannot be checked against its
+    // file (the Keyvault's caller check needs that), and its own app would
+    // replace it too. Replaced, whatever its version or KEEP_ENV.
+    if !same_file
+        && !executable.is_empty()
+        && let Some(why) = gone_build(executable, build_id)
+    {
+        return Verdict::Replace(why);
+    }
     if !same_file && is_kept(executable, kept) {
         return Verdict::Yield(format!(
             "{executable} (cua {}), whose app started it again after this app replaced it",
@@ -194,6 +206,34 @@ fn verdict_for(
             "{why}, an older cua ({theirs}) than this app's ({ours})"
         )),
         _ => Verdict::Replace(why),
+    }
+}
+
+/// The size and modification time part of a build id
+/// (`<version>-<size hex>-<mtime ns hex>`; the version may contain `-`).
+fn file_part(build_id: &str) -> Option<(&str, &str)> {
+    let mut parts = build_id.rsplitn(3, '-');
+    let mtime = parts.next()?;
+    let size = parts.next()?;
+    parts.next()?;
+    Some((size, mtime))
+}
+
+/// Why the daemon of another executable runs a build that no longer
+/// exists: the file is gone, or it is not the file the daemon started from
+/// (`build_id`'s size and modification time). `None` while it is (or when
+/// the build id does not say).
+fn gone_build(executable: &str, build_id: &str) -> Option<String> {
+    let Some(now) = of(Path::new(executable)) else {
+        return Some(format!(
+            "it runs {executable}, which is gone (its app was removed or replaced)"
+        ));
+    };
+    match (file_part(build_id), file_part(&now.build_id)) {
+        (Some(started), Some(on_disk)) if started != on_disk => Some(format!(
+            "it runs {executable}, which was updated or replaced since it started"
+        )),
+        _ => None,
     }
 }
 
@@ -331,6 +371,31 @@ mod tests {
             verdict_for("", &exe, &build, &electron, "0.4.1", &[]),
             Verdict::Keep(_)
         ));
+        // Another app's executable updated or replaced in place since its
+        // daemon started (a Sparkle update of the SwiftUI app to the
+        // Electron app): replaced, whatever its version or KEEP_ENV.
+        let (exe, build) = id(&swift, "0.5.0");
+        std::fs::write(&swift, b"replaced").unwrap();
+        assert!(
+            matches!(verdict_for("0.5.0", &exe, &build, &electron, "0.4.1", &[]), Verdict::Replace(w) if w.contains("updated or replaced since it started"))
+        );
+        assert!(matches!(
+            verdict_for(
+                "0.5.0",
+                &exe,
+                &build,
+                &electron,
+                "0.4.1",
+                std::slice::from_ref(&swift)
+            ),
+            Verdict::Replace(_)
+        ));
+        // ... or gone (the app was removed): replaced.
+        std::fs::remove_file(&swift).unwrap();
+        assert!(
+            matches!(verdict_for("0.5.0", &exe, &build, &electron, "0.4.1", &[]), Verdict::Replace(w) if w.contains("which is gone"))
+        );
+        std::fs::write(&swift, b"cua").unwrap();
         // This app's own executable rebuilt or updated since its daemon
         // started: replaced, whatever the version.
         let (exe, build) = id(&electron, "9.9.9");

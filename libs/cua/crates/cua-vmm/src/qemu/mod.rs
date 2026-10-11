@@ -28,6 +28,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::auto::QemuPackageManager;
 use crate::error::{Result, VmmError};
 use crate::exec::{GuestExec, SshExec};
 use crate::host;
@@ -271,16 +272,25 @@ impl QemuRuntime {
         }
         Err(VmmError::missing(
             name,
-            "install QEMU (macOS: `brew install qemu`; Debian/Ubuntu: `apt install qemu-system qemu-utils`; \
-             Fedora: `dnf install qemu-kvm qemu-img`) or enable allow_install to let cua provision it",
+            format!(
+                "install QEMU (macOS: `brew install qemu`; {}) or enable allow_install to let cua provision it",
+                QemuPackageManager::linux_hint()
+            ),
         ))
     }
 
-    fn accel_for(&self, arch: Arch) -> String {
-        self.cfg
-            .accel
-            .clone()
-            .unwrap_or_else(|| host::qemu_accel(arch).to_string())
+    fn accel_for(&self, arch: Arch, kvm: &std::io::Result<()>) -> Result<String> {
+        if let Some(accel) = &self.cfg.accel {
+            return Ok(accel.clone());
+        }
+        let accel = host::qemu_accel(host::HostOs::current(), arch, kvm)?;
+        if let Err(e) = kvm
+            && accel == "tcg"
+            && arch == Arch::host()
+        {
+            tracing::warn!("{}", host::kvm_hint(e));
+        }
+        Ok(accel.to_string())
     }
 
     async fn resolve_source(
@@ -339,7 +349,10 @@ impl QemuRuntime {
         let fw = firmware::find_uefi(arch, &bin).ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                "install edk2 (Homebrew qemu ships it; Debian: `apt install qemu-efi-aarch64 ovmf`)",
+                format!(
+                    "install edk2 (Homebrew qemu ships it; {})",
+                    QemuPackageManager::linux_hint()
+                ),
             )
         })?;
         match fw.vars_template {
@@ -459,7 +472,7 @@ impl QemuRuntime {
         } else {
             None
         };
-        st.accel = self.accel_for(st.arch);
+        st.accel = self.accel_for(st.arch, &host::kvm_usable())?;
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network;
@@ -892,45 +905,13 @@ pub async fn install_qemu() -> Result<()> {
             host::run(brew, &["install", "qemu"]).await?;
         }
         host::HostOs::Linux => {
-            if let Some(apt) = host::which("apt-get") {
-                let apt = apt.display().to_string();
-                tracing::info!("installing QEMU with apt (sudo -n)");
-                host::run(
-                    "sudo",
-                    &[
-                        "-n",
-                        &apt,
-                        "install",
-                        "-y",
-                        "qemu-system-x86",
-                        "qemu-system-arm",
-                        "qemu-utils",
-                        "qemu-efi-aarch64",
-                        "ovmf",
-                    ],
-                )
-                .await?;
-            } else if let Some(dnf) = host::which("dnf") {
-                let dnf = dnf.display().to_string();
-                host::run(
-                    "sudo",
-                    &[
-                        "-n",
-                        &dnf,
-                        "install",
-                        "-y",
-                        "qemu-kvm",
-                        "qemu-img",
-                        "edk2-ovmf",
-                        "edk2-aarch64",
-                    ],
-                )
-                .await?;
-            } else {
-                return Err(VmmError::missing(
-                    "QEMU",
-                    "no supported package manager found (apt-get/dnf)",
-                ));
+            let (manager, program) = QemuPackageManager::detect().ok_or_else(|| {
+                VmmError::missing("QEMU", "no supported package manager found (apt-get/dnf)")
+            })?;
+            let program = program.display().to_string();
+            tracing::info!("installing QEMU with {manager:?} (sudo -n)");
+            for args in manager.commands(&program) {
+                host::run("sudo", &args).await?;
             }
         }
         host::HostOs::Windows => {
@@ -1464,6 +1445,31 @@ mod tests {
         assert!(err.to_string().contains("DiskResolver"));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_launch_refuses_unopenable_kvm_and_falls_back_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = rt(tmp.path());
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        let err = r.accel_for(Arch::host(), &denied).unwrap_err().to_string();
+        assert!(err.contains("permission denied"), "{err}");
+        assert!(err.contains("sudo usermod -aG kvm"), "{err}");
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[test]
+    fn explicit_tcg_override_is_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            accel: Some("tcg".into()),
+            ..Default::default()
+        });
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        assert_eq!(r.accel_for(Arch::host(), &denied).unwrap(), "tcg");
+    }
+
     /// Records the credentials each resolve got.
     struct SeenCreds(std::sync::Mutex<Vec<Option<String>>>);
 
@@ -1558,6 +1564,18 @@ mod tests {
                 .resolve_with_credentials("ghcr.io/me/x:1", Arch::host(), None)
                 .await
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn missing_qemu_hints_show_the_install_plan() {
+        assert_eq!(
+            QemuPackageManager::linux_hint(),
+            format!(
+                "Debian/Ubuntu: `{}`; Fedora: `{}`",
+                QemuPackageManager::Apt.render(),
+                QemuPackageManager::Dnf.render()
+            )
         );
     }
 }

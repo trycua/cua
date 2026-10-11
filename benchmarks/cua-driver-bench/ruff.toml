@@ -1,0 +1,5 @@
+# Ruff settings for the Cua Driver Bench harness. Inherits the repository settings.
+# The task pack is excluded: its files are pinned by digest (task manifests, evaluator
+# oracles and the harness pins), so they are kept byte for byte as released.
+extend = "../../pyproject.toml"
+extend-exclude = ["taskpack"]

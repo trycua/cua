@@ -1,0 +1,102 @@
+name: "CI: Cua Driver Bench"
+
+on:
+  pull_request:
+    paths:
+      - "benchmarks/cua-driver-bench/**"
+      - ".github/workflows/ci-cua-driver-bench.yml"
+  push:
+    branches: [main]
+    paths:
+      - "benchmarks/cua-driver-bench/**"
+      - ".github/workflows/ci-cua-driver-bench.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-driver-bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Harness tests (no GUI, no model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Run harness, checker and sentinel tests
+        working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench
+        env:
+          CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
+        run: >-
+          uv run --no-project --python 3.12 --with pytest==8.4.2
+          python -m pytest -q tests probes/tests swift/tests
+
+  taskpack:
+    name: Task pack tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Evaluator, reset and manifest tests
+        working-directory: benchmarks/cua-driver-bench/taskpack/tasks/shared
+        run: |
+          set -euo pipefail
+          for task in */; do
+            echo "::group::${task%/}"
+            (cd "$task" && uv run --no-project --python 3.12 python -m unittest discover -s tests)
+            (cd "$task" && python3 tools/refresh_manifest_digests.py --check)
+            echo "::endgroup::"
+          done
+
+      - name: App store tests
+        working-directory: benchmarks/cua-driver-bench/taskpack/tasks/shared
+        run: |
+          set -euo pipefail
+          for dir in */apps/* */fixture/archive-site; do
+            [ -d "$dir/tests" ] || continue
+            echo "::group::$dir"
+            (cd "$dir" && node --test tests/*.test.js)
+            echo "::endgroup::"
+          done
+
+      - name: Pinned tree digests match the task pack
+        working-directory: benchmarks/cua-driver-bench/automated-eval/macos_bench
+        env:
+          CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work
+        run: >-
+          uv run --no-project --python 3.12
+          python tools/check_pack_pins.py
+
+  lint:
+    name: Python lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Check Python files
+        run: |
+          uvx ruff==0.14.10 check --no-fix benchmarks/cua-driver-bench
+          uvx ruff==0.14.10 format --check benchmarks/cua-driver-bench

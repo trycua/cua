@@ -1,0 +1,21 @@
+{
+  "id": "IR-02",
+  "title": "Set two fields and press Apply while a notification banner covers the button",
+  "group": "IR",
+  "category": "interruptions",
+  "ability": "interruption_notification",
+  "dimension_tags": [
+    "interruption",
+    "notification",
+    "occlusion",
+    "form_fill"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "irbanner"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "Interruptions are simulated inside BenchLab (sheets, a non-activating panel, a WKWebView overlay); none is a real system prompt. Amendment 14."
+}

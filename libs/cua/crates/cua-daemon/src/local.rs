@@ -85,8 +85,8 @@ pub fn vmm_error(e: VmmError) -> Error {
         }
         VmmError::Invalid(m) => Error::InvalidArgument(m),
         VmmError::UnsupportedImage { reason, .. } => Error::Unsupported(reason),
-        VmmError::Missing { what, hint } => {
-            Error::ProviderNotConfigured(format!("{what} is not available: {hint}"))
+        e @ (VmmError::Missing { .. } | VmmError::NotRunning { .. }) => {
+            Error::ProviderNotConfigured(e.to_string())
         }
         VmmError::InsufficientDisk(d) => Error::InsufficientDisk(d.to_string()),
         other => Error::Runtime(other.to_string()),

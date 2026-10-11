@@ -137,6 +137,11 @@ pub const ERROR_KINDS: &[&str] = &[
     "fleet",
     "fleet_admission_denied",
     "runtime",
+    // A local create's runtime failure, split by cause (cua_sandbox_created).
+    "runtime_missing",
+    "runtime_not_running",
+    "runtime_permission",
+    "image_pull",
     "env",
     "http",
     "unauthenticated",

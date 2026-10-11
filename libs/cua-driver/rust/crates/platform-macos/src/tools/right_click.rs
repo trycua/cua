@@ -139,7 +139,10 @@ impl Tool for RightClickTool {
                 Err(refusal_result) => return refusal_result,
             };
 
+            // The context menu steals key focus from the user's app when the
+            // target is in the background; the guard hands it back.
             let result = tokio::task::spawn_blocking(move || {
+                let _key_focus = crate::key_focus_guard::protect(pid);
                 ax_show_menu(element_guard.as_ptr(), idx, pid, wid)
             })
             .await;
@@ -238,6 +241,9 @@ impl Tool for RightClickTool {
             Err(refusal) => return refusal,
         };
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let _key_focus = (!fg)
+                .then(|| crate::key_focus_guard::protect(pid))
+                .flatten();
             let do_it = move || -> anyhow::Result<()> {
                 let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 if route == super::pixel_route::PixelClickRoute::ForegroundHid {

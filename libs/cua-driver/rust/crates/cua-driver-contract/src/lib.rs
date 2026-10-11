@@ -44,21 +44,21 @@ fn drop_schemars_numeric_format(schema: &mut Schema) {
     }
 }
 
+pub use cursor::CursorEffectSetting;
 pub use cursor::{
     classify_cursor_semantics, CursorAction, CursorDelivery, CursorMotionEffects,
     CursorMotionEffectsOutput, CursorMotionStyle, CursorMotionTiming, CursorPlayback,
     CursorReducedMotion, CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition,
-    ClipboardReadInput, ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput,
-    EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
-    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionInput,
-    GetSessionStateInput, HotkeyInput, InputDeliveryMode, InvokeMenuInput, LegacyClickInput,
-    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
-    MULTI_CALL_SESSION_DESCRIPTION,
+    ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition, ClipboardReadInput,
+    ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput, EndSessionInput,
+    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
+    InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
+    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
+    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
@@ -391,8 +391,15 @@ mod tests {
 
     #[test]
     fn input_and_output_schemas_drop_only_schemars_numeric_formats() {
+        // `input_schema` panics on this fixture's object `const`. The format
+        // stripper runs in `schema_settings` before that rewrite.
         let schemas = [
-            <NumericFormatFixture as ToolInput>::input_schema(),
+            serde_json::to_value(
+                schema_settings()
+                    .into_generator()
+                    .into_root_schema_for::<NumericFormatFixture>(),
+            )
+            .expect("schema"),
             <NumericFormatFixture as ToolOutput>::output_schema(),
         ];
 

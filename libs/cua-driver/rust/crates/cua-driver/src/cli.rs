@@ -4414,7 +4414,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (true, false). Use null for a key to clear it, or cursor.motion null to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -5193,12 +5193,7 @@ pub fn run_config_cmd(
             // Parse value: try JSON, fall back to string.
             let parsed_value: serde_json::Value = serde_json::from_str(value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.to_owned()));
-            // Dotted keys (cursor.motion.style, ...) use the {key, value} shape.
-            let set_args = if key.contains('.') {
-                serde_json::json!({ "key": key, "value": parsed_value })
-            } else {
-                serde_json::json!({ key: parsed_value })
-            };
+            let set_args = serde_json::json!({ key: parsed_value });
             let result = call("set_config", set_args);
             exit_on_tool_error(&result);
             println!("Config updated.");
@@ -5221,7 +5216,7 @@ pub fn run_config_cmd(
             // Also clear the saved cursor motion defaults.
             exit_on_tool_error(&call(
                 "set_config",
-                serde_json::json!({ "key": "cursor.motion", "value": null }),
+                serde_json::json!({ "cursor.motion": "default" }),
             ));
             println!("Config reset to defaults.");
             let config = get_config();

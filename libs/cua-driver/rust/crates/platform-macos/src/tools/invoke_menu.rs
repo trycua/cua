@@ -554,7 +554,11 @@ fn background_unavailable(reason: String) -> ToolResult {
 /// level, then perform the final item's action. Used for a background app:
 /// opening a menu-bar menu would take key focus and draw over the user's
 /// front app.
-unsafe fn invoke_path_in_background(pid: i32, path: &[String]) -> Result<(), String> {
+unsafe fn invoke_path_in_background(
+    pid: i32,
+    window_id: u32,
+    path: &[String],
+) -> Result<(), String> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
         return Err("invoke_menu: target application is unavailable".into());
@@ -569,6 +573,14 @@ unsafe fn invoke_path_in_background(pid: i32, path: &[String]) -> Result<(), Str
     let target = target?;
     set_messaging_timeout(target);
     let result = (|| {
+        // AppKit validates menu items against the key window. Make the target
+        // window AppKit-key without raising it or touching the user's window
+        // (the focus record only), so items that need a key window enable.
+        if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+        {
+            std::thread::sleep(Duration::from_millis(120));
+        }
         if copy_bool_attr(target, "AXEnabled") == Some(false) {
             return Err(format!(
                 "invoke_menu: path segment {} is disabled while the app is in the background",
@@ -645,7 +657,7 @@ impl Tool for InvokeMenuTool {
             let background_path = path.clone();
             let outcome = tokio::task::spawn_blocking(move || {
                 let _key_focus = crate::key_focus_guard::protect(pid);
-                unsafe { invoke_path_in_background(pid, &background_path) }
+                unsafe { invoke_path_in_background(pid, window_id, &background_path) }
             })
             .await;
             return match outcome {

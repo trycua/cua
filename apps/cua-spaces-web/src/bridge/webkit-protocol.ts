@@ -147,8 +147,9 @@ export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
  * page (WebCodecs), so the page asks it for a media ticket
  * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
  * `onboarding.complete`); the Mac app draws video and its first run
- * natively. */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream"] as const;
+ * natively. It also reads the account's relay allowance
+ * (`relay.usage`, `ops/relay-usage.ts`). */
+export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "relay.usage"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {

@@ -43,6 +43,7 @@ import { SETTINGS_OPERATIONS, type SettingsOperations } from "./ops/settings";
 import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
+import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import type { TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
 
@@ -159,7 +160,8 @@ export interface HostOperations
     SpaceDetailOps,
     HostSetupOps,
     StartupOps,
-    StreamOps {
+    StreamOps,
+    RelayUsageOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
   "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs }; result: SpaceRow };
@@ -259,6 +261,7 @@ export const OPERATIONS = [
   ...KEYVAULT_MANAGE_OPERATIONS,
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
+  ...RELAY_USAGE_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   "telemetry.track",

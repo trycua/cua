@@ -44,6 +44,7 @@ import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./dem
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
+import { demoRelayUsageHandlers, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
@@ -114,6 +115,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
+    ...demoRelayUsageState(),
     ...demoSpaceDetailState(),
     ...demoHostSetupState(now(), options.onboarded === false),
     ...demoStartupState(Boolean(options.keychain)),
@@ -433,6 +435,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })) }),
     ...demoTelemetryHandlers(ctx),
+    ...demoRelayUsageHandlers(ctx),
     ...demoSpaceDetailHandlers(ctx),
     ...demoHostSetupHandlers(ctx),
     ...demoKeyvaultSetupHandlers(ctx),
@@ -459,7 +462,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 }
 
-export interface DemoState extends DemoTelemetryState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

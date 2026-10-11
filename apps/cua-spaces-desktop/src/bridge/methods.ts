@@ -41,8 +41,9 @@ export const METHODS = [
   "startup.get", "startup.act",
 ] as const;
 
-/** A live desktop's media ticket for the page's WebCodecs player, and the
- * first run's state (the SwiftUI app draws its first run natively). */
-export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream"] as const;
+/** A live desktop's media ticket for the page's WebCodecs player, the
+ * first run's state (the SwiftUI app draws its first run natively), and the
+ * account's relay allowance. */
+export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "relay.usage"] as const;
 
 export type Method = (typeof METHODS)[number] | (typeof ELECTRON_METHODS)[number];

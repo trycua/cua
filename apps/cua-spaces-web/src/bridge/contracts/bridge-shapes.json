@@ -3860,6 +3860,91 @@
     "notifications.markAllRead": {
       "type": "null"
     },
+    "relay.usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "metered": {
+          "type": "boolean"
+        },
+        "period": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string"
+        },
+        "team": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "seats": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "seats"
+          ]
+        },
+        "liveSessions": {
+          "type": "number"
+        },
+        "liveSessionsLimit": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "hoursUsed": {
+          "type": "number"
+        },
+        "hoursLimit": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "myHoursUsed": {
+          "type": "number"
+        },
+        "softLimitReached": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "upgradeUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "metered",
+        "period",
+        "plan",
+        "team",
+        "liveSessions",
+        "liveSessionsLimit",
+        "hoursUsed",
+        "hoursLimit",
+        "myHoursUsed",
+        "softLimitReached",
+        "reasons",
+        "upgradeUrl"
+      ]
+    },
     "session.completeOnboarding": {
       "type": "null"
     },

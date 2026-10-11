@@ -33,8 +33,9 @@ from analyze import wilson_interval  # noqa: E402
 # Public setup names; any other arm is reported under its arm id.
 ARM_LABELS = {
     "cc-cua-driver-script": "Cua Driver",
-    "cc-codex-cu": "Codex Computer-Use (Sky)",
+    "cc-codex-cu": "Codex Computer-Use (Sky), driven by Claude Code",  # suffix from Amendment 20
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
+    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6 Astra",  # Amendment 20
 }
 
 
@@ -109,6 +110,11 @@ def _bgc(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "background_completion": _rate(
             sum(1 for i in bg_rows if i.get("background_completion")), len(bg_rows)
+        )
+        if bg_rows
+        else None,
+        "background_completion_pointer_still": _rate(
+            sum(1 for i in bg_rows if i.get("background_completion_pointer_still")), len(bg_rows)
         )
         if bg_rows
         else None,

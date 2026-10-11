@@ -19,10 +19,10 @@
   "environment": "Lume macOS VM on a Mac Studio host (M3 Ultra), cloned from the cached cua-base image; 6 CPU, 12 GB, 1920x1080; one VM for both arms",
   "cdb_pack": {
     "repo": "trycua/cua, benchmarks/cua-driver-bench/taskpack (public copy)",
-    "source": "Copied from Cua's private benchmark repository at revision 16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a; see taskpack/README.md",
+    "source": "Copied from Cua's private benchmark repository at revision 16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a; see taskpack/README.md. shared/cdb-s02 also carries the Amendment 19 checker fix (one Schedule row per session).",
     "revision": "16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a",
     "tree_sha256": {
-      "shared/cdb-s02": "38cb375bb0f879dc780f64856f1876916d4a751abcf7ff3175a85f1989e56ecc",
+      "shared/cdb-s02": "844dbbd2b247395303b901cbd328dee092adfa0e592b511ce6900c69e92073c9",
       "shared/cdb-s03": "f018f55fa0208e6244e5789e0e306401a009f7ee07344aece1c741a3a9b70fa4",
       "shared/cdb-s04": "f7c67bb4dec8711176897f6cc26df8ed55237c0de48dd13cb242119ac7ca81a8"
     },
@@ -57,5 +57,12 @@
     "_cua_node_sha256": "ee2d88fda15173431807447aa2b1949f1db4e822efc4a3f4ba2c9a2b83f592f8",
     "_service_executable_sha256": "fa5b5d685f550af82902cff1a345db558a1da3eb526cf78cd4659fa0dcde01a5",
     "_signature": "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2), notarized"
+  },
+  "codex_native": {
+    "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6-astra at its catalog default effort (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",
+    "codex_cli_version": "codex-cli 0.160.0",
+    "codex_cli_sha256": "6b582e8813ce7e8ed4c52814ee5cf230dba647bf2292df747a4003f2657ef201",
+    "model": "gpt-6-astra",
+    "effort": "medium"
   }
 }

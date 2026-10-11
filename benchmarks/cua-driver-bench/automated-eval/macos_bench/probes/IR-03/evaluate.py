@@ -57,14 +57,20 @@ def evaluate(
         "every other title, status and body as at start",
     )
     done = C.events_of(events, "done")
+    saves = C.events_of(events, "save")
+    # Amendment 19: "When both changes are made, press Done" - the last Done must follow the last save.
+    done_after_saves = bool(done) and all(done[-1]["seq"] > e["seq"] for e in saves)
     done_ok = (
-        bool(done) and C.details(done[-1]).get("clean") is True and state.get("dirty") is False
+        bool(done)
+        and C.details(done[-1]).get("clean") is True
+        and state.get("dirty") is False
+        and done_after_saves
     )
     checks.add(
         "done_clean",
         done_ok,
         0.1,
-        f"{len(done)} done event(s); dirty at end {state.get('dirty')!r}",
+        f"{len(done)} done event(s); dirty at end {state.get('dirty')!r}; last Done after the last save {done_after_saves}",
     )
     checks.add(
         "state_matches_events",

@@ -160,6 +160,57 @@ class GuardTest(unittest.TestCase):
         summary = guard.summary([], [])
         self.assertTrue(summary["violation"] and summary["stopped_trial"])
 
+    def test_terminal_shell_input_in_background_is_a_violation(self) -> None:
+        # A19: Terminal is never in front (background typing), but its idle shell reads input.
+        ttys = iter([{"/dev/ttys003": 100.0}, {"/dev/ttys003": 100.0}, {"/dev/ttys003": 131.5}])
+        guard, _ = self.make([None] * 3)
+        guard.terminal_ttys = lambda: next(ttys)
+        guard.sample()
+        guard.sample()
+        self.assertFalse(guard.stop.is_set())
+        guard.sample()
+        self.assertTrue(guard.stop.is_set())
+        self.assertEqual(guard.violations[0]["detail"], "terminal:input")
+        self.assertEqual(guard.summary([], [])["terminal_ttys_at_start"], 1)
+
+    def test_new_terminal_session_is_a_violation(self) -> None:
+        ttys = iter([{}, {"/dev/ttys009": 5.0}])
+        guard, _ = self.make([None] * 2)
+        guard.terminal_ttys = lambda: next(ttys)
+        guard.sample()
+        guard.sample()
+        self.assertEqual(guard.violations[0]["detail"], "terminal:new_session")
+
+    def test_closed_terminal_session_is_not_a_violation(self) -> None:
+        ttys = iter([{"/dev/ttys003": 1.0}, {}])
+        guard, _ = self.make([None] * 2)
+        guard.terminal_ttys = lambda: next(ttys)
+        guard.sample()
+        guard.sample()
+        self.assertEqual(guard.violations, [])
+
+    def test_terminal_session_ttys_skip_the_runner_and_non_terminal_ttys(self) -> None:
+        rows = [
+            (1, 0, "??", "/sbin/launchd"),
+            (100, 1, "??", "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"),
+            (200, 100, "s000", "login"),
+            (201, 200, "s000", "-zsh"),
+            (202, 201, "s000", "/usr/bin/python3"),  # the runner, started from launch_bench.command
+            (203, 202, "s000", "claude"),
+            (204, 203, "s004", "codex"),  # a pty opened under the runner is the runner's own
+            (300, 100, "s001", "login"),
+            (301, 300, "s001", "-zsh"),  # a stray idle shell window
+            (400, 1, "s005", "sshd-session"),  # not a Terminal session
+        ]
+        self.assertEqual(v2.terminal_session_ttys(rows, exclude_pid=202), {"/dev/ttys001"})
+        self.assertEqual(
+            v2.terminal_session_ttys(rows, exclude_pid=999),
+            {"/dev/ttys000", "/dev/ttys001", "/dev/ttys004"},
+        )
+
+    def test_terminal_tty_inputs_runs_on_this_host(self) -> None:
+        self.assertIsInstance(v2.terminal_tty_inputs(), dict)
+
     def test_record_only_mode_never_stops(self) -> None:
         guard, _ = self.make(["com.apple.Terminal"] * 4, enforce=False)
         for _ in range(4):
@@ -345,6 +396,28 @@ class BackgroundConditionTest(unittest.TestCase):
         self.assertFalse(out["background_completion"])
         self.assertTrue(out["user_input_disrupted"])
 
+    def test_unmeasured_window_order_or_user_text_is_not_completion(self) -> None:
+        # Amendment 19: a missing measure is "not held", never a pass.
+        ua = {
+            "typed": 30,
+            "blocked": 0,
+            "text_disruptions": 0,
+            "text_intact_at_end": True,
+            "disrupted": False,
+        }
+        old_sentinel = v2.background_score(dict(BackgroundTest.QUIET, windows_raised=None), True)
+        out = v2.background_condition_score(
+            old_sentinel, dict(BackgroundTest.QUIET, user_activity=ua), True, "background"
+        )
+        self.assertFalse(out["background_completion"])
+        no_ua = v2.background_condition_score(self.bg(), BackgroundTest.QUIET, True, "background")
+        self.assertFalse(no_ua["background_completion"])
+        self.assertTrue(
+            v2.background_condition_score(self.bg(), BackgroundTest.QUIET, True, "foreground")[
+                "user_window_held"
+            ]
+        )
+
     def test_foreground_condition_has_no_completion_metric(self) -> None:
         out = v2.background_condition_score(self.bg(), BackgroundTest.QUIET, True, "foreground")
         self.assertIsNone(out["background_completion"])
@@ -354,6 +427,36 @@ class BackgroundConditionTest(unittest.TestCase):
         self.assertIn("--user-activity", v2.sentinel_args("background"))
         self.assertIn("User activity", v2.brief_for("Do X.", "background"))
         self.assertEqual(v2.brief_for("Do X.", "foreground"), "Do X.")
+
+
+class PointerStillTest(unittest.TestCase):
+    """A19.5 item 1: background completion with the pointer kept still, reported alongside A15.3."""
+
+    def score(self, pointer_moved: object) -> dict:
+        bg = {
+            "measured": True,
+            "focus_steals": 0,
+            "key_focus_lost": 0,
+            "windows_raised": 0,
+            "input_leaked": 0,
+            "pointer_moved": pointer_moved,
+        }
+        dist = {"user_activity": {"text_disruptions": 0, "text_intact_at_end": True}}
+        return v2.background_condition_score(bg, dist, True, "background")
+
+    def test_pointer_moved_fails_only_the_pointer_still_variant(self) -> None:
+        moved = self.score(True)
+        self.assertTrue(moved["background_completion"])
+        self.assertFalse(moved["background_completion_pointer_still"])
+        self.assertTrue(self.score(False)["background_completion_pointer_still"])
+        self.assertFalse(self.score(None)["background_completion_pointer_still"])
+
+    def test_foreground_has_no_variant(self) -> None:
+        self.assertIsNone(
+            v2.background_condition_score({}, {}, True, "foreground")[
+                "background_completion_pointer_still"
+            ]
+        )
 
 
 if __name__ == "__main__":

@@ -92,7 +92,7 @@ per-category differences are directional only.
 | --- | --- | --- |
 | **Cua Driver** | Run | Cua Driver's MCP server, with its skill and `run_script` on (Cua Driver 0.35 defaults), built from a pinned main commit (arm `cc-cua-driver-script`) |
 | **Codex Computer-Use (Sky)**, driven by Claude Code | Run | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin, talking to OpenAI's Sky computer-use service, registered in Claude Code as MCP server `codex-cu` (arm `cc-codex-cu`). Claude chooses the actions through this MCP bridge; OpenAI's model is not involved. |
-| **Codex Computer-Use (Sky)**, driven by Codex CLI + `gpt-6-astra` | Planned (pre-registered in Amendment 20, not yet run) | The same Codex tool layer driven by OpenAI's own agent and model: the Codex CLI bundled with the ChatGPT app, run as `codex app-server`, with `gpt-6-astra`. Same prompts, approvals, limits, guard and checkers. Its harness code will be added once its smoke checks pass; no numbers exist yet. |
+| **Codex Computer-Use (Sky)**, driven by Codex CLI + `gpt-6-astra` | Planned (pre-registered in Amendment 20, not yet run) | The same Codex tool layer driven by OpenAI's own agent and model: the Codex CLI bundled with the ChatGPT app, run as `codex app-server`, with `gpt-6-astra`. Same prompts, approvals, limits, guard and checkers. Its harness code is `automated-eval/macos_bench/codex_native.py` (arm `cx-codex-cu`); its smoke checks pass, and it runs in the next full Bench v2 run. No numbers yet. |
 
 The harness also keeps internal baseline arms (the Cua Driver 0.34.0 release,
 main with `run_script` off, and the skill in the system prompt) that are not
@@ -151,7 +151,7 @@ for app in "$CDB_BENCH_WORK"/taskpack/tasks/shared/*/apps/*; do (cd "$app" && np
   config from the plugin's own file (`tools/make_codex_cu_mcp.py`). The plugin
   is OpenAI's and is not redistributed here; driving it from a client other
   than OpenAI's is undocumented.
-* **Codex CLI + `gpt-6-astra`.** Planned; its install steps will come with its harness code.
+* **Codex CLI + `gpt-6-astra`** (arm `cx-codex-cu`). Nothing extra to install: it uses the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the same `cua_repl` MCP config as the Claude-driven Codex setup. Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint that serves `gpt-6-astra` (default `http://127.0.0.1:4000/v1`). The pinned CLI build is in `pins.json` (`codex_native`).
 
 ### 4. Check, then run
 

@@ -135,6 +135,11 @@ def check_workbook(path: Path, events: dict) -> dict:
     if error:
         return {"passed": False, "reason": error}
     problems = []
+    # Each session has exactly one Schedule row: a second, conflicting row for a session would
+    # otherwise be hidden by keyed_rows keeping the last one.
+    sessions = [row[0] for row in tables.get("Schedule", [])[1:] if row and row[0]]
+    if sorted(sessions) != sorted(ORACLE["schedule"]):
+        problems.append(f"Schedule must hold exactly one row per session, found {sessions}")
     for session, expected in ORACLE["schedule"].items():
         actual = (rows.get(session, []) + ["", "", "", "", ""])[0:4]
         if actual != expected:

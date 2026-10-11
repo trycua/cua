@@ -79,11 +79,6 @@ async fn resume_trusted_connection(
     bind_trusted_connection(sdk, record.options, record.transport_session)
 }
 
-/// Drop the results of connection tasks that have already finished.
-///
-/// A `JoinSet` keeps every completed task (and its output) until it is joined,
-/// so a long-lived daemon must reap finished connections or its memory grows
-/// with every connection it has ever served.
 fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
     while let Some(result) = connection_tasks.try_join_next() {
         if let Err(error) = result {
@@ -3025,7 +3020,6 @@ mod connection_reaping_tests {
         let live = std::sync::Arc::new(live);
         let waiter = live.clone();
         tasks.spawn(async move { waiter.notified().await });
-        // Let the instantly-finishing tasks complete.
         for _ in 0..16 {
             tokio::task::yield_now().await;
         }

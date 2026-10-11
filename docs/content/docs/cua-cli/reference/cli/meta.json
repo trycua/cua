@@ -20,6 +20,7 @@
     "host",
     "devices",
     "team",
+    "usage",
     "teleport",
     "volume",
     "keyvault",

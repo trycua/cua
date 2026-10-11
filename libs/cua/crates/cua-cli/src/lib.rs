@@ -1708,6 +1708,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         Command::Team(cmd) => {
             return team_cmd::run(cmd, &util::cua_home(), json, out).await;
+        }
         Command::Usage { relay } => {
             return usage_cmd::run(relay, &util::cua_home(), json, out).await;
         }

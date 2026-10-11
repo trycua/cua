@@ -512,10 +512,6 @@ impl Tool for HotkeyTool {
     }
 }
 
-/// Structured result of a delivered combo. A combo is never read back, so its
-/// effect is unverifiable, and delivery is no evidence that it was missed: no
-/// escalation. Resending a chord that landed (cmd+n, cmd+t, a toggle) repeats
-/// it.
 fn delivered_structured(foreground: bool) -> Value {
     serde_json::json!({
         "path": if foreground { "key_events_fg" } else { "key_events" },

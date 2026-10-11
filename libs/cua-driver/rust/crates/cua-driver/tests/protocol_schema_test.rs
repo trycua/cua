@@ -186,8 +186,8 @@ fn tools_list_schema_shape() {
         "hotkey",
         "scroll",
         "browser_dialog",
-        // Trusted browser input may activate the browser window (Linux or
-        // macOS Chromium); foreground accepts that.
+        // Trusted browser input may activate the browser window (Linux
+        // Chromium); foreground accepts that.
         "browser_click",
         "browser_pointer",
         // macOS set_value has no delivery ladder.

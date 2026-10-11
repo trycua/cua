@@ -114,6 +114,11 @@ fn revert_self_activation(target: i32, front: i32) -> bool {
     if !target_self_activated(skylight::front_process_pid(), target, front) {
         return false;
     }
+    // The user may have switched to the target themselves (a click on its
+    // window, or Cmd-Tab). Leave that alone.
+    if user_switched_recently() {
+        return false;
+    }
     let started = Instant::now();
     // Make the user's key window frontmost and key again, the way the
     // foreground tools front an exact window (a user-generated front request
@@ -143,6 +148,30 @@ fn revert_self_activation(target: i32, front: i32) -> bool {
     true
 }
 
+/// A hardware mouse-down or modifier change within this long before an
+/// activation means the user may have caused it.
+const USER_SWITCH_WINDOW_S: f64 = 1.0;
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+}
+
+/// Whether the user pressed a mouse button or a modifier key on the real
+/// hardware just now. Events the driver posts to a pid do not count.
+fn user_switched_recently() -> bool {
+    const HID_SYSTEM_STATE: i32 = 1;
+    const LEFT_MOUSE_DOWN: u32 = 1;
+    const RIGHT_MOUSE_DOWN: u32 = 3;
+    const FLAGS_CHANGED: u32 = 12;
+    [LEFT_MOUSE_DOWN, RIGHT_MOUSE_DOWN, FLAGS_CHANGED]
+        .into_iter()
+        .any(|kind| {
+            let since = unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, kind) };
+            since.is_finite() && since < USER_SWITCH_WINDOW_S
+        })
+}
+
 /// How long the order stays watched after a guarded action ends. A target
 /// can raise a window a moment after the call that caused it returns (a
 /// banner, a sheet, or a menu that a renderer process opens later).
@@ -165,14 +194,14 @@ struct Watch {
 /// Keep restoring the user's window above `target`, and undoing the target's
 /// self-activation, for a short while after the action. One watcher per
 /// target; a later action extends it.
-fn watch_order_after_action(target: i32, front: i32, order: bool) {
+fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: u64) {
     static WATCHING: OnceLock<Mutex<HashMap<i32, Watch>>> = OnceLock::new();
     let watching = WATCHING.get_or_init(|| Mutex::new(HashMap::new()));
     let watch = Watch {
         until: Instant::now() + ORDER_WATCH,
         front,
         order,
-        epoch: crate::window_change_detector::intentional_epoch(),
+        epoch,
     };
     {
         let mut map = watching
@@ -351,15 +380,21 @@ pub struct Lease {
     /// A target window already sat above the user's window when the action
     /// started (the user arranged it so); then nothing is restored.
     above_before: bool,
+    /// [`crate::window_change_detector::intentional_epoch`] when armed. If
+    /// the driver activated an app itself since, the target's activation is
+    /// not reverted.
+    epoch: u64,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        revert_self_activation(self.pid, self.front);
+        if self.epoch == crate::window_change_detector::intentional_epoch() {
+            revert_self_activation(self.pid, self.front);
+        }
         if !self.above_before {
             restore_front_if_raised(self.pid, self.front);
         }
-        watch_order_after_action(self.pid, self.front, !self.above_before);
+        watch_order_after_action(self.pid, self.front, !self.above_before, self.epoch);
         let mut st = lock();
         if let Some((leases, until)) = st.guarded.get_mut(&self.pid) {
             *leases = leases.saturating_sub(1);
@@ -406,6 +441,7 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
         pid: target_pid,
         front,
         above_before: target_above_front(target_pid, front),
+        epoch: crate::window_change_detector::intentional_epoch(),
     };
     if !ensure_tap(front) {
         return None;

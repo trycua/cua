@@ -799,6 +799,7 @@ pub fn front_process_matches(target_pid: libc::pid_t, target_wid: u32) -> Option
 /// Returns `true` only when the target PSN resolved and WindowServer accepted
 /// `SLPSSetFrontProcessWithOptions`.
 pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    crate::window_change_detector::note_intentional_activation();
     let Some(set_front) = set_front_process_fn() else {
         return false;
     };
@@ -887,6 +888,7 @@ fn foreground_turn() -> ForegroundTurn {
     // An intentional activation ends the previous action's detached window
     // watch, whose wildcard lease would otherwise revert it.
     crate::window_change_detector::end_tail();
+    crate::window_change_detector::note_intentional_activation();
     if HOLDS_FOREGROUND_LOCK.with(std::cell::Cell::get) {
         return ForegroundTurn { _guard: None };
     }

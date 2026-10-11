@@ -137,6 +137,9 @@ fn isolated_browser_candidates() -> Vec<PathBuf> {
         "/usr/lib/chromium/chromium",
         "/usr/lib/chromium-browser/chromium-browser",
         "/opt/microsoft/msedge/msedge",
+        // Brave's own binary, not its brave-browser wrapper script: the
+        // launched process must be the browser that owns the window.
+        "/opt/brave.com/brave/brave",
     ]
     .into_iter()
     .map(PathBuf::from)
@@ -304,6 +307,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => ".config/google-chrome",
         BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
         BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::Brave => ".config/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -1430,6 +1434,7 @@ mod tests {
                 "/usr/lib/chromium/chromium",
                 "/usr/lib/chromium-browser/chromium-browser",
                 "/opt/microsoft/msedge/msedge",
+                "/opt/brave.com/brave/brave",
             ]
             .map(PathBuf::from)
         );

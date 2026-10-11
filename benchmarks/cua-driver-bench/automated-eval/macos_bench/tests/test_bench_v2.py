@@ -325,5 +325,25 @@ class BackgroundConditionTest(unittest.TestCase):
         self.assertEqual(v2.brief_for("Do X.", "foreground"), "Do X.")
 
 
+
+class PointerStillTest(unittest.TestCase):
+    """A19.5 item 1: background completion with the pointer kept still, reported alongside A15.3."""
+
+    def score(self, pointer_moved: object) -> dict:
+        bg = {"measured": True, "focus_steals": 0, "key_focus_lost": 0, "windows_raised": 0, "input_leaked": 0,
+              "pointer_moved": pointer_moved}
+        dist = {"user_activity": {"text_disruptions": 0, "text_intact_at_end": True}}
+        return v2.background_condition_score(bg, dist, True, "background")
+
+    def test_pointer_moved_fails_only_the_pointer_still_variant(self) -> None:
+        moved = self.score(True)
+        self.assertTrue(moved["background_completion"])
+        self.assertFalse(moved["background_completion_pointer_still"])
+        self.assertTrue(self.score(False)["background_completion_pointer_still"])
+        self.assertFalse(self.score(None)["background_completion_pointer_still"])
+
+    def test_foreground_has_no_variant(self) -> None:
+        self.assertIsNone(v2.background_condition_score({}, {}, True, "foreground")["background_completion_pointer_still"])
+
 if __name__ == "__main__":
     unittest.main()

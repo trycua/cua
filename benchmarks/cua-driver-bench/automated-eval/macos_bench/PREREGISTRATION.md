@@ -1420,6 +1420,10 @@ Written and committed before smoke v2s5b's first trial. Validation only, never a
 
 **What it checks:** per trial, focus steals, key loss, swallowed user keystrokes, windows raised and pointer movement, against the same tasks in v2rr-ba (Cua Driver: focus steals 2, key loss 2, pointer moved 10). Background completion and success are reported, not tested. Seat: cswap seat 4 with the watchdog at 0.94, access tokens only, deleted with sync before a graceful shutdown.
 
+### A20.7 Background completion with the pointer kept still (reported alongside; headline unchanged)
+
+Registered 11 Oct 2026 before any trial that records it. Every background-condition row also carries `background_completion_pointer_still`: the A15.3 background completion that additionally requires the real pointer not to have moved (`pointer_moved` false; unmeasured counts as moved). `tools/analyze_v2.py` reports its rate next to background completion. The A15.3 metric stays the primary metric until the owner decides A19.5 item 1; if the owner makes the pointer part of the headline, that decision is registered by its own dated line before the next full run, and the A15.3 figure is still reported.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

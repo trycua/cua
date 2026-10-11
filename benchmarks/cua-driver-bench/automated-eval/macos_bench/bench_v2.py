@@ -459,6 +459,11 @@ def background_condition_score(bg: dict[str, Any], disturbance: dict[str, Any], 
         "condition": condition,
         "user_window_held": held,
         "background_completion": bool(passed and held) if condition == "background" else None,
+        # Reported alongside, not the A15.3 metric: background completion that also requires the real pointer to
+        # stay put (A19.5 item 1, the owner's decision). Unmeasured pointer is not "still".
+        "background_completion_pointer_still": bool(passed and held and bg.get("pointer_moved") is False)
+        if condition == "background"
+        else None,
         "success_regardless_of_focus": bool(passed),
         "focus_steals": bg.get("focus_steals"),
         "user_input_disrupted": None if ua is None else bool(ua.get("disrupted") or not text_ok),

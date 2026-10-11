@@ -103,6 +103,11 @@ def _bgc(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "background_completion": _rate(sum(1 for i in bg_rows if i.get("background_completion")), len(bg_rows))
         if bg_rows
         else None,
+        "background_completion_pointer_still": _rate(
+            sum(1 for i in bg_rows if i.get("background_completion_pointer_still")), len(bg_rows)
+        )
+        if bg_rows
+        else None,
         "user_window_held": sum(1 for i in items if i.get("user_window_held")),
         "user_input_disrupted": sum(1 for i in items if i.get("user_input_disrupted")),
         "overlay_owners": sorted({o for i in items for o in (i.get("overlay_owners") or [])}),

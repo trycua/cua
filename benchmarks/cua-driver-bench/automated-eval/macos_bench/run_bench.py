@@ -916,7 +916,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         video_raw = ctx.recorder.stop() if ctx.recorder and recording else None
         events = claude_events.read_events(stream_path)
         summary = claude_events.summarize(events)
-        if native:  # turns are sampling requests from the rollout, not tool uses (codex_native.Translator)
+        if native:  # turns are sampling requests (thread/tokenUsage/updated), not tool uses
             summary["turns"] = summary["api_calls"] = claude.get("turns")
             row["codex_usage"] = claude.get("codex_usage")
             row["codex_non_gui_items"] = claude.get("non_gui_items")
@@ -1688,7 +1688,7 @@ def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str
     summary = claude_events.summarize(claude_events.read_events(stream))
     text = (summary.get("final_text") or "").strip()
     ok = result.get("result_seen") and text.upper().startswith("OK") and not summary["tool_calls"]["total"]
-    out.append((f"init check {arm} (codex exec, {cxn.MODEL})", "pass" if ok else "fail",
+    out.append((f"init check {arm} (codex app-server, {cxn.MODEL})", "pass" if ok else "fail",
                 f"reply={text[:40]!r} tools={summary['tool_calls']['total']} usage={result.get('codex_usage')}"))
     return out
 

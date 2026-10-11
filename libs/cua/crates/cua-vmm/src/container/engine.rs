@@ -198,14 +198,19 @@ pub enum SocketCheck {
 
 /// Connects to the Unix socket behind `uri` (`unix:///path` or a path)
 /// without speaking HTTP, so "not running" and "permission denied" are
-/// told apart before the ping. `None` for other URIs (tcp, npipe).
-pub fn check_socket(uri: &str) -> Option<SocketCheck> {
+/// told apart before the ping. `None` for other URIs (tcp, npipe) and when
+/// the connect does not finish in 5 s (a hung engine: the ping decides).
+pub async fn check_socket(uri: &str) -> Option<SocketCheck> {
     #[cfg(unix)]
     {
         let path = uri
             .strip_prefix("unix://")
             .or_else(|| uri.starts_with('/').then_some(uri))?;
-        Some(match std::os::unix::net::UnixStream::connect(path) {
+        let connect = tokio::net::UnixStream::connect(path);
+        let r = tokio::time::timeout(std::time::Duration::from_secs(5), connect)
+            .await
+            .ok()?;
+        Some(match r {
             Ok(_) => SocketCheck::Accepting,
             Err(e) => match e.kind() {
                 std::io::ErrorKind::PermissionDenied => SocketCheck::PermissionDenied,
@@ -222,6 +227,26 @@ pub fn check_socket(uri: &str) -> Option<SocketCheck> {
     }
 }
 
+fn docker_config_dir() -> PathBuf {
+    std::env::var_os("DOCKER_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| host::home_dir().join(".docker"))
+}
+
+/// The docker CLI's current context when its Unix socket is gone: an
+/// engine that is installed but stopped (Docker Desktop quit). For the
+/// "no engine" message only; [`discover`] never returns it.
+pub fn stopped_context() -> Option<EngineEndpoint> {
+    let env_ctx = std::env::var("DOCKER_CONTEXT").ok();
+    let (name, h) = context_endpoint(&docker_config_dir(), env_ctx.as_deref())?;
+    let path = h.strip_prefix("unix://")?;
+    (!Path::new(path).exists()).then(|| EngineEndpoint {
+        kind: classify(&h),
+        uri: h.clone(),
+        source: format!("context:{name}"),
+    })
+}
+
 /// Find the engine endpoint the way the docker CLI would.
 pub fn discover() -> Option<EngineEndpoint> {
     if let Ok(h) = std::env::var("DOCKER_HOST")
@@ -233,25 +258,17 @@ pub fn discover() -> Option<EngineEndpoint> {
             source: "DOCKER_HOST".into(),
         });
     }
-    let docker_dir = std::env::var_os("DOCKER_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| host::home_dir().join(".docker"));
+    let docker_dir = docker_config_dir();
     let env_ctx = std::env::var("DOCKER_CONTEXT").ok();
-    // A context whose socket is gone is an engine that is installed but
-    // stopped (Docker Desktop quit): used only when no other socket is up,
-    // so the create can say to start it rather than to install one.
-    let mut stopped_context = None;
     if let Some((name, h)) = context_endpoint(&docker_dir, env_ctx.as_deref()) {
         let path = h.trim_start_matches("unix://");
-        let endpoint = EngineEndpoint {
-            kind: classify(&h),
-            uri: h.clone(),
-            source: format!("context:{name}"),
-        };
         if !h.starts_with("unix://") || Path::new(path).exists() {
-            return Some(endpoint);
+            return Some(EngineEndpoint {
+                kind: classify(&h),
+                uri: h,
+                source: format!("context:{name}"),
+            });
         }
-        stopped_context = Some(endpoint);
     }
     #[cfg(windows)]
     if Path::new(WINDOWS_ENGINE_PIPE).exists() {
@@ -272,7 +289,6 @@ pub fn discover() -> Option<EngineEndpoint> {
                 source: "socket".into(),
             }
         })
-        .or(stopped_context)
 }
 
 #[cfg(test)]
@@ -308,18 +324,27 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn check_socket_tells_not_running_from_missing_and_up() {
+    #[tokio::test]
+    async fn check_socket_tells_not_running_from_missing_and_up() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("docker.sock");
         let uri = format!("unix://{}", path.display());
-        assert_eq!(check_socket(&uri), Some(SocketCheck::Missing));
+        assert_eq!(check_socket(&uri).await, Some(SocketCheck::Missing));
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
-        assert_eq!(check_socket(&uri), Some(SocketCheck::Accepting));
+        assert_eq!(check_socket(&uri).await, Some(SocketCheck::Accepting));
         // The engine stopped and left its socket file behind.
         drop(listener);
-        assert_eq!(check_socket(&uri), Some(SocketCheck::NotListening));
-        assert_eq!(check_socket("tcp://127.0.0.1:2375"), None);
+        // A child another test forks can hold the listener a moment longer.
+        let mut seen = None;
+        for _ in 0..50 {
+            seen = check_socket(&uri).await;
+            if seen == Some(SocketCheck::NotListening) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(seen, Some(SocketCheck::NotListening));
+        assert_eq!(check_socket("tcp://127.0.0.1:2375").await, None);
     }
 
     #[test]

@@ -488,6 +488,11 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                     provisioning: m.provisioning,
                 });
             }
+            // An engine was found but is stopped or refused: its own
+            // message says how to start it or get access.
+            if report.container.endpoint.is_some() {
+                return Err(VmmError::other(c.detail));
+            }
             Err(VmmError::missing(
                 "a container engine",
                 format!("{}; {}", c.detail, engine_install_hint()),

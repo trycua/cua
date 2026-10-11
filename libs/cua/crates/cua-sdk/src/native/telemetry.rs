@@ -258,8 +258,8 @@ pub(crate) fn variant<T>(r: &Result<T>) -> Option<&'static str> {
 /// process, never the message.
 fn create_error_kind<T>(on: &str, r: &Result<T>) -> Option<&'static str> {
     let e = r.as_ref().err()?;
-    let local_runtime = matches!(e, CuaError::Runtime(_))
-        || on == "local" && matches!(e, CuaError::ProviderNotConfigured(_));
+    let local_runtime =
+        on == "local" && matches!(e, CuaError::Runtime(_) | CuaError::ProviderNotConfigured(_));
     if local_runtime && let Some(kind) = cua_sandbox_core::runtime_failure_kind(&e.to_string()) {
         return Some(kind);
     }

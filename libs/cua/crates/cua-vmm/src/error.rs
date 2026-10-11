@@ -114,7 +114,10 @@ pub fn failure_kind(message: &str) -> Option<&'static str> {
         Some("runtime_permission")
     } else if m.contains(" is not running: ") {
         Some("runtime_not_running")
-    } else if m.contains(" is not available: ") {
+    } else if m.contains(" is not available: ")
+        && !m.contains("local network access")
+        && !m.contains("network route")
+    {
         Some("runtime_missing")
     } else {
         None
@@ -163,5 +166,7 @@ mod tests {
         let denied_pull = VmmError::Engine("pull x: pull access denied for x".into());
         assert_eq!(failure_kind(&denied_pull.to_string()), Some("image_pull"));
         assert_eq!(failure_kind(&VmmError::other("boom").to_string()), None);
+        let lan = VmmError::missing("Local Network access", "click Allow");
+        assert_eq!(failure_kind(&lan.to_string()), None);
     }
 }

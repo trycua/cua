@@ -1552,9 +1552,19 @@ async fn create(
     let sb = created
         .map_err(|e| match e {
             // The cloud came from a default: say how to sign in or go back.
-            // The SDK already said how to sign in or leave a cloud default.
-            CuaError::ProviderNotConfigured(m) if on == On::Cloud => {
-                CuaError::ProviderNotConfigured(format!("{m}. {BYO_COMPUTE_HINT}"))
+            // The cloud came from a default: say how to sign in or go back
+            // (once: some SDK paths have said it already).
+            CuaError::ProviderNotConfigured(mut m) => {
+                if let Some(hint) =
+                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
+                    && !m.contains(&hint)
+                {
+                    m = format!("{m}; {hint}");
+                }
+                if on == On::Cloud {
+                    m = format!("{m}. {BYO_COMPUTE_HINT}");
+                }
+                CuaError::ProviderNotConfigured(m)
             }
             other => other,
         })

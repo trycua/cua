@@ -247,6 +247,14 @@
       "created_at": "2026-10-11T16:29:15Z",
       "repoId": 925270205,
       "pullRequestNo": 4990
+    },
+    {
+      "name": "UlviShukurzade",
+      "id": 24765995,
+      "comment_id": 6111495413,
+      "created_at": "2026-10-11T17:05:13Z",
+      "repoId": 925270205,
+      "pullRequestNo": 4995
     }
   ]
 }

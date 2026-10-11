@@ -30,8 +30,22 @@ pub struct RevealOutcome {
     pub container_role: String,
     /// How far the content moved, in points, in the requested direction.
     pub moved: f64,
-    /// Nothing lay beyond the edge: the container is already at its end.
-    pub at_end: bool,
+}
+
+impl RevealOutcome {
+    fn from_movement(role: &str, moved: f64) -> Option<Self> {
+        (moved.is_finite() && moved > 0.5).then(|| Self {
+            container_role: role.to_owned(),
+            moved,
+        })
+    }
+
+    fn from_estimated_movement(role: &str, moved: f64) -> Option<Self> {
+        if !moved.is_finite() {
+            return None;
+        }
+        Self::from_movement(role, moved.max(1.0))
+    }
 }
 
 /// `[x, y, w, h]` in screen points.
@@ -354,14 +368,10 @@ unsafe fn reveal_in(
             "right" => before[0] - after[0],
             _ => after[0] - before[0],
         };
-        (moved > 0.5).then(|| RevealOutcome {
-            container_role: role.to_owned(),
-            moved,
-            at_end: false,
-        })
+        RevealOutcome::from_movement(role, moved)
     } else if let Some(pick) = pick_clamped(viewport, direction, distance, &nodes) {
         // A clamped sliver: it scrolled when it now shows at a real size
-        // inside the viewport and a visible element moved (or left). Its old
+        // inside the viewport or a visible reference moved (or left). Its old
         // position is estimated from the row count, so the distance is
         // approximate.
         let reference = nodes
@@ -374,23 +384,13 @@ unsafe fn reveal_in(
         let reference_after = reference.and_then(|at| element_screen_rect(elements[at]));
         let shown =
             after.is_some_and(|rect| real_size(rect) && intersect(rect, viewport).is_some());
-        match content_moved(reference_before, reference_after) {
-            // Nothing visible moved: the container is at its end that way.
-            Some(false) => {
-                return finish(
-                    elements,
-                    Some(RevealOutcome {
-                        container_role: role.to_owned(),
-                        moved: 0.0,
-                        at_end: true,
-                    }),
-                )
-            }
-            Some(true) => {}
-            None if shown => {}
-            None => return finish(elements, None),
+        // A nested scroller can reveal the selected row while a reference
+        // elsewhere in the web area stays fixed. Either observation can
+        // establish movement; neither proves that the scroller is at its end.
+        if content_moved(reference_before, reference_after) != Some(true) && !shown {
+            return finish(elements, None);
         }
-        after.filter(|rect| real_size(*rect)).map(|after| {
+        after.filter(|rect| real_size(*rect)).and_then(|after| {
             let past = (pick.rows as f64 - 1.0) * pick.pitch;
             let [vx, vy, vw, vh] = viewport;
             let moved = match direction {
@@ -399,18 +399,12 @@ unsafe fn reveal_in(
                 "right" => vx + vw + past - after[0],
                 _ => after[0] + after[2] - (vx - past),
             };
-            RevealOutcome {
-                container_role: role.to_owned(),
-                moved: moved.max(1.0),
-                at_end: false,
-            }
+            RevealOutcome::from_estimated_movement(role, moved)
         })
     } else {
-        Some(RevealOutcome {
-            container_role: role.to_owned(),
-            moved: 0.0,
-            at_end: true,
-        })
+        // A bounded AX traversal with no reveal candidate cannot establish
+        // the scroll range or exclude content in a nested container.
+        None
     };
     finish(elements, outcome)
 }
@@ -460,6 +454,37 @@ mod tests {
     }
 
     #[test]
+    fn reveal_outcome_requires_observed_movement() {
+        for moved in [0.0, 0.5, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(RevealOutcome::from_movement("AXWebArea", moved), None);
+        }
+        assert_eq!(
+            RevealOutcome::from_movement("AXScrollArea", 42.0),
+            Some(RevealOutcome {
+                container_role: "AXScrollArea".to_owned(),
+                moved: 42.0,
+            })
+        );
+    }
+
+    #[test]
+    fn estimated_movement_rejects_nonfinite_values_before_clamping() {
+        for moved in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                RevealOutcome::from_estimated_movement("AXWebArea", moved),
+                None
+            );
+        }
+        assert_eq!(
+            RevealOutcome::from_estimated_movement("AXWebArea", 0.0)
+                .unwrap()
+                .moved,
+            1.0,
+            "an already-confirmed reveal keeps the minimum distance estimate"
+        );
+    }
+
+    #[test]
     fn down_reveals_the_row_closest_to_the_distance_below_the_edge() {
         // Rows every 50 pt from y=100; the viewport ends at y=600.
         let rows: Vec<Rect> = (0..30).map(|i| row(100.0 + 50.0 * i as f64)).collect();
@@ -487,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn at_the_end_or_with_only_containers_beyond_nothing_is_picked() {
+    fn without_candidates_beyond_the_viewport_nothing_is_picked() {
         let visible = vec![row(120.0), row(300.0), row(550.0)];
         assert_eq!(pick_reveal_target(VIEWPORT, "down", 120.0, &visible), None);
         // A page-sized wrapper reaching past the edge is not a target.
@@ -542,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reveal_that_moves_nothing_visible_is_the_end() {
+    fn a_reveal_that_moves_nothing_visible_is_not_confirmed_movement() {
         let row = [518.0, 301.0, 600.0, 41.0];
         // Seen live at the top of the page: the reveal changed nothing.
         assert_eq!(content_moved(Some(row), Some(row)), Some(false));

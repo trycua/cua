@@ -40,9 +40,9 @@
       "v2/ma03-plot-renewal-letter": "edd6c155efd4336f7e8a6ae87a1eb8170b03fa4b57ca5070c38546035b571084",
       "v2/ma04-shift-summary-note": "ab157b6323fa26109a24b0070ed131d1a53d9fec8ccad8a9c5962dc6f9da2aef",
       "v2/na01-theatre-calendar": "878026228691bbbd0a930bdda0a2e6c43f0187637a80c68244c963eb0b7056a5",
-      "v2/na02-lido-recurring": "4e9a263aca0cc1f1ba2e1ec180650d0daaa454a5bd4437b3fb5d43aea208521d",
-      "v2/na03-seed-packet-tags": "7713564833f5e202b7101c2e2648dbe30c63fd566a17ec284bec92a2b7cdba3b",
-      "v2/na04-committee-get-info": "fa9569518865801df5d6efd4110118bc9930636813673f84fb0496a5247efe42",
+      "v2/na02-lido-recurring": "77dd22ed7a6f14b8144e9c9f93ea03bda7c8b40e8e1327ae9ea55ebdaf330e93",
+      "v2/na03-seed-packet-tags": "8a3cd5fdbaa908dc5ca8355a586f2f7505f5a54ed7e52dcb04949b58c1d6d902",
+      "v2/na04-committee-get-info": "edfa8b16f2277ea9e606e5ff10e3818195de6770392545d88c4bfefc3191f938",
       "v2/na05-fridge-rota-reminders": "0a296c7fd80ac07df17ea1391760892dd4d42c876d3edb6809f98f3188f69e66",
       "v2/na06-tasting-panel-notes": "d8138150bcf7e709683444c53d2e0bbf3137852e83a2569012c18d86cd138f3d",
       "v2/na07-poster-export-preview": "49f5c0a7028c5435ec326616238782141d90171fb590279434b1ad8e47a7083f",
@@ -56,10 +56,13 @@
       "v2/wf05-parks-survey": "0fb988a4b48b5f8751c999d59e11807bc528828c0b5889f989e345a997b29a6f",
       "v2/wf06-newsletter-editor": "0ad44a83051b82fd82ad43554b37f8c8dd90a623ab898984d3cf0c711d1855fc",
       "v2/wf07-access-matrix": "77043203e9c17b559436eae137573c386894fe389839689326ceb255097b9733",
-      "v2/wf08-greenhouse-alert-rules": "59626df9d870c4d472cad584a2d3a17a250e6932a787538accf0a5ee19824d1e"
+      "v2/wf08-greenhouse-alert-rules": "59626df9d870c4d472cad584a2d3a17a250e6932a787538accf0a5ee19824d1e",
+      "v2/os01-tool-library-other-space": "eb1e8b31990200df0ea79f376a6ed8e5db2017a16a52581078b1017ea853ee92",
+      "v2/os02-allotment-reminders-other-space": "f1835a292250e188642630fd1bc8e58fe4c20c84868357e1eaa7ca2c7419cba7",
+      "v2/os03-quiz-scores-fullscreen": "6eec8c9daa73d162eb5d15f1d7f49d122e202125a32578a241ce5689bb31d19d"
     },
-    "v2_tasks_revision": "420df63df403e29763479a8f8fae01621c638517",
-    "v2_kit_tree_sha256": "bdc029e1eeb2ce1a7960585fc8339eebddd85aee3d04fae286a5b93f9d61ec19"
+    "v2_tasks_revision": "5032431cf8f2b570b22082e0758d979864c05692",
+    "v2_kit_tree_sha256": "211160f30a9aed737d628542ce24befa988b8b5593711da016ee44ea9aee8b34"
   },
   "cua_main": {
     "note": "Amendment 6, 12, 14 and 16 runs: main at the commit of the latest registered run (A17.3 rerun: 984e5f9c5, the #4955 merge; A17.2 smoke v2s4 round 2: 646f8cc72; round 1: a8dc43a34; A16.3 full run: e32127764, the #4943 merge; A16.2 smoke v2s3 round 7: cab0edf4d; rounds 3-6: df3791d0a; round 2: c92ca8aa4; round 1: 066532c91, PR #4943 head on main cfc95fd70; before it A14.8/A15.5 smokes v2s1/v2s2: 815dfd96a). Earlier: Amendment 6 and 12 mini-runs: main at the commit of the latest mini-run (A6.5 and A12.5 list every one); built in the VM with tools/vm_main_build. Earlier builds: v038 5a364bbe6 (Amendment 8), v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",

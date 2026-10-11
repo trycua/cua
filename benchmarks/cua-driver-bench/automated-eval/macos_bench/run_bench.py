@@ -45,6 +45,7 @@ sys.path.insert(0, str(HERE / "swift"))
 
 import arms  # noqa: E402
 import bench_v2 as v2  # noqa: E402
+import spaces_layout  # noqa: E402
 import bench_core as core  # noqa: E402
 import claude_arms as ca  # noqa: E402
 import cdb_adapter  # noqa: E402
@@ -819,14 +820,25 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = park_pointer(ctx)
         lab_app = Path(args.build_dir) / "BenchLab.app"
+        layout = spec.get("off_space") if bench_v2 else None  # Amendment 18: the task's app on another Space
         if cdb is not None:
             cdb.reset()
             brief, paths = cdb.brief(), {}
-            sentinel.start()
+            if layout:
+                row["off_space"] = spaces_layout.before_apps(Path(args.build_dir), layout)
+            else:
+                sentinel.start()
             cdb.start_apps(
                 windows=lambda win: place_window(ctx, win),
                 force_accessibility=ca.force_accessibility(arm),
             )
+            if layout:
+                needle = str(spec.get("off_space_window") or "")
+                found = find_window(ctx, needle) if needle else None
+                row["off_space"].update(
+                    spaces_layout.after_apps(Path(args.build_dir), layout, found[0] if found else None, needle)
+                )
+                sentinel.start()  # the user's window opens on the Space now active
             if ca.force_accessibility(arm):
                 row["force_accessibility_apps"] = [
                     line.split(":", 1)[0] for line in cdb.log if line.endswith(ca.FORCE_ACCESSIBILITY_FLAG)
@@ -980,6 +992,11 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             guard.finish()
         if cdb is not None:
             cdb.stop_apps()
+        if spec.get("off_space") and bench_v2:
+            try:
+                row["off_space_reset"] = spaces_layout.reset(Path(args.build_dir))
+            except Exception as error:  # noqa: BLE001 - recorded; the next trial's layout step checks again
+                row["off_space_reset"] = {"error": str(error)}
         pilot.sweep_processes(str(trial_dir))
         if arm in ca.CU_HELPER_ARMS:
             # the adapter and its helper end with claude's process group; a survivor could post input later
@@ -1216,6 +1233,27 @@ def evaluator_peeks(events: list[dict[str, Any]], patterns: list[str]) -> list[s
                     if pat in text:
                         found.append(f"{block.get('name')}:{pat}")
     return found[:20]
+
+
+def find_window(ctx: "Ctx", needle: str, wait_s: float = 60.0) -> tuple[int, int] | None:
+    """(pid, window_id) of the first window whose title contains needle, through the recorder daemon."""
+    rec_home = ca.RECORDER_STATE / "home"
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        done = ca.cua_cli("call", "list_windows", "{}", socket=ca.RECORDER_SOCKET, home=rec_home, timeout=20)
+        try:
+            data = json.loads(done.stdout[done.stdout.index("{") :])
+        except (ValueError, json.JSONDecodeError):
+            time.sleep(0.5)
+            continue
+        for item in _walk_dicts(data):
+            title = str(item.get("title") or item.get("window_title") or "")
+            wid = item.get("window_id", item.get("id"))
+            pid = item.get("pid", item.get("owner_pid"))
+            if needle.lower() in title.lower() and wid is not None and pid is not None:
+                return int(pid), int(wid)
+        time.sleep(0.5)
+    return None
 
 
 def place_window(ctx: "Ctx", win: dict[str, Any], wait_s: float = 90.0) -> bool:
@@ -2237,7 +2275,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-set",
         choices=list(v2.TASK_SETS),
         default="v2",
-        help="v2: the registered task list; v2 = the ten A14.6 tasks, v2-42 = Amendment 18's expanded set, v2-new = its 32 new tasks",
+        help="v2: the registered task list; v2 = the ten A14.6 tasks, v2-45 = Amendment 18's expanded set, v2-new = its 35 new tasks, v2-os = the off-Space tasks",
     )
     p.add_argument(
         "--gui-only-enforce",

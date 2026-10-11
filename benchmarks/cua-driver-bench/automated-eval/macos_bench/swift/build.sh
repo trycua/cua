@@ -55,3 +55,12 @@ PLIST
 
 build_app BenchSentinel ai.cua.benchsentinel "Bench Sentinel"
 build_app BenchLab ai.cua.benchlab "BenchLab"
+
+# Amendment 18 (off-Space tasks): the Space layout helper, a plain ad-hoc signed command-line tool.
+tmpbin="$(mktemp -t mbbuild)"
+xcrun swiftc -O -parse-as-library -swift-version 5 -target arm64-apple-macosx26.0 \
+  "$here/../tools/benchspaces.swift" -o "$tmpbin"
+mv "$tmpbin" "$out/benchspaces"
+chmod +x "$out/benchspaces"
+codesign --force --sign - --timestamp=none "$out/benchspaces" >/dev/null 2>&1 || true
+echo "$out/benchspaces"

@@ -1369,6 +1369,29 @@ No scored run is registered here. The full run of the 42 tasks (conditions, setu
 
 **A18.5 step 2 outcome (11 Oct 2026, 13:20-14:00Z, `cdb-v2-40`, no token, no model call).** All 32 tasks reset and verify; every untouched state fails with score 0 through the export step and the evaluator; the evaluator user's path (`cdb-eval-run`) runs the new tasks. The scripted solutions of NA-01 to NA-07 pass. Fixes, made before any trial (pack `420df63df403`, digests in `v2-42-taskset.json` updated): the app-data reset deletes calendars, lists and folders by name one at a time; the Calendar export tolerates calendars without events; Notes fixtures no longer repeat their title; NA-05 no longer asks to keep a reminder's flag, because Reminders' scripting can neither set nor read it. Provisioning: Terminal's Automation consent for Calendar, Reminders, Notes and Finder, and calendar and reminders access, were granted inside the VM with the VM's own driver; `/Applications/CuaDriver.app` was given the direct-capture consent it asked for when its daemon started.
 
+**Smoke v2n1f outcome (11 Oct 2026, 13:46-14:50Z, `cdb-v2-40`, validation only, not analysed).** 32 trials, AX setup, foreground; one trial (MA-03) was retried after the seat's access token was revoked mid-trial (seat 5, then seat 2; tokens deleted with sync at the end). The driver was the build in `cdb-v2-40` (main `bf94fd5c7`, script binary `f405ef88`), with a VM-local pin override for this smoke only. 21 of 32 passed on the first try (MA-01, MA-02, WF-01 to WF-04, WF-07, WF-08, NA-01, NA-03, NA-04, NA-06, DS-01, DS-02, DS-05, DS-06, PR-01 to PR-03, IR-06, IR-07). Every task started, its windows appeared and its checker graded the real apps' saved state. Of the 11 failures, two came from the tasks and were fixed before any scored trial (pack revision in `v2-42-taskset.json`):
+
+* **MA-03:** LibreOffice 26.2 showed its welcome dialog on the fresh profile. The kit's profile now records the installed version as the last one run.
+* **NA-02:** the agent named the calendar "Lido Lanes" plus a Return; the checker now ignores leading and trailing white space in calendar names, as a person would.
+
+The other nine are agent or driver outcomes, recorded and not changed: MA-04 and DS-07 typed into TextEdit by setting the text area's accessibility value, which TextEdit shows but does not save (a driver finding for the Cua Driver stream); WF-05 submitted the survey early; WF-06 lost the caret in the rich-text editor and timed out; NA-05 and DS-03 ran out of turns; NA-07 reported DONE without exporting; DS-04 timed out; IR-05 left zone 2 unticked. Also fixed: the Finder tasks now close Finder's windows (Get Info windows included) in their export step, because they stayed open for later trials.
+
+### A18.8a Work on another desktop Space (owner's request, 11 Oct 2026)
+
+Three more tasks, written from scratch on 11 Oct 2026 under A18.4's rules, in a seventh category `other_space` ("Work on another desktop Space"): the task's app is on a desktop Space that is not on screen while the user works on the one that is.
+
+| Task | Layout (`task.json` `off_space`) | App |
+|---|---|---|
+| OS-01 | `desktop`: the app opens on desktop Space 1, then the user moves to desktop Space 2 and opens the user window there | Chrome with a local web app |
+| OS-02 | `desktop` | Reminders |
+| OS-03 | `fullscreen`: the app's window goes full screen (its own Space), then the user goes back to desktop Space 1 | Chrome with a local web app |
+
+* **How the layout is made (`spaces_layout.py`, `tools/benchspaces.swift`, built by `swift/build.sh`).** Before the sentinel is armed: Space 1 is made active, the task's apps open (a window opens on the active Space), then the harness moves to the user's Space with Control-Left/Right presses, one Space at a time, each confirmed with the WindowServer's Space list, and only then opens the user window. Nothing moves a window between Spaces. After the trial it returns to Space 1. Rows carry `off_space` (the layout and every Space listing).
+* **Scoring.** As A15 and A22: in the background condition, any Space switch (A22 criterion 6), focus loss, raise or pointer move fails background completion. In the foreground condition the agent may switch Spaces.
+* **Briefs** say the app is on another desktop Space; OS-03 says not to leave full screen.
+* **The set:** `bench_v2.V2_45_TASKS` (the 42 above plus OS-01 to OS-03; `V2_42_TASKS` names the same tuple), `--task-set v2-45`; `--task-set v2-os` selects only the three.
+* **Status, not yet runnable (11 Oct 2026, 15:10Z).** The VM has one desktop Space, and none of the routes tried in `cdb-v2-40` made a second one or a full-screen Space: Terminal (which runs the harness) has no Accessibility or event-posting grant, so the helper's key presses and clicks are dropped; the Cua Driver's desktop-scope click closes Mission Control instead of pressing its add-desktop button; writing the Spaces preference and restarting the Dock is ignored; Chrome ignored Control-Command-F sent in the background. The planned route is to give `benchspaces` its own bundle identity with Accessibility granted once in the VM (not Terminal), create the second desktop through it, and then run the no-model probe of whether each setup can see and act on a window on another Space. OS-01 to OS-03 are registered here; they run only after that probe and a smoke, each logged here before it runs. If the probe shows a setup cannot act on an off-Space window, the tasks stay and the result is reported as it is.
+
 ### A18.8 The held-out set
 
 Unchanged and not opened. Its re-seal (CUA-1284) waits for CUA-1200 and CUA-1281 to CUA-1283 to close, as that issue says. The new visible tasks use some of the same apps as the held-out tasks (Chrome, LibreOffice, Finder, Preview, Notes, Reminders, TextEdit) for different work; the held-out set stays independent at the task level, not the app level.

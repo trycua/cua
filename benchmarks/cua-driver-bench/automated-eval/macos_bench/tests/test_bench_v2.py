@@ -50,7 +50,9 @@ class CategoriesTest(unittest.TestCase):
         for tid in v2.V2_42_TASKS:
             counts[all_specs[tid]["category"]] = counts.get(all_specs[tid]["category"], 0) + 1
         self.assertEqual(set(counts), set(v2.CATEGORIES))
-        self.assertTrue(all(6 <= n <= 8 for n in counts.values()), counts)
+        self.assertTrue(all(6 <= n <= 8 for c, n in counts.items() if c != "other_space"), counts)
+        self.assertEqual(counts["other_space"], 3)
+        self.assertEqual({all_specs[t].get("off_space") for t in v2.TASK_SETS["v2-os"]}, {"desktop", "fullscreen"})
 
     def test_coding_task_and_missing_category_are_refused(self) -> None:
         all_specs = specs()

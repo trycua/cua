@@ -1,9 +1,9 @@
 {
   "repo": "trycua/cua-driver-bench (private)",
   "branch": "bench/v2-40",
-  "revision": "420df63df403e29763479a8f8fae01621c638517",
+  "revision": "5032431cf8f2b570b22082e0758d979864c05692",
   "scheme": "sha256 tree digest, cdb_adapter.tree_sha256",
-  "kit": "bdc029e1eeb2ce1a7960585fc8339eebddd85aee3d04fae286a5b93f9d61ec19",
+  "kit": "211160f30a9aed737d628542ce24befa988b8b5593711da016ee44ea9aee8b34",
   "tasks": {
     "DS-01": {
       "pack_task": "v2/ds01-flour-order-lookup",
@@ -67,15 +67,15 @@
     },
     "NA-02": {
       "pack_task": "v2/na02-lido-recurring",
-      "tree_sha256": "4e9a263aca0cc1f1ba2e1ec180650d0daaa454a5bd4437b3fb5d43aea208521d"
+      "tree_sha256": "77dd22ed7a6f14b8144e9c9f93ea03bda7c8b40e8e1327ae9ea55ebdaf330e93"
     },
     "NA-03": {
       "pack_task": "v2/na03-seed-packet-tags",
-      "tree_sha256": "7713564833f5e202b7101c2e2648dbe30c63fd566a17ec284bec92a2b7cdba3b"
+      "tree_sha256": "8a3cd5fdbaa908dc5ca8355a586f2f7505f5a54ed7e52dcb04949b58c1d6d902"
     },
     "NA-04": {
       "pack_task": "v2/na04-committee-get-info",
-      "tree_sha256": "fa9569518865801df5d6efd4110118bc9930636813673f84fb0496a5247efe42"
+      "tree_sha256": "edfa8b16f2277ea9e606e5ff10e3818195de6770392545d88c4bfefc3191f938"
     },
     "NA-05": {
       "pack_task": "v2/na05-fridge-rota-reminders",
@@ -88,6 +88,18 @@
     "NA-07": {
       "pack_task": "v2/na07-poster-export-preview",
       "tree_sha256": "49f5c0a7028c5435ec326616238782141d90171fb590279434b1ad8e47a7083f"
+    },
+    "OS-01": {
+      "pack_task": "v2/os01-tool-library-other-space",
+      "tree_sha256": "eb1e8b31990200df0ea79f376a6ed8e5db2017a16a52581078b1017ea853ee92"
+    },
+    "OS-02": {
+      "pack_task": "v2/os02-allotment-reminders-other-space",
+      "tree_sha256": "f1835a292250e188642630fd1bc8e58fe4c20c84868357e1eaa7ca2c7419cba7"
+    },
+    "OS-03": {
+      "pack_task": "v2/os03-quiz-scores-fullscreen",
+      "tree_sha256": "6eec8c9daa73d162eb5d15f1d7f49d122e202125a32578a241ce5689bb31d19d"
     },
     "PR-01": {
       "pack_task": "v2/pr01-kanban-drag",

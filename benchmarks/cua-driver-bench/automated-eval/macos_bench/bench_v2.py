@@ -36,6 +36,7 @@ CATEGORIES: dict[str, str] = {  # report order
     "documents": "Documents & spreadsheets",  # Amendment 18
     "precision": "Precision interactions",
     "interruptions": "Interruptions & recovery",
+    "other_space": "Work on another desktop Space",  # Amendment 18 (owner's request, 11 Oct)
 }
 BACKGROUND_LABEL = "Background operation"  # scored on every trial; never a task bucket
 
@@ -52,8 +53,8 @@ V2_TASKS: tuple[str, ...] = (
     "IR-03",
     "IR-04",
 )
-# Amendment 18: the expanded set (the ten tasks above plus 32 written from scratch on 11 Oct 2026), in
-# schedule order, grouped by category. `run_bench.py run --bench-v2 --task-set v2-42` selects it.
+# Amendment 18: the expanded set (the ten tasks above plus 35 written from scratch on 11 Oct 2026), in
+# schedule order, grouped by category. `run_bench.py run --bench-v2 --task-set v2-45` selects it.
 V2_NEW_TASKS: tuple[str, ...] = (
     "MA-01", "MA-02", "MA-03", "MA-04",
     "WF-01", "WF-02", "WF-03", "WF-04", "WF-05", "WF-06", "WF-07", "WF-08",
@@ -61,9 +62,11 @@ V2_NEW_TASKS: tuple[str, ...] = (
     "DS-01", "DS-02", "DS-03", "DS-04", "DS-05", "DS-06", "DS-07",
     "PR-01", "PR-02", "PR-03",
     "IR-05", "IR-06", "IR-07",
+    "OS-01", "OS-02", "OS-03",
 )  # fmt: skip
-V2_42_TASKS: tuple[str, ...] = V2_TASKS + V2_NEW_TASKS
-TASK_SETS: dict[str, tuple[str, ...]] = {"v2": V2_TASKS, "v2-42": V2_42_TASKS, "v2-new": V2_NEW_TASKS}
+V2_45_TASKS: tuple[str, ...] = V2_TASKS + V2_NEW_TASKS
+V2_42_TASKS = V2_45_TASKS  # kept name: the set registered by A18 grew to 45 with the off-Space tasks before any trial
+TASK_SETS: dict[str, tuple[str, ...]] = {"v2": V2_TASKS, "v2-45": V2_45_TASKS, "v2-new": V2_NEW_TASKS, "v2-os": ("OS-01", "OS-02", "OS-03")}
 # v1 tasks that are not in v2, and why (the S/G split is dropped).
 NOT_IN_V2: dict[str, str] = {
     "CDB-S01": "its end state needs a source-code fix and a test; no GUI-only version without changing the pack",

@@ -3431,7 +3431,7 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
         "grant" => run_permissions_grant(),
         other => {
             eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
-            process::exit(2);
+            process::exit(64);
         }
     }
 }

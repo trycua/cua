@@ -303,8 +303,6 @@ fn background_keys_deliver_complete_sequences_without_changing_focus() -> Result
     Ok(())
 }
 
-/// Typing a character missing from the keymap borrows a spare keycode; the
-/// keymap must hold the same spare keycodes after the call as before it.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_restores_the_spare_keycodes_it_borrows() -> Result<()> {

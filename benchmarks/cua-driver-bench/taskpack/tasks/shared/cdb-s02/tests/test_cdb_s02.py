@@ -80,6 +80,34 @@ def write_ods_rows(path: Path, updates: dict[str, list[str]]) -> None:
             target.writestr(info, payload)
 
 
+def insert_schedule_row_before(path: Path, session: str, values: list[str]) -> None:
+    """Insert a second Schedule row for `session` (values after the ID) just before its existing row."""
+    with zipfile.ZipFile(path) as source:
+        members = [(info, source.read(info.filename)) for info in source.infolist()]
+    root = ET.fromstring(dict((info.filename, data) for info, data in members)["content.xml"])
+    schedule = next(table for table in root.findall(".//table:table", NS) if table.get(TABLE + "name") == "Schedule")
+    rows = list(schedule)
+    for index, row in enumerate(rows):
+        if row.tag != TABLE + "table-row":
+            continue
+        cells = row.findall("table:table-cell", NS)
+        if cells and "".join(cells[0].itertext()).strip() == session:
+            extra = ET.Element(TABLE + "table-row")
+            for value in [session, *values]:
+                cell = ET.SubElement(extra, TABLE + "table-cell")
+                cell.set(OFFICE + "value-type", "string")
+                ET.SubElement(cell, TEXT + "p").text = value
+            schedule.insert(index, extra)
+            break
+    else:
+        raise AssertionError(f"no row for {session}")
+    rendered = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    with zipfile.ZipFile(path, "w") as target:
+        for info, data in members:
+            payload = rendered if info.filename == "content.xml" else data
+            target.writestr(info, payload)
+
+
 def write_calc_time_cells(path: Path, updates: dict[str, dict[int, tuple[str, str]]]) -> None:
     with zipfile.ZipFile(path) as source:
         members = [(info, source.read(info.filename)) for info in source.infolist()]
@@ -338,6 +366,18 @@ class EvaluatorCase(unittest.TestCase):
         self.ws.write_calendar(document)
         result = self.ws.evaluate()
         self.check(result, "hard_constraints", False)
+
+    def test_duplicate_conflicting_schedule_row_fails(self):
+        # CRED review (Amendment 19 of the harness): a stale Boreal row left above the corrected one.
+        self.ws.complete()
+        insert_schedule_row_before(
+            self.ws.root / "planning" / "lighthouse-replan.ods",
+            "LHP-BOREAL",
+            ["tentative", "10:00", "11:00", "Sable", "Mail revision 3"],
+        )
+        result = self.ws.evaluate()
+        self.check(result, "workbook_agreement", False)
+        self.assertFalse(result["passed"])
 
     def test_cancelled_aster_left_on_calendar_fails(self):
         self.ws.complete()

@@ -4,8 +4,9 @@ interruption fields of a trial row.
 * GUI-only (CUA-1200). Every v2 task runs once, with no shell or file tools for any setup. The
   surface is the same for every setup (Skill, a skill-scoped Read, ToolSearch and the setup's own
   computer-use server). `GuiOnlyGuard` watches the agent phase of every trial for the routes that
-  are left: a terminal or scripting app in front, a scripting process, or a computer-use tool input
-  that runs code or touches files outside the GUI. A violation ends the trial at once and the trial
+  are left: a terminal or scripting app in front, a scripting process, input read by a Terminal shell
+  or a new Terminal session (Amendment 19), or a computer-use tool input that runs code or touches files
+  outside the GUI. A violation ends the trial at once and the trial
   counts as failed (`passed` false, `passed_raw` keeps the evaluator's verdict).
 * Categories (CUA-1281). Every task has exactly one `category` in its task.json. Reports aggregate
   per category and overall. Background operation is a score on every trial, not a category.
@@ -207,6 +208,65 @@ def _pgrep(name: str) -> bool:
     return subprocess.run(["pgrep", "-x", name], capture_output=True).returncode == 0
 
 
+def _ps_rows() -> list[tuple[int, int, str, str]]:
+    """(pid, ppid, tty, command name) of every process."""
+    out = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,tty=,comm="], capture_output=True, text=True, timeout=5
+    ).stdout
+    rows = []
+    for line in out.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2], parts[3]))
+    return rows
+
+
+def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: int) -> set[str]:
+    """Device paths of the ttys of Terminal sessions, except the runner's (`exclude_pid`): its own tty, which it
+    never reads, and any tty its descendants open (agents, MCP servers, apps it starts)."""
+    parent = {pid: ppid for pid, ppid, _, _ in rows}
+    tty_of = {pid: tty for pid, _, tty, _ in rows}
+    terminals = {pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] == "Terminal"}
+
+    def ancestors(pid: int) -> set[int]:
+        seen: set[int] = set()
+        while pid in parent and pid not in seen and pid > 1:
+            seen.add(pid)
+            pid = parent[pid]
+        return seen
+
+    def device(tty: str) -> str | None:
+        if tty in ("??", "-", ""):
+            return None
+        return "/dev/" + (tty if tty.startswith("tty") else "tty" + tty)
+
+    excluded = {device(tty_of.get(p, "")) for p in ancestors(exclude_pid)} | {
+        device(tty_of.get(exclude_pid, ""))
+    }
+    ttys: set[str] = set()
+    for pid, _, tty, _ in rows:
+        dev = device(tty)
+        lineage = ancestors(pid)
+        if dev and dev not in excluded and exclude_pid not in lineage and lineage & terminals:
+            ttys.add(dev)
+    return ttys
+
+
+def terminal_tty_inputs(exclude_pid: int | None = None) -> dict[str, float]:
+    """Amendment 19: the last-input time of every Terminal session tty other than the runner's own. A shell
+    sets a tty's access time when it reads typed input, so a later value means input reached a shell."""
+    import os
+
+    rows = _ps_rows()
+    out: dict[str, float] = {}
+    for dev in terminal_session_ttys(rows, os.getpid() if exclude_pid is None else exclude_pid):
+        try:
+            out[dev] = os.stat(dev).st_atime
+        except OSError:
+            continue
+    return out
+
+
 class GuiOnlyGuard(threading.Thread):
     """Samples the frontmost app and the scripting processes every `interval` seconds and reads the
     agent's stream as it grows. The first violation sets `stop` (when enforcing), which ends the trial."""
@@ -218,6 +278,7 @@ class GuiOnlyGuard(threading.Thread):
         enforce: bool = True,
         interval: float = 0.5,
         pgrep: Callable[[str], bool] = _pgrep,
+        terminal_ttys: Callable[[], dict[str, float]] | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.stream_path = stream_path
@@ -225,6 +286,8 @@ class GuiOnlyGuard(threading.Thread):
         self.enforce = enforce
         self.interval = interval
         self.pgrep = pgrep
+        self.terminal_ttys = terminal_ttys
+        self._tty_base: dict[str, float] | None = None
         self.stop = threading.Event()
         self.done = threading.Event()
         self.started_mono = time.monotonic()
@@ -260,7 +323,24 @@ class GuiOnlyGuard(threading.Thread):
         for name in SIDE_DOOR_PROCESSES:
             if self.pgrep(name):
                 self._violate("process", f"process:{name}")
+        self.sample_terminal()
         self.read_stream()
+
+    def sample_terminal(self) -> None:
+        """Amendment 19: Terminal runs the runner, so it is always present and rule 1 only sees it in front.
+        A setup that types into a Terminal window in the background would reach a shell unseen. Input
+        read by a Terminal shell (its tty's access time moves) or a new Terminal session is a violation."""
+        if self.terminal_ttys is None:
+            return
+        current = self.terminal_ttys()
+        if self._tty_base is None:
+            self._tty_base = dict(current)
+            return
+        for dev, atime in current.items():
+            if dev not in self._tty_base:
+                self._violate("terminal", "terminal:new_session")
+            elif atime > self._tty_base[dev]:
+                self._violate("terminal", "terminal:input")
 
     def read_stream(self) -> None:
         try:
@@ -313,6 +393,8 @@ class GuiOnlyGuard(threading.Thread):
             "transient_front": sorted(self.transient),
             "mentions": sorted(self.mentions | set(post_hoc_soft))[:20],
             "frontmost_seen": sorted(self.seen),
+            "terminal_watched": self.terminal_ttys is not None,
+            "terminal_ttys_at_start": None if self._tty_base is None else len(self._tty_base),
         }
 
 
@@ -381,14 +463,16 @@ def background_condition_score(
     """A15.3: background completion = the task passed AND the user window kept focus and frontmost status the
     whole time (no focus steal, no key loss, no window raised over it, no input landing in it, its text intact)."""
     ua = disturbance.get("user_activity") or None
-    text_ok = ua is None or (
-        ua.get("text_disruptions", 0) == 0 and ua.get("text_intact_at_end") is not False
-    )
+    if ua is None:
+        # Amendment 19: in the background condition the user window's text is part of "held"; unmeasured is not held.
+        text_ok = condition != "background"
+    else:
+        text_ok = ua.get("text_disruptions", 0) == 0 and ua.get("text_intact_at_end") is not False
     held = (
         bool(bg.get("measured"))
         and bg.get("focus_steals") == 0
         and bg.get("key_focus_lost") == 0
-        and (bg.get("windows_raised") or 0) == 0
+        and bg.get("windows_raised") == 0  # A19: None (not measured) is not held
         and bg.get("input_leaked") == 0
         and text_ok
     )
@@ -396,6 +480,13 @@ def background_condition_score(
         "condition": condition,
         "user_window_held": held,
         "background_completion": bool(passed and held) if condition == "background" else None,
+        # Reported alongside, not the A15.3 metric: background completion that also requires the real pointer to
+        # stay put (A19.5 item 1, the owner's decision). Unmeasured pointer is not "still".
+        "background_completion_pointer_still": bool(
+            passed and held and bg.get("pointer_moved") is False
+        )
+        if condition == "background"
+        else None,
         "success_regardless_of_focus": bool(passed),
         "focus_steals": bg.get("focus_steals"),
         "user_input_disrupted": None if ua is None else bool(ua.get("disrupted") or not text_ok),

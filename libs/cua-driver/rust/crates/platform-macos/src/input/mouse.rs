@@ -499,8 +499,9 @@ fn click_at_xy_inner(
     })
 }
 
-/// Prepare a raw background pixel click by making the target AppKit-active
-/// without raising or restacking its window.
+/// Prepare a raw background pixel click by making the target window AppKit-key
+/// without raising or restacking it and without taking key status from the
+/// user's window.
 ///
 /// The Swift implementation ran this immediately before the stamped event
 /// stream. The original Rust port retained the SkyLight primitive but omitted
@@ -510,7 +511,12 @@ fn click_at_xy_inner(
 /// Returns whether the private focus-without-raise recipe succeeded. Event
 /// posting remains best-effort when the private APIs are unavailable.
 pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
-    let activated = crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid);
+    // Post only the focus record to the target. The defocus record to the
+    // current front process made the user's key window resign key, and
+    // re-activating that process afterwards did not make the window key
+    // again, so the user's typing was dropped until they clicked it.
+    let activated =
+        crate::input::skylight::activate_without_raise_with(pid as libc::pid_t, wid, false);
     // Match Swift's settle interval so AppKit updates its active/key-window
     // routing before the mouseMoved + primer + target stream arrives.
     std::thread::sleep(std::time::Duration::from_millis(50));

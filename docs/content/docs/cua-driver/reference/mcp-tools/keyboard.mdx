@@ -93,7 +93,11 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="type_text--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="type_text--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="type_text--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="type_text--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="type_text--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="type_text--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 
 **Example arguments**
 

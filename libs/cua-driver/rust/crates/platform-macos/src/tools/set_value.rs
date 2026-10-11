@@ -46,7 +46,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
-        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (the front window loses key focus for ~0.4 s). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
+        description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
             \n\
             A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
@@ -689,9 +689,9 @@ fn select_popup_option(
         // AppKit NSPopUpButton and Chromium <select> publish their items only
         // while the menu is open (a closed Chromium popup lists just the
         // selected one). Open it, wait for the full list, press the match,
-        // and close the menu again whatever happens. While the menu is open
-        // the app's menu tracking holds key focus, so the window that was key
-        // loses it until the menu closes.
+        // and close the menu again whatever happens. The menu's tracking
+        // steals key focus; in the background the key-focus guard armed by
+        // the caller hands it straight back to the user's front window.
         //
         // The AXPress returns only once the app's menu tracking lets it (or
         // the messaging timeout fires), so run it on its own thread and read

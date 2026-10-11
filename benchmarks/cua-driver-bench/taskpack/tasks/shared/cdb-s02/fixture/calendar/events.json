@@ -1,0 +1,81 @@
+{
+  "events": [
+    {
+      "id": "LHP-ASTER",
+      "title": "Aster kickoff",
+      "date": "2026-10-14",
+      "start": "09:00",
+      "end": "09:30",
+      "room": "Juniper",
+      "attendees": ["Mira Sol", "Ivo March"],
+      "status": "tentative",
+      "protected": false
+    },
+    {
+      "id": "LHP-BOREAL",
+      "title": "Boreal review",
+      "date": "2026-10-14",
+      "start": "10:00",
+      "end": "11:00",
+      "room": "Sable",
+      "attendees": ["Nia Vale", "Oren Pike"],
+      "status": "tentative",
+      "protected": false
+    },
+    {
+      "id": "LHP-CINDER",
+      "title": "Cinder decision",
+      "date": "2026-10-14",
+      "start": "11:30",
+      "end": "12:00",
+      "room": "Juniper",
+      "attendees": ["Pax Reed", "Ivo March"],
+      "status": "tentative",
+      "protected": false
+    },
+    {
+      "id": "LHP-DUNE",
+      "title": "Dune handoff",
+      "date": "2026-10-14",
+      "start": "14:30",
+      "end": "15:00",
+      "room": "Sable",
+      "attendees": ["Uma North"],
+      "status": "tentative",
+      "protected": false
+    },
+    {
+      "id": "CAL-LUNCH-01",
+      "title": "Lighthouse lunch hold",
+      "date": "2026-10-14",
+      "start": "12:00",
+      "end": "13:00",
+      "room": "Juniper",
+      "attendees": ["Lighthouse team"],
+      "status": "confirmed",
+      "protected": true
+    },
+    {
+      "id": "CAL-HOLD-31",
+      "title": "Sable ventilation maintenance",
+      "date": "2026-10-14",
+      "start": "14:30",
+      "end": "15:00",
+      "room": "Sable",
+      "attendees": ["Facilities"],
+      "status": "confirmed",
+      "protected": true
+    },
+    {
+      "id": "CAL-DECOY-71",
+      "title": "Archive inventory",
+      "date": "2026-10-15",
+      "start": "09:00",
+      "end": "10:00",
+      "room": "Sable",
+      "attendees": ["Tess Rowan"],
+      "status": "confirmed",
+      "protected": true
+    }
+  ]
+}

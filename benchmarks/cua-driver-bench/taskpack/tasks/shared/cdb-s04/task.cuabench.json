@@ -1,0 +1,313 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.shared.cdb-s04.linked-support-diagnosis",
+  "version": "1.0.0",
+  "title": "CDB-S04: Linked support-case diagnosis",
+  "authors": [
+    {
+      "name": "Cua AI"
+    }
+  ],
+  "provenance": {
+    "origin": "original",
+    "sources_consulted": [
+      {
+        "title": "Cua Driver Bench design record: version 0.1 task portfolio (internal)",
+        "purpose": "Required CDB-S04 workflow and graded outcome"
+      },
+      {
+        "title": "Internal implementation issue: implement CDB-S04 linked support-case diagnosis",
+        "purpose": "Scope and acceptance evidence"
+      },
+      {
+        "title": "Cua Driver Bench schema and runtime evaluator contract",
+        "purpose": "Manifest and evaluator lifecycle shape"
+      },
+      {
+        "title": "Electron and Node.js documentation",
+        "purpose": "Public application and loopback-service behavior"
+      },
+      {
+        "title": "A Cua-produced customer sample (abstract structure only)",
+        "purpose": "Abstract workload properties only; no content, wording, data or implementation reused"
+      }
+    ],
+    "third_party_material": false,
+    "notes": "Independently implemented with structural inspiration; not strict clean-room. The customer sample informed only abstract multi-application workload traits. The scenario, wording, application identities, fixture data, identifiers, workflow, code, evaluator, oracle, UI copy, and tests are original. Similarity review completed 2026-10-10; see PROVENANCE.md."
+  },
+  "instructions": "Review RWC-193, RWC-201, RWC-206, and RWC-212 against root case RWC-184 using Rillwatch Cases, Margin Lantern Manual, the local Morrowglass Archive in Chromium, and the supplied access log. Mark only fully supported reports as duplicates, link each directly to the root, and record the required structured evidence. Leave unsupported reports open and preserve all source material. See brief.md.",
+  "variants": [
+    {
+      "id": "fixture.morrowglass",
+      "fixture_artifacts": [
+        {
+          "path": "brief.md",
+          "sha256": "0d1e2393bd7bc5e2bde1d07e93e6659b77a9cd125ed29c9e4479bb6f0238d66f"
+        },
+        {
+          "path": "reset/setup.py",
+          "sha256": "527ae9fc02ea43f320611c2ce5662e5055a0a3f0e4715fd7949afd86f7928247"
+        },
+        {
+          "path": "reset/verify.py",
+          "sha256": "90e4330ddedd78556a17581cf733bdf612bbcd2b89b7603eb00b28df00122ead"
+        },
+        {
+          "path": "fixture/cases/cases.json",
+          "sha256": "eb7d46828aefd90acae0bb6985c8e354079d941159bcc9ddc94748451595cd38"
+        },
+        {
+          "path": "fixture/wiki/articles.json",
+          "sha256": "f437a1ad19212573c27629233b23ba06240ad5e50c199ff15208275a856fbae9"
+        },
+        {
+          "path": "fixture/logs/archive-access.log",
+          "sha256": "327fa081130d1271ae11ce0013eb0de82055794b492196acf0865eb898bcdfa4"
+        },
+        {
+          "path": "fixture/archive-site/data/records.json",
+          "sha256": "234fc0ea495a8a2da8cf9f2c03352bd8952c2c1d6aa2a2158a01ce61a4ff5030"
+        },
+        {
+          "path": "fixture/archive-site/package.json",
+          "sha256": "7cd35ca5f8f81e703de4d89f3bceecd559d338eaee830cbf5b9e9e2b238b3608"
+        },
+        {
+          "path": "fixture/archive-site/package-lock.json",
+          "sha256": "a36614027637dceac58932b1d5bf400c2da48bd84b294ac9cffaddfa59ee2f97"
+        },
+        {
+          "path": "fixture/archive-site/server.js",
+          "sha256": "baaef12b833c44ec5d6ef60b266b3c98c1441c526d8b512aa9028aaf2ee41fa1"
+        },
+        {
+          "path": "fixture/archive-site/public/app.js",
+          "sha256": "c7e14bd87d27d6518fba930f47e359de687abdf959e51fdd97b6d6afa22d1a9c"
+        },
+        {
+          "path": "fixture/archive-site/public/styles.css",
+          "sha256": "f10aa07002f774b1ac2325ae31f1a594fd12dbc5a977638d2af5e2bf3759eab5"
+        },
+        {
+          "path": "fixture/archive-site/tests/server.test.js",
+          "sha256": "241308209cf8b7810d4da70419423f151ccab63e7e006c6d6dfc0c1a9ac01602"
+        },
+        {
+          "path": "apps/rillwatch-cases/main.js",
+          "sha256": "4a7d40d38e3d661b27d1583bbd2454e67b60b4f966ff606b9238e63741605076"
+        },
+        {
+          "path": "apps/rillwatch-cases/preload.js",
+          "sha256": "1605b375d3416ff2377c029f58c8d9b126bc20c744f8e3eabfb4a3d076f119b1"
+        },
+        {
+          "path": "apps/rillwatch-cases/store.js",
+          "sha256": "74d6e6bf2e53c65adc66e61f9b41a230130706cc1864935f60f39cfbf3668199"
+        },
+        {
+          "path": "apps/rillwatch-cases/package.json",
+          "sha256": "df31ed07918e48e9b183da3c40a0a3290567e114c7765c25c1450830691f67f3"
+        },
+        {
+          "path": "apps/rillwatch-cases/package-lock.json",
+          "sha256": "1654116faf4cc75f14bc49db965059dea22f20e08e695e456a1c8a924e64541d"
+        },
+        {
+          "path": "apps/rillwatch-cases/renderer/index.html",
+          "sha256": "32cc3958768958af4be2f192e4c53f0c554bef89f63793d1dfa49379fa3625ae"
+        },
+        {
+          "path": "apps/rillwatch-cases/renderer/app.js",
+          "sha256": "7c4e10f775a6fee883222d3cdc4ebd2bb1e59dc03f5c4e062184cc051b118b43"
+        },
+        {
+          "path": "apps/rillwatch-cases/renderer/styles.css",
+          "sha256": "7d1c9071d8f16c285d4eb2047b861d63a3eab9e2ee7251a9a4106db63736db20"
+        },
+        {
+          "path": "apps/rillwatch-cases/tests/store.test.js",
+          "sha256": "2cf1faecef62d68649c14069ea3ba09c57cd64a8bb3f18e91cc06b41b987cecd"
+        },
+        {
+          "path": "apps/margin-lantern-manual/main.js",
+          "sha256": "2a0b994f461bdee7f52056e3292b418411d364e4fc9537c1553a5c6e4b8e9298"
+        },
+        {
+          "path": "apps/margin-lantern-manual/preload.js",
+          "sha256": "c60ca730538fc290179627aab1c47f007b25c9fb40a3aa7f77917fd0fb8082e1"
+        },
+        {
+          "path": "apps/margin-lantern-manual/store.js",
+          "sha256": "1594f95e1fb7e35806f4de3b48ea6687bb326696eb48982db053f9e7ac76b964"
+        },
+        {
+          "path": "apps/margin-lantern-manual/package.json",
+          "sha256": "6995b384d6c7334c4c1642b8c2a7ce5b6896e5218ceff634eb400c56f6a18bda"
+        },
+        {
+          "path": "apps/margin-lantern-manual/package-lock.json",
+          "sha256": "b7721533e55ebfcbd185004f9889a353d64c31557eb0b8aa2fbbdc9a6562fe32"
+        },
+        {
+          "path": "apps/margin-lantern-manual/renderer/index.html",
+          "sha256": "dc28ba0e8f2261a307bd5b63995bf0ee90ae61470420d37fe4da54b0ce239583"
+        },
+        {
+          "path": "apps/margin-lantern-manual/renderer/app.js",
+          "sha256": "1b8e2dc6ece3f852a9c06014d9d857a719440eb56adc75c3eca16dc14ae3011c"
+        },
+        {
+          "path": "apps/margin-lantern-manual/renderer/styles.css",
+          "sha256": "aa40bbf59647f057ac4d271f6deb184dd2d6e5e6be50c804a600bd0a39086ec4"
+        },
+        {
+          "path": "apps/margin-lantern-manual/tests/store.test.js",
+          "sha256": "b57bda3b1981ad315addfd359eb6c7b767d4765568196a6a670d2cc1f828f2b4"
+        },
+        {
+          "path": "platform/README.md",
+          "sha256": "40b8a755c9fd95679021de53204da55beb5d7ace5cac6246e808ecc62489dd77"
+        },
+        {
+          "path": "platform/launch.macos.json",
+          "sha256": "262eb742e42b4ba5af1c4322a8389fccea069c794293ba6c0dd0fa73ea3e378c"
+        },
+        {
+          "path": "platform/launch.windows.json",
+          "sha256": "0995428ce9601523b05291931c50e76d5248e6926f54ccc1cda89c56de758963"
+        },
+        {
+          "path": "platform/launch.linux.json",
+          "sha256": "e8a98739aa0a0272153b8084dc46793b67caf6691cca2a15efaf09b1b249b671"
+        }
+      ],
+      "parameters": {
+        "root_case": "RWC-184",
+        "candidate_cases": [
+          "RWC-193",
+          "RWC-201",
+          "RWC-206",
+          "RWC-212"
+        ],
+        "browser_port": 4184,
+        "workspace_layout": {
+          "cases": "cases",
+          "wiki": "wiki",
+          "archive_site": "archive-site",
+          "logs": "logs"
+        }
+      }
+    }
+  ],
+  "required_capabilities": [
+    "observe.screen",
+    "observe.accessibility",
+    "observe.window-metadata",
+    "act.pointer",
+    "act.keyboard",
+    "target.window"
+  ],
+  "observation_surfaces": [
+    "screen",
+    "accessibility",
+    "window-system",
+    "process",
+    "filesystem",
+    "network"
+  ],
+  "network_policy": {
+    "setup": {
+      "mode": "deny"
+    },
+    "agent": {
+      "mode": "deny"
+    },
+    "evaluation": {
+      "mode": "deny"
+    },
+    "cleanup": {
+      "mode": "deny"
+    }
+  },
+  "limits": {
+    "agent_seconds": 1800,
+    "evaluator_seconds": 180
+  },
+  "side_effects": {
+    "allowed": [
+      {
+        "scope": "workspace.cases.candidates",
+        "description": "Update status, direct duplicate link, and structured evidence fields on the four named candidate cases."
+      },
+      {
+        "scope": "workspace.runtime",
+        "description": "Operate the two Electron apps, loopback archive service, browser, terminal or shell, and task-scoped runtime profiles."
+      }
+    ],
+    "forbidden": [
+      {
+        "scope": "workspace.cases.root",
+        "description": "Change root case RWC-184."
+      },
+      {
+        "scope": "workspace.cases.unsupported",
+        "description": "Close, link, or otherwise change an unsupported candidate or unrelated case."
+      },
+      {
+        "scope": "workspace.cases.immutable",
+        "description": "Change case identities, titles, descriptions, components, or timestamps."
+      },
+      {
+        "scope": "workspace.sources",
+        "description": "Change the wiki, archive site, record data, access log, or workspace facts."
+      },
+      {
+        "scope": "network.external",
+        "description": "Reach any non-loopback host."
+      }
+    ]
+  },
+  "evaluator": {
+    "entrypoint": "evaluator/evaluate.py",
+    "inputs": [
+      {
+        "path": "evaluator/evaluate.py",
+        "sha256": "b476b17ddd09d0be656b719d98ccaf65ef0d76e0ff0f842498cd20e37d2285e2"
+      },
+      {
+        "path": "evaluator/oracle.json",
+        "sha256": "cc5adc7beb99c7bfe41937404f71d5127679e4a89a9174d1cea198e19a748b02"
+      }
+    ],
+    "staging": "agent-inaccessible",
+    "oracle": {
+      "required": true,
+      "staging": "before-setup"
+    }
+  },
+  "reset": {
+    "entrypoint": "reset/setup.py",
+    "verification": {
+      "entrypoint": "reset/verify.py",
+      "timeout_seconds": 30
+    },
+    "failure_fixtures": [
+      {
+        "id": "reset.stale-linked-case",
+        "artifact": {
+          "path": "reset/failure-fixtures/stale-linked-case.json",
+          "sha256": "a26b7a0aa8e367a6e1ea5ac2b0a6c66727193c0f726f457605a0490324c4bc6c"
+        },
+        "expected_failure": "reset verification detects a stale linked case state"
+      },
+      {
+        "id": "reset.stale-site-file",
+        "artifact": {
+          "path": "reset/failure-fixtures/stale-site-file.txt",
+          "sha256": "af91c786020876369b8a9509fc74cc3b1701c8c89146da2aeaf2221633202971"
+        },
+        "expected_failure": "reset verification detects an extra or modified archive-site artifact"
+      }
+    ]
+  }
+}

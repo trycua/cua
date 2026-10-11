@@ -287,7 +287,7 @@ class AnalyzeV2Test(unittest.TestCase):
             (Path(tmp) / "results.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
             report = av.analyze(av.load_rows([Path(tmp)]))
         a = report["arms"]["cc-cua-driver-script|foreground"]
-        self.assertEqual(a["label"], "Cua Driver [foreground]")
+        self.assertEqual(a["label"], "Cua Driver, driven by Claude Code [foreground]")
         self.assertEqual(av.headline(a["overall"]), "2/3 passed, 2 focus steals")
         self.assertEqual(a["by_category"]["precision"]["success"]["k"], 1)
         self.assertIsNone(a["by_category"]["web_forms"])

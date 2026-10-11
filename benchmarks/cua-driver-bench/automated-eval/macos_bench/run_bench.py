@@ -699,7 +699,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
-    build_versions = (ctx.versions.get("builds") or {}).get(arm) or (
+    build_versions = (ctx.versions.get("builds") or {}).get(cxn.SOURCE_ARM.get(arm, arm)) or (
         ctx.versions.get("builds") or {}
     ).get("cc-cua-driver", {})
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
@@ -752,7 +752,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "macos": ctx.versions.get("macos"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
         "bench_src_sha256": ctx.versions.get("bench_src_sha256"),
-        "system_prompt_sha256": hashlib.sha256(ca.system_prompt_for(arm).encode()).hexdigest(),
+        "system_prompt_sha256": hashlib.sha256(
+            ca.system_prompt_for(cxn.SOURCE_ARM.get(arm, arm)).encode()
+        ).hexdigest(),
         "skill_in_prompt": bool(getattr(ca.CUA_BUILDS.get(arm), "skill_in_prompt", False)),
         "electron_named_bundles": spec.get("kind") == "cdb"
         and os.environ.get("CDB_ELECTRON_SHARED") != "1",
@@ -812,6 +814,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         )  # no stale clipboard between trials
         if arm in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, arm)
+        elif cxn.SOURCE_ARM.get(arm) in ca.CUA_ARMS:  # A23: Cua Driver under Codex uses that build's daemon
+            ensure_agent_daemon(ctx, cxn.SOURCE_ARM[arm])
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = park_pointer(ctx)
         lab_app = Path(args.build_dir) / "BenchLab.app"
@@ -879,7 +883,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             if native:  # Amendment 20: codex exec, its stream translated for the guard and the summaries
                 claude = cxn.run_codex(
                     argv,
-                    cxn.render_home(trial_dir / "codex-home", mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(arm)),
+                    cxn.render_home(
+                        trial_dir / "codex-home",
+                        mcp_path,
+                        cxn.MODEL,
+                        cxn.EFFORT,
+                        ca.system_prompt_for(cxn.SOURCE_ARM[arm]),
+                        arm,
+                    ),
                     cwd,
                     prompt,
                     timeout_s,
@@ -890,6 +901,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                     allowed_apps=allowed_apps(task),
                     elicitation_path=artifacts / "elicitations.jsonl",
                     abort=v2.EitherEvent(ctx.abort, guard.stop) if guard else ctx.abort,
+                    server=cxn.SERVER_OF[arm],
                 )
             else:
                 claude = claude_driver.run_claude(
@@ -1690,12 +1702,13 @@ def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str
     mcp_path, _server = ctx.mcp[arm]
     home = ctx.run_dir / f"preflight-{arm}-home"
     shutil.rmtree(home, ignore_errors=True)
-    env = cxn.render_home(home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(arm))
+    env = cxn.render_home(home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(cxn.SOURCE_ARM[arm]), arm)
     cwd = ca.prepare_cwd(arm)
     stream = ctx.run_dir / f"preflight-init-{arm}.tsv"
     result = cxn.run_codex(
         cxn.argv(), env, cwd, "Reply OK. Do not call any tool.", 180, 3,
         ctx.run_dir / f"preflight-{arm}-raw.tsv", stream, ctx.run_dir / f"preflight-{arm}.stderr",
+        server=cxn.SERVER_OF[arm],
     )
     summary = claude_events.summarize(claude_events.read_events(stream))
     text = (summary.get("final_text") or "").strip()
@@ -1945,12 +1958,17 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             add("Codex CLI in the ChatGPT app", "fail", str(cxn.CODEX_CLI))
             continue
         try:
-            path, _server = ctx.mcp[native_arm]
-            entry = cxn.server_entry(path)
+            path, server = ctx.mcp[native_arm]
+            entry = cxn.server_entry(path, native_arm)
+            source = cxn.SOURCE_ARM[native_arm]
+            if source in ca.CUA_ARMS and not offline:  # A23: Cua Driver under Codex uses that build's daemon
+                ensure_agent_daemon(ctx, source)
             tools = mcp_list_tools(entry["command"], entry["args"], entry["env"])
-            add(f"{native_arm} cua_repl MCP server lists js, js_reset", "pass" if {"js", "js_reset"} <= set(tools) else "fail", str(tools))
+            want = {"js", "js_reset"} if server == cxn.SERVER else {"list_apps", "run_script"}
+            add(f"{native_arm} {server} MCP server lists {sorted(want)}", "pass" if want <= set(tools) else "fail",
+                f"{len(tools)} tools")
         except Exception as error:  # noqa: BLE001
-            add(f"{native_arm} cua_repl MCP server", "fail", f"{type(error).__name__}: {error}")
+            add(f"{native_arm} MCP server", "fail", f"{type(error).__name__}: {error}")
         for name, status, detail in native_codex_checks(ctx, native_arm, with_models and not offline):
             add(name, status, detail)
     for arc_arm in [a for a in ca.ARC_ARMS if a in ctx.arm_names]:
@@ -2305,7 +2323,9 @@ def setup_arms(ctx: Ctx) -> None:
                 else None,
             }
             for arm, build in ca.CUA_BUILDS.items()
-            if arm in ctx.arm_names or arm == "cc-cua-driver"
+            if arm in ctx.arm_names
+            or arm == "cc-cua-driver"
+            or arm in {cxn.SOURCE_ARM.get(a) for a in ctx.arm_names}
         },
         pins=pins,
         system_prompt_sha256=hashlib.sha256(ca.SYSTEM_PROMPT.encode()).hexdigest(),
@@ -2316,11 +2336,11 @@ def setup_arms(ctx: Ctx) -> None:
                 ctx.mcp[arm] = ca.mcp_config_for(arm, ctx.run_dir, ctx.args.codex_cu_mcp)
             except (FileNotFoundError, ValueError) as error:
                 raise SystemExit(f"arm {arm} unavailable: {error}")
-        elif arm in cxn.ARMS:  # Amendment 20: arm B's cua_repl entry, copied unmodified, driven by Codex CLI
+        elif arm in cxn.ARMS:  # A20/A23: the source Claude arm's MCP entry, copied unmodified, driven by Codex CLI
             try:
-                path, _server = ca.mcp_config_for("cc-codex-cu", ctx.run_dir, ctx.args.codex_cu_mcp)
-                cxn.server_entry(path)
-                ctx.mcp[arm] = (path, cxn.SERVER)
+                path, _server = ca.mcp_config_for(cxn.SOURCE_ARM[arm], ctx.run_dir, ctx.args.codex_cu_mcp)
+                cxn.server_entry(path, arm)
+                ctx.mcp[arm] = (path, cxn.SERVER_OF[arm])
             except (FileNotFoundError, ValueError) as error:
                 raise SystemExit(f"arm {arm} unavailable: {error}")
             ctx.versions["codex_native"] = cxn.observed()

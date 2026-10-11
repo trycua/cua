@@ -51,8 +51,8 @@ class HomeTest(unittest.TestCase):
                 tmp_path / "home", write_arm_b(tmp_path), cxn.MODEL, cxn.EFFORT, "SYSTEM"
             )
             cfg = tomllib.loads((Path(env["CODEX_HOME"]) / "config.toml").read_text("utf-8"))
-        self.assertEqual(cfg["model"], "gpt-6-astra")
-        self.assertEqual(cfg["model_reasoning_effort"], "medium")
+        self.assertEqual(cfg["model"], cxn.MODEL)
+        self.assertEqual(cfg["model_reasoning_effort"], cxn.EFFORT)
         self.assertEqual(cfg["approval_policy"], "on-request")  # elicitations reach the host
         self.assertEqual(cfg["sandbox_mode"], "read-only")
         self.assertEqual(cfg["developer_instructions"], "SYSTEM")
@@ -99,6 +99,34 @@ def usage(total_in: int, cached: int, out: int) -> tuple[str, dict]:
             }
         }
     }
+
+
+
+class CuaDriverUnderCodexTest(unittest.TestCase):
+    """Amendment 23: Cua Driver's MCP server under the same Codex host."""
+
+    def test_cua_server_has_no_tool_filter_and_no_surface_check(self) -> None:
+        cua = {"mcpServers": {"cua": {"type": "stdio", "command": "/w/cua-driver", "args": ["--socket", "/tmp/s", "mcp"],
+                                      "env": {"CUA_DRIVER_HOME": "/w/h"}}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mcp.json"
+            path.write_text(json.dumps(cua), "utf-8")
+            env = cxn.render_home(Path(tmp) / "home", path, cxn.MODEL, cxn.EFFORT, "SYSTEM", "cx-cua-driver")
+            cfg = tomllib.loads((Path(env["CODEX_HOME"]) / "config.toml").read_text("utf-8"))
+        server = cfg["mcp_servers"]["cua"]
+        self.assertEqual(server["args"], ["--socket", "/tmp/s", "mcp"])
+        self.assertNotIn("enabled_tools", server)
+        self.assertEqual(server["env"], {"CUA_DRIVER_HOME": "/w/h"})
+        self.assertNotIn("cua_repl", cfg["mcp_servers"])
+
+    def test_registry(self) -> None:
+        self.assertEqual(cxn.SOURCE_ARM["cx-cua-driver"], "cc-cua-driver-script")
+        self.assertIn("cx-cua-driver", arms.ALL_ARMS)
+        self.assertEqual(cxn.MODEL, "gpt-6.1-sol")
+
+    def test_translator_names_the_cua_server(self) -> None:
+        out = cxn.Translator("cua").feed("thread/started", {"thread": {"id": "t"}})
+        self.assertEqual(out[0]["mcp_servers"], [{"name": "cua", "status": "connected"}])
 
 
 class TranslatorTest(unittest.TestCase):

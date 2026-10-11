@@ -32,11 +32,12 @@ from analyze import wilson_interval  # noqa: E402
 
 # Public names (bench naming of 10 Oct); every other arm is an internal baseline.
 ARM_LABELS = {
-    "cc-cua-driver-script": "Cua Driver",
+    "cc-cua-driver-script": "Cua Driver, driven by Claude Code",  # suffix from Amendment 23
     "cc-codex-cu": "Codex Computer-Use (Sky), driven by Claude Code",  # suffix from Amendment 20
     "cc-codex-cu-1007-browser": "Codex Computer-Use (Sky) 26.1007",
-    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6 Astra",  # Amendment 20
-    "cc-claude-cu-helper": "Claude Computer-Use (Desktop helper)",
+    "cx-codex-cu": "Codex Computer-Use (Sky), driven by Codex CLI + GPT-6.1 Sol",  # Amendment 20, model from A23
+    "cx-cua-driver": "Cua Driver, driven by Codex CLI + GPT-6.1 Sol",  # Amendment 23
+    "cc-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Claude Code",
 }
 
 

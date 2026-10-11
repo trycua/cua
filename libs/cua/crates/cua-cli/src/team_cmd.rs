@@ -71,6 +71,8 @@ pub enum TeamCmd {
         team: Option<String>,
     },
     /// Leave a team.
+    #[command(after_help = "Examples:
+  cua team leave AIGIS")]
     Leave {
         /// Team id or name.
         team: String,
@@ -113,6 +115,8 @@ pub enum TeamCmd {
         device: String,
     },
     /// Decline a member device (it can no longer open team machines).
+    #[command(after_help = "Examples:
+  cua team deny AIGIS dev_0123456789abcdef01234567")]
     Deny {
         /// Team id or name.
         team: String,
@@ -120,6 +124,8 @@ pub enum TeamCmd {
         device: String,
     },
     /// Ask the team's admins to approve this device.
+    #[command(after_help = "Examples:
+  cua team request AIGIS")]
     Request {
         /// Team id or name.
         team: String,
@@ -158,6 +164,8 @@ pub enum TeamCmd {
         limit: usize,
     },
     /// Delete a team (owner). Its machines stay yours.
+    #[command(after_help = "Examples:
+  cua team delete AIGIS --yes")]
     Delete {
         /// Team id or name.
         team: String,

@@ -163,6 +163,12 @@ cua team leave [OPTIONS] <TEAM>
 | --- | --- | --- | --- |
 | `<TEAM>` | string | required | Team id or name. |
 
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-team-leave"
+cua team leave AIGIS
+```
+
 ## `cua team remove-member`
 
 Remove a member (owner or admin; admins cannot remove admins).
@@ -252,6 +258,12 @@ cua team deny [OPTIONS] <TEAM> <DEVICE>
 | `<TEAM>` | string | required | Team id or name. |
 | `<DEVICE>` | string | required | Device id. |
 
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-team-deny"
+cua team deny AIGIS dev_0123456789abcdef01234567
+```
+
 ## `cua team request`
 
 Ask the team's admins to approve this device.
@@ -263,6 +275,12 @@ cua team request [OPTIONS] <TEAM>
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<TEAM>` | string | required | Team id or name. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-team-request"
+cua team request AIGIS
+```
 
 ## `cua team add-machine`
 
@@ -344,6 +362,12 @@ cua team delete [OPTIONS] <TEAM>
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-team-delete--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-team-delete"
+cua team delete AIGIS --yes
+```
 
 ## Exit codes
 

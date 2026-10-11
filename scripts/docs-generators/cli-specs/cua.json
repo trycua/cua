@@ -11324,6 +11324,7 @@
     },
     {
      "abstract": "Leave a team",
+     "after_help": "Examples:\n  cua team leave AIGIS",
      "aliases": [],
      "arguments": [
       {
@@ -11491,6 +11492,7 @@
     },
     {
      "abstract": "Decline a member device (it can no longer open team machines)",
+     "after_help": "Examples:\n  cua team deny AIGIS dev_0123456789abcdef01234567",
      "aliases": [],
      "arguments": [
       {
@@ -11525,6 +11527,7 @@
     },
     {
      "abstract": "Ask the team's admins to approve this device",
+     "after_help": "Examples:\n  cua team request AIGIS",
      "aliases": [],
      "arguments": [
       {
@@ -11673,6 +11676,7 @@
     },
     {
      "abstract": "Delete a team (owner). Its machines stay yours",
+     "after_help": "Examples:\n  cua team delete AIGIS --yes",
      "aliases": [],
      "arguments": [
       {

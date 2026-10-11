@@ -641,8 +641,8 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
- * Puts the app's bundled `cua` on PATH on first launch (there is no
- * onboarding page for it). The same installer the Tauri app runs;
+ * Puts the app's bundled `cua` on PATH after the first run's Command
+ * line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
  * [`plan`](Self::plan) reads what installing would do without writing.
  */
 public protocol AppCliInstallerProtocol: AnyObject, Sendable {
@@ -659,8 +659,8 @@ public protocol AppCliInstallerProtocol: AnyObject, Sendable {
 
 }
 /**
- * Puts the app's bundled `cua` on PATH on first launch (there is no
- * onboarding page for it). The same installer the Tauri app runs;
+ * Puts the app's bundled `cua` on PATH after the first run's Command
+ * line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
  * [`plan`](Self::plan) reads what installing would do without writing.
  */
 open class AppCliInstaller: AppCliInstallerProtocol, @unchecked Sendable {
@@ -21338,9 +21338,19 @@ public struct AppOnboardingState: Equatable, Hashable {
      */
     public var step: AppOnboardingStep
     /**
-     * Where `cua` was installed on first launch, when it was.
+     * Where `cua` was installed, when it was.
      */
     public var cliTarget: String?
+    /**
+     * The bundled `cua`'s install plan, as the shell read it (nothing is
+     * written to read it).
+     */
+    public var cliPlan: AppCliInstallPlan?
+    /**
+     * The Command line page's switch (on unless switched off): Continue
+     * installs, adding the bin dir to PATH when it is not on it.
+     */
+    public var cliInstall: Bool
     /**
      * Menu bar only (no notch). The same setting as Settings' "Spaces tab
      * in the notch".
@@ -21438,8 +21448,16 @@ public struct AppOnboardingState: Equatable, Hashable {
          * Page.
          */step: AppOnboardingStep,
         /**
-         * Where `cua` was installed on first launch, when it was.
+         * Where `cua` was installed, when it was.
          */cliTarget: String?,
+        /**
+         * The bundled `cua`'s install plan, as the shell read it (nothing is
+         * written to read it).
+         */cliPlan: AppCliInstallPlan?,
+        /**
+         * The Command line page's switch (on unless switched off): Continue
+         * installs, adding the bin dir to PATH when it is not on it.
+         */cliInstall: Bool,
         /**
          * Menu bar only (no notch). The same setting as Settings' "Spaces tab
          * in the notch".
@@ -21511,6 +21529,8 @@ public struct AppOnboardingState: Equatable, Hashable {
          */runCounted: Bool) {
         self.step = step
         self.cliTarget = cliTarget
+        self.cliPlan = cliPlan
+        self.cliInstall = cliInstall
         self.menuBar = menuBar
         self.identity = identity
         self.agents = agents
@@ -21551,6 +21571,8 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
             try AppOnboardingState(
                 step: FfiConverterTypeAppOnboardingStep.read(from: &buf),
                 cliTarget: FfiConverterOptionString.read(from: &buf),
+                cliPlan: FfiConverterOptionTypeAppCliInstallPlan.read(from: &buf),
+                cliInstall: FfiConverterBool.read(from: &buf),
                 menuBar: FfiConverterBool.read(from: &buf),
                 identity: FfiConverterOptionString.read(from: &buf),
                 agents: FfiConverterSequenceString.read(from: &buf),
@@ -21577,6 +21599,8 @@ public struct FfiConverterTypeAppOnboardingState: FfiConverterRustBuffer {
     public static func write(_ value: AppOnboardingState, into buf: inout [UInt8]) {
         FfiConverterTypeAppOnboardingStep.write(value.step, into: &buf)
         FfiConverterOptionString.write(value.cliTarget, into: &buf)
+        FfiConverterOptionTypeAppCliInstallPlan.write(value.cliPlan, into: &buf)
+        FfiConverterBool.write(value.cliInstall, into: &buf)
         FfiConverterBool.write(value.menuBar, into: &buf)
         FfiConverterOptionString.write(value.identity, into: &buf)
         FfiConverterSequenceString.write(value.agents, into: &buf)
@@ -21699,6 +21723,10 @@ public struct AppOnboardingView: Equatable, Hashable {
      * Done's "Launch at login" checkbox.
      */
     public var launchAtLogin: AppOnboardingCheckbox?
+    /**
+     * The Command line page's switch: what Continue installs, and where.
+     */
+    public var cli: AppOnboardingCheckbox?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -21765,7 +21793,10 @@ public struct AppOnboardingView: Equatable, Hashable {
          */drive: AppDriveCard?,
         /**
          * Done's "Launch at login" checkbox.
-         */launchAtLogin: AppOnboardingCheckbox?) {
+         */launchAtLogin: AppOnboardingCheckbox?,
+        /**
+         * The Command line page's switch: what Continue installs, and where.
+         */cli: AppOnboardingCheckbox?) {
         self.step = step
         self.dots = dots
         self.title = title
@@ -21785,6 +21816,7 @@ public struct AppOnboardingView: Equatable, Hashable {
         self.usage = usage
         self.drive = drive
         self.launchAtLogin = launchAtLogin
+        self.cli = cli
     }
 
 
@@ -21821,7 +21853,8 @@ public struct FfiConverterTypeAppOnboardingView: FfiConverterRustBuffer {
                 noticeLinkUrl: FfiConverterOptionString.read(from: &buf),
                 usage: FfiConverterOptionTypeAppUsageToggle.read(from: &buf),
                 drive: FfiConverterOptionTypeAppDriveCard.read(from: &buf),
-                launchAtLogin: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf)
+                launchAtLogin: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf),
+                cli: FfiConverterOptionTypeAppOnboardingCheckbox.read(from: &buf)
         )
     }
 
@@ -21845,6 +21878,7 @@ public struct FfiConverterTypeAppOnboardingView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppUsageToggle.write(value.usage, into: &buf)
         FfiConverterOptionTypeAppDriveCard.write(value.drive, into: &buf)
         FfiConverterOptionTypeAppOnboardingCheckbox.write(value.launchAtLogin, into: &buf)
+        FfiConverterOptionTypeAppOnboardingCheckbox.write(value.cli, into: &buf)
     }
 }
 
@@ -45942,12 +45976,39 @@ public enum AppOnboardingAction: Equatable, Hashable {
      */
     case start
     /**
-     * The app installed its bundled `cua` on first launch (any page).
+     * The app installed its bundled `cua` (any page).
      */
     case cliInstalled(
         /**
          * Where.
          */target: String?
+    )
+    /**
+     * The bundled `cua`'s install plan (any page): the Command line page
+     * shows when it needs installing; a current install counts as
+     * installed.
+     */
+    case cliPlanned(
+        /**
+         * The plan.
+         */plan: AppCliInstallPlan
+    )
+    /**
+     * The Command line page's switch.
+     */
+    case cliToggled(
+        /**
+         * On.
+         */on: Bool
+    )
+    /**
+     * Continue (`install`: the switch) or Skip (`install` off) from
+     * Command line. The shell installs only when `install` is on.
+     */
+    case cliDone(
+        /**
+         * Install.
+         */install: Bool
     )
     /**
      * A presentation card was picked (it stays on the page).
@@ -46137,62 +46198,71 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
         case 2: return .cliInstalled(target: try FfiConverterOptionString.read(from: &buf)
         )
 
-        case 3: return .presentationPicked(menuBar: try FfiConverterBool.read(from: &buf)
+        case 3: return .cliPlanned(plan: try FfiConverterTypeAppCliInstallPlan.read(from: &buf)
         )
 
-        case 4: return .presentationDone
-
-        case 5: return .signedIn(identity: try FfiConverterString.read(from: &buf)
+        case 4: return .cliToggled(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 6: return .signinDone
-
-        case 7: return .agentsDone(configured: try FfiConverterSequenceString.read(from: &buf)
+        case 5: return .cliDone(install: try FfiConverterBool.read(from: &buf)
         )
 
-        case 8: return .modeChosen(mode: try FfiConverterTypeAppOnboardingMode.read(from: &buf)
+        case 6: return .presentationPicked(menuBar: try FfiConverterBool.read(from: &buf)
         )
 
-        case 9: return .driveChecked(os: try FfiConverterTypeAppSpaceOs.read(from: &buf), status: try FfiConverterOptionTypeAppDriveMountInput.read(from: &buf)
+        case 7: return .presentationDone
+
+        case 8: return .signedIn(identity: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .driveToggled(on: try FfiConverterBool.read(from: &buf)
+        case 9: return .signinDone
+
+        case 10: return .agentsDone(configured: try FfiConverterSequenceString.read(from: &buf)
         )
 
-        case 11: return .driveContinue
-
-        case 12: return .driveMounted(status: try FfiConverterTypeAppDriveMountInput.read(from: &buf)
+        case 11: return .modeChosen(mode: try FfiConverterTypeAppOnboardingMode.read(from: &buf)
         )
 
-        case 13: return .driveFailed(error: try FfiConverterString.read(from: &buf)
+        case 12: return .driveChecked(os: try FfiConverterTypeAppSpaceOs.read(from: &buf), status: try FfiConverterOptionTypeAppDriveMountInput.read(from: &buf)
         )
 
-        case 14: return .driveStorageLoaded(storage: try FfiConverterTypeAppDriveStorageInput.read(from: &buf), home: try FfiConverterOptionString.read(from: &buf)
+        case 13: return .driveToggled(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 15: return .storageChosen(choice: try FfiConverterTypeAppStorageChoice.read(from: &buf)
+        case 14: return .driveContinue
+
+        case 15: return .driveMounted(status: try FfiConverterTypeAppDriveMountInput.read(from: &buf)
         )
 
-        case 16: return .driveStorage(action: try FfiConverterTypeAppStorageAction.read(from: &buf)
+        case 16: return .driveFailed(error: try FfiConverterString.read(from: &buf)
         )
 
-        case 17: return .driveStorageSaved(check: try FfiConverterTypeAppDriveCheckInput.read(from: &buf)
+        case 17: return .driveStorageLoaded(storage: try FfiConverterTypeAppDriveStorageInput.read(from: &buf), home: try FfiConverterOptionString.read(from: &buf)
         )
 
-        case 18: return .launchAtLoginToggled(on: try FfiConverterBool.read(from: &buf)
+        case 18: return .storageChosen(choice: try FfiConverterTypeAppStorageChoice.read(from: &buf)
         )
 
-        case 19: return .back
-
-        case 20: return .telemetryLoaded(telemetry: try FfiConverterTypeAppTelemetryInput.read(from: &buf)
+        case 19: return .driveStorage(action: try FfiConverterTypeAppStorageAction.read(from: &buf)
         )
 
-        case 21: return .welcomeShown
-
-        case 22: return .usageDataToggled(on: try FfiConverterBool.read(from: &buf)
+        case 20: return .driveStorageSaved(check: try FfiConverterTypeAppDriveCheckInput.read(from: &buf)
         )
 
-        case 23: return .experimentsLoaded(experiments: try FfiConverterTypeAppExperiments.read(from: &buf)
+        case 21: return .launchAtLoginToggled(on: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 22: return .back
+
+        case 23: return .telemetryLoaded(telemetry: try FfiConverterTypeAppTelemetryInput.read(from: &buf)
+        )
+
+        case 24: return .welcomeShown
+
+        case 25: return .usageDataToggled(on: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 26: return .experimentsLoaded(experiments: try FfiConverterTypeAppExperiments.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -46212,105 +46282,120 @@ public struct FfiConverterTypeAppOnboardingAction: FfiConverterRustBuffer {
             FfiConverterOptionString.write(target, into: &buf)
 
 
-        case let .presentationPicked(menuBar):
+        case let .cliPlanned(plan):
             writeInt(&buf, Int32(3))
+            FfiConverterTypeAppCliInstallPlan.write(plan, into: &buf)
+
+
+        case let .cliToggled(on):
+            writeInt(&buf, Int32(4))
+            FfiConverterBool.write(on, into: &buf)
+
+
+        case let .cliDone(install):
+            writeInt(&buf, Int32(5))
+            FfiConverterBool.write(install, into: &buf)
+
+
+        case let .presentationPicked(menuBar):
+            writeInt(&buf, Int32(6))
             FfiConverterBool.write(menuBar, into: &buf)
 
 
         case .presentationDone:
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(7))
 
 
         case let .signedIn(identity):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(identity, into: &buf)
 
 
         case .signinDone:
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(9))
 
 
         case let .agentsDone(configured):
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(10))
             FfiConverterSequenceString.write(configured, into: &buf)
 
 
         case let .modeChosen(mode):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(11))
             FfiConverterTypeAppOnboardingMode.write(mode, into: &buf)
 
 
         case let .driveChecked(os,status):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(12))
             FfiConverterTypeAppSpaceOs.write(os, into: &buf)
             FfiConverterOptionTypeAppDriveMountInput.write(status, into: &buf)
 
 
         case let .driveToggled(on):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(13))
             FfiConverterBool.write(on, into: &buf)
 
 
         case .driveContinue:
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(14))
 
 
         case let .driveMounted(status):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(15))
             FfiConverterTypeAppDriveMountInput.write(status, into: &buf)
 
 
         case let .driveFailed(error):
-            writeInt(&buf, Int32(13))
+            writeInt(&buf, Int32(16))
             FfiConverterString.write(error, into: &buf)
 
 
         case let .driveStorageLoaded(storage,home):
-            writeInt(&buf, Int32(14))
+            writeInt(&buf, Int32(17))
             FfiConverterTypeAppDriveStorageInput.write(storage, into: &buf)
             FfiConverterOptionString.write(home, into: &buf)
 
 
         case let .storageChosen(choice):
-            writeInt(&buf, Int32(15))
+            writeInt(&buf, Int32(18))
             FfiConverterTypeAppStorageChoice.write(choice, into: &buf)
 
 
         case let .driveStorage(action):
-            writeInt(&buf, Int32(16))
+            writeInt(&buf, Int32(19))
             FfiConverterTypeAppStorageAction.write(action, into: &buf)
 
 
         case let .driveStorageSaved(check):
-            writeInt(&buf, Int32(17))
+            writeInt(&buf, Int32(20))
             FfiConverterTypeAppDriveCheckInput.write(check, into: &buf)
 
 
         case let .launchAtLoginToggled(on):
-            writeInt(&buf, Int32(18))
+            writeInt(&buf, Int32(21))
             FfiConverterBool.write(on, into: &buf)
 
 
         case .back:
-            writeInt(&buf, Int32(19))
+            writeInt(&buf, Int32(22))
 
 
         case let .telemetryLoaded(telemetry):
-            writeInt(&buf, Int32(20))
+            writeInt(&buf, Int32(23))
             FfiConverterTypeAppTelemetryInput.write(telemetry, into: &buf)
 
 
         case .welcomeShown:
-            writeInt(&buf, Int32(21))
+            writeInt(&buf, Int32(24))
 
 
         case let .usageDataToggled(on):
-            writeInt(&buf, Int32(22))
+            writeInt(&buf, Int32(25))
             FfiConverterBool.write(on, into: &buf)
 
 
         case let .experimentsLoaded(experiments):
-            writeInt(&buf, Int32(23))
+            writeInt(&buf, Int32(26))
             FfiConverterTypeAppExperiments.write(experiments, into: &buf)
 
         }
@@ -46416,6 +46501,12 @@ public enum AppOnboardingStep: Equatable, Hashable {
      */
     case welcome
     /**
+     * Install the bundled `cua` and add it to PATH (on unless switched
+     * off, with Skip). Only while a shell reported a plan that needs it
+     * ([`OnboardingAction::CliPlanned`]).
+     */
+    case cli
+    /**
      * Sign in to Cua.
      */
     case signin
@@ -46464,17 +46555,19 @@ public struct FfiConverterTypeAppOnboardingStep: FfiConverterRustBuffer {
 
         case 1: return .welcome
 
-        case 2: return .signin
+        case 2: return .cli
 
-        case 3: return .agents
+        case 3: return .signin
 
-        case 4: return .presentation
+        case 4: return .agents
 
-        case 5: return .drive
+        case 5: return .presentation
 
-        case 6: return .mode
+        case 6: return .drive
 
-        case 7: return .done
+        case 7: return .mode
+
+        case 8: return .done
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -46488,28 +46581,32 @@ public struct FfiConverterTypeAppOnboardingStep: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .signin:
+        case .cli:
             writeInt(&buf, Int32(2))
 
 
-        case .agents:
+        case .signin:
             writeInt(&buf, Int32(3))
 
 
-        case .presentation:
+        case .agents:
             writeInt(&buf, Int32(4))
 
 
-        case .drive:
+        case .presentation:
             writeInt(&buf, Int32(5))
 
 
-        case .mode:
+        case .drive:
             writeInt(&buf, Int32(6))
 
 
-        case .done:
+        case .mode:
             writeInt(&buf, Int32(7))
+
+
+        case .done:
+            writeInt(&buf, Int32(8))
 
         }
     }
@@ -54844,6 +54941,30 @@ fileprivate struct FfiConverterOptionTypeAppCatalogEntry: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppCatalogEntry.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppCliInstallPlan: FfiConverterRustBuffer {
+    typealias SwiftType = AppCliInstallPlan?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppCliInstallPlan.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppCliInstallPlan.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

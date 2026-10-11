@@ -1482,7 +1482,7 @@ Written and committed before any trial of arm `cx-codex-cu`, including its smoke
 |---|---|---|---|---|---|
 | v2cx-s1 | background, then foreground | IR-01, MB-10, CDB-G04 | `cx-codex-cu` | 1 per task and condition (6 trials) | 2026-10-11T12:30Z |
 
-In a clone of `cdb-v2` (main `984e5f9c5`, ChatGPT 26.930.51102). **What it checks:** the preflight (pins, gateway, `cua_repl` tools, a trivial app-server turn) passes; elicitations reach the host and are answered; the GUI-only guard sees the setup's tool calls; the sentinel, evaluators and row fields work; nothing is left running after a trial. A plumbing failure is fixed and re-checked, each round logged here before it runs. The smoke never enters any table.
+In a clone of `cdb-v2` (main `984e5f9c5`, ChatGPT 26.930.51102). **Round 1 (v2cx-s1b/f, 12:59Z):** preflight refused both runs before any trial, on harness plumbing only: a native-only run has no Claude quota reading, and the init turn answered "DONE" (the shared system prompt's word) instead of "OK". Fixed in `5d3fb331a` (a native-only run needs no Claude quota reading; either word passes the init check). The VM's Codex CLI matched its pin. **Round 2 (registered before it runs):** v2cx-s2b/f, the same tasks, arm and runs, on harness `5d3fb331a` or later. **What it checks:** the preflight (pins, gateway, `cua_repl` tools, a trivial app-server turn) passes; elicitations reach the host and are answered; the GUI-only guard sees the setup's tool calls; the sentinel, evaluators and row fields work; nothing is left running after a trial. A plumbing failure is fixed and re-checked, each round logged here before it runs. The smoke never enters any table.
 
 ### A20.6 The full run
 

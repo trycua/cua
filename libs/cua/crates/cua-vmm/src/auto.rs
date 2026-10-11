@@ -88,6 +88,12 @@ pub struct QemuReport {
     pub ssh_keygen: Option<PathBuf>,
 }
 
+impl QemuReport {
+    fn installed(&self, arch: Arch) -> bool {
+        self.binaries.get(arch.qemu()).is_some_and(Option::is_some) && self.qemu_img.is_some()
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LumeReport {
     pub supported_host: bool,
@@ -133,14 +139,17 @@ impl DoctorReport {
 pub async fn doctor() -> DoctorReport {
     let host_os = HostOs::current();
     let host_arch = Arch::host();
+    let kvm = host::kvm_usable();
     let mut accel = BTreeMap::new();
     for a in [Arch::Aarch64, Arch::X86_64] {
-        accel.insert(a.qemu().to_string(), host::qemu_accel(a).to_string());
+        if let Ok(acc) = host::qemu_accel(host_os, a, &kvm) {
+            accel.insert(a.qemu().to_string(), acc.to_string());
+        }
     }
     let host = HostReport {
         os: host_os,
         arch: host_arch,
-        kvm: host::kvm_usable(),
+        kvm: kvm.is_ok(),
         accel,
     };
 
@@ -167,8 +176,7 @@ pub async fn doctor() -> DoctorReport {
             .and_then(|s| s.lines().next().map(str::to_string));
     }
     let native = host_arch.qemu().to_string();
-    let qemu_ready =
-        qemu.binaries.get(&native).is_some_and(Option::is_some) && qemu.qemu_img.is_some();
+    let qemu_ready = qemu.installed(host_arch);
     let mut qemu_status = BackendStatus {
         backend: BackendKind::Qemu,
         ready: qemu_ready,
@@ -199,6 +207,7 @@ pub async fn doctor() -> DoctorReport {
             qemu_status.provisioning.push(s.to_string());
         }
     }
+    note_kvm(&mut qemu_status, host_os, &kvm);
 
     // Lume.
     let mut lume = LumeReport {
@@ -346,6 +355,19 @@ pub async fn doctor() -> DoctorReport {
     }
 }
 
+fn note_kvm(status: &mut BackendStatus, host_os: HostOs, kvm: &std::io::Result<()>) {
+    if let Err(e) = kvm
+        && host_os == HostOs::Linux
+    {
+        if host::qemu_accel(host_os, Arch::host(), kvm).is_err() {
+            status.ready = false;
+            status.missing.push(host::kvm_hint(e));
+        } else {
+            status.detail = format!("{}; {}", status.detail, host::kvm_hint(e));
+        }
+    }
+}
+
 /// The built-in Linux runtime ([`crate::managed`]) for `doctor`: ready
 /// while its VM runs; else used (set up or booted on demand) when the
 /// `runtime.linux` setting picks it here.
@@ -448,7 +470,10 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                     .get(arch.qemu())
                     .cloned()
                     .unwrap_or_else(|| "tcg".into());
-                if q.ready || q.provisionable {
+                if q.ready
+                    || q.provisionable
+                    || arch != host.arch && report.qemu.installed(host.arch)
+                {
                     let mut reason = format!("{:?} {arch} guest: QEMU with {accel}", req.os);
                     if accel == "tcg" {
                         reason.push_str(" (software emulation, slow; prefer an image for the host architecture)");
@@ -596,11 +621,57 @@ mod tests {
         assert!(select(&req(ImageKind::Container, GuestOs::Linux, None), &r).is_err());
     }
 
+    #[test]
+    fn doctor_reports_why_native_qemu_has_no_kvm() {
+        let noted = |kvm: std::io::Result<()>| {
+            let mut q = report(true, false, false, false, HostOs::Linux).backends[1].clone();
+            q.detail = "QEMU 10".into();
+            q.missing.clear();
+            note_kvm(&mut q, HostOs::Linux, &kvm);
+            q
+        };
+        let missing = noted(Err(std::io::ErrorKind::NotFound.into()));
+        assert!(missing.ready && missing.missing.is_empty(), "{missing:?}");
+        assert!(missing.detail.starts_with("QEMU 10; "), "{missing:?}");
+        assert!(
+            missing.detail.contains("nested virtualization"),
+            "{missing:?}"
+        );
+        let denied = noted(Err(std::io::ErrorKind::PermissionDenied.into()));
+        assert!(!denied.ready && !denied.provisionable, "{denied:?}");
+        assert!(
+            denied.missing[0].contains("sudo usermod -aG kvm"),
+            "{denied:?}"
+        );
+        let ok = noted(Ok(()));
+        assert!(
+            ok.ready && ok.missing.is_empty() && ok.detail == "QEMU 10",
+            "{ok:?}"
+        );
+    }
+
+    #[test]
+    fn unopenable_kvm_still_selects_qemu_for_foreign_guests() {
+        let mut r = report(false, false, false, false, HostOs::Linux);
+        r.qemu = QemuReport {
+            qemu_img: Some("qemu-img".into()),
+            ..Default::default()
+        };
+        r.qemu
+            .binaries
+            .insert("aarch64".into(), Some("qemu-system".into()));
+        let s = select(&req(ImageKind::Vm, GuestOs::Linux, Some(Arch::X86_64)), &r).unwrap();
+        assert_eq!(s.backend, BackendKind::Qemu);
+        assert!(select(&req(ImageKind::Vm, GuestOs::Linux, None), &r).is_err());
+    }
+
     /// The report `cua runtime doctor --json` prints round-trips.
     #[test]
     fn doctor_report_serialises() {
         let r = report(true, false, true, false, HostOs::Macos);
         let json = serde_json::to_value(&r).unwrap();
+        assert_eq!(json["host"]["kvm"], serde_json::json!(false));
+        assert_eq!(json["host"]["accel"]["x86_64"], serde_json::json!("tcg"));
         assert_eq!(json["backends"].as_array().unwrap().len(), 4);
         assert_eq!(json["backends"][0]["backend"], serde_json::json!("lume"));
         let back: DoctorReport = serde_json::from_value(json).unwrap();

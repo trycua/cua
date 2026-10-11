@@ -2046,7 +2046,13 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             ):  # A23: Cua Driver under Codex uses that build's daemon
                 ensure_agent_daemon(ctx, source)
             tools = mcp_list_tools(entry["command"], entry["args"], entry["env"])
-            want = {"js", "js_reset"} if server == cxn.SERVER else {"list_apps", "run_script"}
+            want = (
+                {"js", "js_reset"}
+                if server == cxn.SERVER
+                else set(ca.load_pins().get("claude_cu_helper", {}).get("tools") or ["app_click"])
+                if server == ca.CU_HELPER_SERVER
+                else {"list_apps", "run_script"}
+            )
             add(
                 f"{native_arm} {server} MCP server lists {sorted(want)}",
                 "pass" if want <= set(tools) else "fail",

@@ -73,13 +73,14 @@ ENABLED_TOOLS = (
 CODEX_CLI = Path(
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 )
-# Amendment 23: the owner asked for GPT-6.1 Sol (`gpt-6.1-sol`, catalog default effort `low`), which the gateway does
-# not serve yet. Until it does, the model is gpt-6-astra at its catalog default effort (`medium`); the model and effort
-# are recorded in every row and named in the setup's label. Each value is the model's catalog default, as the Claude
-# arms use Claude's default.
+# Amendment 23: GPT-6.1 Sol (`gpt-6.1-sol`, served through the gateway), at its catalog default effort
+# (`low`), as the Claude arms use Claude's default. A20's smoke used gpt-6-astra (`medium`). The model and effort are
+# recorded in every row and named in the setup's label.
 MODEL_DEFAULT_EFFORT = {"gpt-6-astra": "medium", "gpt-6.1-sol": "low"}
 MODEL_DISPLAY = {"gpt-6-astra": "GPT-6 Astra", "gpt-6.1-sol": "GPT-6.1 Sol"}
-MODEL = os.environ.get("CDB_CODEX_MODEL") or "gpt-6-astra"
+MODEL = (
+    os.environ.get("CDB_CODEX_MODEL") or "gpt-6.1-sol"
+)  # A23.1: served through the gateway since 11 Oct
 EFFORT = os.environ.get("CDB_CODEX_EFFORT") or MODEL_DEFAULT_EFFORT.get(MODEL, "medium")
 GATEWAY_ENV = "CDB_CODEX_GATEWAY"
 DEFAULT_GATEWAY = "http://127.0.0.1:4000/v1"

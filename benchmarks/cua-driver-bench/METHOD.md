@@ -30,6 +30,7 @@ record of when each one became public.
 | `c77413bbbd45eca33a34f722c197d35a51860900` | 2026-10-11 15:08 | Amendment 23: Codex CLI as a second harness (Cua Driver under Codex CLI), and the Claude helper setup made public |
 | `47fd21ff82d2ebfc732442872508673b46a828d6` | 2026-10-11 15:12 | A23.1: the Codex CLI model is GPT-6.1 Sol if accessible, else `gpt-6-astra` |
 | `ad49a3c1a8e373834fbe78ce53c82aeb4dd504be` | 2026-10-11 15:18 | A23: the Claude helper also runs under Codex CLI (`cx-claude-cu-helper`), the full 2 x 3 matrix |
+| `a1036e6aac3f17ce15256e88cae7f1410e5eddd6` | 2026-10-11 15:22 | A23.1: GPT-6.1 Sol (`gpt-6.1-sol`, effort low) for the Codex CLI setups |
 
 Smoke runs (Amendments 14 to 17) validate the harness and are never analysed.
 Amendments 1 to 13 cover Bench v1, which used different tasks and tools; Bench
@@ -80,7 +81,7 @@ and checkers.
 | Codex Computer-Use (Sky), driven by Codex CLI | `cx-codex-cu` (Amendments 20 and 23, not yet run) | The same `cua_repl` tool layer, driven by OpenAI's own agent (the Codex CLI bundled with the ChatGPT app, run as `codex app-server`) and model, with the same prompts, approvals, budget, GUI-only guard and checkers. |
 | Claude Computer-Use (Desktop helper), driven by Codex CLI (same label and caveat) | `cx-claude-cu-helper` (Amendment 23, not yet run) | The `cc-claude-cu-helper` helper, adapter and MCP entry, driven by the Codex CLI. |
 
-The Codex CLI setups (Amendment 23) use gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending). The
+The Codex CLI setups (Amendment 23) use GPT-6.1 Sol (`gpt-6.1-sol`, default effort low). The
 model is recorded in every row and named in the label; no numbers exist yet for
 these setups. Internal baselines (other Cua Driver builds) may be run; they
 are reported as baselines, never as headline setups.

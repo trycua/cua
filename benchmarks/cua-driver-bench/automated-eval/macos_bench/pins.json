@@ -116,10 +116,10 @@
     ]
   },
   "codex_native": {
-    "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6-astra at its catalog default effort (medium); Amendment 23: GPT-6.1 Sol (gpt-6.1-sol, low) if it becomes accessible. Pinned from the host's identical app version; the smoke checks the VM copy.",
+    "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6.1-sol (Amendment 23) at its catalog default effort (low); A20's smoke used gpt-6-astra (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",
     "codex_cli_version": "codex-cli 0.160.0",
     "codex_cli_sha256": "6b582e8813ce7e8ed4c52814ee5cf230dba647bf2292df747a4003f2657ef201",
-    "model": "gpt-6-astra",
-    "effort": "medium"
+    "model": "gpt-6.1-sol",
+    "effort": "low"
   }
 }

@@ -52,7 +52,7 @@ The full method, with the reasons for each rule, is in [`METHOD.md`](METHOD.md).
   `METHOD.md` lists the commits.
 * **One agent per harness, different tools.** The Claude Code setups run
   `claude -p` with Claude Sonnet 5.5; the Codex CLI setups (Amendment 23) run
-  `codex app-server` with gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending). Within a harness every
+  `codex app-server` with GPT-6.1 Sol (`gpt-6.1-sol`, default effort low). Within a harness every
   setup gets the same system prompt, the same built-in tools and the same
   limits: 360 s and 45 turns per trial.
 * **Two conditions.** In the *foreground* condition a small witness window is
@@ -96,7 +96,7 @@ the agent harness and model are not confounded with the tool layer:
 | Harness and model | Setups (arm ids) |
 | --- | --- |
 | Claude Code + Claude Sonnet 5.5 | Cua Driver (`cc-cua-driver-script`); Codex Computer-Use (Sky) (`cc-codex-cu`); Claude Computer-Use (Desktop helper) (`cc-claude-cu-helper`) |
-| Codex CLI + gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending) | Cua Driver (`cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`); Claude Computer-Use (Desktop helper) (`cx-claude-cu-helper`) |
+| Codex CLI + GPT-6.1 Sol (`gpt-6.1-sol`, default effort low) | Cua Driver (`cx-cua-driver`); Codex Computer-Use (Sky) (`cx-codex-cu`); Claude Computer-Use (Desktop helper) (`cx-claude-cu-helper`) |
 
 | Setup | Status | What the agent drives |
 | --- | --- | --- |
@@ -108,10 +108,9 @@ the agent harness and model are not confounded with the tool layer:
 | **Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure**, driven by Codex CLI | Planned (Amendment 23, not yet run) | The same helper, adapter and MCP entry as `cc-claude-cu-helper`, driven by the Codex CLI (arm `cx-claude-cu-helper`). No numbers yet. |
 
 The Codex CLI setups share `automated-eval/macos_bench/codex_native.py`. Their
-model is gpt-6-astra (GPT-6.1 Sol if it becomes accessible; pending); GPT-6.1 Sol is not
-available to the harness yet, and any switch is registered before the run it
-covers. The model is recorded in every row and named in the setup's label. No
-numbers exist yet for the Codex CLI setups.
+model is GPT-6.1 Sol (`gpt-6.1-sol`, default effort low). The model is recorded
+in every row and named in the setup's label. No numbers exist yet for the Codex
+CLI setups.
 
 The harness also keeps internal baseline arms (the Cua Driver 0.34.0 release,
 main with `run_script` off, and the skill in the system prompt) that are not
@@ -178,7 +177,7 @@ for app in "$CDB_BENCH_WORK"/taskpack/tasks/shared/*/apps/*; do (cd "$app" && np
   launching it, and builds `winlist` and `cu-disclaim` from source. Then give
   `app-cu-helper` Accessibility in System Settings. No Claude Desktop binary,
   app code or asset is included in this repository; only Cua's adapter is.
-* **Codex CLI setups** (arms `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper`). Nothing extra to install beyond the matching Claude Code setup: they use the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the MCP config of the matching Claude Code setup (`cc-codex-cu`, `cc-cua-driver-script` or `cc-claude-cu-helper`). Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint that serves the model (default `http://127.0.0.1:4000/v1`); `CDB_CODEX_MODEL` overrides the default `gpt-6-astra`. The pinned CLI build is in `pins.json` (`codex_native`).
+* **Codex CLI setups** (arms `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper`). Nothing extra to install beyond the matching Claude Code setup: they use the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the MCP config of the matching Claude Code setup (`cc-codex-cu`, `cc-cua-driver-script` or `cc-claude-cu-helper`). Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint serving `gpt-6.1-sol` (default `http://127.0.0.1:4000/v1`). The pinned CLI build is in `pins.json` (`codex_native`).
 
 **Terms checks (open).** Two questions have not been reviewed:
 

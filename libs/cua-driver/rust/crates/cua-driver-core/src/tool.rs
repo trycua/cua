@@ -636,6 +636,12 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
 /// To be removed in a future release.
 pub const RENAMED_TOOLS: &[(&str, &str)] = &[("run_actions", crate::batch_tools::RUN_STEPS_TOOL)];
 
+/// `~/.cua-driver/config.json` key that turns `run_script` off when `true`.
+pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
+/// Legacy `~/.cua-driver/config.json` key. `false` turns `run_script` off;
+/// `true` changes nothing.
+pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
+
 /// The current name of a renamed tool, or `None` when `name` is not an old name.
 pub fn renamed_tool(name: &str) -> Option<&'static str> {
     RENAMED_TOOLS
@@ -1898,12 +1904,9 @@ impl ToolRegistry {
                 "replacement": "action.target",
             }));
         }
-        if let Some(key) = [
-            crate::script_tool::DISABLE_CONFIG_KEY,
-            crate::script_tool::LEGACY_CONFIG_KEY,
-        ]
-        .into_iter()
-        .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        if let Some(key) = [DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY]
+            .into_iter()
+            .find(|key| resolved_name == "set_config" && args.get(key).is_some())
         {
             return ToolResult::error(format!(
                 "config key '{key}' is set by whoever runs cua-driver, in \

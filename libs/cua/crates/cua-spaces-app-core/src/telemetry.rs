@@ -300,13 +300,10 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
 fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static str) {
     match s.step {
         OnboardingStep::Welcome | OnboardingStep::Done => ("completed", "none"),
-        OnboardingStep::Cli => {
-            if s.cli_install {
-                ("completed", "installed")
-            } else {
-                ("skipped", "not_installed")
-            }
-        }
+        OnboardingStep::Cli => match a {
+            OnboardingAction::CliInstalled { .. } => ("completed", "installed"),
+            _ => ("skipped", "not_installed"),
+        },
         OnboardingStep::Signin => {
             if s.identity.as_deref().is_some_and(|i| !i.is_empty()) {
                 ("completed", "signed_in")
@@ -383,6 +380,12 @@ pub fn onboarding(before: &OnboardingState, action: &OnboardingAction) -> Vec<Te
         && before.identity.as_deref() != Some(identity.as_str())
     {
         out.push(step("signed_in", true));
+    }
+    if let OnboardingAction::CliInstallFailed { .. } = action
+        && before.cli_installing
+        && after.cli_error.is_some()
+    {
+        out.push(page(page_name(before.step), "completed", "failed"));
     }
     if after.step == before.step {
         return out;
@@ -1058,12 +1061,24 @@ mod tests {
             pages(&onboarding(&planned, &OnboardingAction::Start))[1..],
             ["welcome completed none", "command_line shown none"]
         );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert!(onboarding(&s, &OnboardingAction::CliDone { install: true }).is_empty());
+        let installed = OnboardingAction::CliInstalled {
+            target: Some("/Users/alice/.local/bin/cua".into()),
+        };
         assert_eq!(
-            pages(&onboarding(
-                &s,
-                &OnboardingAction::CliDone { install: true }
-            )),
+            pages(&onboarding(&installing, &installed)),
             ["command_line completed installed", "signin shown none"]
+        );
+        let failed = OnboardingAction::CliInstallFailed {
+            error: "/Users/alice/.zshrc: Permission denied".into(),
+        };
+        let fail = onboarding(&installing, &failed);
+        assert_eq!(pages(&fail), ["command_line completed failed"]);
+        assert!(!serde_json::to_string(&fail).unwrap().contains("alice"));
+        assert_eq!(
+            pages(&onboarding(&reduce(&installing, &failed), &installed)),
+            Vec::<String>::new()
         );
         let skip = onboarding(&s, &OnboardingAction::CliDone { install: false });
         assert_eq!(

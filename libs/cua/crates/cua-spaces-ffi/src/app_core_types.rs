@@ -5382,6 +5382,11 @@ pub struct AppOnboardingState {
     /// The Command line page's switch (on unless switched off): Continue
     /// installs, adding the bin dir to PATH when it is not on it.
     pub cli_install: bool,
+    /// Continue with the switch on: the shell is installing (answer with
+    /// `cli-installed` or `cli-install-failed`); the page stays until then.
+    pub cli_installing: bool,
+    /// Why the install failed (the page stays, to try again or skip).
+    pub cli_error: Option<String>,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
     /// in the notch".
     pub menu_bar: bool,
@@ -5457,10 +5462,16 @@ pub enum AppOnboardingAction {
         on: bool,
     },
     /// Continue (`install`: the switch) or Skip (`install` off) from
-    /// Command line. The shell installs only when `install` is on.
+    /// Command line. Skip leaves the page; Continue with the switch on
+    /// stays while the shell installs (`cli-installed` then leaves it).
     CliDone {
         /// Install.
         install: bool,
+    },
+    /// The Command line page's install failed: the page stays.
+    CliInstallFailed {
+        /// Why.
+        error: String,
     },
     /// A presentation card was picked (it stays on the page).
     PresentationPicked {

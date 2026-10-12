@@ -156,6 +156,13 @@ pub struct OnboardingState {
     /// installs, adding the bin dir to PATH when it is not on it.
     #[serde(default = "ticked")]
     pub cli_install: bool,
+    /// Continue with the switch on: the shell is installing (answer with
+    /// `cli-installed` or `cli-install-failed`); the page stays until then.
+    #[serde(default)]
+    pub cli_installing: bool,
+    /// Why the install failed (the page stays, to try again or skip).
+    #[serde(default)]
+    pub cli_error: Option<String>,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
     /// in the notch".
     #[serde(default)]
@@ -259,10 +266,16 @@ pub enum OnboardingAction {
         on: bool,
     },
     /// Continue (`install`: the switch) or Skip (`install` off) from
-    /// Command line. The shell installs only when `install` is on.
+    /// Command line. Skip leaves the page; Continue with the switch on
+    /// stays while the shell installs (`cli-installed` then leaves it).
     CliDone {
         /// Install.
         install: bool,
+    },
+    /// The Command line page's install failed: the page stays.
+    CliInstallFailed {
+        /// Why.
+        error: String,
     },
     /// A presentation card was picked (it stays on the page).
     PresentationPicked {
@@ -380,6 +393,8 @@ pub fn initial(
         cli_target: None,
         cli_plan: None,
         cli_install: true,
+        cli_installing: false,
+        cli_error: None,
         menu_bar: false,
         identity,
         agents: vec![],
@@ -471,7 +486,13 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
                 n.run_counted = true;
             }
         }
-        (_, OnboardingAction::CliInstalled { target }) => n.cli_target = target.clone(),
+        (_, OnboardingAction::CliInstalled { target }) => {
+            n.cli_target = target.clone();
+            if s.step == Cli && s.cli_installing {
+                n.cli_installing = false;
+                n.step = next(s, Cli);
+            }
+        }
         (_, OnboardingAction::CliPlanned { plan }) => {
             n.cli_plan = Some(plan.clone());
             if plan.up_to_date {
@@ -481,10 +502,19 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
                 n.step = Cli;
             }
         }
-        (Cli, OnboardingAction::CliToggled { on }) => n.cli_install = *on,
-        (Cli, OnboardingAction::CliDone { install }) => {
+        (Cli, OnboardingAction::CliToggled { on }) if !s.cli_installing => n.cli_install = *on,
+        (Cli, OnboardingAction::CliDone { install }) if !s.cli_installing => {
             n.cli_install = *install;
-            n.step = next(s, Cli);
+            n.cli_error = None;
+            if *install {
+                n.cli_installing = true;
+            } else {
+                n.step = next(s, Cli);
+            }
+        }
+        (Cli, OnboardingAction::CliInstallFailed { error }) if s.cli_installing => {
+            n.cli_installing = false;
+            n.cli_error = Some(error.clone());
         }
         (Presentation, OnboardingAction::PresentationPicked { menu_bar }) => n.menu_bar = *menu_bar,
         (Presentation, OnboardingAction::PresentationDone) => n.step = next(s, Presentation),
@@ -627,7 +657,7 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
             t.enabled = *on;
             n.telemetry = Some(t);
         }
-        (step, OnboardingAction::Back) if step != Welcome => {
+        (step, OnboardingAction::Back) if step != Welcome && !s.cli_installing => {
             let all = steps(s);
             if let Some(i) = all.iter().position(|x| *x == step).filter(|i| *i > 0) {
                 n.step = all[i - 1];
@@ -1185,7 +1215,11 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         Cli => (
             "Command line",
             "Use Cua from your terminal and your scripts.",
-            "Continue",
+            if s.cli_installing {
+                "Installing\u{2026}"
+            } else {
+                "Continue"
+            },
         ),
         Presentation => (
             "Where should Cua Spaces show up?",
@@ -1304,8 +1338,10 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         title: title.into(),
         lede: lede.into(),
         primary_label: primary.into(),
-        can_skip: s.step == Cli || s.step == Agents || (s.step == Signin && s.identity.is_none()),
-        can_back: s.step != Welcome,
+        can_skip: (s.step == Cli && !s.cli_installing)
+            || s.step == Agents
+            || (s.step == Signin && s.identity.is_none()),
+        can_back: s.step != Welcome && !s.cli_installing,
         show_mark: s.step == Welcome,
         preselected_mode: s.installer_mode.unwrap_or(OnboardingMode::Client),
         summary,
@@ -1538,7 +1574,12 @@ mod tests {
         let skipped = reduce(&s, &OnboardingAction::CliDone { install: false });
         assert_eq!(skipped.step, OnboardingStep::Signin);
         assert!(!skipped.cli_install, "Skip installs nothing");
-        let went_on = reduce(&s, &OnboardingAction::CliDone { install: true });
+        let went_on = reduce(
+            &reduce(&s, &OnboardingAction::CliDone { install: true }),
+            &OnboardingAction::CliInstalled {
+                target: Some("/h/.local/bin/cua".into()),
+            },
+        );
         assert_eq!(went_on.step, OnboardingStep::Signin);
         assert!(went_on.cli_install);
         assert_eq!(
@@ -1586,6 +1627,60 @@ mod tests {
     }
 
     #[test]
+    fn continue_waits_on_the_command_line_page_until_the_install_finishes() {
+        let s = reduce(
+            &reduce(
+                &initial(None, None),
+                &OnboardingAction::CliPlanned {
+                    plan: plan(false, false),
+                },
+            ),
+            &OnboardingAction::Start,
+        );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert_eq!(installing.step, OnboardingStep::Cli);
+        assert!(installing.cli_installing);
+        let v = view(&installing);
+        assert_eq!(v.primary_label, "Installing\u{2026}");
+        assert!(!v.can_back && !v.can_skip);
+        for a in [
+            OnboardingAction::CliDone { install: true },
+            OnboardingAction::CliDone { install: false },
+            OnboardingAction::CliToggled { on: false },
+            OnboardingAction::Back,
+        ] {
+            assert_eq!(
+                reduce(&installing, &a),
+                installing,
+                "{a:?} while installing"
+            );
+        }
+        let failed = reduce(
+            &installing,
+            &OnboardingAction::CliInstallFailed {
+                error: "Permission denied".into(),
+            },
+        );
+        assert_eq!(failed.step, OnboardingStep::Cli);
+        assert!(!failed.cli_installing);
+        assert_eq!(failed.cli_error.as_deref(), Some("Permission denied"));
+        assert_eq!(failed.cli_target, None);
+        assert!(view(&failed).can_skip && view(&failed).can_back);
+        let again = reduce(&failed, &OnboardingAction::CliDone { install: true });
+        assert!(again.cli_installing);
+        assert_eq!(again.cli_error, None);
+        let installed = reduce(
+            &again,
+            &OnboardingAction::CliInstalled {
+                target: Some("/h/.local/bin/cua".into()),
+            },
+        );
+        assert_eq!(installed.step, OnboardingStep::Signin);
+        assert!(!installed.cli_installing);
+        assert_eq!(installed.cli_target.as_deref(), Some("/h/.local/bin/cua"));
+    }
+
+    #[test]
     fn a_plan_that_arrives_after_get_started_still_shows_the_command_line_page() {
         let started = reduce(&initial(None, None), &OnboardingAction::Start);
         assert_eq!(started.step, OnboardingStep::Signin);
@@ -1598,7 +1693,7 @@ mod tests {
         assert_eq!(s.step, OnboardingStep::Cli);
         assert!(view(&s).cli.expect("the switch").checked);
         assert_eq!(
-            reduce(&s, &OnboardingAction::CliDone { install: true }).step,
+            reduce(&s, &OnboardingAction::CliDone { install: false }).step,
             OnboardingStep::Signin
         );
         let again = reduce(

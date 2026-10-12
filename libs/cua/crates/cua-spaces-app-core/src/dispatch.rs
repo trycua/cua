@@ -14,10 +14,10 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, cloud_connect, devices, drive_mount_preview, drive_page,
-    drive_settings, driver_preview, experiments, host, login_item, machines, notch, notifications,
-    onboarding, onboarding_preview, paths, persistent, presence, settings, share, telemetry,
-    window, wizard,
+    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
+    drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
+    notifications, onboarding, onboarding_preview, palette, paths, persistent, presence, settings,
+    share, telemetry, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -272,6 +272,10 @@ pub const METHODS: &[&str] = &[
     "telemetry.share",
     "telemetry.enroll",
     "telemetry.checklist",
+    "checklist.reduce",
+    "checklist.view",
+    "palette.keybindings",
+    "palette.rank",
     "telemetry.experimentsChanged",
     "telemetry.experimentsOn",
     "settings.withStorage",
@@ -1020,6 +1024,18 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "telemetry.enroll" => out(telemetry::enroll(&a.get("state")?, &a.get("action")?)),
         "telemetry.checklist" => out(telemetry::checklist(&a.get::<String>("event")?)),
+        "checklist.reduce" => out(checklist::reduce(
+            &a.get::<checklist::ChecklistState>("state")?,
+            &a.get::<checklist::ChecklistAction>("action")?,
+        )),
+        "checklist.view" => out(checklist::view(
+            &a.get::<checklist::ChecklistState>("state")?,
+        )),
+        "palette.keybindings" => out(palette::keybindings()),
+        "palette.rank" => out(palette::rank(
+            &a.get::<Vec<palette::PaletteEntry>>("entries")?,
+            &a.get::<String>("query")?,
+        )),
         "telemetry.experimentsChanged" => out(telemetry::experiments_changed(
             &a.get::<Option<experiments::Experiments>>("before")?
                 .unwrap_or_default(),

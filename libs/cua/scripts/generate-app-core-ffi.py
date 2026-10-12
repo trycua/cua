@@ -65,6 +65,8 @@ TYPES = [
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
+    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
+    ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
 ]
 
 # FFI names that read better than the plain prefix.

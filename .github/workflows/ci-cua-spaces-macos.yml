@@ -16,6 +16,8 @@ on:
     paths:
       - "apps/cua-spaces-macos/**"
       - "libs/cua/crates/cua-spaces-app-core/**"
+      # The shared keyboard shortcuts the core reads (palette.rs).
+      - "apps/cua-spaces-web/src/lib/keybindings.json"
       - "libs/cua/crates/cua-spaces-ffi/**"
       - "libs/cua/crates/cua-spaces-ext/**"
       - "libs/cua/crates/cua-teleport/**"

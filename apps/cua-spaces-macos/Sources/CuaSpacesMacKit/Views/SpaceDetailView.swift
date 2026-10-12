@@ -148,6 +148,12 @@ struct SpaceDetailView: View {
             model.pendingTeleport = nil
             await openTeleport(entry: p.entry, files: p.files)
         }
+        // The checklist's Teleport or Share, on this Space.
+        .task(id: model.detailRequest) {
+            guard let r = model.detailRequest, r.spaceId == space.id else { return }
+            model.detailRequest = nil
+            perform(r.action)
+        }
         .sheet(item: Binding(get: { teleport.map { TeleportSheetItem(model: $0) } },
                              set: { if $0 == nil { teleport = nil } })) { item in
             TeleportPickerSheet(teleport: item.model) { teleport = nil }
@@ -330,6 +336,7 @@ struct SpaceDetailView: View {
                 signedIn: model.identity != nil,
                 shareable: space.id.hasPrefix("relay:") || (space.sdk?.features.contains("relay_attach") ?? false))
             sharing?.telemetry = model.telemetrySink
+            sharing?.onShared = { [weak model] in model?.checklist.done(.share) }
             model.recordFeature("share_open")
         case .power:
             if let button = appPowerButton(space: space) { model.setPower(space, on: button.turnOn) }
@@ -388,6 +395,7 @@ struct SpaceDetailView: View {
             // The review reads saved Keyvault items and a browser's sites
             // from the Keyvault, and starts from what was sent last time.
             t.keyvault = model.keyvault
+            t.onTeleported = { [weak model] in model?.checklist.done(.teleport) }
             t.rememberedChoices = model.settings.teleportChoices
             t.onRemember = { [weak model] choices in
                 model?.settings.teleportChoices = choices

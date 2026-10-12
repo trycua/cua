@@ -2402,6 +2402,36 @@ pub fn app_telemetry_enroll(
     core::telemetry::enroll(&state, &action)
 }
 
+// ---- Getting started and the command palette -----------------------------
+
+/// The getting-started checklist after `action`, and its usage events.
+#[uniffi::export]
+pub fn app_checklist_reduce(
+    state: AppChecklistState,
+    action: AppChecklistAction,
+) -> AppChecklistTransition {
+    core::checklist::reduce(&state, &action)
+}
+
+/// The getting-started checklist as drawn.
+#[uniffi::export]
+pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
+    core::checklist::view(&state)
+}
+
+/// The default keyboard shortcuts (the shared UI's `keybindings.json`).
+#[uniffi::export]
+pub fn app_keybindings() -> Vec<AppKeybinding> {
+    core::palette::keybindings()
+}
+
+/// The command palette's matches for `query`, best first, as indices into
+/// `entries`.
+#[uniffi::export]
+pub fn app_palette_rank(entries: Vec<AppPaletteEntry>, query: String) -> Vec<u32> {
+    core::palette::rank(&entries, &query)
+}
+
 // ---- Fixtures ----------------------------------------------------------------
 
 fn from_json<T: serde::de::DeserializeOwned>(what: &str, json: &str) -> Result<T> {

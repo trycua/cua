@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 
-import { useChecklist, useKeyvault, useSession, useSpaces } from "@/bridge";
+import { useBridge, useChecklist, useKeyvault, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
@@ -60,6 +60,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const { preference, resolved, setPreference } = useTheme();
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const checklist = useChecklist();
+  const { core } = useBridge();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
@@ -157,7 +158,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     }),
   ];
 
-  const results = filterCommands(commands, query);
+  const results = filterCommands(commands, query, core);
   const current = Math.min(active, Math.max(0, results.length - 1));
 
   const runAt = (i: number) => {

@@ -33,6 +33,17 @@ public enum MainSelection: Hashable {
     case drive
     /// The notifications feed.
     case notifications
+    /// Your machines: this one and the others that run your Spaces.
+    case machines
+    /// The getting-started checklist.
+    case gettingStarted
+}
+
+/// A detail action to run once that Space's detail shows (the checklist's
+/// Teleport and Share).
+public struct DetailRequest: Equatable {
+    public let spaceId: String
+    public let action: AppDetailActionId
 }
 
 /// The app's root model. It holds the core's Space list state and forwards
@@ -60,6 +71,10 @@ public final class AppModel {
     public var banner: String?
     public var bannerIsError = false
     public var showingNewSpace = false
+    /// The command palette (⌘K).
+    public var showingPalette = false
+    /// Run by the Space's detail when it shows (`DetailRequest`).
+    public var detailRequest: DetailRequest?
     public var confirmDeleteId: String?
     /// A teleport the notch started: the Space and the dropped app.
     public var pendingTeleport: PendingTeleport?
@@ -75,6 +90,8 @@ public final class AppModel {
     public let devices: DevicesModel
     /// Persistent agents, the Cua Volume and the notifications feed.
     public let persistent: PersistentModel
+    /// The getting-started checklist.
+    public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
     /// Settings, Agents: the provider keys agents get (kept by the daemon).
@@ -145,6 +162,8 @@ public final class AppModel {
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
         self.persistent = PersistentModel(tools: backend as? AgentsToolRunning)
+        self.checklist = ChecklistModel(path: URL(fileURLWithPath: settingsPath)
+            .deletingLastPathComponent().appendingPathComponent("checklist.json").path)
         self.storage = StorageModel(tools: backend as? AgentsToolRunning)
         self.agentKeys = AgentKeysModel(tools: backend as? AgentsToolRunning)
         self.cloud = CloudModel(tools: backend as? CloudToolRunning)
@@ -173,6 +192,7 @@ public final class AppModel {
         // The app core's usage events for each step (the Tauri app sends
         // the same ones): the first run, Settings, Storage, enrollment.
         onboarding.telemetry = telemetry
+        self.checklist.telemetry = telemetry
         self.storage.telemetry = telemetry
         self.devices.telemetry = telemetry
         // Live Keyvault sign-ins show left of the notch (and in the menu).
@@ -326,6 +346,67 @@ public final class AppModel {
     /// The Spaces one of your machines provides (its detail lists them).
     public func hostedRows(_ machineId: String) -> [AppSidebarRow] {
         appHostedRows(spaces: spaces, machineSpaceId: machineId, selectedId: sidebar.selectedId ?? "")
+    }
+
+    // MARK: - Machines and getting started
+
+    /// The Machines page's rows, whatever the search: This machine, then
+    /// your other machines (the core's `relay:<machine>` rows; the Spaces
+    /// they provide are nested under them and listed in their detail).
+    public var machineRows: [AppSidebarRow] {
+        let all = appSidebar(spaces: spaces, query: "", selectedId: "")
+        let others = all.sections.flatMap(\.rows).filter { !$0.nested && $0.id.hasPrefix("relay:") }
+        return (all.thisMachine.map { [$0] } ?? []) + others
+    }
+
+    /// Your Spaces: neither This machine nor one of your machines.
+    var realSpaces: [AppSpace] {
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+    }
+
+    /// What the checklist ticks off from what the app shows.
+    var checklistSeen: AppChecklistAction {
+        .observe(otherMachine: machineRows.contains { $0.id.hasPrefix("relay:") },
+                 hasSpace: realSpaces.contains { $0.status == .running || $0.status == .suspended },
+                 agentRan: persistent.agentCount > 0)
+    }
+
+    /// "Add a machine": New Space's "Connect by address".
+    public func openAddMachine() async {
+        await openNativeNewSpace()
+        wizard.send(.showAddress)
+    }
+
+    /// Getting started (the palette, Help): opens the checklist again.
+    public func openGettingStarted() {
+        checklist.send(.reopen)
+        selection = .gettingStarted
+    }
+
+    /// A checklist step's button.
+    public func runChecklistStep(_ step: AppChecklistStep) async {
+        switch step {
+        case .addMachine:
+            selection = .machines
+            await openAddMachine()
+        case .createSpace: await openNewSpace()
+        case .teleport: await openOnSpace(.teleport)
+        case .share: await openOnSpace(.share)
+        case .runAgent: selection = .agents
+        }
+    }
+
+    /// Opens `action` on the first Space that offers it now; without one,
+    /// New Space (no Space yet) or the first Space (to start it).
+    private func openOnSpace(_ action: AppDetailActionId) async {
+        let real = realSpaces
+        if real.isEmpty { return await openNewSpace() }
+        let ready = real.first { space in
+            detail(space).actions.contains { $0.id == action && $0.enabled }
+        }
+        let space = ready ?? real[0]
+        selection = .space(space.id)
+        if ready != nil { detailRequest = DetailRequest(spaceId: space.id, action: action) }
     }
 
 

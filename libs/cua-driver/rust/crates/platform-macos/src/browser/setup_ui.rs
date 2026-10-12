@@ -1595,8 +1595,28 @@ fn set_remote_debugging(
             // Chrome's own "Paste and Go" navigates without keystrokes, so
             // Chrome stays in the background. The user's pasteboard is put
             // back right after.
-            let pasted = !confirmed
-                && super::pasteboard_stash::PasteboardStash::replace_with_text(
+            // A menu can close before the press lands (the user typing
+            // elsewhere); check that the tab really left the New Tab page.
+            let showing_setup_page = || {
+                let tree = walk_tree(pid, Some(window_id), None);
+                let shown = tree.nodes.iter().any(|node| {
+                    node.role == "AXWindow"
+                        && node.title.as_deref().is_some_and(|title| {
+                            descriptor
+                                .page_titles
+                                .iter()
+                                .any(|page| title.starts_with(page))
+                        })
+                });
+                release_actionable_nodes(&tree.nodes);
+                shown
+            };
+            let mut pasted = false;
+            for attempt in 0..3 {
+                if confirmed {
+                    break;
+                }
+                let pressed = super::pasteboard_stash::PasteboardStash::replace_with_text(
                     descriptor.setup_url,
                 )
                 .is_some_and(|stash| {
@@ -1608,6 +1628,18 @@ fn set_remote_debugging(
                     stash.restore();
                     pressed
                 });
+                let deadline = Instant::now() + Duration::from_millis(2500);
+                while pressed && Instant::now() < deadline && !showing_setup_page() {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                pasted = pressed && showing_setup_page();
+                exp_log(&format!(
+                    "paste attempt {attempt}: pressed={pressed} navigated={pasted}"
+                ));
+                if pasted {
+                    break;
+                }
+            }
             exp_log(&format!("confirmed={confirmed} pasted={pasted}"));
             if confirmed || pasted {
                 unsafe { CFRelease(omnibox as CFTypeRef) };

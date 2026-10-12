@@ -42,7 +42,7 @@ cua host setup [OPTIONS]
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-host-setup--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai). |
+| <span id="cua-host-setup--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 | <span id="cua-host-setup--pair"></span>`--pair` | string |  | Join with a one-time pairing code (or add-machine link) made in the Cua Spaces app or with `cua host pair`, instead of signing in here. The machine joins the account (or team) that made it. |
 | <span id="cua-host-setup--direct"></span>`--direct` | string |  | Serve directly on ip:port with a local env token (LAN / port-forwarded) instead of joining a relay. |
 | <span id="cua-host-setup--name"></span>`--name` | string |  | Display name (default: the host name). |
@@ -92,7 +92,7 @@ cua host pair [OPTIONS]
 | <span id="cua-host-pair--name"></span>`--name` | string |  | Name the machine gets (default: its own host name). |
 | <span id="cua-host-pair--expires"></span>`--expires` | integer | `30` | Minutes until the code expires (1 to 1440). |
 | <span id="cua-host-pair--revoke"></span>`--revoke` | string |  | Revoke an unused code by id (`pc_…`). |
-| <span id="cua-host-pair--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai). |
+| <span id="cua-host-pair--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 | <span id="cua-host-pair--list"></span>`--list` | boolean | `false` | List your codes (used, unused, revoked, expired) instead. |
 
 **Examples**

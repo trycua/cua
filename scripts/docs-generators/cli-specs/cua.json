@@ -9579,7 +9579,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai)",
+       "help": "Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

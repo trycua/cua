@@ -86,6 +86,9 @@ pub struct SetupOptions {
     /// Tailscale and private LAN addresses, and allow a public listen
     /// address (see [`crate::direct`]). Default off.
     pub allow_any_address: bool,
+    /// Install the driver before registering (a single-use pairing code is
+    /// then spent only once the download worked). Default off.
+    pub download_first: bool,
 }
 
 impl SetupOptions {
@@ -102,6 +105,7 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            download_first: false,
         }
     }
 
@@ -124,6 +128,7 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            download_first: false,
         }
     }
 }
@@ -917,6 +922,10 @@ impl Host {
             provide_spaces: opts.provide_spaces,
             ..Default::default()
         };
+        if opts.download_first {
+            *stage = SetupStage::Download;
+            install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
+        }
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
@@ -989,16 +998,10 @@ impl Host {
                 write_json(&self.paths.policy(), &policy)?;
             }
         }
-        *stage = SetupStage::Download;
-        let source = driver::locate(opts.driver_bin.as_deref())?;
-        match &source {
-            DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
-            DriverSource::Release { version, url, .. } => {
-                tracing::info!(%version, %url, "downloading cua-spacesd")
-            }
-            DriverSource::Local(_) => {}
+        if !opts.download_first {
+            *stage = SetupStage::Download;
+            install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
-        driver::install_to(&source, &config.driver_bin).await?;
         *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
         let manager = self.manager(runner);
@@ -1578,6 +1581,19 @@ pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
             .owner_email
             .as_deref()
             .is_some_and(|e| e.eq_ignore_ascii_case(account))
+}
+
+/// Locates (or downloads) cua-spacesd and installs it at `dest`.
+async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
+    let source = driver::locate(explicit)?;
+    match &source {
+        DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
+        DriverSource::Release { version, url, .. } => {
+            tracing::info!(%version, %url, "downloading cua-spacesd")
+        }
+        DriverSource::Local(_) => {}
+    }
+    driver::install_to(&source, dest).await
 }
 
 #[cfg(test)]

@@ -473,6 +473,21 @@ impl RelayClient {
             .map_err(|e| (Error::Relay(format!("bad relay response: {e}")), false))
     }
 
+    /// One call with an optional JSON body (see [`RelayClient::send`]).
+    pub(crate) async fn send_json<B: Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&B>,
+        bearer: &str,
+    ) -> Result<T> {
+        let mut req = self.http.request(method, self.url(path));
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        self.send(req, bearer).await
+    }
+
     /// `GET /v1/info` (no auth).
     pub async fn info(&self) -> Result<RelayInfo> {
         let resp = self

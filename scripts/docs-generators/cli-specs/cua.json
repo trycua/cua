@@ -9130,7 +9130,7 @@
    "subcommands": [
     {
      "abstract": "Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare machine: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Serve on the LAN instead of the relay\n  cua host setup --direct 0.0.0.0:3211 --name studio-mac\n  # A spare Mac on your tailnet that runs Spaces, without the relay\n  # (prints the command that adds it on your laptop)\n  cua host setup --direct 100.101.102.103:3211 --profile spare",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare machine: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Serve on the LAN instead of the relay\n  cua host setup --direct 0.0.0.0:3211 --name studio-mac\n  # A spare Mac on your tailnet that runs Spaces, without the relay\n  # (prints the command that adds it on your laptop)\n  cua host setup --direct 100.101.102.103:3211 --profile spare\n  # Add this machine with a one-time code from the Cua Spaces app\n  # (Add a machine) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -9209,6 +9209,22 @@
        "takes_value": true,
        "type": "string",
        "value_name": "RELAY"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Join with a one-time pairing code (or add-machine link) made in the Cua Spaces app or with `cua host pair`, instead of signing in here. The machine joins the account (or team) that made it",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "pair",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CODE"
       },
       {
        "aliases": [],
@@ -9329,6 +9345,113 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua host setup [OPTIONS]"
+    },
+    {
+     "abstract": "Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. Codes work once and expire (30 minutes by default). Run from an enrolled device",
+     "after_help": "Examples:\n  cua host pair\n  cua host pair --team team-aigis --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "List your codes (used, unused, revoked, expired) instead",
+       "hidden": false,
+       "name": "list",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "pair",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Add the machine for this team (its id)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "team",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "TEAM"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Name the machine gets (default: its own host name)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "name",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "NAME"
+      },
+      {
+       "aliases": [],
+       "default_value": "30",
+       "env": null,
+       "help": "Minutes until the code expires (1 to 1440)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "expires",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MINUTES"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Revoke an unused code by id (`pc_…`)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "revoke",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "ID"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "relay",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "RELAY"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua host pair [OPTIONS]"
     },
     {
      "abstract": "Show or change what this machine shares: its own desktop, and whether it creates Spaces for your other devices",

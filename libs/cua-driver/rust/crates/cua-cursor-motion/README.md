@@ -1,7 +1,7 @@
 # cua-cursor-motion
 
 The agent cursor motions of [Cua Driver](https://cua.ai/docs/cua-driver) as a
-small Rust library: six motion styles, three timing modes, the comet trail and
+small Rust library: six motion styles, seven timing modes, the comet trail and
 the other effects, and an API for designing your own motions.
 
 Cua Driver plans every agent cursor move with this crate, and the
@@ -61,9 +61,16 @@ and lets any follow-through or settle finish during the click.
 | `adaptive` | Careful for small targets, a swoop for long moves. |
 | `classic` | The original Dubins glide with an arrival spring. |
 
-Timing is `native` (the style's own), `fitts`
+Timing is `steady` by default (see below), `native` (the style's own), `fitts`
 (`150 + 120 log2(D / W + 1)` ms, 300 to 1000 ms, where `W` is the target's
 smaller side) or `fixed` (`glide_duration_ms`, 1430 ms when 0).
+
+Four more modes slow short moves down. `relaxed`, `steady` (the default) and `calm` keep
+the style's own timing but make every move take at least 450, 600 or 750 ms,
+with a sine ease in place of the style's curve, so long moves are almost
+unchanged. `deliberate` is Fitts' law with a 400 ms constant
+(`400 + 120 log2(D / W + 1)` ms, 450 to 1300 ms). `classic` keeps its own
+timing in all four.
 
 ## Effects
 

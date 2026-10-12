@@ -640,6 +640,9 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
         try await b().sendFiles(id: id, paths: paths)
     }
     public func agentRuns(id: String) async throws -> [AppSpaceAgentRun] { try await b().agentRuns(id: id) }
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        try await b().agentEvents(id: id, runId: runId, cursor: cursor)
+    }
     public func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? {
         await b().thumbnail(id: id, maxAgeMs: maxAgeMs)
     }

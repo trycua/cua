@@ -81,7 +81,7 @@ fn schema_delivery_mode() -> Value {
         "type": "string",
         "enum": ["background", "foreground"],
         "default": "background",
-        "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
+        "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
     })
 }
 
@@ -907,7 +907,8 @@ impl BrowserClickTool {
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture unless \
                 delivery_mode=\"foreground\" accepts that the browser window may \
-                activate (Linux Chromium; for example a browser inside a sandbox). \
+                activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; \
+                for example a browser inside a sandbox). \
                 input_route=\"dom_event\" (synthetic \
                 el.click(), ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \

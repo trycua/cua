@@ -58,6 +58,9 @@ pub const MINIMAL_CHIP_SECS: f64 = MINIMAL_CHIP_DELAY_SECS
 /// How fast the minimal badge's session name fades in or out when another
 /// agent cursor appears or leaves.
 pub const MINIMAL_NAME_FADE_SECS: f64 = 0.2;
+/// An unarmed chip plays anyway after this long, in case its action's end
+/// never arrives.
+pub const MINIMAL_CHIP_ARM_TIMEOUT_SECS: f64 = 10.0;
 /// Text of the minimal chip for a foreground moment without a key combo.
 pub const FOREGROUND_CHIP_LABEL: &str = "foreground";
 
@@ -68,8 +71,14 @@ pub struct MinimalChip {
     pub key_combo: Option<String>,
     /// The action brings something to the foreground.
     pub foreground: bool,
-    /// Seconds played. The clock only runs while the cursor is at rest.
+    /// Seconds played. The clock only runs once the action has ended and
+    /// the cursor is at rest.
     pub secs: f64,
+    /// The action has ended. A real foreground click can hide the overlay
+    /// while it is delivered, so the chip plays after the action instead.
+    pub armed: bool,
+    /// Seconds waited unarmed, so a lost `EndAction` cannot pin the chip.
+    pub waiting_secs: f64,
 }
 
 impl MinimalChip {
@@ -730,8 +739,12 @@ impl RenderStateCore {
     /// session name eases toward its target and drops at once on motion.
     fn tick_minimal_badge(&mut self, dt: f64) {
         let moving = self.is_moving();
-        if !moving {
-            if let Some(chip) = self.minimal_chip.as_mut() {
+        if let Some(chip) = self.minimal_chip.as_mut() {
+            if !chip.armed {
+                // The tick that arms the chip does not play it.
+                chip.waiting_secs += dt.max(0.0);
+                chip.armed = chip.waiting_secs >= MINIMAL_CHIP_ARM_TIMEOUT_SECS;
+            } else if !moving {
                 chip.secs += dt.max(0.0);
                 if chip.secs >= MINIMAL_CHIP_SECS {
                     self.minimal_chip = None;
@@ -939,6 +952,8 @@ impl RenderStateCore {
                         key_combo: None,
                         foreground: true,
                         secs: 0.0,
+                        armed: false,
+                        waiting_secs: 0.0,
                     });
                 true
             }
@@ -951,12 +966,19 @@ impl RenderStateCore {
                     key_combo: None,
                     foreground: false,
                     secs: 0.0,
+                    armed: false,
+                    waiting_secs: 0.0,
                 });
                 chip.key_combo = Some(combo);
                 chip.secs = 0.0;
                 true
             }
             OverlayCommand::EndAction(action) => {
+                // The action is over: its chip plays from now.
+                if let Some(chip) = self.minimal_chip.as_mut().filter(|chip| !chip.armed) {
+                    chip.armed = true;
+                    chip.secs = 0.0;
+                }
                 self.visual.end(action);
                 true
             }
@@ -1677,6 +1699,17 @@ mod session_badge_and_action_tests {
         );
         move_to(&mut core, 300.0, 240.0);
         settle_without_text(&mut core);
+        // A real foreground click may hide the overlay while it is delivered,
+        // so nothing plays until the action ends.
+        for _ in 0..60 {
+            core.tick_motion(FRAME);
+            assert_eq!(
+                core.session_badge_chip_alpha(),
+                0.0,
+                "waits for the action to end"
+            );
+        }
+        core.apply_command_base(OverlayCommand::EndAction(CursorAction::Click), false, false);
 
         let mut peak: f32 = 0.0;
         let mut visible_secs = 0.0;
@@ -1735,6 +1768,7 @@ mod session_badge_and_action_tests {
             false,
             false,
         ));
+        core.apply_command_base(OverlayCommand::EndAction(CursorAction::Key), false, false);
         core.tick_motion(MINIMAL_CHIP_DELAY_SECS + MINIMAL_CHIP_FADE_IN_SECS + 0.1);
         let layout = shown(&core).expect("the combo paints");
         let expected = crate::badge_mode::format_key_combo(&["cmd".into(), "c".into()]);
@@ -1781,6 +1815,28 @@ mod session_badge_and_action_tests {
         core.peer_cursors_visible = false;
         core.tick_motion(MINIMAL_NAME_FADE_SECS + FRAME);
         assert_eq!(core.session_badge_alpha(), 0.0);
+    }
+
+    #[test]
+    fn minimal_chip_plays_even_if_its_action_never_ends() {
+        let mut core = minimal_core();
+        move_to(&mut core, 300.0, 240.0);
+        settle_without_text(&mut core);
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Key,
+                delivery: Some(DeliveryModifier::Foreground),
+                target: None,
+            },
+            false,
+            false,
+        );
+        core.tick_motion(MINIMAL_CHIP_ARM_TIMEOUT_SECS);
+        assert_eq!(core.session_badge_chip_alpha(), 0.0);
+        core.tick_motion(0.3);
+        assert!(core.session_badge_chip_alpha() > 0.0);
+        core.tick_motion(MINIMAL_CHIP_SECS);
+        assert!(core.minimal_chip.is_none());
     }
 
     #[test]

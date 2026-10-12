@@ -466,6 +466,7 @@ public struct OnboardingView: View {
             } else {
                 if skipShows(v) {
                     Button(onboarding.copy.skip) { skip(v.step) }
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("onboarding-skip")
                 }
                 primary(v)

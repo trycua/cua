@@ -1100,7 +1100,7 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         ),
         Signin => (
             "Sign in",
-            "Connect your machines and your team.",
+            "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
             "Continue",
         ),
         Agents => (
@@ -1305,6 +1305,24 @@ mod tests {
                 "Cua Spaces is in your system tray."
             );
         }
+    }
+
+    #[test]
+    fn signin_explains_account_access_and_allows_skipping() {
+        let s = reduce(&initial(None, None), &OnboardingAction::Start);
+        for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
+            let v = view_on(&s, os);
+            assert_eq!(v.title, "Sign in");
+            assert_eq!(
+                v.lede,
+                "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it."
+            );
+            assert!(v.can_skip);
+        }
+        assert_eq!(
+            reduce(&s, &OnboardingAction::SigninDone).step,
+            OnboardingStep::Agents
+        );
     }
 
     /// Cua Volume off (the default): no Volume page, dot, Done line or

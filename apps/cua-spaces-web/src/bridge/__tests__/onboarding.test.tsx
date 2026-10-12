@@ -37,6 +37,7 @@ describe.each([
     s = onboardingReduce(core, s, { type: "start" }, ctx);
     expect(s.step).toBe("signin");
     expect(onboardingView(core, s).canSkip).toBe(true);
+    expect(onboardingView(core, s).lede).toBe("Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.");
     s = onboardingReduce(core, s, { type: "signin-done" }, ctx);
     expect(s.step).toBe("agents");
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);

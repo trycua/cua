@@ -208,7 +208,7 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
     welcome: ["Welcome to Cua Spaces", "Computers for you and your agents.", "Get started"],
-    signin: ["Sign in", "Connect your machines and your team.", "Continue"],
+    signin: ["Sign in", "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.", "Continue"],
     mode: ["How will you use this machine?", "You can change this later.", "Continue"],
     done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };

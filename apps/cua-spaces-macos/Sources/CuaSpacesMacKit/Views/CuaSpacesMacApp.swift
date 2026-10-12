@@ -46,13 +46,6 @@ public struct CuaSpacesMacApp: App {
             // No `.appSettings` group here: the `Settings` scene's item is the
             // app menu's one "Settings…". The New UI window answers its
             // action itself (`WebUIAppWindow`), so ⌘, opens its Settings.
-            // New UI (preview): the shared web UI in its own window.
-            CommandGroup(after: .newItem) {
-                if model.settings.experiments.webUi {
-                    OpenWebUIButton(model: model)
-                        .keyboardShortcut("u", modifiers: [.command, .shift])
-                }
-            }
             CommandGroup(before: .sidebar) {
                 NavigationCommands(model: model)
                 Divider()
@@ -131,12 +124,15 @@ struct RootView: View {
                 }
         } else if model.onboarding.completed {
             MainWindow(model: model)
+                // New UI on: whatever opened this window gets New UI in its place.
+                .background(WindowReader { MainWindowSwitch.nativeAppeared($0, model: model) })
                 .onAppear {
                     // The New UI window's bridge opens these scenes.
                     WebUIWindowController.actions = .make(openWindow: openWindow)
                     // Opened at login: the menu bar item and the notch only,
                     // as after the window is closed (once per launch).
-                    if AppDelegate.takeQuietStart() { dismissWindow(id: "main") }
+                    if AppDelegate.takeQuietStart() { dismissWindow(id: "main"); return }
+                    MainWindowSwitch.nativeAppeared(nil, model: model)
                 }
         } else {
             OnboardingView(onboarding: model.onboarding, onSignIn: model.account == nil ? nil : {
@@ -157,9 +153,12 @@ struct GettingStartedCommand: View {
     var body: some View {
         Button("Getting Started") {
             guard model.startup.isReady, model.onboarding.completed else { return }
-            NSApp.activate()
-            openWindow(id: "main")
             model.openGettingStarted()
+            // New UI shows the checklist on its Spaces page.
+            MainUIRouter(model: model).open(.home) {
+                NSApp.activate()
+                openWindow(id: "main")
+            }
         }
     }
 }
@@ -274,14 +273,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         start(Self.model)
     }
 
+    /// The Dock icon (or opening the app again) with no window up: the main
+    /// UI in use, New UI while it is on. The notch and the menu bar item's
+    /// panels don't count as windows.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        let model = Self.model
+        guard model.startup.isReady, model.onboarding.completed else { return true }
+        guard !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) else { return true }
+        MainUIRouter(model: model).open(.home) { WebUIWindowController.actions?.openMain() }
+        return false
+    }
+
     func start(_ model: AppModel) {
         guard !started else { return }
         started = true
         // New Space opens New UI's wizard while its experiment is on.
         model.openWebNewSpace = { on in WebUIWindowController.showNewSpace(model: model, on: on) }
+        // New UI on and off: one window, its frame kept, never two.
+        model.openWebUI = { MainWindowSwitch.switchToWebUI(model: model) }
         model.closeWebUI = { WebUIWindowController.closeShared() }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
+        controller.showMain = { WebUIWindowController.actions?.openMain() }
         // Each of these shows its result in the main window (the New UI
         // window while its experiment is on): open it when it was closed
         // (the notch stays up without it), or a drop would commit to
@@ -378,6 +391,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // approval sheet) even with the window closed; this Mac's own
         // enrollment shows as the main window's banner. Nothing else asks.
         model.devices.notify = { DeviceNotifier.shared.post($0) }
+        // A click on one of the app's notifications: the main UI in use.
+        DeviceNotifier.shared.onOpen = { id in
+            router.open(id.hasPrefix("agent-") ? .agents : .home) { WebUIWindowController.actions?.openMain() }
+        }
         // Persistent agents' answers and requests, from the daemon's feed,
         // while the app runs (the daemon keeps them while it does not).
         model.persistent.post = { AgentNotifier.shared.post($0) }

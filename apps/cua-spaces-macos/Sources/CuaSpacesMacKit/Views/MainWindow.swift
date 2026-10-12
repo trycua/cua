@@ -46,12 +46,6 @@ public struct MainWindow: View {
                 .keyboardShortcut("n", modifiers: .command)
                 .help(chrome.newSpaceLabel)
             }
-            if model.settings.experiments.webUi {
-                ToolbarItem(placement: .primaryAction) {
-                    OpenWebUIButton(model: model, label: "New UI")
-                        .help("Open New UI (preview)")
-                }
-            }
         }
         .sheet(isPresented: $model.showingNewSpace) {
             NewSpaceWizardView(wizard: model.wizard,

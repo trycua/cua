@@ -683,6 +683,8 @@ public final class DevicesModel {
 final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = DeviceNotifier()
     private var authorized: Bool?
+    /// A notification was clicked (its identifier): the app opens its main UI.
+    var onOpen: ((String) -> Void)?
 
     static var available: Bool { Bundle.main.bundleURL.pathExtension == "app" }
 
@@ -709,6 +711,10 @@ final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
-        await MainActor.run { NSApp.activate() }
+        let id = response.notification.request.identifier
+        await MainActor.run {
+            NSApp.activate()
+            onOpen?(id)
+        }
     }
 }

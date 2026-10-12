@@ -154,8 +154,7 @@ pub fn pack(disk: &Path, arch: &str, out_dir: &Path) -> Result<PackedImage> {
 /// Pull a containerDisk for `linux/<arch>` and return the cached qcow2.
 ///
 /// Cached per platform-manifest digest at `~/.cua/images/disks/<hex>/disk.qcow2`
-/// (so a moving tag re-pulls only when it changes). The compressed layer blob
-/// is deleted after extraction, as is a partial disk (disks are GBs).
+/// (so a moving tag re-pulls only when it changes).
 pub async fn pull(
     client: &RegistryClient,
     cache: &ImageCache,
@@ -228,10 +227,10 @@ pub async fn pull(
                 }
             }
         }
-        .map_err(|e| ImageError::Registry(e.to_string()))?;
+        .map_err(|e| ImageError::Registry(e.to_string()));
         let _ = std::fs::remove_file(&blob);
         let _ = std::fs::remove_file(disk.with_extension("partial"));
-        let found = found?;
+        let found = found??;
         progress.extract_done(layer.size);
         if found {
             cache.record_ref(reference, &digest)?;

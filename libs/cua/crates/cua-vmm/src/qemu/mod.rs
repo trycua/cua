@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::auto::QemuPackageManager;
+use crate::disk::{QEMU_OVERLAY_ESTIMATE, VM_CREATE_ESTIMATE};
 use crate::error::{Result, VmmError};
 use crate::exec::{GuestExec, SshExec};
 use crate::host;
@@ -380,11 +381,11 @@ impl QemuRuntime {
         spec_like: &StartSpec,
         source: Option<String>,
     ) -> Result<QemuState> {
-        let estimate = match backing {
-            Some(_) => crate::disk::QEMU_OVERLAY_ESTIMATE,
-            None => crate::disk::VM_CREATE_ESTIMATE,
-        };
-        crate::disk::ensure_space(&self.cfg.root, estimate, &format!("create VM {name}"))?;
+        crate::disk::ensure_space(
+            &self.cfg.root,
+            backing.map_or(VM_CREATE_ESTIMATE, |_| QEMU_OVERLAY_ESTIMATE),
+            &format!("create VM {name}"),
+        )?;
         let dir = self.dir(name);
         std::fs::create_dir_all(&dir)?;
         let arch = spec_like.effective_arch();
@@ -1021,13 +1022,11 @@ impl Runtime for QemuRuntime {
                     st
                 }
                 Err(VmmError::NotFound(_)) => {
-                    if matches!(spec.image, ImageSource::Oci { .. }) {
-                        crate::disk::ensure_space(
-                            &self.cfg.root,
-                            crate::disk::QEMU_OVERLAY_ESTIMATE,
-                            &format!("create VM {}", spec.name),
-                        )?;
-                    }
+                    crate::disk::ensure_space(
+                        &self.cfg.root,
+                        QEMU_OVERLAY_ESTIMATE,
+                        &format!("create VM {}", spec.name),
+                    )?;
                     let (backing, iso) = match &spec.image {
                         ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
                         ImageSource::Disk { path }

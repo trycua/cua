@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::auto::QemuPackageManager;
-use crate::disk::{QEMU_OVERLAY_ESTIMATE, VM_CREATE_ESTIMATE};
 use crate::error::{Result, VmmError};
 use crate::exec::{GuestExec, SshExec};
 use crate::host;
@@ -383,7 +382,7 @@ impl QemuRuntime {
     ) -> Result<QemuState> {
         crate::disk::ensure_space(
             &self.cfg.root,
-            backing.map_or(VM_CREATE_ESTIMATE, |_| QEMU_OVERLAY_ESTIMATE),
+            backing.map_or(crate::disk::VM_CREATE_ESTIMATE, |_| crate::disk::GIB),
             &format!("create VM {name}"),
         )?;
         let dir = self.dir(name);
@@ -1024,7 +1023,7 @@ impl Runtime for QemuRuntime {
                 Err(VmmError::NotFound(_)) => {
                     crate::disk::ensure_space(
                         &self.cfg.root,
-                        QEMU_OVERLAY_ESTIMATE,
+                        crate::disk::GIB,
                         &format!("create VM {}", spec.name),
                     )?;
                     let (backing, iso) = match &spec.image {

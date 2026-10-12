@@ -45,7 +45,6 @@ pub const CONTAINER_PULL_ESTIMATE: u64 = 2 * GIB;
 /// What a new VM instance (overlay, firmware vars, first boot writes) is
 /// assumed to write.
 pub const VM_CREATE_ESTIMATE: u64 = 4 * GIB;
-pub const QEMU_OVERLAY_ESTIMATE: u64 = GIB;
 /// What a local image build (build container export, pack and import, or a
 /// VM build's flattened disk) is assumed to write on top of its base.
 pub const BUILD_ESTIMATE: u64 = 4 * GIB;

@@ -53,6 +53,13 @@ public struct CuaSpacesMacApp: App {
                         .keyboardShortcut("u", modifiers: [.command, .shift])
                 }
             }
+            CommandGroup(before: .sidebar) {
+                NavigationCommands(model: model)
+                Divider()
+            }
+            CommandGroup(after: .help) {
+                GettingStartedCommand(model: model)
+            }
         }
 
         // A Space's desktop in its own window ("Open"); never at launch.
@@ -138,6 +145,21 @@ struct RootView: View {
             }, signInPhase: model.signIn, onCancelSignIn: { model.cancelSignIn() }, signInURL: model.signInURL)
                 .toolbar(removing: .title)
                 .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        }
+    }
+}
+
+/// Help, Getting Started: the checklist again, in the main window.
+struct GettingStartedCommand: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Getting Started") {
+            guard model.startup.isReady, model.onboarding.completed else { return }
+            NSApp.activate()
+            openWindow(id: "main")
+            model.openGettingStarted()
         }
     }
 }

@@ -1095,6 +1095,16 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
+    slug: 'spaces/app-checklist-palette',
+    title: 'Getting started and the command palette',
+    description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
+    intro:
+      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, or what the app shows now) and returns the new `AppChecklistState` with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
+    items: [],
+    prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
+    spaces: true,
+  },
+  {
     slug: 'spaces/app-core/telemetry',
     title: 'Usage telemetry',
     description: 'Which anonymous usage events a Spaces app step means, and sending them.',

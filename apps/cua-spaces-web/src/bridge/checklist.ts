@@ -6,9 +6,12 @@
  * Spaces, ticked off as they happen and kept between launches (this
  * page's storage, like the first run's progress).
  *
- * Usage events are the core's (`telemetry.checklist`): `cua_onboarding_step`
- * with step `checklist_shown`, `checklist_<step>` (once per step),
+ * What each event does to it, its words and its usage events are the
+ * core's (`checklist.reduce`, `checklist.view`), the same calls the SwiftUI
+ * app makes. Usage events: `cua_onboarding_step` with step
+ * `checklist_shown`, `checklist_<step>` (once per step),
  * `checklist_completed`, `checklist_dismissed` or `checklist_reopened`.
+ * Without the core the checklist is not shown and nothing changes.
  */
 
 import { useContext, useEffect, useSyncExternalStore } from "react";
@@ -18,13 +21,11 @@ import type { CoreClient } from "./core";
 import type { TelemetrySignal } from "./ops/telemetry";
 import type { BridgeStore } from "./store";
 
-/** The steps in order (`telemetry::CHECKLIST_STEPS`). */
+/** The steps in order (`checklist::STEPS`). */
 export const CHECKLIST_STEPS = ["add_machine", "create_space", "teleport", "share", "run_agent"] as const;
 export type ChecklistStep = (typeof CHECKLIST_STEPS)[number];
 
-/** What happens to the checklist itself. */
-export type ChecklistEvent = ChecklistStep | "shown" | "completed" | "dismissed" | "reopened";
-
+/** As stored (the shape earlier versions wrote). */
 export interface ChecklistState {
   /** Steps done, each once. */
   done: Partial<Record<ChecklistStep, true>>;
@@ -32,6 +33,55 @@ export interface ChecklistState {
   dismissed: boolean;
   /** It was on screen once (`checklist_shown` was recorded). */
   shown: boolean;
+}
+
+/** `checklist::ChecklistAction`. */
+export type ChecklistAction =
+  | { type: "done"; step: ChecklistStep }
+  | { type: "shown" }
+  | { type: "dismiss" }
+  | { type: "reopen" }
+  | { type: "observe"; otherMachine: boolean; hasSpace: boolean; agentRan: boolean };
+
+/** `checklist::ChecklistRow`. */
+export interface ChecklistRow {
+  step: ChecklistStep;
+  title: string;
+  detail: string;
+  /** The button that does it; hidden once done. */
+  action: string;
+  done: boolean;
+}
+
+/** `checklist::ChecklistView`. */
+export interface ChecklistView {
+  visible: boolean;
+  complete: boolean;
+  title: string;
+  detail: string;
+  /** "2 of 5". */
+  progress: string;
+  closeLabel: string;
+  rows: ChecklistRow[];
+}
+
+/** `checklist::ChecklistState`. */
+interface CoreChecklistState {
+  done: ChecklistStep[];
+  dismissed: boolean;
+  shown: boolean;
+}
+
+const toCore = (s: ChecklistState): CoreChecklistState => ({
+  done: CHECKLIST_STEPS.filter((step) => s.done[step]),
+  dismissed: s.dismissed,
+  shown: s.shown,
+});
+
+function fromCore(c: CoreChecklistState): ChecklistState {
+  const done: ChecklistState["done"] = {};
+  for (const step of c.done) done[step] = true;
+  return { done, dismissed: c.dismissed, shown: c.shown };
 }
 
 const STORAGE_KEY = "cua-spaces:checklist";
@@ -97,52 +147,38 @@ export function subscribeChecklist(listener: () => void): () => void {
   };
 }
 
-export const checklistComplete = (s: ChecklistState) => CHECKLIST_STEPS.every((step) => s.done[step]);
-
-/** The core's usage events for one checklist event. */
-export function telemetryChecklist(core: CoreClient, event: ChecklistEvent): TelemetrySignal[] {
-  return core.tryCall<TelemetrySignal[]>("telemetry.checklist", { event }) ?? [];
+/** The checklist as drawn, or null without the core. */
+export function checklistView(core: CoreClient, state: ChecklistState): ChecklistView | null {
+  return core.tryCall<ChecklistView>("checklist.view", { state: toCore(state) }) ?? null;
 }
 
-function track(store: BridgeStore | null, events: ChecklistEvent[]): void {
-  if (!store) return;
-  for (const e of events) void store.telemetry.track(telemetryChecklist(store.core, e));
+/** Runs `action` through the core: saves what changed and answers the
+ * usage events it means. */
+function apply(core: CoreClient, action: ChecklistAction): TelemetrySignal[] {
+  const t = core.tryCall<{ state: CoreChecklistState; signals: TelemetrySignal[] }>("checklist.reduce", {
+    state: toCore(readChecklist()),
+    action,
+  });
+  if (!t || t.signals.length === 0) return [];
+  write(fromCore(t.state));
+  return t.signals;
 }
 
-/** Events waiting for the bridge store. */
-const pending: ChecklistEvent[] = [];
-
-/* Each change is saved at once and answers with the events it means. */
-
-function markDone(step: ChecklistStep): ChecklistEvent[] {
-  const s = readChecklist();
-  if (s.done[step]) return [];
-  const next = { ...s, done: { ...s.done, [step]: true as const } };
-  write(next);
-  return checklistComplete(next) ? [step, "completed"] : [step];
-}
-
-function markShown(): ChecklistEvent[] {
-  const s = readChecklist();
-  if (s.shown) return [];
-  write({ ...s, shown: true });
-  return ["shown"];
-}
-
-function markDismissed(dismissed: boolean): ChecklistEvent[] {
-  const s = readChecklist();
-  if (s.dismissed === dismissed) return [];
-  write({ ...s, dismissed });
-  return [dismissed ? "dismissed" : "reopened"];
-}
+/** Usage events waiting for the bridge store. */
+const pending: TelemetrySignal[] = [];
 
 /** Ticks off `step` (once): records it, and `completed` with the last one. */
 export function checklistDone(store: BridgeStore | null, step: ChecklistStep): void {
-  track(store, markDone(step));
+  if (!store) return;
+  const signals = apply(store.core, { type: "done", step });
+  if (signals.length) void store.telemetry.track(signals);
 }
 
 export interface ChecklistHook {
   state: ChecklistState;
+  /** Null without the core. */
+  view: ChecklistView | null;
+  send(action: ChecklistAction): void;
   done(step: ChecklistStep): void;
   shown(): void;
   dismiss(): void;
@@ -154,23 +190,26 @@ export function useChecklist(): ChecklistHook {
   const ctx = useContext(BridgeContext);
   if (!ctx) throw new Error("useChecklist needs a <BridgeProvider> above it");
   const state = useSyncExternalStore(subscribeChecklist, readChecklist, readChecklist);
-  const { store } = ctx;
+  const { core, store } = ctx;
   // Events from before the store exists wait for it (the first `ready`
   // promise can be replaced before it resolves).
   useEffect(() => {
-    if (store && pending.length) track(store, pending.splice(0));
+    if (store && pending.length) void store.telemetry.track(pending.splice(0));
   }, [store]);
-  const later = (events: ChecklistEvent[]) => {
-    if (!events.length) return;
-    if (store) track(store, events);
-    else pending.push(...events);
+  const send = (action: ChecklistAction) => {
+    const signals = apply(core, action);
+    if (!signals.length) return;
+    if (store) void store.telemetry.track(signals);
+    else pending.push(...signals);
   };
   return {
     state,
-    done: (step) => later(markDone(step)),
-    shown: () => later(markShown()),
-    dismiss: () => later(markDismissed(true)),
-    reopen: () => later(markDismissed(false)),
+    view: checklistView(core, state),
+    send,
+    done: (step) => send({ type: "done", step }),
+    shown: () => send({ type: "shown" }),
+    dismiss: () => send({ type: "dismiss" }),
+    reopen: () => send({ type: "reopen" }),
   };
 }
 

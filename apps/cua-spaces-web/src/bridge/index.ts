@@ -109,10 +109,11 @@ export { expiresInText, PAIRING_POLL_MS, pairingUnsupported, usePairingCode, typ
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
 export {
   CHECKLIST_STEPS,
-  checklistComplete,
   useChecklist,
   type ChecklistHook,
+  type ChecklistRow,
   type ChecklistState,
   type ChecklistStep,
+  type ChecklistView,
 } from "./checklist";
 export { formatHours, relayUsageLine, useRelayUsage, RELAY_USAGE_FOCUS_MS, RELAY_USAGE_POLL_MS, type RelayUsage } from "./relay-usage";

@@ -3,17 +3,19 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { CHECKLIST_STEPS, checklistDone, readChecklist, resetChecklistCache, telemetryChecklist } from "../checklist";
+import { CHECKLIST_STEPS, checklistDone, checklistView, readChecklist, resetChecklistCache } from "../checklist";
 import type { BridgeStore } from "../store";
 import { sanitizeSignals, type TelemetrySignal } from "../ops/telemetry";
-import { testCore, wasmBuilt } from "./testCore";
+import { noCore, testCore, wasmBuilt } from "./testCore";
 
 const KEY = "cua-spaces:checklist";
 
-async function fakeStore(): Promise<{ store: BridgeStore; sent: TelemetrySignal[] }> {
+async function fakeStore(core?: BridgeStore["core"]): Promise<{ store: BridgeStore; sent: TelemetrySignal[] }> {
   const sent: TelemetrySignal[] = [];
-  const core = await testCore();
-  const store = { core, telemetry: { track: async (s: readonly unknown[]) => void sent.push(...sanitizeSignals(s)) } } as unknown as BridgeStore;
+  const store = {
+    core: core ?? (await testCore()),
+    telemetry: { track: async (s: readonly unknown[]) => void sent.push(...sanitizeSignals(s)) },
+  } as unknown as BridgeStore;
   return { store, sent };
 }
 
@@ -23,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("the getting-started checklist", () => {
-  it("keeps each step done between launches", async () => {
+  it.skipIf(!wasmBuilt)("keeps each step done between launches, in the stored shape", async () => {
     const { store } = await fakeStore();
     checklistDone(store, "create_space");
     resetChecklistCache();
@@ -56,9 +58,25 @@ describe("the getting-started checklist", () => {
     ]);
   });
 
-  it.skipIf(!wasmBuilt)("sends nothing for a word the core doesn't know", async () => {
+  it.skipIf(!wasmBuilt)("draws the core's rows and progress", async () => {
     const core = await testCore();
-    expect(telemetryChecklist(core, "shown")).toEqual([{ type: "step", step: "checklist_shown", ok: true }]);
-    expect(telemetryChecklist(core, "me@example.com" as never)).toEqual([]);
+    const view = checklistView(core, { done: { teleport: true }, dismissed: false, shown: true })!;
+    expect(view).toMatchObject({ visible: true, complete: false, title: "Get started", progress: "1 of 5" });
+    expect(view.rows.map((r) => [r.step, r.action, r.done])).toEqual([
+      ["add_machine", "Add machine", false],
+      ["create_space", "Create", false],
+      ["teleport", "Teleport", true],
+      ["share", "Share", false],
+      ["run_agent", "Open Agents", false],
+    ]);
+    expect(checklistView(core, { done: {}, dismissed: true, shown: true })?.visible).toBe(false);
+  });
+
+  it("without the core: not drawn, and nothing changes", async () => {
+    const { store, sent } = await fakeStore(noCore);
+    checklistDone(store, "share");
+    expect(readChecklist().done).toEqual({});
+    expect(sent).toEqual([]);
+    expect(checklistView(noCore, readChecklist())).toBeNull();
   });
 });

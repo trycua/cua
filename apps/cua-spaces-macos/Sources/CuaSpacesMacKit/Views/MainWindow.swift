@@ -7,7 +7,8 @@ import SwiftUI
 
 /// The main window: a sidebar of Spaces and the Keyvault (with its global
 /// switch), and the selected item's detail. Rows are one line; the
-/// sections, search, selection fallback and dimming are the core's.
+/// sections, search, selection fallback and dimming are the core's. ⌘K
+/// opens the command palette.
 public struct MainWindow: View {
     @Bindable var model: AppModel
     @Environment(\.openSettings) private var openSettings
@@ -61,6 +62,9 @@ public struct MainWindow: View {
                                cloud: model.cloud,
                                onRuntimeSwitch: { await model.applyRuntimeSwitch($0) })
         }
+        .sheet(isPresented: $model.showingPalette) {
+            CommandPaletteView(model: model)
+        }
         .sheet(item: approvalBinding) { _ in
             ApprovalSheet(keyvault: model.keyvault)
         }
@@ -76,6 +80,8 @@ public struct MainWindow: View {
             await model.refresh()
             await model.keyvault.refresh()
         }
+        // The checklist ticks off what the app already shows.
+        .onChange(of: model.checklistSeen, initial: true) { _, seen in model.checklist.send(seen) }
     }
 
     /// The main window's copy of a Devices sheet (Settings has its own).
@@ -121,6 +127,10 @@ public struct MainWindow: View {
             EmptySpaces(model: model)
         case .notifications:
             NotificationsPageView(model: model.persistent)
+        case .machines:
+            MachinesPageView(model: model)
+        case .gettingStarted:
+            GettingStartedView(model: model)
         case nil:
             EmptySpaces(model: model)
         }
@@ -141,7 +151,14 @@ struct Sidebar: View {
     var body: some View {
         let sidebar = model.sidebar
         let kv = model.keyvault
+        let checklist = model.checklist.view
         List(selection: $model.selection) {
+            if checklist.visible {
+                Label(checklist.title, systemImage: "checklist")
+                    .badge(Text(checklist.progress))
+                    .tag(MainSelection.gettingStarted)
+                    .accessibilityIdentifier("sidebar-getting-started")
+            }
             if let row = sidebar.thisMachine {
                 spaceRow(row)
             }
@@ -174,6 +191,7 @@ struct Sidebar: View {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)
             }
             Section {
+                Label("Machines", systemImage: "server.rack").tag(MainSelection.machines)
                 Label("Agents", systemImage: "person.2").tag(MainSelection.agents)
                 // Only with the Cua Volume experiment on (the core's chrome).
                 if let volume = model.chrome.volumeLabel {

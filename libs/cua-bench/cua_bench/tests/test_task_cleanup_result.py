@@ -1,0 +1,52 @@
+"""Regression for preserving failed task results through cleanup errors."""
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
+
+from cua_bench.runner import task_runner as module
+
+
+@pytest.mark.asyncio
+async def test_cleanup_exception_preserves_timeout_result_and_receipt(tmp_path, monkeypatch):
+    runner = module.TaskRunner()
+    events = []
+
+    async def create_network(*args, **kwargs):
+        return None
+
+    async def start_agent(**kwargs):
+        return None
+
+    async def timeout(*args, **kwargs):
+        raise asyncio.TimeoutError()
+
+    async def logs(*args, **kwargs):
+        return "logs"
+
+    async def fail_cleanup(task_id):
+        events.append("cleanup")
+        raise RuntimeError("injected image removal failure")
+
+    async def receipt(task_id, output_dir):
+        events.append("receipt")
+        (Path(output_dir) / "cleanup-result.json").write_text(
+            json.dumps({"verified": True}), encoding="utf-8"
+        )
+
+    monkeypatch.setattr(module, "create_network", create_network)
+    monkeypatch.setattr(module, "wait_for_container", timeout)
+    monkeypatch.setattr(module, "get_container_logs", logs)
+    monkeypatch.setattr(runner, "_start_agent_container", start_agent)
+    monkeypatch.setattr(runner, "_cleanup_task", fail_cleanup)
+    monkeypatch.setattr(runner, "_write_cleanup_receipt", receipt)
+
+    result = await runner.run_task(
+        env_path=tmp_path, task_index=0, env_type="linux-docker",
+        provider_type="simulated", cleanup_before=False, output_dir=str(tmp_path),
+    )
+    assert result.success is False
+    assert "Task timed out" in result.error
+    assert "Task cleanup failed: RuntimeError" in result.error
+    assert events == ["cleanup", "receipt"]

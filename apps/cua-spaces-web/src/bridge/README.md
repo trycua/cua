@@ -183,7 +183,10 @@ speaks it as is:
   the native sheet is the fallback while New UI is off. The app menu's
   Settings command (⌘,) sends `settings.openRequested` while the New UI
   window is in front, and the page goes to Settings (also with no focus in
-  its web view).
+  its web view). While New UI is on, the notch and the menu bar item send
+  `route.openRequested {path}` (a Space's tile `/spaces/<id>`, with
+  `?dropped=[names]` for a drop on it; the list `/spaces`; Settings
+  `/settings`), and the page goes there.
 - `machines.list` carries `hostnames` (what each relay machine's cua-spacesd
   reported), so a machine and its enrolled device list once.
 - `keyvault.unlock` with a passphrase fails with `native_only`.

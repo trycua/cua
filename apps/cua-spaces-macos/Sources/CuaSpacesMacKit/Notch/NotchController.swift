@@ -54,6 +54,10 @@ public final class NotchController {
     /// Its Dismiss: hide the indicator and the tiles' key (nothing is
     /// revoked or wiped).
     @ObservationIgnored public var onDismissAccess: (() -> Void)?
+    /// The header's list and Settings buttons; unset, `showMain` and
+    /// `showSettings`.
+    @ObservationIgnored public var onOpenList: (() -> Void)?
+    @ObservationIgnored public var onOpenSettings: (() -> Void)?
     /// Opens (or brings forward) the main window, which may have been
     /// closed while the notch stayed up. Set by the notch view.
     @ObservationIgnored public var showMain: (() -> Void)?
@@ -455,8 +459,8 @@ extension NotchController: NotchSurface {
         model.send(.dismiss)
         NSApp.activate()
         switch button {
-        case .list: showMain?()
-        case .settings: showSettings?()
+        case .list: (onOpenList ?? showMain)?()
+        case .settings: (onOpenSettings ?? showSettings)?()
         }
     }
 

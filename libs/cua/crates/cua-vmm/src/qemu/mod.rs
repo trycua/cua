@@ -380,11 +380,11 @@ impl QemuRuntime {
         spec_like: &StartSpec,
         source: Option<String>,
     ) -> Result<QemuState> {
-        crate::disk::ensure_space(
-            &self.cfg.root,
-            crate::disk::VM_CREATE_ESTIMATE,
-            &format!("create VM {name}"),
-        )?;
+        let estimate = match backing {
+            Some(_) => crate::disk::QEMU_OVERLAY_ESTIMATE,
+            None => crate::disk::VM_CREATE_ESTIMATE,
+        };
+        crate::disk::ensure_space(&self.cfg.root, estimate, &format!("create VM {name}"))?;
         let dir = self.dir(name);
         std::fs::create_dir_all(&dir)?;
         let arch = spec_like.effective_arch();
@@ -1021,6 +1021,13 @@ impl Runtime for QemuRuntime {
                     st
                 }
                 Err(VmmError::NotFound(_)) => {
+                    if matches!(spec.image, ImageSource::Oci { .. }) {
+                        crate::disk::ensure_space(
+                            &self.cfg.root,
+                            crate::disk::QEMU_OVERLAY_ESTIMATE,
+                            &format!("create VM {}", spec.name),
+                        )?;
+                    }
                     let (backing, iso) = match &spec.image {
                         ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
                         ImageSource::Disk { path }
@@ -1566,6 +1573,76 @@ mod tests {
                 .resolve_with_credentials("ghcr.io/me/x:1", Arch::host(), None)
                 .await
                 .is_ok()
+        );
+    }
+
+    struct LowUnder(PathBuf, u64);
+
+    impl crate::disk::SpaceProbe for LowUnder {
+        fn space(&self, path: &Path) -> std::io::Result<crate::disk::Space> {
+            let available = if path.starts_with(&self.0) {
+                self.1
+            } else {
+                500 * crate::disk::GIB
+            };
+            Ok(crate::disk::Space {
+                available,
+                total: 500 * crate::disk::GIB,
+            })
+        }
+    }
+
+    struct CountingResolver(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl DiskResolver for CountingResolver {
+        async fn resolve(&self, _: &str, _: Arch) -> Result<PathBuf> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(VmmError::invalid("stop here"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_disk_fails_before_the_pull_and_overlays_need_less_than_blank_disks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let resolver = Arc::new(CountingResolver(Default::default()));
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            resolver: Some(resolver.clone()),
+            ..Default::default()
+        });
+        let min_free = crate::disk::CacheConfig::load().min_free;
+        let set_available = |bytes| {
+            crate::disk::set_probe(Some(Arc::new(LowUnder(tmp.path().to_path_buf(), bytes))))
+        };
+
+        set_available(min_free + crate::disk::GIB / 2);
+        let err = r
+            .start(&StartSpec::new("full", ImageSource::oci("ghcr.io/x/y:1")))
+            .await
+            .unwrap_err();
+        let pulls = resolver.0.load(std::sync::atomic::Ordering::SeqCst);
+
+        set_available(min_free + 2 * crate::disk::GIB);
+        let backing = tmp.path().join("base.qcow2");
+        std::fs::write(&backing, b"not really a disk").unwrap();
+        let spec = StartSpec::new("o1", ImageSource::disk(&backing));
+        let overlay = r
+            .create_instance("o1", Some(&backing), None, &spec, None)
+            .await
+            .err();
+        let blank = r.create_instance("b1", None, None, &spec, None).await.err();
+        crate::disk::set_probe(None);
+
+        assert!(matches!(err, VmmError::InsufficientDisk(_)), "{err}");
+        assert_eq!(pulls, 0, "nothing is pulled when the overlay cannot fit");
+        assert!(
+            !matches!(overlay, Some(VmmError::InsufficientDisk(_))),
+            "{overlay:?}"
+        );
+        assert!(
+            matches!(blank, Some(VmmError::InsufficientDisk(_))),
+            "{blank:?}"
         );
     }
 

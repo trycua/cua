@@ -155,13 +155,12 @@ pub fn pack(disk: &Path, arch: &str, out_dir: &Path) -> Result<PackedImage> {
 ///
 /// Cached per platform-manifest digest at `~/.cua/images/disks/<hex>/disk.qcow2`
 /// (so a moving tag re-pulls only when it changes). The compressed layer blob
-/// is deleted after extraction unless `keep_blobs` (disks are GBs).
+/// is deleted after extraction, as is a partial disk (disks are GBs).
 pub async fn pull(
     client: &RegistryClient,
     cache: &ImageCache,
     reference: &str,
     arch: &str,
-    keep_blobs: bool,
 ) -> Result<PathBuf> {
     let (pinned, manifest, digest) = client.resolve_platform(reference, arch).await?;
     let dir = cache.disk_dir(&digest)?;
@@ -229,11 +228,11 @@ pub async fn pull(
                 }
             }
         }
-        .map_err(|e| ImageError::Registry(e.to_string()))??;
+        .map_err(|e| ImageError::Registry(e.to_string()))?;
+        let _ = std::fs::remove_file(&blob);
+        let _ = std::fs::remove_file(disk.with_extension("partial"));
+        let found = found?;
         progress.extract_done(layer.size);
-        if !keep_blobs {
-            let _ = std::fs::remove_file(&blob);
-        }
         if found {
             cache.record_ref(reference, &digest)?;
             cua_vmm::disk::mark_used(&dir);
@@ -345,7 +344,7 @@ impl ContainerDiskResolver {
 #[async_trait::async_trait]
 impl cua_vmm::DiskResolver for ContainerDiskResolver {
     async fn resolve(&self, reference: &str, arch: cua_vmm::Arch) -> cua_vmm::Result<PathBuf> {
-        Ok(pull(&self.client, &self.cache, reference, arch.oci(), false).await?)
+        Ok(pull(&self.client, &self.cache, reference, arch.oci()).await?)
     }
 
     /// Pulls a private containerDisk with the caller's credentials (a
@@ -360,7 +359,7 @@ impl cua_vmm::DiskResolver for ContainerDiskResolver {
             None => self.resolve(reference, arch).await,
             Some(c) => {
                 let client = RegistryClient::with_credentials(c.clone());
-                Ok(pull(&client, &self.cache, reference, arch.oci(), false).await?)
+                Ok(pull(&client, &self.cache, reference, arch.oci()).await?)
             }
         }
     }

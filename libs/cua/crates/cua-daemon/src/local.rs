@@ -1352,7 +1352,7 @@ pub async fn pull_image(local: &VmmLocal, reference: &str) -> Result<LocalImageI
         (BackendKind::Qemu, ImageSource::Oci { reference: r }) => {
             let client = cua_image::RegistryClient::default();
             let cache = cua_image::ImageCache::default();
-            let disk = cua_image::containerdisk::pull(&client, &cache, &r, arch.oci(), false)
+            let disk = cua_image::containerdisk::pull(&client, &cache, &r, arch.oci())
                 .await
                 .map_err(image_error)?;
             let size = std::fs::metadata(&disk).map(|m| m.len()).unwrap_or(0);
@@ -1475,7 +1475,6 @@ async fn build_with(
                     &cua_image::ImageCache::default(),
                     &reference,
                     opts.arch.oci(),
-                    false,
                 )
                 .await
                 .map_err(image_error)?,

@@ -792,7 +792,7 @@ pub(super) async fn run_in_background(
                     "The app's scripting interface reported the document saved",
                 ),
                 Ok(Err(refusal)) => background_unavailable(format!(
-                    "{message}, and saving through {app_name}'s scripting interface did not \
+                    "{preface}{message}, and saving through {app_name}'s scripting interface did not \
                      complete ({}: {}). Nothing was saved",
                     refusal.code, refusal.reason
                 )),

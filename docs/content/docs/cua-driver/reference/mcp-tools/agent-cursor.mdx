@@ -10,8 +10,6 @@ description: "Show, animate and style the agent cursor."
   Version: 0.34.0
 */}
 
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | [`set_agent_cursor_enabled`](#set_agent_cursor_enabled) | Show or hide the agent cursor owned by a session. | macOS, Linux, Windows |
@@ -40,48 +38,9 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 ## `set_agent_cursor_motion`
 
+Configure the movement style, timing, effects and visibility timing for a session cursor.
+
 Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
-
-<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
-<Tab value="macOS">
-
-Configure the movement style, timing, effects and visibility timing for a session cursor.
-
-**macOS parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_agent_cursor_motion--macos--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` or the default `steady` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="set_agent_cursor_motion--macos--timing"></span>`timing` | `"native" \| "fitts" \| "fixed" \| "relaxed" \| "steady" \| "calm" \| "deliberate"` |  | `steady` (default) keeps the style's timing but makes every move take at least 600 ms, with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor. `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses glide_duration_ms (1430 ms when 0). |
-
-</Tab>
-<Tab value="Linux">
-
-Configure the movement style, timing, effects and visibility timing for a session cursor.
-
-**Linux parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_agent_cursor_motion--linux--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="set_agent_cursor_motion--linux--timing"></span>`timing` | `"native" \| "fitts" \| "fixed" \| "relaxed" \| "steady" \| "calm" \| "deliberate"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms, with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms). |
-
-</Tab>
-<Tab value="Windows">
-
-Configure the movement style, timing, effects and visibility timing for a session cursor.
-
-**Windows parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_agent_cursor_motion--windows--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="set_agent_cursor_motion--windows--timing"></span>`timing` | `"native" \| "fitts" \| "fixed" \| "relaxed" \| "steady" \| "calm" \| "deliberate"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms, with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms). |
-
-</Tab>
-</Tabs>
-
-**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -95,11 +54,13 @@ Configure the movement style, timing, effects and visibility timing for a sessio
 | <span id="set_agent_cursor_motion--effects-squish"></span>`effects.squish` | `"on" \| "off" \| "default"` |  | Brief scale-down of the cursor on click. |
 | <span id="set_agent_cursor_motion--effects-trail"></span>`effects.trail` | `"on" \| "off" \| "default"` |  | Short fading trail behind the cursor. |
 | <span id="set_agent_cursor_motion--end_handle"></span>`end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
+| <span id="set_agent_cursor_motion--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` or the default `steady` timing also fixes the duration. Clamped to 0..5000. |
 | <span id="set_agent_cursor_motion--idle_hide_ms"></span>`idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
 | <span id="set_agent_cursor_motion--session"></span>`session` | `string` | required | Public label of the session that owns the cursor. Omitted or null motion fields keep their current value. |
 | <span id="set_agent_cursor_motion--spring"></span>`spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
 | <span id="set_agent_cursor_motion--start_handle"></span>`start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
 | <span id="set_agent_cursor_motion--style"></span>`style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Trajectory style. `signature_arc` (default) is one arc with a small follow-through; `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target; `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for small targets and a swoop for long moves; `classic` is the previous Dubins glide. When the theme's reduced motion is on, every move is a short straight glide with no effects. |
+| <span id="set_agent_cursor_motion--timing"></span>`timing` | `"native" \| "fitts" \| "fixed" \| "relaxed" \| "steady" \| "calm" \| "deliberate"` |  | `steady` (default) keeps the style's timing but makes every move take at least 600 ms, with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor. `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses glide_duration_ms (1430 ms when 0). |
 | <span id="set_agent_cursor_motion--turn_radius"></span>`turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
 
 **Example arguments**

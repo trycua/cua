@@ -26,9 +26,7 @@ use crate::settings::{SettingsOption, SettingsRow, TelemetryInput};
 pub enum OnboardingStep {
     /// Welcome.
     Welcome,
-    /// Install the bundled `cua` and add it to PATH (on unless switched
-    /// off, with Skip). Only while a shell reported a plan that needs it
-    /// ([`OnboardingAction::CliPlanned`]).
+    /// Install the bundled `cua`, while its plan needs it.
     Cli,
     /// Sign in to Cua.
     Signin,
@@ -148,19 +146,13 @@ pub struct OnboardingState {
     pub step: OnboardingStep,
     /// Where `cua` was installed, when it was.
     pub cli_target: Option<String>,
-    /// The bundled `cua`'s install plan, as the shell read it (nothing is
-    /// written to read it).
+    /// The bundled `cua`'s install plan, as the shell read it.
     #[serde(default)]
     pub cli_plan: Option<CliInstallPlan>,
-    /// The Command line page's switch (on unless switched off): Continue
-    /// installs, adding the bin dir to PATH when it is not on it.
-    #[serde(default = "ticked")]
-    pub cli_install: bool,
-    /// Continue with the switch on: the shell is installing (answer with
-    /// `cli-installed` or `cli-install-failed`); the page stays until then.
+    /// Continue on Command line: the shell is installing.
     #[serde(default)]
     pub cli_installing: bool,
-    /// Why the install failed (the page stays, to try again or skip).
+    /// Why the install failed.
     #[serde(default)]
     pub cli_error: Option<String>,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
@@ -248,31 +240,22 @@ impl OnboardingState {
 pub enum OnboardingAction {
     /// "Get started".
     Start,
-    /// The app installed its bundled `cua` (any page).
+    /// The app installed its bundled `cua` on first launch (any page).
     CliInstalled {
         /// Where.
         target: Option<String>,
     },
-    /// The bundled `cua`'s install plan (any page): the Command line page
-    /// shows when it needs installing; a current install counts as
-    /// installed.
+    /// The bundled `cua`'s install plan, read or installed (any page).
     CliPlanned {
         /// The plan.
         plan: CliInstallPlan,
     },
-    /// The Command line page's switch.
-    CliToggled {
-        /// On.
-        on: bool,
-    },
-    /// Continue (`install`: the switch) or Skip (`install` off) from
-    /// Command line. Skip leaves the page; Continue with the switch on
-    /// stays while the shell installs (`cli-installed` then leaves it).
+    /// Continue (`install`) or Skip from Command line.
     CliDone {
         /// Install.
         install: bool,
     },
-    /// The Command line page's install failed: the page stays.
+    /// The Command line page's install failed.
     CliInstallFailed {
         /// Why.
         error: String,
@@ -392,7 +375,6 @@ pub fn initial(
         step: OnboardingStep::Welcome,
         cli_target: None,
         cli_plan: None,
-        cli_install: true,
         cli_installing: false,
         cli_error: None,
         menu_bar: false,
@@ -486,25 +468,21 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
                 n.run_counted = true;
             }
         }
-        (_, OnboardingAction::CliInstalled { target }) => {
-            n.cli_target = target.clone();
-            if s.step == Cli && s.cli_installing {
-                n.cli_installing = false;
-                n.step = next(s, Cli);
-            }
-        }
+        (_, OnboardingAction::CliInstalled { target }) => n.cli_target = target.clone(),
         (_, OnboardingAction::CliPlanned { plan }) => {
             n.cli_plan = Some(plan.clone());
             if plan.up_to_date {
                 n.cli_target = Some(plan.target.clone());
             }
+            if s.step == Cli && !cli_shown(&n) {
+                n.cli_installing = false;
+                n.step = next(s, Cli);
+            }
             if s.step != Welcome && !cli_shown(s) && cli_shown(&n) {
                 n.step = Cli;
             }
         }
-        (Cli, OnboardingAction::CliToggled { on }) if !s.cli_installing => n.cli_install = *on,
         (Cli, OnboardingAction::CliDone { install }) if !s.cli_installing => {
-            n.cli_install = *install;
             n.cli_error = None;
             if *install {
                 n.cli_installing = true;
@@ -728,9 +706,6 @@ pub struct OnboardingView {
     pub drive: Option<DriveCard>,
     /// Done's "Launch at login" checkbox.
     pub launch_at_login: Option<OnboardingCheckbox>,
-    /// The Command line page's switch: what Continue installs, and where.
-    #[serde(default)]
-    pub cli: Option<OnboardingCheckbox>,
 }
 
 /// A checkbox with one muted line under it.
@@ -1158,33 +1133,20 @@ pub fn installed_at_text(target: &str) -> String {
     format!("Installed at {target}")
 }
 
-/// The Command line page's switch for `plan`: the PATH part only when its
-/// bin dir is not on PATH, and the files Continue writes.
-pub fn cli_checkbox(plan: &CliInstallPlan, on: bool) -> OnboardingCheckbox {
+fn cli_lede(plan: &CliInstallPlan) -> String {
     let verb = match plan.method {
         Some(InstallMethod::Symlink) => "Links",
         _ => "Copies",
     };
-    let (label, note) = if plan.on_path {
-        (
-            "Install the cua command",
-            format!("{verb} cua to {}.", plan.target),
-        )
+    if plan.on_path {
+        format!("{verb} cua to {}.", plan.target)
     } else {
-        (
-            "Install the cua command and add it to your PATH",
-            format!(
-                "{verb} cua to {} and adds {} to PATH in {}.",
-                plan.target,
-                plan.bin_dir,
-                plan.path_profile.as_deref().unwrap_or("your shell profile")
-            ),
+        format!(
+            "{verb} cua to {} and adds {} to PATH in {}.",
+            plan.target,
+            plan.bin_dir,
+            plan.path_profile.as_deref().unwrap_or("your shell profile")
         )
-    };
-    OnboardingCheckbox {
-        label: label.into(),
-        checked: on,
-        note,
     }
 }
 
@@ -1206,6 +1168,7 @@ pub fn done_lede(os: SpaceOs) -> &'static str {
 pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
     use crate::spaces::sidebar::Fact;
     use OnboardingStep::*;
+    let cli = s.cli_plan.as_ref().map(cli_lede).unwrap_or_default();
     let (title, lede, primary) = match s.step {
         Welcome => (
             "Welcome to Cua Spaces",
@@ -1213,8 +1176,12 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             "Get started",
         ),
         Cli => (
-            "Command line",
-            "Use Cua from your terminal and your scripts.",
+            if s.cli_plan.as_ref().is_some_and(|p| p.on_path) {
+                "Install the cua command"
+            } else {
+                "Install the cua command and add it to your PATH"
+            },
+            cli.as_str(),
             if s.cli_installing {
                 "Installing\u{2026}"
             } else {
@@ -1399,11 +1366,6 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
             checked: s.launch_at_login,
             note: crate::login_item::note(s.experiments.cua_volume).into(),
         }),
-        cli: s
-            .cli_plan
-            .as_ref()
-            .filter(|_| s.step == Cli)
-            .map(|p| cli_checkbox(p, s.cli_install)),
     }
 }
 
@@ -1555,36 +1517,38 @@ mod tests {
         let s = reduce(&planned, &OnboardingAction::Start);
         assert_eq!(s.step, OnboardingStep::Cli);
         let v = view(&s);
-        assert_eq!(v.title, "Command line");
+        assert_eq!(v.title, "Install the cua command and add it to your PATH");
+        assert_eq!(
+            v.lede,
+            "Copies cua to /h/.local/bin/cua and adds /h/.local/bin to PATH in /h/.zshrc."
+        );
+        assert_eq!(v.primary_label, "Continue");
         assert!(v.can_skip && v.can_back);
         assert!(
             v.dots
                 .iter()
                 .any(|d| d.label == "Command line" && d.current)
         );
-        let cli = v.cli.expect("the switch");
-        assert_eq!(cli.label, "Install the cua command and add it to your PATH");
-        assert!(cli.checked, "on by default");
-        assert_eq!(
-            cli.note,
-            "Copies cua to /h/.local/bin/cua and adds /h/.local/bin to PATH in /h/.zshrc."
-        );
-        let off = reduce(&s, &OnboardingAction::CliToggled { on: false });
-        assert!(!view(&off).cli.unwrap().checked);
         let skipped = reduce(&s, &OnboardingAction::CliDone { install: false });
         assert_eq!(skipped.step, OnboardingStep::Signin);
-        assert!(!skipped.cli_install, "Skip installs nothing");
+        assert!(!skipped.cli_installing, "Skip installs nothing");
+        assert_eq!(
+            reduce(&skipped, &OnboardingAction::Back).step,
+            OnboardingStep::Cli
+        );
         let went_on = reduce(
             &reduce(&s, &OnboardingAction::CliDone { install: true }),
-            &OnboardingAction::CliInstalled {
-                target: Some("/h/.local/bin/cua".into()),
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
             },
         );
         assert_eq!(went_on.step, OnboardingStep::Signin);
-        assert!(went_on.cli_install);
-        assert_eq!(
-            reduce(&went_on, &OnboardingAction::Back).step,
-            OnboardingStep::Cli
+        assert_eq!(went_on.cli_target.as_deref(), Some("/h/.local/bin/cua"));
+        assert!(
+            view(&went_on)
+                .dots
+                .iter()
+                .all(|d| d.label != "Command line")
         );
         let on_path = reduce(
             &s,
@@ -1592,7 +1556,7 @@ mod tests {
                 plan: plan(false, true),
             },
         );
-        assert_eq!(view(&on_path).cli.unwrap().label, "Install the cua command");
+        assert_eq!(view(&on_path).title, "Install the cua command");
         for p in [
             plan(true, true),
             CliInstallPlan {
@@ -1616,14 +1580,16 @@ mod tests {
             },
         );
         assert_eq!(current.cli_target.as_deref(), Some("/h/.local/bin/cua"));
-        let linked = CliInstallPlan {
-            method: Some(InstallMethod::Symlink),
-            ..plan(false, true)
-        };
-        assert_eq!(
-            cli_checkbox(&linked, true).note,
-            "Links cua to /h/.local/bin/cua."
+        let linked = reduce(
+            &s,
+            &OnboardingAction::CliPlanned {
+                plan: CliInstallPlan {
+                    method: Some(InstallMethod::Symlink),
+                    ..plan(false, true)
+                },
+            },
         );
+        assert_eq!(view(&linked).lede, "Links cua to /h/.local/bin/cua.");
     }
 
     #[test]
@@ -1646,7 +1612,6 @@ mod tests {
         for a in [
             OnboardingAction::CliDone { install: true },
             OnboardingAction::CliDone { install: false },
-            OnboardingAction::CliToggled { on: false },
             OnboardingAction::Back,
         ] {
             assert_eq!(
@@ -1671,8 +1636,8 @@ mod tests {
         assert_eq!(again.cli_error, None);
         let installed = reduce(
             &again,
-            &OnboardingAction::CliInstalled {
-                target: Some("/h/.local/bin/cua".into()),
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
             },
         );
         assert_eq!(installed.step, OnboardingStep::Signin);
@@ -1691,7 +1656,6 @@ mod tests {
             },
         );
         assert_eq!(s.step, OnboardingStep::Cli);
-        assert!(view(&s).cli.expect("the switch").checked);
         assert_eq!(
             reduce(&s, &OnboardingAction::CliDone { install: false }).step,
             OnboardingStep::Signin

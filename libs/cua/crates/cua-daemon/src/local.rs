@@ -116,6 +116,21 @@ fn backend_prefix(image: &str) -> Option<(&str, &str)> {
     })
 }
 
+fn missing_fallback_allowed(
+    kind: cua_sandbox_core::placement::Kind,
+    runtime: &cua_sandbox_core::placement::Runtime,
+    prefix: Option<(&str, &str)>,
+    backend: BackendKind,
+    source: LinuxSource,
+) -> bool {
+    use cua_sandbox_core::placement::{Kind, Runtime};
+    kind == Kind::Auto
+        && *runtime == Runtime::Auto
+        && prefix.is_none()
+        && backend == BackendKind::Container
+        && source == LinuxSource::Auto
+}
+
 async fn vm_instead(
     image: &str,
     os: &str,
@@ -810,11 +825,13 @@ impl LocalRuntime for VmmLocal {
             }),
             other => RuntimeError::Other(other.to_string()),
         })?;
-        if kind == Kind::Auto
-            && runtime == Runtime::Auto
-            && backend_prefix(&spec.image).is_none()
-            && r.placement.backend == BackendKind::Container
-            && let Err(e @ VmmError::Missing { .. }) = self.engine().await
+        if missing_fallback_allowed(
+            kind,
+            &runtime,
+            backend_prefix(&spec.image),
+            r.placement.backend,
+            LinuxSource::current(),
+        ) && let Err(e @ VmmError::Missing { .. }) = self.engine().await
         {
             let ready = doctor_report()
                 .await
@@ -1613,6 +1630,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn missing_fallback_requires_auto_linux_source() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        for source in [LinuxSource::Auto, LinuxSource::Builtin, LinuxSource::System] {
+            assert_eq!(
+                missing_fallback_allowed(
+                    Kind::Auto,
+                    &Runtime::Auto,
+                    None,
+                    BackendKind::Container,
+                    source,
+                ),
+                source == LinuxSource::Auto,
+            );
+        }
+    }
 
     /// The macOS path of "Spaces on your machines", verified without a VM:
     /// the canonical macOS image (what a host resolves `macos:26` to) is a

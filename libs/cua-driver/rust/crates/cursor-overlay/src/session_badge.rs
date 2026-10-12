@@ -674,6 +674,14 @@ mod tests {
     }
 
     #[test]
+    fn badge_font_has_the_mac_modifier_symbols() {
+        let font = font().expect("badge font");
+        for symbol in ['⌘', '⇧', '⌥', '⌃'] {
+            assert_ne!(font.lookup_glyph_index(symbol), 0, "{symbol}");
+        }
+    }
+
+    #[test]
     fn long_label_stays_inside_the_bounded_badge() {
         let layout = session_badge_layout(SessionBadgeInput {
             label: Some("A very long public session label"),

@@ -79,10 +79,13 @@ Note: capture_mode is a per-call param (on get_window_state / click), not a stor
 
 Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.&lt;trail|glow|magnet|ripple|squish&gt; are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.
 
+Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.
+
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="set_config--macos--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
 | <span id="set_config--macos--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
 | <span id="set_config--macos--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |
 

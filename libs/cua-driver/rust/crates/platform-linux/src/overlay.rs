@@ -335,6 +335,9 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
@@ -524,6 +527,17 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
             delivery,
             target,
         } if semantic => {
+            // The GNOME helper paints its own single-cursor badge. Under the
+            // minimal badge it gets only foreground moments; under `off`, no
+            // chips at all.
+            let (delivery, target) = match cursor_overlay::badge_mode::active() {
+                cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
+                cursor_overlay::BadgeMode::Minimal => (
+                    delivery.filter(|value| *value == cursor_overlay::DeliveryModifier::Foreground),
+                    None,
+                ),
+                cursor_overlay::BadgeMode::Off => (None, None),
+            };
             crate::wayland::shell_helper::set_cursor_state(
                 action.as_str(),
                 delivery.as_ref().map_or("", |value| value.as_str()),
@@ -535,8 +549,12 @@ fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool
             crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
         }
         OverlayCommand::SetSessionLabel(label) if semantic => {
+            // The helper has no hover reveal and draws one cursor, so the
+            // minimal badge never shows the name there.
+            let shown = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
             crate::wayland::shell_helper::set_session_label(
                 cursor_overlay::sanitize_session_label(label)
+                    .filter(|_| shown)
                     .as_deref()
                     .unwrap_or(""),
             );

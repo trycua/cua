@@ -274,7 +274,10 @@ jobs:
               COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
             elif [[ "$SDK" == "true" ]]; then
               # Release Please bumps VERSION, pyproject, __init__, package.json
-              # and package-lock.json together; only validation runs here.
+              # and package-lock.json together; only validation runs here. The
+              # generated references and the lockfiles that copy the version
+              # are regenerated on the branch by
+              # release-sync-generated-files.yml.
               python3 .github/scripts/validate_release_versions.py --product sdk
               COMMIT_MESSAGE="chore(cua-sdk): synchronize release metadata"
             else

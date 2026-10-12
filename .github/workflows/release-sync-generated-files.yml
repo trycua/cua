@@ -1,0 +1,130 @@
+name: "Release: Sync generated files on release PRs"
+
+# A Release Please release PR bumps a component's version files only. The
+# generated references and the lockfiles that copy that version are rewritten
+# here, on the release branch itself, so merging the release never leaves
+# main with version drift (cua 0.3.0 and 0.3.1 both did).
+#
+# Release Please (release-please.yml) pushes the branch with the release
+# GitHub App, which starts this workflow. The regeneration runs with no
+# credentials; only the final push mints the App token, and pushing with it
+# re-runs the PR's checks. Nothing changed means no commit, and a push of this
+# workflow's own commit is skipped, so it never loops.
+#
+# Components:
+#   cua-sdk  .github/scripts/sync_sdk_release_files.py (docs generators,
+#            hand-maintained version facts, uv/npm locks of the local cua).
+# The other components' generated files are synchronized by the "Synchronize
+# generated files on release pull requests" step of release-please.yml.
+
+on:
+  push:
+    branches:
+      - "release-please--branches--main--components--*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sync-generated-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMMIT_SUBJECT: "chore(cua-sdk): regenerate files that record the release version"
+
+jobs:
+  cua-sdk:
+    name: cua-sdk release files
+    if: >-
+      !github.event.deleted &&
+      github.ref == 'refs/heads/release-please--branches--main--components--cua-sdk' &&
+      !startsWith(github.event.head_commit.message, 'chore(cua-sdk): regenerate files that record the release version')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NPM_CONFIG_IGNORE_SCRIPTS: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The cua SDK generators build cua-sdk, cua-spaces-ffi and cua-bindgen.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
+          df -h /
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+      - name: Install docs dependencies (no lifecycle scripts)
+        run: pnpm --dir docs install --frozen-lockfile --ignore-scripts
+      - name: Install the TypeScript SDK's dependencies (typedoc input)
+        run: npm ci --ignore-scripts
+        working-directory: libs/cua/typescript
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install the pinned nightly for rustdoc JSON
+        run: rustup toolchain install nightly-2026-09-20 --profile minimal
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            scripts/docs-generators/rustdoc-json
+          key: release-sync-cua-sdk
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
+            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libxrandr-dev libxi-dev libudev-dev
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+
+      - name: Regenerate the files that record the cua SDK version
+        run: python3 .github/scripts/sync_sdk_release_files.py
+
+      - name: Stage the regenerated files
+        id: stage
+        run: |
+          set -euo pipefail
+          git add -A -- docs/content/docs scripts/docs-generators/cli-specs
+          git add -- '*uv.lock' '*package-lock.json'
+          if git diff --cached --quiet; then
+            echo "Generated files already match the release version"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --cached --stat
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate release GitHub App token
+        if: steps.stage.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      # A plain (fast-forward) push: when Release Please rewrote the branch
+      # meanwhile, this fails and the run its push started takes over.
+      - name: Commit and push to the release branch
+        if: steps.stage.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
+          git commit -q -m "$COMMIT_SUBJECT" \
+            -m "Generated by .github/scripts/sync_sdk_release_files.py for cua $(tr -d '[:space:]' < libs/cua/VERSION)."
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/$BRANCH"

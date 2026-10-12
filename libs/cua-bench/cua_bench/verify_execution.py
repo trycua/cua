@@ -1,0 +1,126 @@
+"""Offline, read-only verifier for cua-bench execution artifacts.
+
+Checks internal consistency, not the truth of screenshots or the remote oracle.
+Usage: python -m cua_bench.verify_execution OUTPUT_DIR --task-index 0 --execution-id ID
+"""
+import argparse
+import json
+import math
+from pathlib import Path
+
+
+def _json(path):
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path.name}: expected object")
+    return value
+
+
+def verify_execution(root: Path, task_index: int, execution_id: str, *, require_actions=True):
+    """Return a machine-readable fail-closed independent verification report."""
+    errors = []
+    checks = {}
+    root = Path(root)
+    oracle_path = root / "oracle-result.json"
+    cleanup_path = root / "cleanup-result.json"
+    action_path = root / f"task_{task_index}_agent_logs" / "executed-actions.jsonl"
+
+    try:
+        oracle = _json(oracle_path)
+        rewards = oracle.get("rewards")
+        threshold = oracle.get("success_threshold")
+        valid = (
+            oracle.get("schema_version") == "cua-bench-oracle-result/v1"
+            and oracle.get("task_index") == task_index
+            and oracle.get("execution_id") == execution_id
+            and oracle.get("evaluated") is True
+            and isinstance(rewards, list) and len(rewards) > 0
+            and all(type(v) in (float, int) and math.isfinite(v) and 0 <= v <= 1 for v in rewards)
+            and type(threshold) in (float, int) and math.isfinite(threshold) and 0 <= threshold <= 1
+            and type(oracle.get("success")) is bool
+            and oracle["success"] == all(v >= threshold for v in rewards)
+        )
+        checks["oracle"] = bool(valid and oracle["success"])
+        if not checks["oracle"]:
+            errors.append("oracle_invalid_or_unsuccessful")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        checks["oracle"] = False
+        errors.append(f"oracle_unreadable:{type(exc).__name__}")
+
+    try:
+        cleanup = _json(cleanup_path)
+        resources = cleanup.get("resources")
+        valid = (
+            cleanup.get("schema_version") == "cua-bench-cleanup/v1"
+            and cleanup.get("task_id") == execution_id
+            and isinstance(resources, dict) and len(resources) > 0
+            and all(isinstance(v, dict) and v.get("absent") is True for v in resources.values())
+            and cleanup.get("verified") is True
+        )
+        checks["cleanup"] = valid
+        if not valid:
+            errors.append("cleanup_unverified")
+    except (OSError, ValueError, TypeError) as exc:
+        checks["cleanup"] = False
+        errors.append(f"cleanup_unreadable:{type(exc).__name__}")
+
+    action_count = 0
+    if require_actions:
+        try:
+            with action_path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    record = json.loads(line)
+                    action_count += 1
+                    if (
+                        not isinstance(record, dict)
+                        or record.get("schema_version") != "cua-bench-executed-action/v1"
+                        or record.get("execution_id") != execution_id
+                        or record.get("sequence") != action_count
+                        or record.get("execution_status") not in ("returned", "failed")
+                        or not isinstance(record.get("action"), dict)
+                        or not isinstance(record.get("before"), dict)
+                        or not isinstance(record.get("after"), dict)
+                    ):
+                        raise ValueError("Invalid action event")
+            checks["actions"] = action_count > 0
+            if not checks["actions"]:
+                errors.append("actions_empty")
+        except (OSError, ValueError, TypeError) as exc:
+            checks["actions"] = False
+            errors.append(f"actions_unreadable_or_invalid:{type(exc).__name__}")
+    else:
+        checks["actions"] = None
+
+    return {
+        "schema_version": "cua-bench-verification/v1",
+        "execution_id": execution_id,
+        "task_index": task_index,
+        "valid": not errors,
+        "checks": checks,
+        "verified_action_count": action_count,
+        "errors": errors,
+        "limitations": [
+            "Verifies internal artifact consistency only, not screenshot authenticity",
+            "Does not independently re-execute or trustlessly validate the environment oracle",
+            "Cannot establish that the recording intercepted all device actions",
+        ],
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output_dir", type=Path)
+    parser.add_argument("--task-index", required=True, type=int)
+    parser.add_argument("--execution-id", required=True)
+    parser.add_argument("--no-agent", action="store_true", help="Oracle-only task; no agent action stream")
+    args = parser.parse_args()
+    result = verify_execution(
+        args.output_dir, args.task_index, args.execution_id,
+        require_actions=not args.no_agent,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    raise SystemExit(0 if result["valid"] else 1)
+
+
+if __name__ == "__main__":
+    main()

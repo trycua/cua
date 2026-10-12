@@ -131,10 +131,7 @@ Electron answers `ELECTRON_HOST_METHODS`: `spaces.openStream` (it draws a
 Space's video in the page), `onboarding.get` / `onboarding.complete`
 (its first run is this page's `routes/onboarding`, with Done's "Launch at
 login"; the SwiftUI app's is native, so there `session.get` reads it as
-done), and `relay.usage` (the account's relay allowance this month,
-`ops/relay-usage.ts`, for Settings' Relay usage row and the notice above
-every page once it is used up; other hosts show neither), and
-`presence.join` / `presence.publish` / `presence.leave` (the other
+done), and `presence.join` / `presence.publish` / `presence.leave` (the other
 participants' cursors over the video it draws, `ops/presence.ts`; events
 `presence.event` go to the joining window only; the Mac app draws presence
 natively). Electron reads

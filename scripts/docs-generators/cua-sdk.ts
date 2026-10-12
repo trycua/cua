@@ -725,7 +725,7 @@ export const PAGES: PageSpec[] = [
     title: 'Spaces app core',
     description: 'The view models the Cua Spaces apps share: Space list, New Space wizard, teleport review, notch and Keyvault.',
     intro:
-      'The Tauri and SwiftUI Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Build your own Spaces UI on it. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
+      'The Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
     items: ['cua_spaces_register'],
     modules: ['app_core', 'app_core_types'],
     catalog: true,
@@ -1004,6 +1004,16 @@ export const PAGES: PageSpec[] = [
       'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it.',
     items: ['AppCreditNotice'],
     prefixes: ['AppBilling', 'app_billing_'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/relay',
+    title: 'Relay usage',
+    description: 'The Relay usage row in Settings and the notice past the monthly relay allowance.',
+    intro:
+      '`app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does) with the session\'s `Devices` and an account token. `app_relay_usage_view` derives the Settings row (`AppRelayUsageView`) and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade, dismissed per month and reason. Nothing stops at the limit.',
+    items: [],
+    prefixes: ['AppRelay', 'app_relay_'],
     spaces: true,
   },
   {

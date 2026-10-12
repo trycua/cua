@@ -33,6 +33,7 @@ import type {
   VaultView,
 } from "./contracts/keyvault";
 import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
+import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
 
@@ -673,4 +674,13 @@ export function orderRuns<T extends SpaceAgentRun>(core: CoreClient, runs: T[]):
     if (out.length === runs.length) return out;
   }
   return [...runs].sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status] || (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+/* ---- Relay usage ---------------------------------------------------------- */
+
+/** Settings' Relay usage row and the notice past the allowance (the core's
+ * `relayUsage.view`). No stand-in: without the core the page shows
+ * neither, rather than words of its own. */
+export function relayUsageView(core: CoreClient, usage: RelayUsage): RelayUsageView | null {
+  return core.tryCall<RelayUsageView | null>("relayUsage.view", { usage }) ?? null;
 }

@@ -27,6 +27,7 @@ public struct MainWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         DevicesBanner(devices: model.devices)
+                        RelayAllowanceBanner(devices: model.devices)
                         if let error = model.rosterError {
                             SpacesDiscoveryNotice(error: error)
                         }
@@ -82,6 +83,17 @@ public struct MainWindow: View {
         }
         // The checklist ticks off what the app already shows.
         .onChange(of: model.checklistSeen, initial: true) { _, seen in model.checklist.send(seen) }
+        // The relay allowance: at once (and on every sign-in or out), every
+        // 5 minutes, and when the app comes to the front.
+        .task(id: model.devices.signedIn) {
+            while !Task.isCancelled {
+                await model.devices.readRelayUsage()
+                try? await Task.sleep(for: DevicesModel.relayUsagePoll)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.devices.readRelayUsage(maxAge: DevicesModel.relayUsageFocusAge) }
+        }
     }
 
     /// The main window's copy of a Devices sheet (Settings has its own).

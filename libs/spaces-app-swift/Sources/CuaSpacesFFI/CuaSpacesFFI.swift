@@ -24996,6 +24996,424 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 }
 
 
+public struct AppRelayAllowanceNotice: Equatable, Hashable {
+    /**
+     * "You've used your free relay allowance for this month. ..."
+     */
+    public var text: String
+    /**
+     * [`UPGRADE`].
+     */
+    public var upgrade: String
+    /**
+     * What Upgrade opens; none: no Upgrade button.
+     */
+    public var upgradeUrl: String?
+    /**
+     * [`DISMISS`].
+     */
+    public var dismiss: String
+    /**
+     * What a dismissal remembers: the month and the reasons. A new month,
+     * or another limit reached, shows the notice again.
+     */
+    public var dismissKey: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "You've used your free relay allowance for this month. ..."
+         */text: String,
+        /**
+         * [`UPGRADE`].
+         */upgrade: String,
+        /**
+         * What Upgrade opens; none: no Upgrade button.
+         */upgradeUrl: String?,
+        /**
+         * [`DISMISS`].
+         */dismiss: String,
+        /**
+         * What a dismissal remembers: the month and the reasons. A new month,
+         * or another limit reached, shows the notice again.
+         */dismissKey: String) {
+        self.text = text
+        self.upgrade = upgrade
+        self.upgradeUrl = upgradeUrl
+        self.dismiss = dismiss
+        self.dismissKey = dismissKey
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRelayAllowanceNotice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRelayAllowanceNotice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRelayAllowanceNotice {
+        return
+            try AppRelayAllowanceNotice(
+                text: FfiConverterString.read(from: &buf),
+                upgrade: FfiConverterString.read(from: &buf),
+                upgradeUrl: FfiConverterOptionString.read(from: &buf),
+                dismiss: FfiConverterString.read(from: &buf),
+                dismissKey: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRelayAllowanceNotice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterString.write(value.upgrade, into: &buf)
+        FfiConverterOptionString.write(value.upgradeUrl, into: &buf)
+        FfiConverterString.write(value.dismiss, into: &buf)
+        FfiConverterString.write(value.dismissKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayAllowanceNotice_lift(_ buf: RustBuffer) throws -> AppRelayAllowanceNotice {
+    return try FfiConverterTypeAppRelayAllowanceNotice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayAllowanceNotice_lower(_ value: AppRelayAllowanceNotice) -> RustBuffer {
+    return FfiConverterTypeAppRelayAllowanceNotice.lower(value)
+}
+
+
+public struct AppRelayUsage: Equatable, Hashable {
+    /**
+     * The relay meters this account (false: no allowance applies).
+     */
+    public var metered: Bool
+    /**
+     * The month counted (`2026-10`).
+     */
+    public var period: String
+    /**
+     * `free`, `pro`, `team`, ...
+     */
+    public var plan: String
+    /**
+     * The team whose allowance is pooled.
+     */
+    public var team: AppRelayUsageTeam?
+    /**
+     * Live sessions now.
+     */
+    public var liveSessions: UInt32
+    /**
+     * Live sessions allowed at once (none: no limit).
+     */
+    public var liveSessionsLimit: UInt32?
+    /**
+     * Relay hours used this month (the team's, when pooled).
+     */
+    public var hoursUsed: Double
+    /**
+     * Relay hours allowed this month (none: no limit).
+     */
+    public var hoursLimit: Double?
+    /**
+     * This account's own relay hours this month.
+     */
+    public var myHoursUsed: Double
+    /**
+     * Past the allowance (sessions keep working).
+     */
+    public var softLimitReached: Bool
+    /**
+     * What is past it: `sessions` and/or `hours`.
+     */
+    public var reasons: [String]
+    /**
+     * Where to get more (https only; see [`checked`]).
+     */
+    public var upgradeUrl: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The relay meters this account (false: no allowance applies).
+         */metered: Bool,
+        /**
+         * The month counted (`2026-10`).
+         */period: String,
+        /**
+         * `free`, `pro`, `team`, ...
+         */plan: String,
+        /**
+         * The team whose allowance is pooled.
+         */team: AppRelayUsageTeam?,
+        /**
+         * Live sessions now.
+         */liveSessions: UInt32,
+        /**
+         * Live sessions allowed at once (none: no limit).
+         */liveSessionsLimit: UInt32?,
+        /**
+         * Relay hours used this month (the team's, when pooled).
+         */hoursUsed: Double,
+        /**
+         * Relay hours allowed this month (none: no limit).
+         */hoursLimit: Double?,
+        /**
+         * This account's own relay hours this month.
+         */myHoursUsed: Double,
+        /**
+         * Past the allowance (sessions keep working).
+         */softLimitReached: Bool,
+        /**
+         * What is past it: `sessions` and/or `hours`.
+         */reasons: [String],
+        /**
+         * Where to get more (https only; see [`checked`]).
+         */upgradeUrl: String?) {
+        self.metered = metered
+        self.period = period
+        self.plan = plan
+        self.team = team
+        self.liveSessions = liveSessions
+        self.liveSessionsLimit = liveSessionsLimit
+        self.hoursUsed = hoursUsed
+        self.hoursLimit = hoursLimit
+        self.myHoursUsed = myHoursUsed
+        self.softLimitReached = softLimitReached
+        self.reasons = reasons
+        self.upgradeUrl = upgradeUrl
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRelayUsage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRelayUsage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRelayUsage {
+        return
+            try AppRelayUsage(
+                metered: FfiConverterBool.read(from: &buf),
+                period: FfiConverterString.read(from: &buf),
+                plan: FfiConverterString.read(from: &buf),
+                team: FfiConverterOptionTypeAppRelayUsageTeam.read(from: &buf),
+                liveSessions: FfiConverterUInt32.read(from: &buf),
+                liveSessionsLimit: FfiConverterOptionUInt32.read(from: &buf),
+                hoursUsed: FfiConverterDouble.read(from: &buf),
+                hoursLimit: FfiConverterOptionDouble.read(from: &buf),
+                myHoursUsed: FfiConverterDouble.read(from: &buf),
+                softLimitReached: FfiConverterBool.read(from: &buf),
+                reasons: FfiConverterSequenceString.read(from: &buf),
+                upgradeUrl: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRelayUsage, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.metered, into: &buf)
+        FfiConverterString.write(value.period, into: &buf)
+        FfiConverterString.write(value.plan, into: &buf)
+        FfiConverterOptionTypeAppRelayUsageTeam.write(value.team, into: &buf)
+        FfiConverterUInt32.write(value.liveSessions, into: &buf)
+        FfiConverterOptionUInt32.write(value.liveSessionsLimit, into: &buf)
+        FfiConverterDouble.write(value.hoursUsed, into: &buf)
+        FfiConverterOptionDouble.write(value.hoursLimit, into: &buf)
+        FfiConverterDouble.write(value.myHoursUsed, into: &buf)
+        FfiConverterBool.write(value.softLimitReached, into: &buf)
+        FfiConverterSequenceString.write(value.reasons, into: &buf)
+        FfiConverterOptionString.write(value.upgradeUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayUsage_lift(_ buf: RustBuffer) throws -> AppRelayUsage {
+    return try FfiConverterTypeAppRelayUsage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayUsage_lower(_ value: AppRelayUsage) -> RustBuffer {
+    return FfiConverterTypeAppRelayUsage.lower(value)
+}
+
+
+public struct AppRelayUsageTeam: Equatable, Hashable {
+    /**
+     * Team id.
+     */
+    public var id: String
+    /**
+     * Seats sharing the allowance.
+     */
+    public var seats: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Team id.
+         */id: String,
+        /**
+         * Seats sharing the allowance.
+         */seats: UInt32) {
+        self.id = id
+        self.seats = seats
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRelayUsageTeam: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRelayUsageTeam: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRelayUsageTeam {
+        return
+            try AppRelayUsageTeam(
+                id: FfiConverterString.read(from: &buf),
+                seats: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRelayUsageTeam, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt32.write(value.seats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayUsageTeam_lift(_ buf: RustBuffer) throws -> AppRelayUsageTeam {
+    return try FfiConverterTypeAppRelayUsageTeam.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayUsageTeam_lower(_ value: AppRelayUsageTeam) -> RustBuffer {
+    return FfiConverterTypeAppRelayUsageTeam.lower(value)
+}
+
+
+public struct AppRelayUsageView: Equatable, Hashable {
+    /**
+     * [`ROW_LABEL`].
+     */
+    public var label: String
+    /**
+     * "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+     * team pool when there is one.
+     */
+    public var line: String
+    /**
+     * "Free plan" (empty when the relay names none).
+     */
+    public var plan: String
+    /**
+     * Past the allowance.
+     */
+    public var notice: AppRelayAllowanceNotice?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * [`ROW_LABEL`].
+         */label: String,
+        /**
+         * "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+         * team pool when there is one.
+         */line: String,
+        /**
+         * "Free plan" (empty when the relay names none).
+         */plan: String,
+        /**
+         * Past the allowance.
+         */notice: AppRelayAllowanceNotice?) {
+        self.label = label
+        self.line = line
+        self.plan = plan
+        self.notice = notice
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRelayUsageView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRelayUsageView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRelayUsageView {
+        return
+            try AppRelayUsageView(
+                label: FfiConverterString.read(from: &buf),
+                line: FfiConverterString.read(from: &buf),
+                plan: FfiConverterString.read(from: &buf),
+                notice: FfiConverterOptionTypeAppRelayAllowanceNotice.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRelayUsageView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.line, into: &buf)
+        FfiConverterString.write(value.plan, into: &buf)
+        FfiConverterOptionTypeAppRelayAllowanceNotice.write(value.notice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayUsageView_lift(_ buf: RustBuffer) throws -> AppRelayUsageView {
+    return try FfiConverterTypeAppRelayUsageView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRelayUsageView_lower(_ value: AppRelayUsageView) -> RustBuffer {
+    return FfiConverterTypeAppRelayUsageView.lower(value)
+}
+
+
 public struct AppRememberedChoice: Equatable, Hashable {
     /**
      * `<app>|<space>`.
@@ -56640,6 +57058,102 @@ fileprivate struct FfiConverterOptionTypeAppPreviewPoint: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppRelayAllowanceNotice: FfiConverterRustBuffer {
+    typealias SwiftType = AppRelayAllowanceNotice?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRelayAllowanceNotice.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRelayAllowanceNotice.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppRelayUsage: FfiConverterRustBuffer {
+    typealias SwiftType = AppRelayUsage?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRelayUsage.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRelayUsage.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppRelayUsageTeam: FfiConverterRustBuffer {
+    typealias SwiftType = AppRelayUsageTeam?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRelayUsageTeam.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRelayUsageTeam.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppRelayUsageView: FfiConverterRustBuffer {
+    typealias SwiftType = AppRelayUsageView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRelayUsageView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRelayUsageView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppReviewView: FfiConverterRustBuffer {
     typealias SwiftType = AppReviewView?
 
@@ -63532,6 +64046,36 @@ public func appRefreshReportFromJson(json: String)throws  -> AppRefreshReport  {
 })
 }
 /**
+ * The account's relay allowance this month (`GET /v1/usage` on the relay
+ * `devices` uses, as `cua usage` reads it) with `account_token`; none
+ * from a relay that meters nothing. Both Spaces apps read it here.
+ */
+public func appRelayUsage(devices: Devices, accountToken: String)async throws  -> AppRelayUsage?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_func_app_relay_usage(FfiConverterTypeDevices_lower(devices),FfiConverterString.lower(accountToken)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeAppRelayUsage.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+/**
+ * Settings' "Relay usage" row and the notice past the allowance; none
+ * when the relay meters nothing.
+ */
+public func appRelayUsageView(usage: AppRelayUsage) -> AppRelayUsageView?  {
+    return try!  FfiConverterOptionTypeAppRelayUsageView.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_relay_usage_view(
+        FfiConverterTypeAppRelayUsage_lower(usage),$0
+    )
+})
+}
+/**
  * `choices` with the sites just sent remembered for `key`.
  */
 public func appReviewRemember(choices: [AppRememberedChoice], key: String, domains: [String]) -> [AppRememberedChoice]  {
@@ -65352,6 +65896,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_refresh_report_from_json() != 63623) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_relay_usage() != 28377) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view() != 38605) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_review_remember() != 9631) {

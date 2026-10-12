@@ -67,6 +67,7 @@ TYPES = [
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
     ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
+    ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "RelayUsageView"]),
 ]
 
 # FFI names that read better than the plain prefix.

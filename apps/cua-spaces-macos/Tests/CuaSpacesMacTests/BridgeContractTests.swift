@@ -199,7 +199,8 @@ struct BridgeContractTests {
     /// fixtures. A method left out says why in `skipped`.
     func cases(space: String) -> [(String, [String: Any])] {
         [
-            ("app.info", [:]), ("session.get", [:]), ("session.signOut", [:]),
+            // The relay allowance before the sign-out below (signed out, it is null).
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
             ("spaces.setPower", ["id": space, "on": true]),

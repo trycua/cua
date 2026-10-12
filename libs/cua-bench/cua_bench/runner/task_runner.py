@@ -273,36 +273,37 @@ class TaskRunner:
         env_container_name = f"cua-env-{task_id}"
         agent_container_name = f"cua-agent-{task_id}"
 
-        # Create task overlay for QEMU types (protects golden image)
-        overlay_path: Optional[Path] = None
-        if not is_simulated and config.get("use_overlays"):
-            overlay_path = self._create_task_overlay(task_id)
-
-        # Track task for cleanup
-        self._running_tasks[task_id] = {
-            "network": network_name,
-            "env_container": env_container_name if not is_simulated else None,
-            "agent_container": agent_container_name,
-            "env_image": config.get("image") if not is_simulated else None,
-            "agent_image": self.agent_image,
-            "remove_images": remove_images_after,
-            "overlay_path": overlay_path,
-            "is_simulated": is_simulated,
-        }
-
-        # Do not let artifacts from an earlier run masquerade as this execution.
-        # Leave unrelated user files alone; only clear known generated receipts.
-        if output_dir:
-            task_output = Path(output_dir)
-            task_output.mkdir(parents=True, exist_ok=True)
-            for receipt_name in ("oracle-result.json", "cleanup-result.json"):
-                (task_output / receipt_name).unlink(missing_ok=True)
-
-        # Track log streaming process for cleanup
+        # Include overlay creation and receipt initialization in lifecycle cleanup.
         log_stream_process = None
         completed_result: Optional[TaskResult] = None
-
+        overlay_path: Optional[Path] = None
         try:
+            # Create task overlay for QEMU types (protects golden image)
+            if not is_simulated and config.get("use_overlays"):
+                overlay_path = self._create_task_overlay(task_id)
+
+            # Track task for cleanup
+            self._running_tasks[task_id] = {
+                "network": network_name,
+                "env_container": env_container_name if not is_simulated else None,
+                "agent_container": agent_container_name,
+                "env_image": config.get("image") if not is_simulated else None,
+                "agent_image": self.agent_image,
+                "remove_images": remove_images_after,
+                "overlay_path": overlay_path,
+                "is_simulated": is_simulated,
+            }
+
+            # Do not let artifacts from an earlier run masquerade as this execution.
+            # Leave unrelated user files alone; only clear known generated receipts.
+            if output_dir:
+                task_output = Path(output_dir)
+                task_output.mkdir(parents=True, exist_ok=True)
+                for receipt_name in ("oracle-result.json", "cleanup-result.json"):
+                    (task_output / receipt_name).unlink(missing_ok=True)
+
+            # Track log streaming process for cleanup
+
             # 1. Create network
             await create_network(network_name)
 

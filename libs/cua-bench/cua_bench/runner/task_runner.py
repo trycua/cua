@@ -495,7 +495,11 @@ class TaskRunner:
                     except Exception as exc:
                         if completed_result is not None:
                             completed_result.success = False
-                            completed_result.error = f"Unable to verify Docker cleanup: {type(exc).__name__}"
+                            detail = f"Unable to verify Docker cleanup: {type(exc).__name__}"
+                            completed_result.error = (
+                                f"{completed_result.error}; {detail}"
+                                if completed_result.error else detail
+                            )
 
     async def run_task_interactively(
         self,

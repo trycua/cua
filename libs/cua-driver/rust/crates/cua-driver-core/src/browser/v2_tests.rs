@@ -713,6 +713,17 @@ struct FixturePlatform {
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    focus: Arc<FixtureFocus>,
+}
+
+/// Foreground model for existing-profile attachment: whether attaching
+/// brings the browser forward on this "platform", which pid is in front,
+/// and which restores core asked for.
+#[derive(Default)]
+struct FixtureFocus {
+    attach_activates_browser: bool,
+    frontmost: StdMutex<Option<i64>>,
+    restores: StdMutex<Vec<(i64, i64)>>,
 }
 
 #[async_trait]
@@ -720,6 +731,25 @@ impl BrowserPlatform for FixturePlatform {
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         self.trusted_input_limited
             .then_some("fixture trusted input raises the standalone window")
+    }
+
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        self.focus
+            .attach_activates_browser
+            .then_some("fixture browser comes to the front to show its consent prompt")
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        *self.focus.frontmost.lock().unwrap()
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        self.focus
+            .restores
+            .lock()
+            .unwrap()
+            .push((previous_pid, browser_pid));
+        true
     }
 
     async fn classify_browser(&self, _pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -939,6 +969,7 @@ async fn fixture_with_platform(
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus: Default::default(),
     }));
     Fixture {
         state,
@@ -993,6 +1024,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(provider.clone()),
     );
@@ -1023,6 +1055,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -1036,6 +1069,50 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
         },
         setup_invoked,
+    )
+}
+
+/// Existing-profile setup fixture whose platform brings the browser forward
+/// on attach, with `frontmost` in front when the call starts.
+async fn foreground_attach_fixture(
+    frontmost: i64,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let focus = Arc::new(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(frontmost)),
+        restores: StdMutex::new(Vec::new()),
+    });
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: focus.clone(),
+        }),
+        Some(provider.clone()),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked,
+        },
+        focus,
+        provider,
     )
 }
 
@@ -1078,6 +1155,7 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus: Default::default(),
     }));
 
     let result = GetBrowserStateTool::new(engine)
@@ -1306,6 +1384,90 @@ async fn approved_existing_profile_setup_reports_exact_side_effects() {
 }
 
 #[tokio::test]
+async fn background_existing_profile_attach_refuses_before_any_visible_effect() {
+    // pid 99 (the user's app) is in front; attaching would bring pid 1 forward.
+    let (f, focus, provider) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(refused["escalation"]["recommended"], "foreground");
+    assert_eq!(refused["status"], "refused");
+    assert_eq!(refused["refusal"]["code"], "background_unavailable");
+    assert_eq!(refused["refusal"]["detail"]["frontmost_pid"], 99);
+    assert_eq!(refused["refusal"]["detail"]["visible_effects"], false);
+    assert!(
+        !f.setup_invoked.load(Ordering::SeqCst),
+        "a background refusal must not open the setup page"
+    );
+    assert!(
+        !provider.consent_seen.load(Ordering::SeqCst),
+        "a background refusal must not ask for consent"
+    );
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front() {
+    let (f, focus, _) = foreground_attach_fixture(1).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], false);
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_brings_the_previous_app_back() {
+    let (f, focus, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+}
+
+#[tokio::test]
+async fn existing_profile_attach_rejects_an_unknown_delivery_mode() {
+    let (f, _, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "auto",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
 async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1325,6 +1487,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -1370,6 +1533,7 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: true,
+            focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),

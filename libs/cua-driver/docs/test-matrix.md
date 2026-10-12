@@ -169,6 +169,7 @@ Windows native harnesses are repo-local applications built from source:
 | Harness | Source test | Coverage |
 | --- | --- | --- |
 | WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows; foreground single-line and multiline text integrity |
+| WinForms modal | `semantic_click_deadline_windows_test.rs` | Synchronous element-token Invoke deadline, single-flight busy refusal, no input replay, four-pattern recovery after modal dismissal, and completed-miss coordinate fallback |
 | WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup; foreground single-line and multiline text integrity |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
 | Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |

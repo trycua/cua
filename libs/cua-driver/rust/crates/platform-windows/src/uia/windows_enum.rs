@@ -40,10 +40,11 @@ use windows::Win32::UI::Accessibility::{
 /// apartment. Safe to ignore — COM is up either way.
 const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 /// Subtree scans: keep the pre-existing interactive operation budget.
-const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
+pub(crate) const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
 /// Health probes can tolerate the same budget without delaying window listing.
 const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiaDeadlineError {
     Timeout,
     Busy,
@@ -132,7 +133,7 @@ where
     run_uia_with_deadline_cancelable(stage, timeout, fallback, |_| f())
 }
 
-fn run_uia_with_deadline_cancelable<T, F>(
+pub(crate) fn run_uia_with_deadline_cancelable<T, F>(
     stage: &'static str,
     timeout: Duration,
     fallback: &'static str,
@@ -161,12 +162,12 @@ where
     )
 }
 
-struct ComInit {
+pub(crate) struct ComInit {
     needs_uninit: bool,
 }
 
 impl ComInit {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
         if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
             tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");

@@ -934,14 +934,24 @@ impl BrowserEngine {
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         let browser_pid = request.pid;
+        // A platform with a self-activation guard attaches in the background
+        // under it instead of refusing.
+        let background_guard = match browser_pid {
+            Some(pid) if !request.foreground && self.platform.frontmost_app_pid() != Some(pid) => {
+                self.platform.guard_background_attach(pid)
+            }
+            _ => None,
+        };
+        let guarded = background_guard.is_some();
         let previous_front = match browser_pid {
-            Some(pid) if request.foreground => self
+            Some(pid) if request.foreground || guarded => self
                 .platform
                 .frontmost_app_pid()
                 .filter(|front| *front != pid),
             _ => None,
         };
-        let mut result = self.attach_existing_profile_checked(request).await;
+        let mut result = self.attach_existing_profile_checked(request, guarded).await;
+        drop(background_guard);
         if let (Some(previous), Some(pid)) = (previous_front, browser_pid) {
             let restored = self.platform.restore_frontmost_app(previous, pid);
             match &mut result {
@@ -1004,6 +1014,7 @@ impl BrowserEngine {
     async fn attach_existing_profile_checked(
         &self,
         request: PrepareRequest,
+        guarded: bool,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         enum ConsentPath {
             Protected,
@@ -1090,7 +1101,7 @@ impl BrowserEngine {
             ));
         }
         self.native_window_checked(pid, window_id).await?;
-        self.existing_profile_background_check(pid, request.foreground)?;
+        self.existing_profile_background_check(pid, request.foreground || guarded)?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
         let mut setup = ExistingProfileSetupOutcome::default();
         let setup_request = ExistingProfileSetupRequest {

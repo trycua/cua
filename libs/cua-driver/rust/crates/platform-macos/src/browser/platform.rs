@@ -275,6 +275,40 @@ impl Default for MacOsBrowserPlatform {
     }
 }
 
+/// Keeps reverting `pid`'s self-activation while alive: re-arms the
+/// key-focus guard every 1.5 s (each lease reverts on drop and then watches
+/// the front process for 2.5 s), and once more when dropped.
+struct SelfActivationGuard {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    pid: i32,
+}
+
+impl SelfActivationGuard {
+    fn start(pid: i32) -> Self {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        std::thread::spawn(move || {
+            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                drop(crate::key_focus_guard::protect(pid));
+                for _ in 0..15 {
+                    if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        Self { stop, pid }
+    }
+}
+
+impl Drop for SelfActivationGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        drop(crate::key_focus_guard::protect(self.pid));
+    }
+}
+
 /// Bring `previous_pid` back to the front when `browser_pid` is in front.
 /// Leaves things alone when some other app took the front in the meantime.
 fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bool {
@@ -798,6 +832,11 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         )
     }
 
+    fn guard_background_attach(&self, browser_pid: i64) -> Option<Box<dyn std::any::Any + Send>> {
+        let pid = i32::try_from(browser_pid).ok()?;
+        Some(Box::new(SelfActivationGuard::start(pid)))
+    }
+
     fn frontmost_app_pid(&self) -> Option<i64> {
         crate::apps::frontmost_pid().map(i64::from)
     }
@@ -1286,6 +1325,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // Turning remote debugging back off reopens Chrome's setup page,
         // which brings Chrome to the front; hand the front back afterwards.
         let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        let _guard = previous_front.map(|_| SelfActivationGuard::start(pid));
         let result = run_committed_consent_cleanup(
             CONSENT_CLEANUP_PASSES,
             || super::consent_ui::dismiss(pid, window_id),

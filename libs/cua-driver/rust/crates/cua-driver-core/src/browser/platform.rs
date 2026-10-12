@@ -386,6 +386,15 @@ pub trait BrowserPlatform: Send + Sync {
         None
     }
 
+    /// Guard a background existing-profile attachment the platform cannot
+    /// keep fully in the background: while the returned value is alive, a
+    /// self-activation of `browser_pid` is reverted as fast as the platform
+    /// can. `None` (the default) means no guard; a platform that returns
+    /// `Some` here attaches in the background instead of refusing.
+    fn guard_background_attach(&self, _browser_pid: i64) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
     /// Pid of the app the user has in front, when the platform can tell.
     fn frontmost_app_pid(&self) -> Option<i64> {
         None

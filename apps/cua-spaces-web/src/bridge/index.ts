@@ -90,7 +90,7 @@ export type * from "./contracts/settings";
 export type * from "./contracts/devices";
 export type * from "./contracts/notifications";
 export * from "./settings-hooks";
-export { NATIVE_ONLY_STEPS, signInCodeText, type SavedOnboarding } from "./onboarding";
+export { hasNotch, passedSteps, signInCodeText, type SavedOnboarding } from "./onboarding";
 export { useConnectCloud, useFirstSpaceOffers, useNewSpaceRequests, useNewSpaceWizard, type ConnectCloudHook, type FirstSpaceHook, type NewSpaceWizardHook } from "./new-space-hooks";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
 export type * from "./contracts/volume";

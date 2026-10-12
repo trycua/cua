@@ -115,6 +115,7 @@ describe.skipIf(!wasmBuilt)("the first run's Cua Volume page", () => {
     act(() => probe.flow.send({ type: "start" }));
     act(() => probe.flow.send({ type: "signin-done" }));
     act(() => probe.flow.send({ type: "agents-done", configured: [] }));
+    act(() => probe.flow.send({ type: "presentation-done" }));
     expect(probe.flow.view?.step).toBe("drive");
     const card = probe.flow.view!.drive!;
     expect(card.label).toBe("Add Cua Volume to Finder");

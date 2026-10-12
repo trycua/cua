@@ -13,6 +13,7 @@ import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
+import { passedSteps } from "./onboarding";
 import type { MachineRow, OnboardingMode, SettingsPage, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
@@ -87,10 +88,6 @@ export interface SessionData extends SessionSnapshot {
   signInUrl: string | null;
 }
 
-
-/** The core's telemetry names of the pages a web host passes through
- * (`NATIVE_ONLY_STEPS`): never on screen here, so never reported. */
-const UNSEEN_PAGES = new Set(["presentation"]);
 
 /** What a persistent agent is doing: paused, a turn running, or waiting. */
 export type AgentState = "running" | "paused" | "idle";
@@ -306,9 +303,10 @@ export class BridgeStore {
 
   /** The events a first-run step means, from the state before it. */
   trackOnboarding(before: OnboardingFlowState, action: OnboardingAction): void {
-    // The pages the web passes through unseen (Menu bar) are not reported.
+    // The pages this host passes through unseen (Menu bar off a Mac) are not reported.
+    const unseen: readonly string[] = passedSteps();
     const seen = telemetryOnboarding(this.core, before, action).filter(
-      (s) => s.type !== "onboarding-page" || !UNSEEN_PAGES.has(s.page),
+      (s) => s.type !== "onboarding-page" || !unseen.includes(s.page),
     );
     void this.telemetry.track(seen);
   }

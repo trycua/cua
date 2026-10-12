@@ -488,7 +488,10 @@ class TaskRunner:
                         )
                         if completed_result is not None and cleanup.get("verified") is not True:
                             completed_result.success = False
-                            completed_result.error = "Task Docker resources not fully cleaned up"
+                            completed_result.error = (
+                                f"{completed_result.error}; Task Docker resources not fully cleaned up"
+                                if completed_result.error else "Task Docker resources not fully cleaned up"
+                            )
                     except Exception as exc:
                         if completed_result is not None:
                             completed_result.success = False

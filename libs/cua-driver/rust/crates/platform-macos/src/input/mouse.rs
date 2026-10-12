@@ -699,7 +699,7 @@ pub fn click_at_xy_chromium(
             step.skylight_window_location.0,
             step.skylight_window_location.1,
         );
-        set_explicit_flags(&event, flags);
+        set_explicit_flags(event, flags);
     };
 
     let post = |event: &CGEvent, _step: &ChromiumClickRouteStep| {

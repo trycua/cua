@@ -81,7 +81,7 @@ export const HOST_COVERAGE = {
   },
   "keyvault.overview": { webkit: { methods: ["keyvault.get"] }, tauri: ["keyvault_overview"] },
   "keyvault.unlock": {
-    webkit: { methods: ["keyvault.unlockVault"], byDesign: "a passphrase never crosses the bridge: native_only" },
+    webkit: { methods: ["keyvault.unlockVault"], byDesign: "the host asks for the passphrase itself: native_only" },
     tauri: ["keyvault_unlock", "keyvault_unlock_passphrase"],
   },
   "keyvault.setUnattended": {

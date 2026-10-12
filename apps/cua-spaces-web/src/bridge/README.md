@@ -189,7 +189,9 @@ speaks it as is:
   `/settings`), and the page goes there.
 - `machines.list` carries `hostnames` (what each relay machine's cua-spacesd
   reported), so a machine and its enrolled device list once.
-- `keyvault.unlock` with a passphrase fails with `native_only`.
+- `keyvault.unlock` and `keyvault.setup` ask for a passphrase in the host's
+  own prompt (a sheet on the Mac app's window, a window of the Electron
+  shell); one sent from the page fails with `native_only`.
   Onboarding stays native. Appearance is kept in the page, and an appearance
   change calls `window.setBackgroundColor`. The host registers ⌘⇧Space
   itself; `settings.get` carries `globalShortcut: {label, registered}`, and

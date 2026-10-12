@@ -517,7 +517,7 @@ export function createWebkitAdapter(
     },
     "keyvault.overview": async () => toKeyvaultOverview(await request<WkKeyvault>("keyvault.get")),
     "keyvault.unlock": async ({ passphrase }) => {
-      if (passphrase) throw new HostError("Enter the passphrase in the Cua Spaces window", "native_only");
+      if (passphrase) throw new HostError("Cua Spaces asks for the passphrase in its own prompt", "native_only");
       await request("keyvault.unlockVault");
       return null;
     },
@@ -579,7 +579,7 @@ export function createWebkitAdapter(
     ...webkitAgentDetailOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
-    ...webkitKeyvaultSetupOps(request, () => new HostError("Enter the passphrase in the Cua Spaces window", "native_only")),
+    ...webkitKeyvaultSetupOps(request, () => new HostError("Cua Spaces asks for the passphrase in its own prompt", "native_only")),
     // Electron draws a Space's video in the page, on a ticket from the
     // host; the Mac app draws it natively.
     ...(electron

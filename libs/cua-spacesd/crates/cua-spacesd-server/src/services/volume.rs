@@ -681,7 +681,9 @@ impl VolumeService for VolumeServiceImpl {
         &self,
         request: Request<AttachVolumeRequest>,
     ) -> Result<GrpcResponse<AttachVolumeResponse>, Status> {
-        let principal = caller(&request).principal;
+        let caller = caller(&request);
+        let issued = caller.account.as_ref().map(|a| a.issued_at);
+        let principal = caller.principal;
         let body = request.into_inner();
         let backend = backend()
             .map_err(|reason| status(Code::FailedPrecondition, ErrorReason::Unspecified, reason))?;
@@ -736,10 +738,13 @@ impl VolumeService for VolumeServiceImpl {
         let ttl = duration(body.ticket_ttl.as_ref())
             .filter(|d| !d.is_zero())
             .unwrap_or(VOLUME_DEFAULT_TTL);
-        let (ticket, _) =
-            self.state
-                .ctx
-                .mint_ticket(TicketScope::Volume, &id, principal.as_ref(), ttl);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Volume,
+            &id,
+            principal.as_ref(),
+            issued,
+            ttl,
+        );
         *self.state.current.lock().expect("volume") = Some(Arc::new(Session {
             id: id.clone(),
             hub,

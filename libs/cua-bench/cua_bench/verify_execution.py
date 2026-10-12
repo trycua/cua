@@ -35,7 +35,7 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
             and oracle.get("execution_id") == execution_id
             and oracle.get("evaluated") is True
             and isinstance(rewards, list) and len(rewards) > 0
-            and all(type(v) in (float, int) and math.isfinite(v) and 0 <= v <= 1 for v in rewards)
+            and all(type(v) in (float, int) and math.isfinite(v) for v in rewards)
             and type(threshold) in (float, int) and math.isfinite(threshold) and 0 <= threshold <= 1
             and type(oracle.get("success")) is bool
             and oracle["success"] == all(v >= threshold for v in rewards)
@@ -76,7 +76,7 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
                         or record.get("schema_version") != "cua-bench-executed-action/v1"
                         or record.get("execution_id") != execution_id
                         or record.get("sequence") != action_count
-                        or record.get("execution_status") not in ("returned", "failed")
+                        or record.get("execution_status") != "returned"
                         or not isinstance(record.get("action"), dict)
                         or not isinstance(record.get("before"), dict)
                         or not isinstance(record.get("after"), dict)

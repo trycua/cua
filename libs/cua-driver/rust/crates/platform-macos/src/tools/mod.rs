@@ -13,6 +13,7 @@ mod kill_app;
 mod launch_app;
 mod list_apps;
 mod list_windows;
+mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;

@@ -39,7 +39,13 @@ fn def() -> &'static ToolDef {
                fronting or raising it — uses the macOS 14+ auth-message envelope so \
                Chromium/Electron accept it as trusted live input. With an AX target, \
                focus that exact element first. No top-level focus steal. \
-               `window_id` here only targets the combo; it does not raise.\n\
+               `window_id` here only targets the combo; it does not raise. Background \
+               key events never reach a native app's menus, so when the combo is a \
+               menu item's key equivalent (cmd+s, cmd+w, ...) and the app is not in \
+               front, that menu item runs through accessibility instead (a disabled \
+               Save is saved through the app's scripting interface and verified on \
+               disk); a menu item macOS keeps disabled in the background is refused \
+               with `background_unavailable`, and no keys are sent.\n\
              • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
@@ -270,6 +276,55 @@ impl Tool for HotkeyTool {
             window_id,
         ) {
             return error;
+        }
+
+        // ── Menu key equivalents in a background app ──
+        // Background key events reach a window's views but never its app's
+        // menu key equivalents, so a background cmd+s to TextEdit saved
+        // nothing while reporting "Pressed". When the combo is a menu item's
+        // key equivalent in a native app that is not in front, run that menu
+        // item in the background instead (verified for Save), or refuse when
+        // macOS keeps it disabled. No key events are sent on this route.
+        if !fg && px.is_none() {
+            if let (Some(wid), Some(combo)) = (
+                window_id,
+                super::menu_equivalent::Combo::parse(&modifiers, &key),
+            ) {
+                let menu_item = tokio::task::spawn_blocking(move || {
+                    let native = !super::type_text::is_browser_pid(pid)
+                        && !crate::browser::electron_js::ElectronJs::is_electron(pid);
+                    let in_front = apps::frontmost_pid() == Some(pid);
+                    if native && !in_front {
+                        super::menu_equivalent::find(pid, &combo)
+                    } else {
+                        None
+                    }
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(item) = menu_item {
+                    if let Some(ptr) = element_ptr {
+                        // The menu command acts on the focused element.
+                        let focused =
+                            tokio::task::spawn_blocking(move || focus_hotkey_element(pid, ptr))
+                                .await;
+                        if !matches!(focused, Ok(Ok(()))) {
+                            return ToolResult::error(
+                                "hotkey: the requested element did not take focus, so its menu \
+                                 command was not run.",
+                            );
+                        }
+                    }
+                    return super::invoke_menu::run_in_background(
+                        pid,
+                        wid,
+                        item.path,
+                        super::invoke_menu::MenuRequest::KeyEquivalent(key_display),
+                    )
+                    .await;
+                }
+            }
         }
 
         // ── Exact-target background gate (macOS background input v1) ──

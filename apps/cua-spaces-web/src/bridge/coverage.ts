@@ -39,6 +39,7 @@ import { HOST_SETUP_COVERAGE } from "./ops/host-setup";
 import { SPACE_DETAIL_COVERAGE } from "./ops/space-detail";
 import { STREAM_COVERAGE } from "./ops/stream";
 import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
+import { PRESENCE_COVERAGE } from "./ops/presence";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
 
@@ -157,6 +158,7 @@ export const HOST_COVERAGE = {
   ...STARTUP_COVERAGE,
   ...STREAM_COVERAGE,
   ...RELAY_USAGE_COVERAGE,
+  ...PRESENCE_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 
 /**

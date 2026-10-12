@@ -21,7 +21,7 @@ import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, notchThumbnail, openSpaceFromNotch, type NotchFeedUi } from "./notch-feed";
+import { dropOnSpace, feedNotch, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
@@ -182,12 +182,17 @@ async function startNativeHost(showRoute: (route: string) => void) {
       openAccess: () => showRoute("/keyvault?view=access"),
       // Hides the indicator and the tiles' key; nothing is revoked or wiped.
       dismissAccess: () => model.keyvault.dismiss(),
-      // No window-drag monitor yet (no `teleport` below), so no drag commits.
-      teleport: (spaceId) => showRoute(`/spaces/${encodeURIComponent(spaceId)}`),
+      // A window dragged onto a tile: the Teleport review for its app there.
+      teleport: (spaceId, app) => void teleportFromNotch(model, notchUi, spaceId, app),
       drop: (spaceId, paths) => void dropOnSpace(model, notchUi, spaceId, paths),
     },
+    teleport: notchTeleport(() => model.backend.teleportHandle()),
   });
-  if (notch) feedNotch(notch, model);
+  if (notch) {
+    feedNotch(notch, model);
+    // Window drags need the SDK: look again once it is in.
+    if (!model.startup.isReady) model.startup.onReady.push(() => notch.recheckPermission());
+  }
   return { env, bridge, background };
 }
 

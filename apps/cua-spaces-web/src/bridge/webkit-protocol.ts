@@ -151,8 +151,9 @@ export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
  * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
  * `onboarding.complete`); the Mac app draws video and its first run
  * natively. It also reads the account's relay allowance
- * (`relay.usage`, `ops/relay-usage.ts`). */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "relay.usage"] as const;
+ * (`relay.usage`, `ops/relay-usage.ts`) and joins presence for the video
+ * the page draws (`presence.*`, `ops/presence.ts`). */
+export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {

@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { helperPath, notchSupported, startNotch, type NotchActions } from "../src/notch";
+import { notchTeleport } from "../src/notch-feed";
 import { fakeCore, manualClock, MOTION } from "./fakeNotchCore";
 
 const require = createRequire(import.meta.url);
@@ -226,4 +227,30 @@ describe("the notch end to end (fake helper)", () => {
     clock.advance(120_000);
     expect(children).toHaveLength(1);
   });
+});
+
+describe("window drags onto the notch", () => {
+    it("follows window drags with the SDK's teleport handle once there is one", async () => {
+      let handle: { windowDragSupported(): boolean; windowDragPermitted(): boolean; requestWindowDragPermission(): boolean; startWindowDrag: ReturnType<typeof vi.fn>; captureWindowThumbnail(): ArrayBuffer } | null = null;
+      const t = notchTeleport(() => handle as never);
+      expect(t.windowDragSupported()).toBe(false);
+      expect(t.windowDragPermitted()).toBe(false);
+      await expect(t.startWindowDrag({ onEvent() {} })).rejects.toThrow(/not running/);
+      const monitor = { stop: vi.fn() };
+      handle = {
+        windowDragSupported: () => true,
+        windowDragPermitted: () => true,
+        requestWindowDragPermission: () => true,
+        startWindowDrag: vi.fn(() => monitor),
+        captureWindowThumbnail: () => new ArrayBuffer(3),
+      };
+      expect(t.windowDragSupported()).toBe(true);
+      const listener = { onEvent() {} };
+      const started = t.startWindowDrag(listener);
+      // Not inside the caller's own call: the event tap may take a while to start.
+      expect(handle.startWindowDrag).not.toHaveBeenCalled();
+      expect(await started).toBe(monitor);
+      expect(handle.startWindowDrag).toHaveBeenCalledWith(listener);
+      expect((t.captureWindowThumbnail(7, 320) as ArrayBuffer).byteLength).toBe(3);
+    });
 });

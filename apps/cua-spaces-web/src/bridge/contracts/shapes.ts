@@ -59,6 +59,7 @@ import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestI
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
 import type { HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
@@ -560,6 +561,25 @@ const KvGrantShape = ref(
 const hostStatusOrNull = HostStatusShape;
 const agentSetupRows = list(AgentSetupRowShape);
 const shares = list(ShareShape);
+const PresenceParticipantShape = ref(
+  "PresenceParticipant",
+  obj<PresenceParticipantWire>()({ participantId: str, principalId: str, displayName: str, color: str, kind: str }),
+);
+const PresenceCursorShape = ref(
+  "PresenceCursor",
+  obj<PresenceCursorWire>()({
+    displayId: str,
+    windowId: opt(str),
+    x: num,
+    y: num,
+    visible: bool,
+    pressed: bool,
+    shape: str,
+    shapeSource: str,
+    atMs: num,
+    receivedMs: num,
+  }),
+);
 
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
@@ -720,6 +740,15 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       upgradeUrl: nullable(str),
     }),
   ),
+  "presence.join": obj<PresenceJoinInfo>()({
+    handle: str,
+    me: PresenceParticipantShape,
+    members: list(object({ participant: PresenceParticipantShape, cursor: opt(PresenceCursorShape) })),
+    delayMs: num,
+    datagrams: bool,
+  }),
+  "presence.publish": nul,
+  "presence.leave": nul,
 
   "about.get": AboutShape,
   "about.set": AboutShape,

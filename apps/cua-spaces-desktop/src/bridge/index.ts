@@ -23,6 +23,7 @@ import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
 import { notificationsMethods } from "./notifications";
 import { onboardingMethods } from "./onboarding";
+import { presenceMethods } from "./presence";
 import { relayUsageMethods } from "./relay-usage";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
@@ -64,6 +65,7 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  presenceMethods,
 ];
 
 export interface Bridge {

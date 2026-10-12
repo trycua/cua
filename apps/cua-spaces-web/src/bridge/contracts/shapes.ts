@@ -23,7 +23,7 @@
  */
 
 import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
-import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice } from "./devices";
+import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode } from "./devices";
 import type {
   CancelOutcome,
   DaemonStatus,
@@ -272,6 +272,23 @@ const DevicesShape = ref(
     machines: opt(list(object({ id: str, name: opt(str), confirmed: opt(bool) }))),
     readError: optNull(str),
     deviceName: optNull(str),
+  }),
+);
+
+const PairingCodeShape = ref(
+  "PairingCode",
+  obj<PairingCode>()({
+    id: str,
+    code: nullable(str),
+    url: nullable(str),
+    installSh: nullable(str),
+    installPowershell: nullable(str),
+    state: oneOf("active", "used", "revoked", "expired"),
+    team: nullable(str),
+    createdAt: num,
+    expiresAt: num,
+    usedAt: nullable(num),
+    machine: nullable(str),
   }),
 );
 
@@ -719,6 +736,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "devices.rename": nul,
   "devices.revoke": nul,
   "devices.confirmMachine": nul,
+  "devices.createPairingCode": PairingCodeShape,
+  "devices.pairingCodes": list(PairingCodeShape),
+  "devices.revokePairingCode": nul,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
@@ -1011,6 +1031,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "devices.rename": nul,
   "devices.revoke": nul,
   "devices.confirmMachine": nul,
+  "devices.createPairingCode": PairingCodeShape,
+  "devices.pairingCodes": list(PairingCodeShape),
+  "devices.revokePairingCode": nul,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),

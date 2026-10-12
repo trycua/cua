@@ -21,6 +21,13 @@ public protocol DevicesRunning: AnyObject, Sendable {
     /// Vouches for a machine that registered without an enrolled device's
     /// proof (S5), from this enrolled device.
     func confirmMachine(id: String) async throws
+    /// A one-time link, QR code and install commands that add another
+    /// computer to the account (or to `team`), from this enrolled device.
+    func createPairingCode(team: String?) async throws -> PairingCode
+    /// The account's pairing codes, newest first (without the codes).
+    func pairingCodes() async throws -> [PairingCode]
+    /// Revokes an unused pairing code (`pc_…`).
+    func revokePairingCode(id: String) async throws
 }
 
 /// The SDK's `Devices` for the signed-in session (key in the session's vault,
@@ -56,6 +63,11 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
     public func revoke(id: String) async throws { _ = try await inner.revoke(id: id) }
     public func confirmMachine(id: String) async throws { _ = try await inner.confirmMachine(machineId: id) }
+    public func createPairingCode(team: String?) async throws -> PairingCode {
+        try await inner.createPairingCode(team: team, ttlSecs: nil)
+    }
+    public func pairingCodes() async throws -> [PairingCode] { try await inner.pairingCodes() }
+    public func revokePairingCode(id: String) async throws { try await inner.revokePairingCode(id: id) }
 }
 
 /// An in-memory account on a relay (fixtures, tests): this Mac enrolled,
@@ -155,6 +167,39 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
     public func confirmMachine(id: String) async throws {
         calls.append("confirm-machine:\(id)")
         for i in current.machines.indices where current.machines[i].id == id { current.machines[i].confirmed = true }
+    }
+
+    /// The account's pairing codes as the relay keeps them (with the codes).
+    public var pairing: [PairingCode] = []
+
+    public func createPairingCode(team: String?) async throws -> PairingCode {
+        calls.append("create-pairing-code:\(team ?? "")")
+        let now = UInt64(Date().timeIntervalSince1970)
+        let code = "K7QM-4XPB-\(String(format: "%04d", pairing.count + 1))"
+        let made = PairingCode(
+            id: "pc_fixture\(pairing.count + 1)", code: code, url: "https://spaces.cua.ai/add/\(code)",
+            installSh: "curl -fsSL https://cua.ai/install.sh | sh -s -- --pair \(code)",
+            installPowershell: "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair \(code)",
+            state: "active", team: team, createdAt: now, expiresAt: now + 1800, usedAt: nil, machine: nil)
+        pairing.insert(made, at: 0)
+        return made
+    }
+
+    public func pairingCodes() async throws -> [PairingCode] {
+        calls.append("pairing-codes")
+        return pairing.map {
+            var listed = $0
+            listed.code = nil
+            listed.url = nil
+            listed.installSh = nil
+            listed.installPowershell = nil
+            return listed
+        }
+    }
+
+    public func revokePairingCode(id: String) async throws {
+        calls.append("revoke-pairing-code:\(id)")
+        for i in pairing.indices where pairing[i].id == id { pairing[i].state = "revoked" }
     }
 }
 

@@ -104,7 +104,8 @@ extension WebUIBridge {
 
         // Settings, Devices
         case "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
-             "devices.revoke", "devices.confirmMachine":
+             "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
+             "devices.revokePairingCode":
             return try await devices(method, args)
 
         // Settings, Storage
@@ -326,6 +327,15 @@ extension WebUIBridge {
             try await relay.revoke(id: try string(args, "id"))
         case "devices.confirmMachine":
             try await relay.confirmMachine(id: try string(args, "id"))
+        // "Add a machine" by link or QR code: the relay keeps the code.
+        case "devices.createPairingCode":
+            let team = (args["team"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return BridgeValue.encode(try await relay.createPairingCode(team: team))
+        case "devices.pairingCodes":
+            return BridgeValue.encode(try await relay.pairingCodes())
+        case "devices.revokePairingCode":
+            try await relay.revokePairingCode(id: try string(args, "id"))
+            return NSNull()
         default:
             throw Failure.unimplemented(method)
         }

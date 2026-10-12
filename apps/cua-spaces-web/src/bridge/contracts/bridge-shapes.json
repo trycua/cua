@@ -1515,6 +1515,83 @@
         "body"
       ]
     },
+    "PairingCode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installSh": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installPowershell": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "enum": [
+            "active",
+            "used",
+            "revoked",
+            "expired"
+          ]
+        },
+        "team": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "expiresAt": {
+          "type": "number"
+        },
+        "usedAt": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "url",
+        "installSh",
+        "installPowershell",
+        "state",
+        "team",
+        "createdAt",
+        "expiresAt",
+        "usedAt",
+        "machine"
+      ]
+    },
     "RemoteWindow": {
       "type": "object",
       "properties": {
@@ -3736,6 +3813,9 @@
     "devices.confirmMachine": {
       "type": "null"
     },
+    "devices.createPairingCode": {
+      "$ref": "#/$defs/PairingCode"
+    },
     "devices.enroll": {
       "type": "object",
       "properties": {
@@ -3757,10 +3837,19 @@
     "devices.get": {
       "$ref": "#/$defs/DevicesInput"
     },
+    "devices.pairingCodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PairingCode"
+      }
+    },
     "devices.rename": {
       "type": "null"
     },
     "devices.revoke": {
+      "type": "null"
+    },
+    "devices.revokePairingCode": {
       "type": "null"
     },
     "experiments.get": {
@@ -5086,6 +5175,9 @@
     "devices.confirmMachine": {
       "type": "null"
     },
+    "devices.createPairingCode": {
+      "$ref": "#/$defs/PairingCode"
+    },
     "devices.enroll": {
       "type": "object",
       "properties": {
@@ -5107,10 +5199,19 @@
     "devices.get": {
       "$ref": "#/$defs/DevicesInput"
     },
+    "devices.pairingCodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PairingCode"
+      }
+    },
     "devices.rename": {
       "type": "null"
     },
     "devices.revoke": {
+      "type": "null"
+    },
+    "devices.revokePairingCode": {
       "type": "null"
     },
     "host.action": {

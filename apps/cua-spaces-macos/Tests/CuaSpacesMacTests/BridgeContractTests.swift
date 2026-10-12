@@ -215,6 +215,8 @@ struct BridgeContractTests {
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
+            ("devices.createPairingCode", ["team": NSNull()]), ("devices.pairingCodes", [:]),
+            ("devices.revokePairingCode", ["id": "pc_fixture1"]),
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),

@@ -143,6 +143,9 @@ export const HOST_COVERAGE = {
   "devices.rename": { webkit: { methods: ["devices.rename"] }, tauri: ST["devices.rename"] },
   "devices.revoke": { webkit: { methods: ["devices.revoke"] }, tauri: ST["devices.revoke"] },
   "devices.confirmMachine": { webkit: { methods: ["devices.confirmMachine"] }, tauri: ST["devices.confirmMachine"] },
+  "devices.createPairingCode": { webkit: { methods: ["devices.createPairingCode"] }, tauri: ST["devices.createPairingCode"] },
+  "devices.pairingCodes": { webkit: { methods: ["devices.pairingCodes"] }, tauri: ST["devices.pairingCodes"] },
+  "devices.revokePairingCode": { webkit: { methods: ["devices.revokePairingCode"] }, tauri: ST["devices.revokePairingCode"] },
   "storage.get": { webkit: { methods: ["storage.get"] }, tauri: ST["storage.get"] },
   "storage.run": { webkit: { methods: ["storage.run"] }, tauri: ST["storage.run"] },
   // Notifications (ops/notifications.ts).

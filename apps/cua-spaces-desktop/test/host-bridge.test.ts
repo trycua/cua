@@ -185,6 +185,9 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["devices.rename", { id: "dev_old", name: "Old box" }],
       ["devices.revoke", { id: "dev_old" }],
       ["devices.confirmMachine", { id: "m2" }],
+      ["devices.createPairingCode", { team: null }],
+      ["devices.pairingCodes", {}],
+      ["devices.revokePairingCode", { id: "pc_fixture1" }],
       ["storage.get", {}],
       ["storage.run", { request: { kind: "clear-cache" } }],
       ["notifications.list", {}],
@@ -220,6 +223,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "devices.rename": { id: "dev_old", name: "Old box" },
       "devices.revoke": { id: "dev_old" },
       "devices.confirmMachine": { id: "m2" },
+      "devices.createPairingCode": { team: null },
+      "devices.revokePairingCode": { id: "pc_fixture1" },
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
@@ -440,6 +445,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await call("devices.revoke", { id: "dev_old" });
     await call("devices.confirmMachine", { id: "m2" });
     expect(relay.calls.slice(-2)).toEqual(["revoke:dev_old", "confirm-machine:m2"]);
+  });
+
+  it("makes, lists and revokes the codes that add a machine", async () => {
+    const made = (await call("devices.createPairingCode", { team: null })) as Record<string, unknown>;
+    expect(made).toMatchObject({ id: "pc_fixture1", state: "active", team: null, url: expect.stringContaining("/add/"), installSh: expect.stringContaining("--pair") });
+    expect(typeof made.expiresAt).toBe("number");
+    const listed = (await call("devices.pairingCodes", {})) as Record<string, unknown>[];
+    expect(listed).toEqual([expect.objectContaining({ id: "pc_fixture1", code: null, url: null })]);
+    expect(await call("devices.revokePairingCode", { id: "pc_fixture1" })).toBeNull();
+    expect(relay.calls.slice(-3)).toEqual(["create-pairing-code:", "pairing-codes", "revoke-pairing-code:pc_fixture1"]);
   });
 
   it("announces a device asking to join once per launch", async () => {

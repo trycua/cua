@@ -735,6 +735,11 @@ public final class PendingDevices: DevicesRunning, @unchecked Sendable {
     public func rename(id: String, name: String) async throws { try await d().rename(id: id, name: name) }
     public func revoke(id: String) async throws { try await d().revoke(id: id) }
     public func confirmMachine(id: String) async throws { try await d().confirmMachine(id: id) }
+    public func createPairingCode(team: String?) async throws -> PairingCode {
+        try await d().createPairingCode(team: team)
+    }
+    public func pairingCodes() async throws -> [PairingCode] { try await d().pairingCodes() }
+    public func revokePairingCode(id: String) async throws { try await d().revokePairingCode(id: id) }
 }
 
 /// This machine's host service until the SDK is in.

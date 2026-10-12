@@ -6030,9 +6030,9 @@ impl Tool for SetValueTool {
                 `type_text` — UIA ValuePattern writes are ignored by some web inputs (same \
                 caveat as Swift's `AXValue`-vs-WebKit).".into(),
             input_schema: json!({
-                "type":"object","required":["pid","value"],"properties":{
+                "type":"object","required":["value"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID."},
+                    "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                     "window_id":{"type":"integer","description":"HWND of the window. Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."},
@@ -6896,11 +6896,11 @@ impl Tool for DoubleClickTool {
                 returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in \
                 quick succession to the deepest child window at that point.\n\n\
                 Exactly one of `element_token` or (`x` AND `y`) must be provided. \
-                `pid` is required in both modes. The macOS-only `modifier` field is accepted for \
+                `pid` is required with `x`, `y`; an `element_token` carries its own pid. The macOS-only `modifier` field is accepted for \
                 parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"HWND for the target window. Omit when element_token is supplied (the token carries it)."},
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
@@ -7262,12 +7262,12 @@ impl Tool for RightClickTool {
                 returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest \
                 child window at that point.\n\n\
                 Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is \
-                required in both modes. \
+                required with `x`, `y`; an `element_token` carries its own pid. \
                 `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't \
                 propagate modifier-key state).".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"HWND for the target window. Omit when element_token is supplied (the token carries it)."},
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},

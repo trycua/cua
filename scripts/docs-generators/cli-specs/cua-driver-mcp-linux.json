@@ -648,7 +648,7 @@
       "type": "boolean"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -668,9 +668,7 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "double_click",
@@ -721,7 +719,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -741,9 +739,7 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "right_click",
@@ -1502,7 +1498,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -1519,7 +1515,6 @@
      }
     },
     "required": [
-     "pid",
      "value"
     ],
     "type": "object"

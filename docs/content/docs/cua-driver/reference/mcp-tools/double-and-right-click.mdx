@@ -67,7 +67,7 @@ Double-click against a target pid. Two addressing modes:
 
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`): posts two WM_LBUTTONDOWN/UP pairs in quick succession to the deepest child window at that point.
 
-Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required in both modes. The macOS-only `modifier` field is accepted for parity (no-op on Windows: PostMessage doesn't propagate modifier-key state).
+Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid. The macOS-only `modifier` field is accepted for parity (no-op on Windows: PostMessage doesn't propagate modifier-key state).
 
 **Windows parameters**
 
@@ -88,14 +88,8 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="double_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="double_click--pid"></span>`pid` | `integer` | required | Target process ID. |
+| <span id="double_click--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
 | <span id="double_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-
-**Example arguments**
-
-```json
-{"pid":1}
-```
 
 ## `right_click`
 
@@ -110,7 +104,7 @@ Right-click against a target pid. Two addressing modes:
 
 - `x`, `y`: synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).
 
-Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always required.
+Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid.
 
 **macOS parameters**
 
@@ -149,7 +143,7 @@ Right-click against a target pid. Two addressing modes:
 
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`): posts WM_RBUTTONDOWN/UP to the deepest child window at that point.
 
-Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required in both modes. `modifier` is accepted for parity (no-op on Windows: PostMessage doesn't propagate modifier-key state).
+Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid. `modifier` is accepted for parity (no-op on Windows: PostMessage doesn't propagate modifier-key state).
 
 **Windows parameters**
 
@@ -170,11 +164,5 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="right_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="right_click--pid"></span>`pid` | `integer` | required | Target process ID. |
+| <span id="right_click--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
 | <span id="right_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-
-**Example arguments**
-
-```json
-{"pid":1}
-```

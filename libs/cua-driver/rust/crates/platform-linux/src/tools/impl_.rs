@@ -9172,9 +9172,9 @@ impl Tool for SetValueTool {
             name: "set_value".into(),
             description: "Set value of an AT-SPI element via SetValue action.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","value"],"properties":{
+                "type":"object","required":["value"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID."},
+                    "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                     "window_id":{"type":"integer","description":"Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "value":{"type":"string","description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
@@ -10186,10 +10186,10 @@ impl Tool for DoubleClickTool {
                 (target_occluded), one covered by this app's own dialog is retargeted to it \
                 (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it)."},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
@@ -10472,10 +10472,10 @@ impl Tool for RightClickTool {
                 title}`): call get_window_state(pid, window_id=<that id>) to index its menu items \
                 and click them by element_token. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it)."},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},

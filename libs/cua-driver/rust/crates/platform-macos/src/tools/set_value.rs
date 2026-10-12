@@ -51,10 +51,10 @@ fn def() -> &'static ToolDef {
             A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "value"],
+            "required": ["value"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "window_id": {
                     "type": "integer",
                     "description": "Window ID. Omit with element_token."

@@ -431,6 +431,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "experiments": BridgeValue.encode(model.experimentsPage),
             // Settings → About's channel; null while this build has no updater.
             "updateChannel": model.updates.updater == nil ? NSNull() : (model.updates.channel == .beta ? "beta" : "stable"),
+            // ⌘⇧Space, and whether the system gave it (tried again on each read).
+            "globalShortcut": GlobalShortcut.installed?.bridgeValue ?? NSNull(),
         ]
     }
 

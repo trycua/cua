@@ -1945,6 +1945,24 @@
               }
             }
           }
+        },
+        "globalShortcut": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "registered": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "label",
+            "registered"
+          ]
         }
       },
       "required": [
@@ -3294,6 +3312,24 @@
             "stable",
             "beta",
             null
+          ]
+        },
+        "globalShortcut": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "registered": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "label",
+            "registered"
           ]
         }
       },

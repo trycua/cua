@@ -309,6 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             teleport.prefetch()
         }
         notch = controller
+        // ⌘⇧Space from any app: the window of the UI in use, in front.
+        GlobalShortcut.install(model)
         AppEnvironment.applyStartView(model, notch: controller)
         // New UI on: its window is the one a launch opens (the main window
         // is suppressed); not when opened at login.

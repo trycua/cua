@@ -17,6 +17,7 @@ import {
   type SettingsPage as CorePage,
   type SettingsRow as CoreRow,
   type SettingsSection as CoreSection,
+  type GlobalShortcut,
 } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
@@ -29,7 +30,7 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { lazy, Suspense } from "react";
 import { toastError } from "@/components/ui/toast";
-import { showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
+import { globalShortcutLine, showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
 import { keyvaultRows } from "@/lib/keyvault";
 import { DEFAULT_KEYBINDINGS, type KeybindingCommand } from "@/lib/keybindings";
 import { useTheme, type ThemePreference } from "@/lib/theme";
@@ -135,7 +136,7 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         {/* The notch is the macOS app's. */}
         {general ? rows(general, (r) => r.id === "notch" && !mac) : null}
         <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
-        {mac ? <SettingsRow label="Global shortcut" control={<span className="text-[13px] text-muted-foreground">{settings?.values.hotkey ?? ""}</span>} /> : null}
+        <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
 
       <StorageSection />
@@ -159,6 +160,20 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         ))}
       </SettingsGroup>
     </>
+  );
+}
+
+/** The host's global shortcut (the macOS hosts register one), and whether the system gave it. */
+function GlobalShortcutRow({ shortcut }: { shortcut: GlobalShortcut | null | undefined }) {
+  if (!shortcut) return null;
+  return (
+    <div data-global-shortcut={shortcut.registered ? "registered" : "taken"}>
+      <SettingsRow
+        label="Global shortcut"
+        description={globalShortcutLine(shortcut)}
+        control={<span className="text-[13px] text-muted-foreground">{shortcut.label}</span>}
+      />
+    </div>
   );
 }
 
@@ -198,23 +213,21 @@ function FallbackSettingsPage() {
         <LaunchAtLoginRows />
         <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
         {showsMacShellSettings() ? (
-          <>
-            <SettingsRow
-              label="Show in menu bar"
-              description="Open Cua Spaces from the menu bar instead of the notch."
-              htmlFor="menuBar"
-              control={
-                <Switch
-                  id="menuBar"
-                  checked={values?.menuBar ?? false}
-                  disabled={!values}
-                  onCheckedChange={(on) => void updateSetting("menuBar", on).catch(fail("Couldn't change the menu bar setting"))}
-                />
-              }
-            />
-            <SettingsRow label="Global shortcut" control={<span className="text-[13px] text-muted-foreground">{values?.hotkey ?? ""}</span>} />
-          </>
+          <SettingsRow
+            label="Show in menu bar"
+            description="Open Cua Spaces from the menu bar instead of the notch."
+            htmlFor="menuBar"
+            control={
+              <Switch
+                id="menuBar"
+                checked={values?.menuBar ?? false}
+                disabled={!values}
+                onCheckedChange={(on) => void updateSetting("menuBar", on).catch(fail("Couldn't change the menu bar setting"))}
+              />
+            }
+          />
         ) : null}
+        <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
 
       <StorageSection />

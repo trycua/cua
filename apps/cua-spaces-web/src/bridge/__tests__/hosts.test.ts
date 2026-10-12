@@ -504,6 +504,14 @@ describe("webkit adapter", () => {
     expect(snap.defaultLocation).toMatchObject({ source: "env", env: "CUA_ON" });
   });
 
+  it("reads the global shortcut the host registered, and none from a host without one", async () => {
+    const taken = { label: "\u2318\u21e7Space", registered: false };
+    const withShortcut = createWebkitAdapter(webkitHost(() => ok({ ...settingsPage, globalShortcut: taken })).win);
+    expect((await withShortcut.call("settings.get", {})).globalShortcut).toEqual(taken);
+    const without = createWebkitAdapter(webkitHost(() => ok(settingsPage)).win);
+    expect((await without.call("settings.get", {})).globalShortcut).toBeNull();
+  });
+
   it("reads launch at login and the update channel when the host sends them, and sets them by row", async () => {
     const { win, sent } = webkitHost(() => ok(settingsWithLogin));
     const a = createWebkitAdapter(win);

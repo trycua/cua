@@ -96,6 +96,17 @@ export interface SettingsSnapshot {
    * laid them out; each absent or null one is not this host's, and the page
    * leaves its row out. Changed with `settings.choose`. */
   hostSettings?: HostSettings;
+  /** The global shortcut that brings the app to the front, as the host
+   * registered it with the system. Absent or null: this host has none. */
+  globalShortcut?: GlobalShortcut | null;
+}
+
+/** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */
+export interface GlobalShortcut {
+  /** As glyphs (`⌘⇧Space`). */
+  label: string;
+  /** False when the system refused it (another app holds the same keys). */
+  registered: boolean;
 }
 
 /** `settings::SettingsInput`'s host-only fields: the core lays out their rows. */

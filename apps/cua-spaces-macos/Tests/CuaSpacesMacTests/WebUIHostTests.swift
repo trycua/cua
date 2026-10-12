@@ -269,6 +269,24 @@ struct WebUIHostTests {
         #expect(model.updates.channel == .beta)
     }
 
+    @Test func theGlobalShortcutSaysWhetherTheSystemGaveIt() async throws {
+        let (bridge, _) = bridge()
+        defer { GlobalShortcut.installed = nil }
+        GlobalShortcut.installed = nil
+        #expect((try await bridge.handle("settings.get", [:]) as? [String: Any])?["globalShortcut"] is NSNull)
+        // Another app holds the keys at launch, then lets them go: each read tries again.
+        var answers = [false, true]
+        var tries = 0
+        GlobalShortcut.installed = GlobalShortcut { tries += 1; return answers.removeFirst() }
+        GlobalShortcut.installed?.ensure()
+        let refused = (try await bridge.handle("settings.get", [:]) as? [String: Any])?["globalShortcut"] as? [String: Any]
+        #expect(refused?["label"] as? String == "\u{2318}\u{21e7}Space")
+        #expect(refused?["registered"] as? Bool == true)
+        #expect(tries == 2)
+        _ = try await bridge.handle("settings.get", [:])
+        #expect(tries == 2)
+    }
+
     @Test func everyPageOperationIsRouted() {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
                   "agents.setupDriver", "about.set", "loginItem.set", "devices.approve", "storage.run",

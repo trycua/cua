@@ -477,11 +477,17 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   // MARK: Settings
 
   it("lays out General with the Teams waitlist, Welcome and What is collected, and the runtimes", async () => {
-    const s = (await call("settings.get")) as { page: { sections: { id: string; rows: { id: string }[] }[] }; updateChannel: unknown };
+    const s = (await call("settings.get")) as {
+      page: { sections: { id: string; rows: { id: string }[] }[] };
+      updateChannel: unknown;
+      globalShortcut: unknown;
+    };
     const rows = s.page.sections.flatMap((x) => x.rows.map((r) => r.id));
     expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "telemetry", "telemetry-note", "launch-at-login"]));
     expect(rows).toEqual(expect.arrayContaining(["macos-runtime", "linux-runtime"]));
     expect(s.updateChannel).toBe("stable");
+    // Another app holds ⌘⇧Space: the page says so.
+    expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
   });
 
   it("chooses each row as the Swift app does", async () => {

@@ -237,6 +237,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       keyvaultSiteIcons: on("keyvault-site-icons"),
       keyvaultProtection: protection.length ? protection : null,
     },
+    globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
   };
 }
 

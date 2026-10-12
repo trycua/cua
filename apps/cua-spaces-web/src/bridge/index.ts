@@ -70,6 +70,7 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type GlobalShortcut,
   type HostSettings,
   type OpName,
   type SettingKey,

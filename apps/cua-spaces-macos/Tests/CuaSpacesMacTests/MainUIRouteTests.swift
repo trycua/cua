@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-@testable import CuaSpacesMacKit
 import AppKit
+import CuaSpacesFFI
+@testable import CuaSpacesMacKit
 import Foundation
 import Testing
 

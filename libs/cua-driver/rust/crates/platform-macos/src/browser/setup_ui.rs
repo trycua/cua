@@ -427,9 +427,7 @@ fn open_tab_from_context_menu(pid: i32, nodes: &[AXNode]) -> bool {
     let selected_tab = nodes
         .iter()
         .find(|node| {
-            node.role == "AXRadioButton"
-                && node.value.as_deref() == Some("1")
-                && has_action(node, "AXShowMenu")
+            node.role == "AXRadioButton" && has_action(node, "AXShowMenu")
         })
         .map(|node| node.element_ptr);
     selected_tab.is_some_and(|tab| {
@@ -1707,7 +1705,18 @@ fn set_remote_debugging(
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
-        let tree = walk_tree(pid, Some(window_id), None);
+        let mut tree = walk_tree(pid, Some(window_id), None);
+        if !tree.nodes.iter().any(|node| node.role == "AXCheckBox") {
+            // A page loaded while Chrome is in the background can be missing
+            // from the window-scoped walk; the application walk reaches it.
+            let app_tree = walk_tree(pid, None, None);
+            if app_tree.nodes.iter().any(|node| node.role == "AXCheckBox") {
+                release_actionable_nodes(&tree.nodes);
+                tree = app_tree;
+            } else {
+                release_actionable_nodes(&app_tree.nodes);
+            }
+        }
         let checkbox = exact_setup_checkbox(&tree, descriptor);
         exp_log(&format!("ready-loop: nodes={} checkbox={:?} cb_nodes={:?}", tree.nodes.len(), checkbox.as_ref().map(|c| c.is_some()).map_err(|e| e.message.clone()), tree.nodes.iter().filter(|n| n.role == "AXCheckBox").map(|n| (n.title.clone(), n.description.clone(), n.actions.clone())).collect::<Vec<_>>()));
         match checkbox {

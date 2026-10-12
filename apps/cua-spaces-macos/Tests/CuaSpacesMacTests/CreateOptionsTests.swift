@@ -57,7 +57,7 @@ struct CreateOptionsTests {
         #expect(try decodedEnv(options) == (await model.newSpaceEnv()))
         let env = try #require(options["env"] as? [String: Any])
         let storage = try #require(env["storage"] as? [String: Any])
-        #expect(Set(storage.keys) == ["reserveBytes", "lume", "qemu", "container", "pulled"])
+        #expect(Set(storage.keys) == ["reserveBytes", "lume", "qemu", "container", "pulled", "linuxRuntimeDownloadBytes"])
         let container = try #require(storage["container"] as? [String: Any])
         #expect(Set(container.keys) == ["availableBytes", "totalBytes", "name"])
         #expect(container["name"] as? String == "Macintosh HD")

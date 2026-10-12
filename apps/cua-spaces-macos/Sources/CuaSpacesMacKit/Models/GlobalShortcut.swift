@@ -58,7 +58,7 @@ final class GlobalShortcut {
 /// it fails when another app registered the same keys.
 @MainActor
 final class CarbonHotKey {
-    private static let signature: OSType = 0x4355_4153 // 'CUAS'
+    nonisolated static let signature: OSType = 0x4355_4153 // 'CUAS'
     private let keyCode: UInt32
     private let modifiers: UInt32
     private let onPress: () -> Void

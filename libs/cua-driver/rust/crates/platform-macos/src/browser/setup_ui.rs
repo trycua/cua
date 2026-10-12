@@ -389,7 +389,19 @@ fn press_context_menu_item(pid: i32, element: AXUIElementRef, title: &str) -> bo
     let deadline = Instant::now() + Duration::from_millis(1500);
     loop {
         let tree = walk_tree(pid, None, None);
-        exp_log(&format!("menu scan for {title:?}: {} nodes, items {:?}", tree.nodes.len(), tree.nodes.iter().filter(|n| n.role == "AXMenuItem" && n.title.as_deref().is_some_and(|t| t.contains("Paste") || t.contains("Tab"))).map(|n| (n.title.clone(), n.actions.clone())).take(6).collect::<Vec<_>>()));
+        exp_log(&format!(
+            "menu scan for {title:?}: {} nodes, items {:?}",
+            tree.nodes.len(),
+            tree.nodes
+                .iter()
+                .filter(|n| n.role == "AXMenuItem"
+                    && n.title
+                        .as_deref()
+                        .is_some_and(|t| t.contains("Paste") || t.contains("Tab")))
+                .map(|n| (n.title.clone(), n.actions.clone()))
+                .take(6)
+                .collect::<Vec<_>>()
+        ));
         let item = tree
             .nodes
             .iter()
@@ -426,9 +438,7 @@ fn press_context_menu_item(pid: i32, element: AXUIElementRef, title: &str) -> bo
 fn open_tab_from_context_menu(pid: i32, nodes: &[AXNode]) -> bool {
     let selected_tab = nodes
         .iter()
-        .find(|node| {
-            node.role == "AXRadioButton" && has_action(node, "AXShowMenu")
-        })
+        .find(|node| node.role == "AXRadioButton" && has_action(node, "AXShowMenu"))
         .map(|node| node.element_ptr);
     selected_tab.is_some_and(|tab| {
         press_context_menu_item(pid, tab as AXUIElementRef, "New Tab to the Right")
@@ -437,8 +447,15 @@ fn open_tab_from_context_menu(pid: i32, nodes: &[AXNode]) -> bool {
 
 fn exp_log(line: &str) {
     use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/bp-setup.log") {
-        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/bp-setup.log")
+    {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
         let _ = writeln!(file, "{ms} {line}");
     }
 }
@@ -875,6 +892,10 @@ fn exact_pixel_setup_checkbox(
     }
     let nodes = &tree.nodes;
     if !native_setup_page_committed(pid, nodes, descriptor) {
+        exp_log(&format!(
+            "pixel gate: proven={}",
+            native_setup_page_proven(nodes, descriptor)
+        ));
         return Ok(None);
     }
     let window_frames = distinct_elements(
@@ -993,10 +1014,18 @@ fn press_pixel_checkbox(
     descriptor: &BrowserSetupDescriptor,
     navigation_committed: bool,
 ) -> anyhow::Result<bool> {
-    crate::input::skylight::with_foreground_assist(pid, window_id, || {
-        std::thread::sleep(Duration::from_millis(60));
-        if crate::apps::frontmost_pid() != Some(pid) {
-            anyhow::bail!("the approved browser lost foreground before the setup click");
+    // Experiment: the background Chromium click route keeps the browser in
+    // the background and the user's window key.
+    let background = std::fs::metadata("/tmp/cua-exp-bg-click").is_ok();
+    let click = |delivery: crate::input::mouse::WindowClickDelivery| -> anyhow::Result<()> {
+        if matches!(
+            delivery,
+            crate::input::mouse::WindowClickDelivery::Foreground
+        ) {
+            std::thread::sleep(Duration::from_millis(60));
+            if crate::apps::frontmost_pid() != Some(pid) {
+                anyhow::bail!("the approved browser lost foreground before the setup click");
+            }
         }
         let current = walk_tree(pid, Some(window_id), None);
         let validation = (|| {
@@ -1050,10 +1079,17 @@ fn press_pixel_checkbox(
             window_id,
             1,
             &[],
-            crate::input::mouse::WindowClickDelivery::Foreground,
+            delivery,
         )?;
         std::thread::sleep(Duration::from_millis(100));
         Ok(())
+    };
+    exp_log(&format!("pixel checkbox click background={background}"));
+    if background {
+        return click(crate::input::mouse::WindowClickDelivery::Background).map(|()| false);
+    }
+    crate::input::skylight::with_foreground_assist(pid, window_id, || {
+        click(crate::input::mouse::WindowClickDelivery::Foreground)
     })
 }
 
@@ -1378,7 +1414,15 @@ fn set_remote_debugging(
             injected_global_input: false,
         },
         Ok(None) => {
-            exp_log(&format!("tabs: {:?}", initial.nodes.iter().filter(|n| n.role == "AXRadioButton").map(|n| (n.value.clone(), n.actions.clone())).collect::<Vec<_>>()));
+            exp_log(&format!(
+                "tabs: {:?}",
+                initial
+                    .nodes
+                    .iter()
+                    .filter(|n| n.role == "AXRadioButton")
+                    .map(|n| (n.value.clone(), n.actions.clone()))
+                    .collect::<Vec<_>>()
+            ));
             let opened_from_menu = open_tab_from_context_menu(pid, &initial.nodes);
             exp_log(&format!("opened_from_menu={opened_from_menu}"));
             let pressed = if opened_from_menu {

@@ -4,9 +4,14 @@
 //! Requires the repository WinForms modal fixture and an interactive desktop.
 #![cfg(target_os = "windows")]
 
+use cua_driver_testkit::e2e::{
+    execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
+    OracleKind, Scope, Targeting,
+};
 use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -52,10 +57,72 @@ fn click_args(snap: &ToolResponse, label: &str, pid: u32, wid: u64) -> serde_jso
     json!({"pid": pid, "window_id": wid, "element_token": snap.element_token(idx), "delivery_mode": "background"})
 }
 
+fn record_probe_response(
+    recording_dir: Option<&Path>,
+    step: &str,
+    elapsed: Duration,
+    response: &ToolResponse,
+    journal: &Path,
+) {
+    let Some(dir) = recording_dir else { return };
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("deadline-protocol.jsonl"))
+        .expect("open deadline protocol evidence");
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "step": step,
+            "elapsed_ms": elapsed.as_millis(),
+            "is_error": response.is_error(),
+            "text": response.text(),
+            "structured": response.structured(),
+            "fixture_counts": counts(journal),
+        })
+    )
+    .expect("write deadline protocol evidence");
+}
+
 #[test]
 #[ignore]
 fn synchronous_modal_click_times_out_without_replay_and_recovers() {
-    let mut driver = McpDriver::spawn_named("semantic-modal-deadline").expect("built driver");
+    let cell_id = "windows-winforms-semantic-modal-deadline";
+    // This lifecycle includes background activation and foreground dismissal;
+    // it does not claim focus-preserving background delivery for every step.
+    let case = CaseSpec::delivered(
+        cell_id,
+        "winforms-modal",
+        "winforms",
+        "semantic_modal_deadline_recovery",
+        Targeting::Ax,
+        Delivery::NotApplicable,
+        Scope::Window,
+        DriverRoute::Composite,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::AxState,
+            OracleKind::Protocol,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let driver = McpDriver::spawn_named(cell_id).expect("built driver");
+        // Keep the path before any scenario assertion or recording call can
+        // panic, and before Drop finalizes and clears the driver's directory.
+        *evidence = recording_evidence(driver.recording_dir());
+        evidence.log = evidence.video.as_ref().map(|video| {
+            Path::new(video)
+                .with_file_name("deadline-protocol.jsonl")
+                .to_string_lossy()
+                .replace('\\', "/")
+        });
+        run_modal_scenario(driver)
+    });
+}
+
+fn run_modal_scenario(mut driver: McpDriver) -> Observation {
+    let recording_dir = driver.recording_dir().map(Path::to_owned);
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("fixture.txt");
     let exe = harness_app("harness-winforms-modal", "CuaTestHarness.WinFormsModal.exe");
@@ -88,13 +155,30 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
     assert!(normal.text().contains("UIA Invoke"), "{}", normal.text());
     wait_count(&journal, "normal", 1);
 
-    let snap = snapshot(&mut driver, pid, wid);
+    // Probe the deliberately blocked provider through a separate transport
+    // session on the same daemon and UIA gate. The owner's continuous video
+    // still captures the complete modal lifecycle, but the probe does not
+    // introduce recorder UIA walks into the latency measurement or attempt
+    // inaccessible per-turn state while the provider is blocked. Retain its
+    // responses and independent fixture counts as linked protocol evidence.
+    let mut probe = driver
+        .spawn_peer_unrecorded()
+        .expect("start deadline probe on the same daemon");
+    let snap = snapshot(&mut probe, pid, wid);
     let args = click_args(&snap, "Open synchronous modal", pid, wid);
     let start = Instant::now();
-    let response = driver.call("click", args.clone());
-    println!("modal_response_ms={}", start.elapsed().as_millis());
+    let response = probe.call("click", args.clone());
+    let elapsed = start.elapsed();
+    record_probe_response(
+        recording_dir.as_deref(),
+        "modal",
+        elapsed,
+        &response,
+        &journal,
+    );
+    println!("modal_response_ms={}", elapsed.as_millis());
     assert!(
-        start.elapsed() < Duration::from_secs(6),
+        elapsed < Duration::from_secs(6),
         "semantic response was not bounded: {}",
         response.text()
     );
@@ -114,9 +198,11 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
 
     // Reuse the same admitted token. No second worker or activation is allowed.
     let retry_start = Instant::now();
-    let busy = driver.call("click", args);
-    println!("busy_response_ms={}", retry_start.elapsed().as_millis());
-    assert!(retry_start.elapsed() < Duration::from_secs(1));
+    let busy = probe.call("click", args);
+    let elapsed = retry_start.elapsed();
+    record_probe_response(recording_dir.as_deref(), "busy", elapsed, &busy, &journal);
+    println!("busy_response_ms={}", elapsed.as_millis());
+    assert!(elapsed < Duration::from_secs(1));
     assert!(busy.is_error());
     assert_eq!(busy.structured()["code"], "background_unavailable");
     assert_eq!(busy.structured()["uia_status"], "busy");
@@ -129,18 +215,27 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
     );
 
     // Read-only Win32 enumeration remains usable while the UIA permit is held.
-    let (dialog, _) = driver
+    let (dialog, _) = probe
         .find_window(pid.into(), "CUA synchronous modal")
         .expect("owned modal window");
-    let focus = driver.call("bring_to_front", json!({"pid": pid, "window_id": dialog}));
+    let focus = probe.call("bring_to_front", json!({"pid": pid, "window_id": dialog}));
     assert!(!focus.is_error(), "{}", focus.text());
     assert_eq!(focus.structured()["landed_on_target"], true);
-    let dismiss = driver.call(
+    let dismiss_start = Instant::now();
+    let dismiss = probe.call(
         "press_key",
         json!({"pid": pid, "window_id": dialog, "key": "Escape", "delivery_mode": "foreground"}),
     );
+    let dismiss_elapsed = dismiss_start.elapsed();
     assert!(!dismiss.is_error(), "{}", dismiss.text());
     wait_count(&journal, "closed", 1);
+    record_probe_response(
+        recording_dir.as_deref(),
+        "dismissed",
+        dismiss_elapsed,
+        &dismiss,
+        &journal,
+    );
     std::thread::sleep(Duration::from_millis(250));
 
     let snap = snapshot(&mut driver, pid, wid);
@@ -203,4 +298,14 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
     );
     assert_eq!(counts(&journal).get("mouse_down"), Some(&0));
     println!("final_fixture_counts={:?}", counts(&journal));
+    let mut observation = Observation::delivered(
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::AxState,
+            OracleKind::Protocol,
+        ],
+        Evidence::default(),
+    );
+    observation.message = "Fixture confirms modal activation and recovery; the timed-out tool response remains unverifiable.".into();
+    observation
 }

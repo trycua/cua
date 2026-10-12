@@ -295,6 +295,8 @@ async def run_benchmark(
     # Expand tasks to (task_path, variant_id) tuples
     task_variants: List[Tuple[Path, int]] = []
     for task_path in tasks:
+        env = None
+        discovery_error = None
         try:
             env = make(str(task_path), split=split)
             if env.tasks_config_fn:
@@ -302,7 +304,17 @@ async def run_benchmark(
             else:
                 variant_count = 1
         except Exception as exc:
-            raise RuntimeError(f"Unable to discover variants for {task_path}") from exc
+            discovery_error = exc
+        finally:
+            if env is not None:
+                try:
+                    await env.close()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Unable to close discovery environment for {task_path}"
+                    ) from exc
+        if discovery_error is not None:
+            raise RuntimeError(f"Unable to discover variants for {task_path}") from discovery_error
 
         if type(variant_count) is not int or variant_count < 1:
             raise ValueError(f"Invalid variant count for {task_path}: {variant_count!r}")

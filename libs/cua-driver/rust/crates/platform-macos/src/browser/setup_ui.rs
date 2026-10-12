@@ -1718,7 +1718,7 @@ fn set_remote_debugging(
             }
         }
         let checkbox = exact_setup_checkbox(&tree, descriptor);
-        exp_log(&format!("ready-loop: nodes={} checkbox={:?} cb_nodes={:?}", tree.nodes.len(), checkbox.as_ref().map(|c| c.is_some()).map_err(|e| e.message.clone()), tree.nodes.iter().filter(|n| n.role == "AXCheckBox").map(|n| (n.title.clone(), n.description.clone(), n.actions.clone())).collect::<Vec<_>>()));
+        exp_log(&format!("ready-loop: nodes={} checkbox={:?} cb_nodes={:?} webareas={:?} maxdepth={}", tree.nodes.len(), checkbox.as_ref().map(|c| c.is_some()).map_err(|e| e.message.clone()), tree.nodes.iter().filter(|n| n.role == "AXCheckBox").map(|n| (n.title.clone(), n.description.clone(), n.actions.clone())).collect::<Vec<_>>(), tree.nodes.iter().filter(|n| n.role == "AXWebArea").map(|n| (n.title.clone(), n.depth)).collect::<Vec<_>>(), tree.nodes.iter().map(|n| n.depth).max().unwrap_or(0)));
         match checkbox {
             Ok(Some(element)) => {
                 let value = unsafe { copy_binary_attr(element as AXUIElementRef, "AXValue") };

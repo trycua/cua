@@ -274,12 +274,18 @@ jobs:
               COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
             elif [[ "$SDK" == "true" ]]; then
               # Release Please bumps VERSION, pyproject, __init__, package.json
-              # and package-lock.json together; the stamped docs follow here.
+              # and package-lock.json together; the stamped docs and the other
+              # lockfiles that lock the checkout's SDK follow here.
               PREVIOUS=$(git show origin/main:libs/cua/VERSION)
               python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
+              SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
               git add docs/content/docs/cua-cli docs/content/docs/cua-sdk docs/content/docs/fleets scripts/docs-generators/cli-specs/cua.json
-              COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation"
+              if [[ -n "$SDK_LOCKS" ]]; then
+                mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
+                git add -- "${SDK_LOCK_PATHS[@]}"
+              fi
+              COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation and lockfiles"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
               # The Sandbox reference records the package version, so regenerate

@@ -1141,6 +1141,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "window.setDragRegions": nul,
   "startup.get": StartupShape,
   "startup.act": StartupShape,
+  "relay.usage": OP_SHAPES["relay.usage"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

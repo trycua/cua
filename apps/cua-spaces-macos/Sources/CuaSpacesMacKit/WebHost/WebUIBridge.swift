@@ -101,6 +101,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "window.setBackgroundColor", "window.setDragRegions",
         // The launch (WebUIBridge+Startup.swift).
         "startup.get", "startup.act",
+        // The relay allowance this month (WebUIBridge+Pages.swift).
+        "relay.usage",
     ]
 
     let model: AppModel

@@ -10,12 +10,12 @@
 import nativeModule from "./cua_spaces_ffi-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSpacesFfiDecodedFrameSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiPcmSink, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportApproval, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportRunListener, type UniffiVTableCallbackInterfaceCuaSpacesFfiTeleportWindowDragListener,
 } from "./cua_spaces_ffi-ffi";
-import { type AgentInfo, type AgentSetupOutcome, type CuaLike, type DevicesSnapshot, type FleetBillingStatus, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type SandboxLike, type SpaceLike, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
+import { type AgentInfo, type AgentSetupOutcome, type CuaLike, type DevicesLike, type DevicesSnapshot, type FleetBillingStatus, type HostLike, type HostStatus, type MediaEvent, type MediaOpenOptions, type MediaSessionLike, type SandboxLike, type SpaceLike, type SpaceSendFileReport, type SpacesHost, type SpacesdClientLike, type TeleportItem, type TeleportManifest, CuaError,
 } from "./cua_sdk";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt16, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol,
 } from "@ubjs/core";
 import uniffiCuaSdkModule from "./cua_sdk";
-const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevicesSnapshot, FfiConverterTypeFleetBillingStatus, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
+const { FfiConverterTypeAgentInfo, FfiConverterTypeAgentSetupOutcome, FfiConverterTypeCua, FfiConverterTypeCuaError, FfiConverterTypeDevices, FfiConverterTypeDevicesSnapshot, FfiConverterTypeFleetBillingStatus, FfiConverterTypeHost, FfiConverterTypeHostStatus, FfiConverterTypeMediaEvent, FfiConverterTypeMediaOpenOptions, FfiConverterTypeMediaSession, FfiConverterTypeSandbox, FfiConverterTypeSpace, FfiConverterTypeSpaceSendFileReport, FfiConverterTypeSpacesHost, FfiConverterTypeSpacesdClient, FfiConverterTypeTeleportItem, FfiConverterTypeTeleportManifest } = uniffiCuaSdkModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -3418,6 +3418,63 @@ export function appRefreshReportFromJson(json: string): AppRefreshReport /*throw
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_refresh_report_from_json(
         FfiConverterString.lower(json, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The account's relay allowance this month (`GET /v1/usage` on the relay
+ * `devices` uses, as `cua usage` reads it) with `account_token`; none
+ * from a relay that meters nothing. Both Spaces apps read it here.
+ */
+export async function appRelayUsage(devices: DevicesLike, accountToken: string, asyncOpts_?: { signal: AbortSignal }): Promise<AppRelayUsage | undefined> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_relay_usage(FfiConverterTypeDevices.lower(devices, nativeModule().rustbuffer_alloc),FfiConverterString.lower(accountToken, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterOptionalTypeAppRelayUsage.lift.bind(FfiConverterOptionalTypeAppRelayUsage),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Settings' "Relay usage" row and the notice past the allowance; none
+ * when the relay meters nothing.
+ */
+export function appRelayUsageView(usage: AppRelayUsage): AppRelayUsageView | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeAppRelayUsageView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_relay_usage_view(
+        FfiConverterTypeAppRelayUsage.lower(usage, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -28970,6 +29027,309 @@ const FfiConverterTypeAppRefreshReport = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.agentsError) +
              FfiConverterOptionalString.allocationSize(value.daemonError);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRelayAllowanceNotice = {
+    /**
+     * "You've used your free relay allowance for this month. ..."
+     */
+    text: string,
+    /**
+     * [`UPGRADE`].
+     */
+    upgrade: string,
+    /**
+     * What Upgrade opens; none: no Upgrade button.
+     */
+    upgradeUrl?: string,
+    /**
+     * [`DISMISS`].
+     */
+    dismiss: string,
+    /**
+     * What a dismissal remembers: the month and the reasons. A new month,
+     * or another limit reached, shows the notice again.
+     */
+    dismissKey: string
+}
+
+/**
+ * Generated factory for {@link AppRelayAllowanceNotice} record objects.
+ */
+export const AppRelayAllowanceNotice = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRelayAllowanceNotice, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRelayAllowanceNotice>,
+    });
+})();
+
+const FfiConverterTypeAppRelayAllowanceNotice = (() => {
+    type TypeName = AppRelayAllowanceNotice;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                text: FfiConverterString.read(from),
+                upgrade: FfiConverterString.read(from),
+                upgradeUrl: FfiConverterOptionalString.read(from),
+                dismiss: FfiConverterString.read(from),
+                dismissKey: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.text, into);
+            FfiConverterString.write(value.upgrade, into);
+            FfiConverterOptionalString.write(value.upgradeUrl, into);
+            FfiConverterString.write(value.dismiss, into);
+            FfiConverterString.write(value.dismissKey, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.text) +
+             FfiConverterString.allocationSize(value.upgrade) +
+             FfiConverterOptionalString.allocationSize(value.upgradeUrl) +
+             FfiConverterString.allocationSize(value.dismiss) +
+             FfiConverterString.allocationSize(value.dismissKey);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRelayUsageTeam = {
+    /**
+     * Team id.
+     */
+    id: string,
+    /**
+     * Seats sharing the allowance.
+     */
+    seats: number
+}
+
+/**
+ * Generated factory for {@link AppRelayUsageTeam} record objects.
+ */
+export const AppRelayUsageTeam = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRelayUsageTeam, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRelayUsageTeam>,
+    });
+})();
+
+const FfiConverterTypeAppRelayUsageTeam = (() => {
+    type TypeName = AppRelayUsageTeam;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                seats: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterUInt32.write(value.seats, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterUInt32.allocationSize(value.seats);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRelayUsage = {
+    /**
+     * The relay meters this account (false: no allowance applies).
+     */
+    metered: boolean,
+    /**
+     * The month counted (`2026-10`).
+     */
+    period: string,
+    /**
+     * `free`, `pro`, `team`, ...
+     */
+    plan: string,
+    /**
+     * The team whose allowance is pooled.
+     */
+    team?: AppRelayUsageTeam,
+    /**
+     * Live sessions now.
+     */
+    liveSessions: number,
+    /**
+     * Live sessions allowed at once (none: no limit).
+     */
+    liveSessionsLimit?: number,
+    /**
+     * Relay hours used this month (the team's, when pooled).
+     */
+    hoursUsed: number,
+    /**
+     * Relay hours allowed this month (none: no limit).
+     */
+    hoursLimit?: number,
+    /**
+     * This account's own relay hours this month.
+     */
+    myHoursUsed: number,
+    /**
+     * Past the allowance (sessions keep working).
+     */
+    softLimitReached: boolean,
+    /**
+     * What is past it: `sessions` and/or `hours`.
+     */
+    reasons: Array<string>,
+    /**
+     * Where to get more (https only; see [`checked`]).
+     */
+    upgradeUrl?: string
+}
+
+/**
+ * Generated factory for {@link AppRelayUsage} record objects.
+ */
+export const AppRelayUsage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRelayUsage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRelayUsage>,
+    });
+})();
+
+const FfiConverterTypeAppRelayUsage = (() => {
+    type TypeName = AppRelayUsage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                metered: FfiConverterBool.read(from),
+                period: FfiConverterString.read(from),
+                plan: FfiConverterString.read(from),
+                team: FfiConverterOptionalTypeAppRelayUsageTeam.read(from),
+                liveSessions: FfiConverterUInt32.read(from),
+                liveSessionsLimit: FfiConverterOptionalUInt32.read(from),
+                hoursUsed: FfiConverterFloat64.read(from),
+                hoursLimit: FfiConverterOptionalFloat64.read(from),
+                myHoursUsed: FfiConverterFloat64.read(from),
+                softLimitReached: FfiConverterBool.read(from),
+                reasons: FfiConverterSequenceString.read(from),
+                upgradeUrl: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.metered, into);
+            FfiConverterString.write(value.period, into);
+            FfiConverterString.write(value.plan, into);
+            FfiConverterOptionalTypeAppRelayUsageTeam.write(value.team, into);
+            FfiConverterUInt32.write(value.liveSessions, into);
+            FfiConverterOptionalUInt32.write(value.liveSessionsLimit, into);
+            FfiConverterFloat64.write(value.hoursUsed, into);
+            FfiConverterOptionalFloat64.write(value.hoursLimit, into);
+            FfiConverterFloat64.write(value.myHoursUsed, into);
+            FfiConverterBool.write(value.softLimitReached, into);
+            FfiConverterSequenceString.write(value.reasons, into);
+            FfiConverterOptionalString.write(value.upgradeUrl, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.metered) +
+             FfiConverterString.allocationSize(value.period) +
+             FfiConverterString.allocationSize(value.plan) +
+             FfiConverterOptionalTypeAppRelayUsageTeam.allocationSize(value.team) +
+             FfiConverterUInt32.allocationSize(value.liveSessions) +
+             FfiConverterOptionalUInt32.allocationSize(value.liveSessionsLimit) +
+             FfiConverterFloat64.allocationSize(value.hoursUsed) +
+             FfiConverterOptionalFloat64.allocationSize(value.hoursLimit) +
+             FfiConverterFloat64.allocationSize(value.myHoursUsed) +
+             FfiConverterBool.allocationSize(value.softLimitReached) +
+             FfiConverterSequenceString.allocationSize(value.reasons) +
+             FfiConverterOptionalString.allocationSize(value.upgradeUrl);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppRelayUsageView = {
+    /**
+     * [`ROW_LABEL`].
+     */
+    label: string,
+    /**
+     * "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+     * team pool when there is one.
+     */
+    line: string,
+    /**
+     * "Free plan" (empty when the relay names none).
+     */
+    plan: string,
+    /**
+     * Past the allowance.
+     */
+    notice?: AppRelayAllowanceNotice
+}
+
+/**
+ * Generated factory for {@link AppRelayUsageView} record objects.
+ */
+export const AppRelayUsageView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppRelayUsageView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppRelayUsageView>,
+    });
+})();
+
+const FfiConverterTypeAppRelayUsageView = (() => {
+    type TypeName = AppRelayUsageView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                label: FfiConverterString.read(from),
+                line: FfiConverterString.read(from),
+                plan: FfiConverterString.read(from),
+                notice: FfiConverterOptionalTypeAppRelayAllowanceNotice.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.line, into);
+            FfiConverterString.write(value.plan, into);
+            FfiConverterOptionalTypeAppRelayAllowanceNotice.write(value.notice, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.line) +
+             FfiConverterString.allocationSize(value.plan) +
+             FfiConverterOptionalTypeAppRelayAllowanceNotice.allocationSize(value.notice);
 
         }
     };
@@ -56748,6 +57108,12 @@ const FfiConverterOptionalTypeAppNotchPreview = new FfiConverterOptional(FfiConv
 // FfiConverter for AppMenuPreview | undefined
 const FfiConverterOptionalTypeAppMenuPreview = new FfiConverterOptional(FfiConverterTypeAppMenuPreview);
 
+// FfiConverter for AppRelayUsageTeam | undefined
+const FfiConverterOptionalTypeAppRelayUsageTeam = new FfiConverterOptional(FfiConverterTypeAppRelayUsageTeam);
+
+// FfiConverter for AppRelayAllowanceNotice | undefined
+const FfiConverterOptionalTypeAppRelayAllowanceNotice = new FfiConverterOptional(FfiConverterTypeAppRelayAllowanceNotice);
+
 // FfiConverter for Array<AppRemoteWindow>
 const FfiConverterSequenceTypeAppRemoteWindow = new FfiConverterArray(FfiConverterTypeAppRemoteWindow);
 
@@ -57047,6 +57413,12 @@ const FfiConverterSequenceTypeAppEntrySection = new FfiConverterArray(FfiConvert
 
 // FfiConverter for Array<AppSensitiveOption>
 const FfiConverterSequenceTypeAppSensitiveOption = new FfiConverterArray(FfiConverterTypeAppSensitiveOption);
+
+// FfiConverter for AppRelayUsage | undefined
+const FfiConverterOptionalTypeAppRelayUsage = new FfiConverterOptional(FfiConverterTypeAppRelayUsage);
+
+// FfiConverter for AppRelayUsageView | undefined
+const FfiConverterOptionalTypeAppRelayUsageView = new FfiConverterOptional(FfiConverterTypeAppRelayUsageView);
 
 // FfiConverter for Array<AppSpaceRow>
 const FfiConverterSequenceTypeAppSpaceRow = new FfiConverterArray(FfiConverterTypeAppSpaceRow);
@@ -57591,6 +57963,12 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_refresh_report_from_json() !== 63623) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_refresh_report_from_json");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_relay_usage() !== 28377) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_relay_usage");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view() !== 38605) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_relay_usage_view");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_review_remember() !== 9631) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_review_remember");
@@ -58333,6 +58711,10 @@ export default Object.freeze({
     FfiConverterTypeAppPreviewSegment,
     FfiConverterTypeAppPreviewWindow,
     FfiConverterTypeAppRefreshReport,
+    FfiConverterTypeAppRelayAllowanceNotice,
+    FfiConverterTypeAppRelayUsage,
+    FfiConverterTypeAppRelayUsageTeam,
+    FfiConverterTypeAppRelayUsageView,
     FfiConverterTypeAppRememberedChoice,
     FfiConverterTypeAppRemoteWindow,
     FfiConverterTypeAppRemoteWindowGroup,

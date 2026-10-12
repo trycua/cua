@@ -8,9 +8,8 @@ import {
   useBridge,
   useExperiments,
   useLoginItem,
-  relayUsageLine,
   useMachines,
-  useRelayUsage,
+  useRelayUsageView,
   useSession,
   useSettings,
   useStorageSettings,
@@ -177,15 +176,13 @@ function GlobalShortcutRow({ shortcut }: { shortcut: GlobalShortcut | null | und
   );
 }
 
-/** The relay allowance this month, where the host reads it (Electron). */
+/** The relay allowance this month (the core's words), where the host reads it. */
 function RelayUsageRow() {
-  const usage = useRelayUsage();
-  if (!usage) return null;
-  const team = usage.team ? ` · Team pool, ${usage.team.seats} ${usage.team.seats === 1 ? "seat" : "seats"}` : "";
-  const plan = usage.plan ? `${usage.plan[0]!.toUpperCase()}${usage.plan.slice(1)} plan` : "";
+  const view = useRelayUsageView();
+  if (!view) return null;
   return (
     <div data-relay-usage="">
-      <SettingsRow label="Relay usage" description={relayUsageLine(usage) + team} control={<span className="text-[13px] text-muted-foreground">{plan}</span>} />
+      <SettingsRow label={view.label} description={view.line} control={<span className="text-[13px] text-muted-foreground">{view.plan}</span>} />
     </div>
   );
 }

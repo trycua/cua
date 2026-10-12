@@ -2,18 +2,23 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { demoRelayUsage } from "@/bridge/adapters/demo/relay-usage";
-import { noCore } from "@/bridge/__tests__/testCore";
-import { BridgeProvider, type DataAdapter, type RelayUsage } from "@/bridge";
+import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
+import { BridgeProvider, type CoreClient, type DataAdapter, type RelayUsage } from "@/bridge";
 
 import { RelayAllowanceNotice } from "./relay-allowance-notice";
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
+});
+
+let core: CoreClient;
+beforeAll(async () => {
+  core = await testCore();
 });
 
 const reached: RelayUsage = { ...demoRelayUsage(), hoursUsed: 20.2, softLimitReached: true, reasons: ["hours"] };
@@ -32,14 +37,15 @@ function host(usage: RelayUsage | null) {
   };
   const view = () =>
     render(
-      <BridgeProvider adapter={adapter} core={noCore}>
+      <BridgeProvider adapter={adapter} core={core}>
         <RelayAllowanceNotice />
       </BridgeProvider>,
     );
   return { demo, opened, view };
 }
 
-describe("<RelayAllowanceNotice>", () => {
+// The words are the app core's: these need the wasm build.
+describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
   it("shows nothing within the allowance", async () => {
     const { view } = host(demoRelayUsage());
     view();

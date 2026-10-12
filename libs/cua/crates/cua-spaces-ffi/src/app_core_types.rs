@@ -9146,3 +9146,76 @@ pub struct AppPaletteEntry {
     /// Extra words it answers to ("create add").
     pub keywords: Option<String>,
 }
+
+/// The team whose allowance is pooled.
+pub type AppRelayUsageTeam = core::relay_usage::RelayUsageTeam;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsageTeam {
+    /// Team id.
+    pub id: String,
+    /// Seats sharing the allowance.
+    pub seats: u32,
+}
+
+/// The relay's answer (`cua_host::RelayUsage`, camelCase: the web bridge's
+/// `relay.usage` result). Every field has a default.
+pub type AppRelayUsage = core::relay_usage::RelayUsage;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsage {
+    /// The relay meters this account (false: no allowance applies).
+    pub metered: bool,
+    /// The month counted (`2026-10`).
+    pub period: String,
+    /// `free`, `pro`, `team`, ...
+    pub plan: String,
+    /// The team whose allowance is pooled.
+    pub team: Option<AppRelayUsageTeam>,
+    /// Live sessions now.
+    pub live_sessions: u32,
+    /// Live sessions allowed at once (none: no limit).
+    pub live_sessions_limit: Option<u32>,
+    /// Relay hours used this month (the team's, when pooled).
+    pub hours_used: f64,
+    /// Relay hours allowed this month (none: no limit).
+    pub hours_limit: Option<f64>,
+    /// This account's own relay hours this month.
+    pub my_hours_used: f64,
+    /// Past the allowance (sessions keep working).
+    pub soft_limit_reached: bool,
+    /// What is past it: `sessions` and/or `hours`.
+    pub reasons: Vec<String>,
+    /// Where to get more (https only; see [`checked`]).
+    pub upgrade_url: Option<String>,
+}
+
+/// The line above every page past the allowance.
+pub type AppRelayAllowanceNotice = core::relay_usage::RelayAllowanceNotice;
+#[uniffi::remote(Record)]
+pub struct AppRelayAllowanceNotice {
+    /// "You've used your free relay allowance for this month. ..."
+    pub text: String,
+    /// [`UPGRADE`].
+    pub upgrade: String,
+    /// What Upgrade opens; none: no Upgrade button.
+    pub upgrade_url: Option<String>,
+    /// [`DISMISS`].
+    pub dismiss: String,
+    /// What a dismissal remembers: the month and the reasons. A new month,
+    /// or another limit reached, shows the notice again.
+    pub dismiss_key: String,
+}
+
+/// The allowance as drawn.
+pub type AppRelayUsageView = core::relay_usage::RelayUsageView;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsageView {
+    /// [`ROW_LABEL`].
+    pub label: String,
+    /// "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+    /// team pool when there is one.
+    pub line: String,
+    /// "Free plan" (empty when the relay names none).
+    pub plan: String,
+    /// Past the allowance.
+    pub notice: Option<AppRelayAllowanceNotice>,
+}

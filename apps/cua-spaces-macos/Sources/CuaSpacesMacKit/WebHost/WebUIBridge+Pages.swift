@@ -108,6 +108,15 @@ extension WebUIBridge {
              "devices.revokePairingCode":
             return try await devices(method, args)
 
+        // Settings, Relay usage, and the notice past the allowance: the
+        // same read as the native row (`app_relay_usage`). Signed out, or
+        // a relay that meters nothing: null.
+        case "relay.usage":
+            let devices = model.devices
+            guard devices.signedIn, let relay = devices.devices else { return NSNull() }
+            guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
+            return BridgeValue.encode(usage)
+
         // Settings, Storage
         case "storage.get":
             let storage = model.storage

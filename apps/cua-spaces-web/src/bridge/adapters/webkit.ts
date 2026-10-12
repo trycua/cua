@@ -55,7 +55,7 @@ import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
-import { unsupportedRelayUsageOps, type RelayUsage } from "../ops/relay-usage";
+import type { RelayUsage } from "../ops/relay-usage";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import type { SpaceRow } from "../contracts/spaces";
 import {
@@ -585,8 +585,7 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.openStream": (target: OpArgs<"spaces.openStream">) => request<StreamTicket>("spaces.openStream", { ...target }) }
       : unsupportedStreamOps("webkit")),
-    // The relay allowance: Electron reads it; the Mac app not yet.
-    ...(electron ? { "relay.usage": () => request<RelayUsage | null>("relay.usage") } : unsupportedRelayUsageOps("webkit")),
+    "relay.usage": () => request<RelayUsage | null>("relay.usage"),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {

@@ -83,6 +83,7 @@ pub mod parity;
 pub mod paths;
 pub mod persistent;
 pub mod presence;
+pub mod relay_usage;
 pub mod settings;
 pub mod share;
 pub mod spaces;

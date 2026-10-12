@@ -4658,6 +4658,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px"),
         ("cua-driver config set cursor.motion.style magnetic", "Make magnetic the default cursor motion for new sessions"),
         ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
+        ("cua-driver config set cursor.motion.timing native", "Drop the 600 ms floor of the default steady timing"),
         ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
     ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),

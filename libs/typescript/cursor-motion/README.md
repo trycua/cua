@@ -78,7 +78,7 @@ const frame = effects.motionFrame(trajectory, t, anchorForPointer(s.x, s.y, s.he
 | `adaptive`      | Careful for small targets, a swoop for long moves.          |
 | `classic`       | The original Dubins glide with an arrival spring.           |
 
-Timing is `native`, `fitts` (`150 + 120 log2(D / W + 1)` ms, 300 to 1000 ms)
+Timing is `steady` by default, `native`, `fitts` (`150 + 120 log2(D / W + 1)` ms, 300 to 1000 ms)
 or `fixed` (`glideDurationMs`, 1430 ms when 0). `relaxed`, `steady` and `calm`
 keep the style's timing with a 450, 600 or 750 ms floor and a sine ease;
 `deliberate` is `400 + 120 log2(D / W + 1)` ms, 450 to 1300 ms. The other knobs (`arcSize`,

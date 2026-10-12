@@ -190,7 +190,7 @@ pub fn config_schema_properties() -> Map<String, Value> {
         json!({
             "type": "string",
             "enum": MotionTiming::ALL.map(MotionTiming::as_str),
-            "description": "Saved default cursor move timing for new sessions."
+            "description": "Saved default cursor move timing for new sessions. Built-in default: steady (a 600 ms floor on every move)."
         }),
     );
     for name in EFFECT_NAMES {
@@ -384,11 +384,11 @@ mod tests {
     }
 
     #[test]
-    fn built_in_default_is_signature_arc() {
+    fn built_in_default_is_signature_arc_with_steady_timing() {
         let mut motion = MotionConfig::default();
         SavedMotionDefaults::default().apply(&mut motion);
         assert_eq!(motion.style, MotionStyle::SignatureArc);
-        assert_eq!(motion.timing, MotionTiming::Native);
+        assert_eq!(motion.timing, MotionTiming::Steady);
     }
 
     #[test]

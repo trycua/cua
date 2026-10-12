@@ -1678,10 +1678,11 @@ export type CursorMotionSelection = {
      */
     style?: CursorMotionStyle,
     /**
+     * `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+     * with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
      * `native` uses the style's own timing; `fitts` scales the move time with distance and
-     * target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
-     * `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
-     * with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
+     * target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+     * glide_duration_ms (1430 ms when 0).
      */
     timing?: CursorMotionTiming,
     /**
@@ -1715,7 +1716,8 @@ export type CursorMotionSelection = {
     spring?: number,
     /**
      * Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-     * nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+     * nonzero value with `native` or the default `steady` timing also fixes the duration.
+     * Clamped to 0..5000.
      */
     glideDurationMs?: number,
     /**
@@ -5308,10 +5310,11 @@ export type SetAgentCursorMotionInput = {
      */
     style?: CursorMotionStyle,
     /**
+     * `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+     * with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
      * `native` uses the style's own timing; `fitts` scales the move time with distance and
-     * target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
-     * `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
-     * with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
+     * target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+     * glide_duration_ms (1430 ms when 0).
      */
     timing?: CursorMotionTiming,
     /**
@@ -5345,7 +5348,8 @@ export type SetAgentCursorMotionInput = {
     spring?: number,
     /**
      * Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-     * nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+     * nonzero value with `native` or the default `steady` timing also fixes the duration.
+     * Clamped to 0..5000.
      */
     glideDurationMs?: number,
     /**

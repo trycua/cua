@@ -11,7 +11,7 @@ import {
   type Pt,
   type Rect,
 } from './geom';
-import { motionParams, resolvedEffects, type MotionParams } from './params';
+import { DEFAULT_PARAMS, motionParams, resolvedEffects, type MotionParams } from './params';
 import { bowPath, cuaPath, naturalSide, straightPath, type Path } from './path';
 import { Rng } from './rng';
 import { durationMs, specForStyle, type Duration, type Heading, type MotionSpec } from './spec';
@@ -441,7 +441,9 @@ export function planMove(params: Partial<MotionParams>, req: MoveRequest): Traje
   const q = resolve(req);
   const c: Ctx = { from: q.from, aim: q.to, target: q.target };
   const fixedMs = p.glideDurationMs > 0 ? p.glideDurationMs : DEFAULT_FIXED_MS;
-  const timing: MotionTiming = p.timing === 'native' && p.glideDurationMs > 0 ? 'fixed' : p.timing;
+  // A positive glideDurationMs fixes the time with `native` and with the default timing.
+  const legacy = p.timing === 'native' || p.timing === DEFAULT_PARAMS.timing;
+  const timing: MotionTiming = legacy && p.glideDurationMs > 0 ? 'fixed' : p.timing;
   if (req.reducedMotion) return reduced(q, p.style);
   if (p.style === 'classic') return planClassic(p, q, timing, fixedMs);
   let spec = specForStyle(p.style, p);

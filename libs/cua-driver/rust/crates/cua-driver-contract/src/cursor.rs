@@ -251,11 +251,11 @@ impl CursorMotionStyle {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CursorMotionTiming {
-    #[default]
     Native,
     Fitts,
     Fixed,
     Relaxed,
+    #[default]
     Steady,
     Calm,
     Deliberate,

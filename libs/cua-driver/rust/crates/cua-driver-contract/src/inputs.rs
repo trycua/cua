@@ -464,10 +464,11 @@ pub struct CursorMotionSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_style_schema")]
     pub style: Option<crate::CursorMotionStyle>,
+    /// `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+    /// with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
     /// `native` uses the style's own timing; `fitts` scales the move time with distance and
-    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
-    /// `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
-    /// with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
+    /// target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+    /// glide_duration_ms (1430 ms when 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
@@ -495,7 +496,8 @@ pub struct CursorMotionSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spring: Option<f64>,
     /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    /// nonzero value with `native` or the default `steady` timing also fixes the duration.
+    /// Clamped to 0..5000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glide_duration_ms: Option<f64>,
     /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
@@ -525,10 +527,11 @@ pub struct SetAgentCursorMotionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_style_schema")]
     pub style: Option<crate::CursorMotionStyle>,
+    /// `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+    /// with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
     /// `native` uses the style's own timing; `fitts` scales the move time with distance and
-    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
-    /// `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
-    /// with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
+    /// target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+    /// glide_duration_ms (1430 ms when 0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
@@ -556,7 +559,8 @@ pub struct SetAgentCursorMotionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spring: Option<f64>,
     /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    /// nonzero value with `native` or the default `steady` timing also fixes the duration.
+    /// Clamped to 0..5000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glide_duration_ms: Option<f64>,
     /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).

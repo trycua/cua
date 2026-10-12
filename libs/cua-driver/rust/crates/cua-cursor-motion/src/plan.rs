@@ -581,8 +581,11 @@ pub fn plan_move(params: &MotionParams, req: &MoveRequest) -> Trajectory {
     } else {
         DEFAULT_FIXED_MS
     };
-    // A fixed glide_duration_ms predates `timing`; keep honoring it.
-    let timing = if params.timing == MotionTiming::Native && params.glide_duration_ms > 0.0 {
+    // A fixed glide_duration_ms predates `timing`; keep honoring it with
+    // `native` and with the default timing.
+    let legacy =
+        matches!(params.timing, MotionTiming::Native) || params.timing == MotionTiming::default();
+    let timing = if legacy && params.glide_duration_ms > 0.0 {
         MotionTiming::Fixed
     } else {
         params.timing
@@ -597,7 +600,11 @@ pub fn plan_move(params: &MotionParams, req: &MoveRequest) -> Trajectory {
     }
 
     let mut rng = Rng::from_seed(&req.seed);
-    let (mut raw, snap) = generate(params.style, &ctx, params, &mut rng);
+    let effective = MotionParams {
+        timing,
+        ..params.clone()
+    };
+    let (mut raw, snap) = generate(params.style, &ctx, &effective, &mut rng);
     let mut events: Vec<f64> = snap.into_iter().collect();
     apply_timing(&mut raw, &mut events, &ctx, timing, fixed_ms);
     let heading = if params.style == MotionStyle::Magnetic {
@@ -1064,6 +1071,8 @@ mod tests {
             );
         }
         assert_eq!(MotionTiming::parse("steady"), Some(MotionTiming::Steady));
+        assert_eq!(MotionTiming::default(), MotionTiming::Steady);
+        assert_eq!(MotionParams::default().timing, MotionTiming::Steady);
         assert_eq!(MotionTiming::Native.floor_ms(), None);
     }
 

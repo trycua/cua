@@ -113,7 +113,6 @@ impl MotionStyle {
 pub enum MotionTiming {
     /// The style's own timing (distance-aware for every style except
     /// `classic`, which is speed-based).
-    #[default]
     Native,
     /// Fitts' law: `150 + 120 log2(D / W + 1)` ms, clamped to 300..1000,
     /// where `W` is the target's smaller side.
@@ -123,7 +122,8 @@ pub enum MotionTiming {
     /// The style's own timing, but no move is shorter than 450 ms, with a
     /// gentler sine ease. Slows short hops; long moves keep their time.
     Relaxed,
-    /// Like `relaxed` with a 600 ms floor.
+    /// Like `relaxed` with a 600 ms floor. The default.
+    #[default]
     Steady,
     /// Like `relaxed` with a 750 ms floor.
     Calm,

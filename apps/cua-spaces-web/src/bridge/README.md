@@ -302,16 +302,17 @@ The wizard and "Connect a cloud" run the core's `wizard.*` and `cloudConnect.*`;
 ## First run (`onboarding.ts`)
 
 The pages, copy and answers are the core's, the same as `OnboardingView.swift`.
-One core page needs the native app, so the web passes through it with the
-answer an unchanged native run gives: Menu bar (`presentation-picked` with
-the current `menuBar` setting). Left: Welcome with the usage-data switch,
-Sign in (optional), AI agents (detected agents, the cua skills and MCP
-server, and the cua-driver card; see "Cua Volume" below), Cua Volume (only
-with its experiment on), This machine with the permissions still to grant
-(`host.permissionRows` over `host.status`'s hints; explainers only, the
-grant stays in System Settings), and Done with a first Space
-(`wizard.pickerImages`, one per OS, created through
-`useSpaces().createSpace`).
+The pages: Welcome with the usage-data switch, Sign in (optional), AI
+agents (detected agents, the cua skills and MCP server, and the cua-driver
+card; see "Cua Volume" below), Menu bar (notch and menu bar, or menu bar
+only; the pick writes the `menuBar` setting, as Settings' notch row does),
+Cua Volume (only with its experiment on), This machine with the
+permissions still to grant (`host.permissionRows` over `host.status`'s
+hints; explainers only, the grant stays in System Settings), and Done with
+a first Space (`wizard.pickerImages`, one per OS, created through
+`useSpaces().createSpace`). Menu bar shows only where the host has the
+notch (`hasNotch`: a Mac); elsewhere the flow passes through it with the
+current `menuBar` setting and Done leaves out its "Shows in" fact.
 
 - Progress is saved in `localStorage` (`cua-spaces:onboarding`), so the flow
   resumes on the same page. "Set up later" sets `skipped`; the shell stops

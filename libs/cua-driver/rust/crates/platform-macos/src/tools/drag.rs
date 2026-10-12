@@ -157,6 +157,15 @@ impl Tool for DragTool {
             let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
             let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
             let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
+            if let Some(refusal) = super::desktop_pointer_guard::check(
+                "drag",
+                &args,
+                vec![(from_x, from_y), (to_x, to_y)],
+            )
+            .await
+            {
+                return refusal;
+            }
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
             let modifiers = input.modifier.unwrap_or_default();

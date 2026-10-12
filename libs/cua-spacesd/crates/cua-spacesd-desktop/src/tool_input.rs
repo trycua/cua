@@ -226,6 +226,17 @@ fn desktop_arguments() -> Map<String, Value> {
     arguments
 }
 
+/// Desktop pointer input from a person driving the display. The macOS driver
+/// refuses a desktop pointer action over a background app unless the caller
+/// accepts using the real pointer; this viewer is the person at the pointer.
+fn desktop_pointer_arguments() -> Map<String, Value> {
+    #[allow(unused_mut)]
+    let mut arguments = desktop_arguments();
+    #[cfg(target_os = "macos")]
+    arguments.insert("delivery_mode".into(), "foreground".into());
+    arguments
+}
+
 impl ToolInputLease {
     /// The Windows driver can move the real desktop pointer. Window scope
     /// moves only its agent overlay, so never opt that route into hover.
@@ -257,7 +268,7 @@ impl ToolInputLease {
             ToolInputTarget::Window { pid, window_id, .. } => {
                 window_arguments(*pid, *window_id, self.mode)
             }
-            ToolInputTarget::Display { .. } => desktop_arguments(),
+            ToolInputTarget::Display { .. } => desktop_pointer_arguments(),
         }
     }
 
@@ -401,7 +412,7 @@ impl InteractiveInputLease for ToolInputLease {
                     calls.extend(self.call(gesture, extent));
                 }
                 let (x, y) = self.point(x, y, extent);
-                let mut arguments = desktop_arguments();
+                let mut arguments = desktop_pointer_arguments();
                 arguments.insert("x".into(), x.into());
                 arguments.insert("y".into(), y.into());
                 calls.push(("move_cursor", arguments));
@@ -531,6 +542,23 @@ mod tests {
         }
     }
 
+    /// Expected desktop pointer arguments: the macOS driver needs the
+    /// viewer's explicit foreground opt-in for the real pointer.
+    fn desktop_pointer(mut expected: Value) -> Value {
+        if cfg!(target_os = "macos") {
+            expected["delivery_mode"] = json!("foreground");
+        }
+        expected
+    }
+
+    #[test]
+    fn desktop_pointer_input_opts_into_the_real_pointer_on_macos_only() {
+        let pointer = Value::Object(desktop_pointer_arguments());
+        assert_eq!(pointer, desktop_pointer(json!({"scope": "desktop"})));
+        // Keys keep the plain desktop scope.
+        assert_eq!(Value::Object(desktop_arguments()), json!({"scope": "desktop"}));
+    }
+
     fn hover_lease(tools: Arc<Recorded>) -> ToolInputLease {
         open(
             &display_target(),
@@ -598,7 +626,7 @@ mod tests {
             vec![
                 (
                     "click".into(),
-                    json!({"scope": "desktop", "x": 640.0, "y": 400.0, "button": "left"})
+                    desktop_pointer(json!({"scope": "desktop", "x": 640.0, "y": 400.0, "button": "left"}))
                 ),
                 // Keys and text go to the focused window, in the foreground.
                 (
@@ -617,7 +645,7 @@ mod tests {
                 ),
                 (
                     "scroll".into(),
-                    json!({"scope": "desktop", "x": 320.0, "y": 200.0, "direction": "down", "amount": 2})
+                    desktop_pointer(json!({"scope": "desktop", "x": 320.0, "y": 200.0, "direction": "down", "amount": 2}))
                 ),
             ]
         );
@@ -656,7 +684,7 @@ mod tests {
             vec![
                 (
                     "move_cursor".into(),
-                    json!({"scope":"desktop", "x":-1280.0, "y":100.0})
+                    desktop_pointer(json!({"scope":"desktop", "x":-1280.0, "y":100.0}))
                 ),
                 (
                     "press_key".into(),
@@ -664,11 +692,11 @@ mod tests {
                 ),
                 (
                     "click".into(),
-                    json!({"scope":"desktop", "x":-960.0, "y":100.0, "button":"left"})
+                    desktop_pointer(json!({"scope":"desktop", "x":-960.0, "y":100.0, "button":"left"}))
                 ),
                 (
                     "move_cursor".into(),
-                    json!({"scope":"desktop", "x":-321.0, "y":499.0})
+                    desktop_pointer(json!({"scope":"desktop", "x":-321.0, "y":499.0}))
                 ),
             ]
         );
@@ -702,18 +730,18 @@ mod tests {
             vec![
                 (
                     "move_cursor".into(),
-                    json!({"scope":"desktop", "x":320.0, "y":200.0})
+                    desktop_pointer(json!({"scope":"desktop", "x":320.0, "y":200.0}))
                 ),
                 (
                     "drag".into(),
-                    json!({
+                    desktop_pointer(json!({
                         "scope":"desktop", "from_x":320.0, "from_y":200.0,
                         "to_x":959.0, "to_y":599.0, "button":"left",
-                    })
+                    }))
                 ),
                 (
                     "move_cursor".into(),
-                    json!({"scope":"desktop", "x":1279.0, "y":799.0})
+                    desktop_pointer(json!({"scope":"desktop", "x":1279.0, "y":799.0}))
                 ),
             ]
         );
@@ -739,15 +767,15 @@ mod tests {
             vec![
                 (
                     "scroll".into(),
-                    json!({"scope":"desktop", "x":640.0, "y":400.0, "direction":"down", "amount":3})
+                    desktop_pointer(json!({"scope":"desktop", "x":640.0, "y":400.0, "direction":"down", "amount":3}))
                 ),
                 (
                     "move_cursor".into(),
-                    json!({"scope":"desktop", "x":959.0, "y":599.0})
+                    desktop_pointer(json!({"scope":"desktop", "x":959.0, "y":599.0}))
                 ),
                 (
                     "scroll".into(),
-                    json!({"scope":"desktop", "x":959.0, "y":599.0, "direction":"down", "amount":1})
+                    desktop_pointer(json!({"scope":"desktop", "x":959.0, "y":599.0, "direction":"down", "amount":1}))
                 ),
             ]
         );

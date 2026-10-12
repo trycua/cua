@@ -1103,7 +1103,7 @@ pub(super) fn is_browser_pid(pid: i32) -> bool {
     crate::browser::browser_js::BrowserJs::supports(&bundle_id) || is_chromium_identity(&bundle_id)
 }
 
-fn is_chromium_identity(bundle_id: &str) -> bool {
+pub(crate) fn is_chromium_identity(bundle_id: &str) -> bool {
     bundle_id
         .to_ascii_lowercase()
         .split(|ch: char| !ch.is_ascii_alphanumeric())

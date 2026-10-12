@@ -275,9 +275,11 @@ impl GetBrowserStateTool {
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
                 semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                opaque continuation. Never performs setup: a browser that is not \
+                attached yet refuses with browser_consent_required or \
+                browser_requires_setup, and detail.next_call names the browser_prepare call \
+                that attaches it. Use this route for any web page in Chrome, Edge or Brave; \
+                desktop pointer tools move the user's pointer."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -607,7 +609,13 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser. \
+            description: "Attach the browser tools to a browser. For a page in the user's \
+                running Chrome, Edge or Brave, call it once with pid, window_id, session and \
+                strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with \
+                browser_consent_required or browser_requires_setup; then call \
+                get_browser_state again and act with browser_click, browser_type or \
+                browser_pointer. It attaches, or refuses with nothing changed and says why. \
+                Explicitly prepare an owned DevTools endpoint for a browser. \
                 pid is required for an existing process or existing-profile attachment, \
                 and optional only for allow_launch=true with an isolated profile. Existing \
                 endpoints are detected without side effects. Acting setup \
@@ -654,7 +662,7 @@ impl BrowserPrepareTool {
                     },
                     "strategy": {
                         "type": "object",
-                        "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+                        "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
                         "properties": {
                             "kind": { "type": "string", "enum": ["existing_profile"] }
                         },
@@ -710,7 +718,9 @@ impl Tool for BrowserPrepareTool {
                 Ok(strategy) => Some(strategy),
                 Err(error) => {
                     return ToolResult::error(format!(
-                        "invalid browser preparation strategy: {error}"
+                        "invalid browser preparation strategy ({error}). Pass an object: \
+                         \"strategy\": {{\"kind\": \"existing_profile\"}}, with pid and \
+                         window_id from list_windows."
                     ))
                 }
             },

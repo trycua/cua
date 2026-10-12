@@ -109,7 +109,13 @@ title looks close.
 `get_browser_state` is strictly read-only. It never launches a browser,
 changes a profile, enables remote debugging, or accepts a consent prompt. If
 it returns `browser_requires_setup` or `browser_consent_required`, choose one
-explicit preparation flow. A standalone consumer browser cannot bind through
+explicit preparation flow. For the user's running Chrome, Edge or Brave the
+refusal's `detail.next_call` is the exact `browser_prepare` call to make next
+(`pid`, `window_id`, `session`, `strategy:{"kind":"existing_profile"}`). It is
+the driver's own setup step, not a question for the user: make the call, and it
+attaches or refuses with nothing changed and says why. Do not fall back to
+desktop-target pointer tools for the page; they move the user's real pointer,
+and over a background window they refuse. A standalone consumer browser cannot bind through
 a DevTools listener merely because the listener belongs to that process.
 
 ### Driver-owned isolated profile

@@ -299,6 +299,8 @@ export interface WkSettings {
   /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
+  /** The global shortcut the host registered; absent or null: none. */
+  globalShortcut?: { label: string; registered: boolean } | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */

@@ -4,7 +4,7 @@
 // The bridge's system services with Electron (`bridge/system.ts`): links and
 // settings panes, Show in Finder / Explorer, notifications (a click brings
 // the app to the page it is about), the owner check before approving a
-// device, the login item and the updater.
+// device, the login item, the updater and the global shortcut's state.
 //
 // The owner check is the system's prompt through the app core
 // (`model/presence.ts`: Touch ID, Windows Hello, polkit), with a dialog of
@@ -12,6 +12,7 @@
 import { app, BrowserWindow, dialog, Notification, shell } from "electron";
 import * as os from "node:os";
 import type { SystemNote, SystemServices } from "./bridge/system";
+import type { GlobalShortcut } from "./global-shortcut";
 import { confirmOwner } from "./model/presence";
 import { makeLoginItem } from "./login-item";
 import type { Native } from "./native/load";
@@ -19,7 +20,12 @@ import { ElectronUpdater } from "./updater";
 
 const OPENABLE = /^(https?:|x-apple\.systempreferences:|ms-settings:)/;
 
-export function makeSystem(o: { native: Native; showRoute: (route: string) => void; platform?: NodeJS.Platform }): SystemServices {
+export function makeSystem(o: {
+  native: Native;
+  showRoute: (route: string) => void;
+  globalShortcut?: GlobalShortcut | null;
+  platform?: NodeJS.Platform;
+}): SystemServices {
   const platform = o.platform ?? process.platform;
   // Shown notifications, by id (a newer one with the same id replaces it).
   const shown = new Map<string, Notification>();
@@ -61,5 +67,6 @@ export function makeSystem(o: { native: Native; showRoute: (route: string) => vo
     loginItem: makeLoginItem(platform),
     updater: ElectronUpdater.start(),
     home: process.env.HOME || os.homedir(),
+    globalShortcut: () => o.globalShortcut?.ensure() ?? null,
   };
 }

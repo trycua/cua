@@ -61,7 +61,7 @@ import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../
 import type { RelayUsage } from "../ops/relay-usage";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -227,6 +227,7 @@ const SettingsShape = ref(
         keyvaultProtection: optNull(list(obj<{ label: string; value: string }>()({ label: str, value: str }))),
       }),
     ),
+    globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
   }),
 );
 
@@ -899,6 +900,7 @@ const WkSettingsShape = ref(
       ),
     }),
     updateChannel: optNull(oneOf("stable", "beta")),
+    globalShortcut: optNull(object({ label: str, registered: bool })),
   }),
 );
 

@@ -175,6 +175,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
     telemetry: demoTelemetry(state.settings.telemetry),
     ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
+    // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
+    globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());

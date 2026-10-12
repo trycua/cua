@@ -10,6 +10,7 @@ import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
+import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
 import { installBridgeIpc } from "./bridge/ipc";
@@ -86,7 +87,7 @@ function migrateSwiftApp() {
 }
 
 /** The native host: the library, the model on it and the bridge. */
-async function startNativeHost(showRoute: (route: string) => void) {
+async function startNativeHost(showRoute: (route: string) => void, globalShortcut: GlobalShortcut | null) {
   const dir = nativeDir({
     platform: process.platform,
     arch: process.arch,
@@ -124,7 +125,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute }),
+    system: makeSystem({ native, showRoute, globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -250,10 +251,17 @@ if (!app.requestSingleInstanceLock()) {
     const { webRoot } = handleAppProtocol();
     if (process.env.CUA_SPACES_LOG_STARTUP) console.log(`[cua-spaces] serving ${webRoot}`);
 
+    // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
+    const shortcut = E2E_DEMO
+      ? null
+      : installGlobalShortcut(process.platform, () => {
+          app.focus({ steal: true });
+          showMain();
+        });
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {
-        host = await startNativeHost(showRoute);
+        host = await startNativeHost(showRoute, shortcut);
       } catch (error) {
         // A broken install: say so plainly, never show the app without its data.
         const why = error instanceof Error ? error.message : String(error);

@@ -33,7 +33,7 @@ import { BridgeProvider, useSpaces } from "@/bridge";
 | `useSpaces()` | `Space[]` with pending creates, power changes and deletes overlaid by the core. Actions: `createSpace(req)`, `cancelCreate(pendingId)`, `dismissCreate(pendingId)`, `startSpace(id)`, `stopSpace(id)`, `deleteSpace(id)`, `openSpace(id)`. |
 | `useMachines()` | `Machine[]`, this machine first, each with `spaceIds`, `connection` (`relay`, `direct`, or null before host setup), `detail`, `lastSeen` and, for this machine, `panel` (the core's `host.panel`). Also `setupGuide`: host setup in the core's words (`host.panel` choices, `host.formView`), for the Add a machine explainer. |
 | `usePairingCode({ open, enabled, team? })` | "Add a machine" by link or QR code: makes a code on opening (`devices.createPairingCode`), reads `devices.pairingCodes` every 3 s until it is `used`, `revoked` or `expired`, and `revoke()` / `renew()`. `phase` is `idle`, `minting`, `ready`, `used`, `revoked`, `expired` or `error` (`error.unsupported` when the host or relay can't make codes). |
-| `useSettings()` | `{ values, telemetry, defaultLocation, page }`, where `page` is the core's Settings layout. Action: `updateSetting(key, value)` for `theme`, `menuBar`, `hotkey`, `telemetry`, `defaultLocation`, `launchAtLogin` or `updateChannel`. The last two are `null` when the host can't offer them, and the Settings page hides their rows. |
+| `useSettings()` | `{ values, telemetry, defaultLocation, page }`, where `page` is the core's Settings layout. Action: `updateSetting(key, value)` for `theme`, `menuBar`, `hotkey`, `telemetry`, `defaultLocation`, `launchAtLogin` or `updateChannel`. The last two are `null` when the host can't offer them, and the Settings page hides their rows. `globalShortcut` is the host's ⌘⇧Space (macOS) with whether the system gave it to the app; absent or `null` where the host has none. |
 | `useKeyvault()` | `{ overview, groups, views, vaultState }`. `views` holds the core's `page`, `sidebar` and `vault` (the list grouped by app, then site). Actions: `unlock(passphrase?)`, `lockItem(id)`, `lockItems(ids)`, `unlockItems(ids)`, `setDisabled`, `approve`, `deny`, `revokeGrant`, `vaultAction(action)` (search, select, open), and `pane(selection)`. |
 | `useSession()` | `{ fleet, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
 | `useAgents()` | `{ agents, runs, unread, canList }`: persistent agents (state `running`, `paused` or `idle`, the core's row line and action label, the run the detail opens) and the runs in every running Space, in the core's order. Actions: `pauseAgent(name)`, `resumeAgent(name)`, `agentSetup()`, `configureAgents(agents?)`. |
@@ -183,8 +183,10 @@ speaks it as is:
 - `machines.list` carries `hostnames` (what each relay machine's cua-spacesd
   reported), so a machine and its enrolled device list once.
 - `keyvault.unlock` with a passphrase fails with `native_only`.
-  Onboarding stays native. Appearance and the hotkey are kept in the page,
-  and an appearance change calls `window.setBackgroundColor`.
+  Onboarding stays native. Appearance is kept in the page, and an appearance
+  change calls `window.setBackgroundColor`. The host registers ⌘⇧Space
+  itself; `settings.get` carries `globalShortcut: {label, registered}`, and
+  each read tries the registration again when the system refused it.
 - Touch ID and the unlock prompt stay native.
 - Launch at login is the core's `launch-at-login` row. The adapter reads it
   from the page and sets it with `settings.choose {row: "launch-at-login"}`,

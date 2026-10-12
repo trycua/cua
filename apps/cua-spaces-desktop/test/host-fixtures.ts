@@ -279,7 +279,11 @@ export class FixtureSystem implements SystemServices {
   allow = true;
   loginItem = new FixtureLoginItem();
   updater = new FixtureUpdater(Date.UTC(2026, 9, 7, 12, 0));
+  shortcut: { label: string; registered: boolean } | null = { label: "\u2318\u21e7Space", registered: false };
   constructor(readonly home: string) {}
+  globalShortcut() {
+    return this.shortcut;
+  }
   async openExternal(url: string) {
     this.opened.push(url);
   }

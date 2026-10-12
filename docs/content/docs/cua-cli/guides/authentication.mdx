@@ -81,5 +81,49 @@ steps:
   run `cua auth logout` when done, or use an API key or workload token.
 </Callout>
 
+## Targeting staging
+
+`CUA_ENV=staging` points the CLI, the SDK, `cua daemon` and the Cua Spaces app
+at the Cua staging deployment. Unset, or `prod`, is production. Any other value
+makes `cua` exit with code `2` rather than fall back to production.
+
+```bash test="cli-shape" id="cua-env-staging"
+export CUA_ENV=staging
+cua auth login --remote     # device code against the staging realm
+cua auth status             # starts with "Environment: staging (...)"
+```
+
+| Setting | Override (wins over `CUA_ENV`) | `prod` (default) | `staging` |
+|---------|--------------------------------|------------------|-----------|
+| Sign-in issuer | `CUA_OIDC_ISSUER` | `https://auth.cua.ai/realms/cyclops-cs` | `https://auth.cua.ai/realms/cua-staging` |
+| OAuth client | `CUA_OIDC_CLIENT_ID` | `cua-cli` | `cua-cli` |
+| Relay | `CUA_RELAY_URL` (or `--relay`) | `https://relay.cua.ai` | `https://relay.staging.cua.ai` |
+| Spaces API | `CUA_SPACES_API_URL` | `https://api.spaces.cua.ai` | `https://api.staging.cua.ai` |
+| Spaces site (add-machine links `<site>/add/<code>`) | `CUA_SPACES_SITE_URL` | `https://spaces.cua.ai` | `https://spaces.staging.cua.ai` |
+| cua home | `CUA_HOME` | `~/.cua` | `~/.cua/envs/staging` |
+| Keychain / Credential Manager service | none | `run.cua.ai` | `staging.run.cua.ai` |
+
+Each environment has its own session, host enrollment, Spaces registry and
+daemon, so signing in to staging never replaces or sends your production
+session, and the other way round. Fleet has no staging deployment: under
+`CUA_ENV=staging` the CLI does not send the staging session to
+`https://run.cua.ai`, so cloud sandboxes need `CUA_FLEET_BASE_URL` set to a
+non-production Fleet, or an API key.
+
+Usage telemetry follows the environment too: staging events go to the staging
+PostHog project, never to production's. `CUA_POSTHOG_KEY` overrides the
+project key; `CUA_TELEMETRY_ENDPOINT` overrides the ingest URL.
+
+Beta channel builds talk to staging by default. A `cua` compiled with
+`CUA_DEFAULT_ENV=staging` treats an unset `CUA_ENV` as `staging`, and the macOS
+app built with `scripts/build-release.sh --channel beta` carries `CuaEnv=staging`
+in its `Info.plist` and compiles its bundled `cua` the same way. `CUA_ENV=prod`
+still selects production in a beta build.
+
+For the macOS app, launch it with the variable set:
+`open -n --env CUA_ENV=staging -a "Cua Spaces"`. Quit the production app
+first. The host service (`cua host setup`) has one name on each machine, so pair
+a staging host on a separate machine or VM.
+
 Other variables (`CUA_FLEET_BASE_URL`, `CUA_OIDC_ISSUER`, `CUA_AUTH_FLOW`,
 `CUA_NO_BROWSER`, ...) are listed in the [CLI reference](/cua-cli/reference/cli).

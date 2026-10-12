@@ -29,16 +29,13 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// The relay the app and CLI use unless configured otherwise.
+/// The production relay (`CUA_RELAY_URL` and `CUA_ENV` change it).
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
 
-/// `CUA_RELAY_URL` when set and non-empty, else [`DEFAULT_RELAY_URL`].
+/// `CUA_RELAY_URL` when set and non-empty, else the relay of `CUA_ENV`
+/// ([`DEFAULT_RELAY_URL`] in production).
 pub fn relay_url_from_env() -> String {
-    std::env::var("CUA_RELAY_URL")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_RELAY_URL.to_string())
+    cua_home::env::relay_url()
 }
 
 /// Supplies a fresh cua.ai account access token (refreshing as needed).

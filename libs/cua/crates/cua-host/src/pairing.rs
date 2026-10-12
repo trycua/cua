@@ -23,8 +23,15 @@ use serde::{Deserialize, Serialize};
 pub const PAIRING_TOKEN_PREFIX: &str = "cpc_";
 /// Characters of a code.
 pub const PAIRING_CODE_LEN: usize = 12;
-/// Where an add-machine link opens.
+/// Where an add-machine link opens in production.
 pub const ADD_MACHINE_BASE_URL: &str = "https://spaces.cua.ai/add";
+
+/// Where an add-machine link opens: `<Spaces site>/add`, the site of
+/// `CUA_SPACES_SITE_URL` or `CUA_ENV` ([`ADD_MACHINE_BASE_URL`] in
+/// production).
+pub fn add_machine_base_url() -> String {
+    format!("{}/add", cua_home::env::spaces_site_url())
+}
 
 const ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -72,17 +79,19 @@ pub fn display_pairing_code(code: &str) -> String {
     }
 }
 
-/// The add-machine link for `code`: `https://spaces.cua.ai/add/<code>`,
-/// plus `?relay=<url>` when the machine must join another relay than
-/// [`DEFAULT_RELAY_URL`].
+/// The add-machine link for `code`: `<add_machine_base_url>/<code>`
+/// (`https://spaces.cua.ai/add/<code>` in production), plus `?relay=<url>`
+/// when the machine must join another relay than the production
+/// [`DEFAULT_RELAY_URL`] (a staging relay is always named, since the
+/// machine being added has no `CUA_ENV`).
 pub fn add_machine_url(code: &str, relay: &str) -> String {
     let code = display_pairing_code(code);
     let relay = relay.trim().trim_end_matches('/');
+    let base = add_machine_base_url();
     if relay.is_empty() || relay == DEFAULT_RELAY_URL {
-        format!("{ADD_MACHINE_BASE_URL}/{code}")
+        format!("{base}/{code}")
     } else {
-        let mut url = url::Url::parse(&format!("{ADD_MACHINE_BASE_URL}/{code}"))
-            .expect("static add-machine URL");
+        let mut url = url::Url::parse(&format!("{base}/{code}")).expect("static add-machine URL");
         url.query_pairs_mut().append_pair("relay", relay);
         url.to_string()
     }

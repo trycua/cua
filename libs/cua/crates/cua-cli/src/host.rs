@@ -34,7 +34,7 @@ pub enum HostCmd {
   # (Add a machine) or `cua host pair`: no sign-in needed here
   cua host setup --pair K7QM-4XPB-2RHD")]
     Setup {
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long, conflicts_with = "direct")]
         relay: Option<String>,
         /// Join with a one-time pairing code (or add-machine link) made in
@@ -117,7 +117,7 @@ pub enum HostCmd {
         /// Revoke an unused code by id (`pc_…`).
         #[arg(long, value_name = "ID", conflicts_with_all = ["team", "name"])]
         revoke: Option<String>,
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long)]
         relay: Option<String>,
     },
@@ -215,7 +215,7 @@ pub enum SpacesCmd {
   cua spaces ls --json"
     )]
     Ls {
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long)]
         relay: Option<String>,
     },

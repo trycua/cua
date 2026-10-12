@@ -251,7 +251,7 @@ enum Command {
   cua usage
   cua usage --json")]
     Usage {
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long)]
         relay: Option<String>,
     },
@@ -2498,6 +2498,16 @@ pub fn main() {
     #[cfg(windows)]
     keep_stdio_out_of_children();
     promote_spacesd_env_vars();
+    // `CUA_ENV` picks every endpoint and the cua home: a typo must not fall
+    // back to production silently.
+    if let Err(e) = cua_home::env::CuaEnv::try_current() {
+        eprintln!("error: {e}");
+        std::process::exit(2);
+    }
+    // SAFETY: still first in `main`, before any other thread exists. Pins
+    // `CUA_HOME` for a non-production `CUA_ENV` so every component and
+    // child process (the daemon) uses that environment's home.
+    unsafe { cua_home::env::pin_home() };
     let matches = Cli::command().get_matches();
     let command = command_path(&matches);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());

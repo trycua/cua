@@ -297,6 +297,7 @@ pub struct FleetConfig {
 impl FleetConfig {
   fn from_env() -> Self;
   fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self;
+  fn accepts_session(&self) -> bool;
   fn has_auth(&self) -> bool;
 }
 ```

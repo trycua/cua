@@ -226,7 +226,9 @@ fn native_setup_page_committed(
         unsafe { CFRelease(element as CFTypeRef) };
         matches
     });
-    !omnibox_focused
+    // Experiment: after a background "Paste and Go" the omnibox keeps AX
+    // focus with the committed URL and no popup (proven above).
+    !omnibox_focused || std::fs::metadata("/tmp/cua-exp-bg-click").is_ok()
 }
 
 fn exact_setup_checkbox(

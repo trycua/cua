@@ -6,6 +6,7 @@ Usage: python -m cua_bench.verify_execution OUTPUT_DIR --task-index 0 --executio
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 
 
@@ -14,6 +15,16 @@ def _json(path):
     if not isinstance(value, dict):
         raise ValueError(f"{path.name}: expected object")
     return value
+
+
+def _valid_observation(value):
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is not None
+        and type(value.get("size_bytes")) is int
+        and value["size_bytes"] >= 0
+    )
 
 
 def verify_execution(root: Path, task_index: int, execution_id: str, *, require_actions=True):
@@ -78,8 +89,8 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
                         or record.get("sequence") != action_count
                         or record.get("execution_status") != "returned"
                         or not isinstance(record.get("action"), dict)
-                        or not isinstance(record.get("before"), dict)
-                        or not isinstance(record.get("after"), dict)
+                        or not _valid_observation(record.get("before"))
+                        or not _valid_observation(record.get("after"))
                     ):
                         raise ValueError("Invalid action event")
             checks["actions"] = action_count > 0

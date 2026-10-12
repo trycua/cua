@@ -232,7 +232,8 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
-    /// Teams: share machines with every member and their agents. Owners
+    /// Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1):
+    /// teams share machines with every member and their agents. Owners
     /// and admins invite (email or link), approve member devices, add
     /// machines and read the audit log.
     #[command(
@@ -1296,6 +1297,13 @@ async fn env_at(
 
 async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     let json = cli.json;
+    // Teams are experimental: refused (before any sign-in, daemon or relay
+    // call) unless CUA_EXPERIMENTAL_TEAMS is set.
+    if uses_teams(&cli.command) && !cua_home::experimental::teams_enabled() {
+        return Err(CuaError::InvalidArgument(
+            cua_home::experimental::TEAMS_UNAVAILABLE.into(),
+        ));
+    }
     // Commands that need no SDK handle.
     match &cli.command {
         Command::Images(cmd) => {
@@ -2497,6 +2505,33 @@ fn notice_mode(started_by: Option<&str>) -> cua_telemetry::NoticeMode {
     }
 }
 
+/// Whether `cmd` is a Teams command: `cua team`, `cua host pair --team`,
+/// or sharing a Space with (or unsharing it from) `team:<id>`.
+fn uses_teams(cmd: &Command) -> bool {
+    let team = |who: &str| who.trim().starts_with("team:");
+    match cmd {
+        Command::Team(_) => true,
+        Command::Host(host::HostCmd::Pair { team: Some(_), .. }) => true,
+        Command::Spaces(host::SpacesCmd::Share { who, .. }) => team(who),
+        Command::Spaces(host::SpacesCmd::Unshare { who: Some(who), .. }) => team(who),
+        _ => false,
+    }
+}
+
+/// The clap command `cua` parses with. Teams are experimental: without
+/// them, `cua team` and `cua host pair --team` stay out of help (they still
+/// parse, and are refused with a short reason).
+fn cli_command(teams: bool) -> clap::Command {
+    let cmd = Cli::command();
+    if teams {
+        return cmd;
+    }
+    cmd.mut_subcommand("team", |c| c.hide(true))
+        .mut_subcommand("host", |h| {
+            h.mut_subcommand("pair", |p| p.mut_arg("team", |a| a.hide(true)))
+        })
+}
+
 /// The `cua` command: parses this process's arguments, runs them and exits.
 /// The Cua Spaces build registers its [`extension`] first.
 pub fn main() {
@@ -2513,7 +2548,7 @@ pub fn main() {
     // `CUA_HOME` for a non-production `CUA_ENV` so every component and
     // child process (the daemon) uses that environment's home.
     unsafe { cua_home::env::pin_home() };
-    let matches = Cli::command().get_matches();
+    let matches = cli_command(cua_home::experimental::teams_enabled()).get_matches();
     let command = command_path(&matches);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let daemon_process = matches!(cli.command, Command::Daemon(DaemonCmd::Start { .. }));

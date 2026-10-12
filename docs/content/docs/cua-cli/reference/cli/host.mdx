@@ -88,7 +88,7 @@ cua host pair [OPTIONS]
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-host-pair--team"></span>`--team` | string |  | Add the machine for this team (its id). |
+| <span id="cua-host-pair--team"></span>`--team` | string |  | Add the machine for this team (its id). Experimental: needs CUA_EXPERIMENTAL_TEAMS=1. |
 | <span id="cua-host-pair--name"></span>`--name` | string |  | Name the machine gets (default: its own host name). |
 | <span id="cua-host-pair--expires"></span>`--expires` | integer | `30` | Minutes until the code expires (1 to 1440). |
 | <span id="cua-host-pair--revoke"></span>`--revoke` | string |  | Revoke an unused code by id (`pc_…`). |
@@ -99,7 +99,7 @@ cua host pair [OPTIONS]
 
 ```bash test="cli-shape" id="ref-cua-host-pair"
 cua host pair
-cua host pair --team team-aigis --expires 60
+cua host pair --name build-box --expires 60
 cua host pair --list
 cua host pair --revoke pc_0123456789abcdef
 ```

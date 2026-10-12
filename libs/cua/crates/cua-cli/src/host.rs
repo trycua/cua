@@ -98,11 +98,12 @@ pub enum HostCmd {
     /// from an enrolled device.
     #[command(after_help = "Examples:
   cua host pair
-  cua host pair --team team-aigis --expires 60
+  cua host pair --name build-box --expires 60
   cua host pair --list
   cua host pair --revoke pc_0123456789abcdef")]
     Pair {
-        /// Add the machine for this team (its id).
+        /// Add the machine for this team (its id). Experimental: needs
+        /// CUA_EXPERIMENTAL_TEAMS=1.
         #[arg(long)]
         team: Option<String>,
         /// Name the machine gets (default: its own host name).

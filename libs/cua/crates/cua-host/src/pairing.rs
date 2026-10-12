@@ -200,6 +200,17 @@ struct PairingCodeList {
     codes: Vec<PairingCode>,
 }
 
+/// A code for a team needs Teams on ([`cua_home::experimental`]).
+fn check_pairing_team(req: &PairingCodeRequest, teams: bool) -> Result<()> {
+    if req.team.is_some() && !teams {
+        return Err(Error::InvalidArgument(format!(
+            "{} A pairing code adds the machine to your account; leave out the team.",
+            cua_home::experimental::TEAMS_UNAVAILABLE
+        )));
+    }
+    Ok(())
+}
+
 impl RelayClient {
     /// Mints a one-time pairing code (from an enrolled device: needs
     /// [`RelayClient::with_device_session`]).
@@ -208,6 +219,7 @@ impl RelayClient {
         account_token: &str,
         req: &PairingCodeRequest,
     ) -> Result<PairingCode> {
+        check_pairing_team(req, cua_home::experimental::teams_enabled())?;
         self.send_json(
             reqwest::Method::POST,
             "/v1/pairing-codes",
@@ -255,6 +267,18 @@ impl RelayClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_team_pairing_code_needs_teams_on() {
+        let team = PairingCodeRequest {
+            team: Some("team-aigis".into()),
+            ..Default::default()
+        };
+        let err = check_pairing_team(&team, false).unwrap_err().to_string();
+        assert!(err.contains("Teams isn't available yet."), "{err}");
+        check_pairing_team(&team, true).unwrap();
+        check_pairing_team(&PairingCodeRequest::default(), false).unwrap();
+    }
 
     #[test]
     fn codes_read_the_way_people_type_them() {

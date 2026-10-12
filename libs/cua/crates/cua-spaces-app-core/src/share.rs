@@ -185,10 +185,21 @@ pub struct ShareSheetView {
 }
 
 /// Why `who` is not an email or account id, or its normalized form.
+/// A team (`team:<id>`) only while Teams are on ([`cua_home::experimental`]).
 pub fn validate_who(who: &str) -> Result<String, String> {
+    validate_who_with(who, cua_home::experimental::teams_enabled())
+}
+
+fn validate_who_with(who: &str, teams: bool) -> Result<String, String> {
     let w = who.trim();
     if w.is_empty() {
         return Err("Enter an email or account ID.".into());
+    }
+    if !teams && ["team:", "org:", "group:"].iter().any(|p| w.starts_with(p)) {
+        return Err(format!(
+            "{} Share with people, one at a time.",
+            cua_home::experimental::TEAMS_UNAVAILABLE
+        ));
     }
     if let Some(team) = w.strip_prefix("team:") {
         // A team (`team:<id>` as `cua team ls` or the Teams page shows it):
@@ -434,26 +445,30 @@ mod tests {
         );
         assert_eq!(s.error.as_deref(), Some("not shared: you declined"));
         assert!(!s.busy);
+    }
+
+    #[test]
+    fn teams_are_shared_with_only_while_teams_are_on() {
+        // On (CUA_EXPERIMENTAL_TEAMS=1): a team id, always for full use.
         assert_eq!(
-            validate_who("team:design").unwrap_err(),
+            validate_who_with("team:design", true).unwrap_err(),
             "Enter a team as team:<id>, as `cua team ls` shows it."
         );
-        assert_eq!(validate_who(" team:team-0a1b ").unwrap(), "team:team-0a1b");
-        // A team is always shared for full use.
-        let s = share_reduce(
-            &i,
-            &share_initial(),
-            &ShareSheetAction::SetWho {
-                who: "team:team-0a1b".into(),
-            },
-        );
         assert_eq!(
-            share_reduce(&i, &s, &ShareSheetAction::Submit).request,
-            Some(ShareRequest::Share {
-                space: "local:studio".into(),
-                who: "team:team-0a1b".into(),
-                role: "editor".into()
-            })
+            validate_who_with(" team:team-0a1b ", true).unwrap(),
+            "team:team-0a1b"
+        );
+        assert_eq!(role_for("team:team-0a1b", "viewer"), "editor");
+        // Off: refused, whatever the id.
+        for who in ["team:team-0a1b", "team:design", "org:acme"] {
+            assert_eq!(
+                validate_who_with(who, false).unwrap_err(),
+                "Teams isn't available yet. Share with people, one at a time."
+            );
+        }
+        assert_eq!(
+            validate_who_with("bob@example.com", false).unwrap(),
+            "bob@example.com"
         );
     }
 

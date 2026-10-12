@@ -425,6 +425,12 @@ export interface SettingsInput {
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   /** The Keyvault's auto-wipe (none: no Keyvault section). */
   keyvaultAutoWipe?: boolean | null;
+  /** The unlock prompt shows (none: no row). */
+  keyvaultUnlockPrompt?: boolean | null;
+  /** Load site icons the browser had none for (the core's default: on). */
+  keyvaultSiteIcons?: boolean;
+  /** The Keyvault's protection facts (Touch ID, the daemon's signature). */
+  keyvaultProtection?: { label: string; value: string }[];
   /** "Connect to the desktop automatically" (none: no row). */
   autoConnect?: boolean | null;
   /** Which Lume macOS Spaces run on (none: no Runtimes section). */

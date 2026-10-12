@@ -217,7 +217,15 @@ const SettingsShape = ref(
       obj<TelemetryView>()({ enabled: bool, source: str, sourceKind: str, noticeShown: bool, noticeText: str, docsUrl: str }),
     ),
     hostSettings: opt(
-      obj<HostSettings>()({ lumeSource: optNull(str), linuxSource: optNull(str), autoConnect: optNull(bool), keyvaultAutoWipe: optNull(bool) }),
+      obj<HostSettings>()({
+        lumeSource: optNull(str),
+        linuxSource: optNull(str),
+        autoConnect: optNull(bool),
+        keyvaultAutoWipe: optNull(bool),
+        keyvaultUnlockPrompt: optNull(bool),
+        keyvaultSiteIcons: optNull(bool),
+        keyvaultProtection: optNull(list(obj<{ label: string; value: string }>()({ label: str, value: str }))),
+      }),
     ),
   }),
 );
@@ -856,6 +864,7 @@ const WkSettingsShape = ref(
               label: str,
               enabled: bool,
               help: optNull(str),
+              value: optNull(str),
               options: list(object({ id: str, label: str, active: bool })),
             }),
           ),

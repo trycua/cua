@@ -795,13 +795,29 @@ describe("webkit adapter", () => {
         sections: [
           { id: "general", rows: [toggle("auto-connect", false)] },
           { id: "runtimes", rows: [choice("macos-runtime", "builtin"), choice("linux-runtime", "system")] },
-          { id: "keyvault", rows: [toggle("keyvault-auto-wipe", true)] },
+          {
+            id: "keyvault",
+            rows: [
+              toggle("keyvault-auto-wipe", true),
+              toggle("keyvault-unlock-prompt", false),
+              toggle("keyvault-site-icons", true),
+              { id: "keyvault-protection:Unlock", kind: "text", label: "Unlock", value: "Mac login", enabled: true, options: [] },
+            ],
+          },
         ],
       },
     };
     const { win, sent } = webkitHost(() => ok(page));
     const a = createWebkitAdapter(win);
-    expect((await a.call("settings.get", {})).hostSettings).toEqual({ lumeSource: "builtin", linuxSource: "system", autoConnect: false, keyvaultAutoWipe: true });
+    expect((await a.call("settings.get", {})).hostSettings).toEqual({
+      lumeSource: "builtin",
+      linuxSource: "system",
+      autoConnect: false,
+      keyvaultAutoWipe: true,
+      keyvaultUnlockPrompt: false,
+      keyvaultSiteIcons: true,
+      keyvaultProtection: [{ label: "Unlock", value: "Mac login" }],
+    });
     await a.call("settings.choose", { row: "macos-runtime", option: "system" });
     expect(sent.slice(-2).map((r) => [r.method, r.args])).toEqual([
       ["settings.choose", { row: "macos-runtime", option: "system" }],
@@ -809,7 +825,15 @@ describe("webkit adapter", () => {
     ]);
     // A host without these rows has none of them.
     const { win: bare } = webkitHost(() => ok(settingsPage));
-    expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({ lumeSource: null, linuxSource: null, autoConnect: null, keyvaultAutoWipe: null });
+    expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({
+      lumeSource: null,
+      linuxSource: null,
+      autoConnect: null,
+      keyvaultAutoWipe: null,
+      keyvaultUnlockPrompt: null,
+      keyvaultSiteIcons: null,
+      keyvaultProtection: null,
+    });
   });
 
   it("maps Teleport's records onto the core's words, and keeps the host's keys for the plan and run", async () => {

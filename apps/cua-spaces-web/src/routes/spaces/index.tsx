@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { KeyRoundIcon, MonitorIcon, PlusIcon } from "lucide-react";
+import { KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaces, useSpaceThumbnail, type Space } from "@/bridge";
@@ -16,9 +16,11 @@ import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
+import { toastError } from "@/components/ui/toast";
 import { creatingLine, thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
-import { createError, createProgress, machineName, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
+import { cn } from "@/lib/utils";
+import { createError, createProgress, machineName, powerButton, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
 
 export const Route = createFileRoute("/spaces/")({ component: SpacesPage });
 
@@ -100,21 +102,58 @@ function SpacesPage() {
 
 function SpaceTile({ space, machine, accessKey }: { space: Space; machine: string; accessKey?: string | null }) {
   return (
-    <div className="relative">
+    <div className="group/tile relative">
       <SpaceLink space={space} machine={machine} />
-      {/* A live Keyvault sign-in is in this Space: the badge opens Access with its row brought forward. */}
-      {accessKey !== undefined ? (
-        <Link
-          to="/keyvault"
-          search={{ view: "access", focus: accessKey ?? undefined }}
-          data-signed-in={space.id}
-          title="A Keyvault sign-in is live in this Space. Open Access."
-          className="absolute top-3 right-3 inline-flex items-center gap-1 rounded-full border bg-card/90 px-2 py-0.5 text-2xs font-medium text-muted-foreground shadow-xs outline-none backdrop-blur-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
-        >
-          <KeyRoundIcon className="size-3" /> Signed in
-        </Link>
-      ) : null}
+      {/* Over the thumbnail, as the SwiftUI sidebar row ends: "Signed in", then power. */}
+      <div className="absolute top-3 right-3 flex items-center gap-1.5">
+        {/* A live Keyvault sign-in is in this Space: the badge opens Access with its row brought forward. */}
+        {accessKey !== undefined ? (
+          <Link
+            to="/keyvault"
+            search={{ view: "access", focus: accessKey ?? undefined }}
+            data-signed-in={space.id}
+            title="A Keyvault sign-in is live in this Space. Open Access."
+            className="inline-flex items-center gap-1 rounded-full border bg-card/90 px-2 py-0.5 text-2xs font-medium text-muted-foreground shadow-xs outline-none backdrop-blur-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <KeyRoundIcon className="size-3" /> Signed in
+          </Link>
+        ) : null}
+        <TilePower space={space} />
+      </div>
     </div>
+  );
+}
+
+/**
+ * The core's power button, while the pointer is on the tile or focus is in
+ * it, and always while it runs (the SwiftUI sidebar row's, which shows on
+ * hover, on the selected row and while busy).
+ */
+function TilePower({ space }: { space: Space }) {
+  const { core } = useBridge();
+  const { startSpace, stopSpace } = useSpaces();
+  const button = powerButton(core, space);
+  if (!button) return null;
+  const press = () => {
+    const [act, word] = button.turnOn ? [startSpace, "start"] : [stopSpace, "stop"];
+    void act(space.id).catch(toastError(`Couldn't ${word} ${space.name}`));
+  };
+  return (
+    <button
+      type="button"
+      data-tile-power={button.turnOn ? "on" : "off"}
+      data-busy={button.busy || undefined}
+      disabled={button.busy}
+      title={button.help}
+      aria-label={`${button.help} ${space.name}`}
+      onClick={press}
+      className={cn(
+        "inline-flex size-6 items-center justify-center rounded-full border bg-card/90 text-muted-foreground shadow-xs outline-none backdrop-blur-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-default",
+        !button.busy && "opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100",
+      )}
+    >
+      {button.busy ? <LoaderCircleIcon className="size-3 animate-spin" aria-hidden /> : <PowerIcon className="size-3" aria-hidden />}
+    </button>
   );
 }
 

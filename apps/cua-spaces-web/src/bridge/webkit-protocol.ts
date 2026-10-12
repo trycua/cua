@@ -286,6 +286,8 @@ export interface WkSettingsRow {
   label: string;
   enabled: boolean;
   help?: string | null;
+  /** A text row's value (the Keyvault's protection facts). */
+  value?: string | null;
   options: { id: string; label: string; active: boolean }[];
 }
 

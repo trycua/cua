@@ -28,7 +28,8 @@ def make_receipts(root, execution_id="run-1"):
         "schema_version": "cua-bench-executed-action/v1",
         "execution_id": execution_id, "sequence": 1,
         "execution_status": "returned", "action": {"type": "click"},
-        "before": {"sha256": "a"}, "after": {"sha256": "b"},
+        "before": {"sha256": "a" * 64, "size_bytes": 1},
+        "after": {"sha256": "b" * 64, "size_bytes": 1},
     })
 
 
@@ -96,6 +97,17 @@ def test_failed_action_cannot_prove_successful_execution(tmp_path):
     p = tmp_path / "task_0_agent_logs" / "executed-actions.jsonl"
     value = json.loads(p.read_text())
     value["execution_status"] = "failed"
+    write_json(p, value)
+    result = verify_execution(tmp_path, 0, "run-1")
+    assert result["valid"] is False
+    assert result["checks"]["actions"] is False
+
+
+def test_missing_screenshot_observation_fails_closed(tmp_path):
+    make_receipts(tmp_path)
+    p = tmp_path / "task_0_agent_logs" / "executed-actions.jsonl"
+    value = json.loads(p.read_text())
+    value["before"] = {"error_type": "TimeoutError"}
     write_json(p, value)
     result = verify_execution(tmp_path, 0, "run-1")
     assert result["valid"] is False

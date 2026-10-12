@@ -8,6 +8,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -393,7 +394,7 @@ class TaskRunner:
                             isinstance(rewards, list) and bool(rewards)
                             and all(
                                 isinstance(v, (int, float)) and not isinstance(v, bool)
-                                and math.isfinite(v) and 0.0 <= v <= 1.0
+                                and math.isfinite(v)
                                 for v in rewards
                             )
                         )
@@ -443,10 +444,18 @@ class TaskRunner:
                                     or record.get("sequence") != sequence
                                     or record.get("execution_status") not in ("returned", "failed")
                                     or not isinstance(record.get("action"), dict)
-                                    or not isinstance(record.get("before"), dict)
-                                    or not isinstance(record.get("after"), dict)
+                                    or not all(
+                                        isinstance(record.get(phase), dict)
+                                        and isinstance(record[phase].get("sha256"), str)
+                                        and re.fullmatch(r"[0-9a-f]{64}", record[phase]["sha256"])
+                                        and type(record[phase].get("size_bytes")) is int
+                                        and record[phase]["size_bytes"] >= 0
+                                        for phase in ("before", "after")
+                                    )
                                 ):
                                     raise ValueError("Invalid action evidence record")
+                                if record["execution_status"] == "failed":
+                                    raise ValueError("Failed agent action cannot establish a successful run")
                         if sequence == 0:
                             evidence_error = "Empty agent action evidence"
                         else:

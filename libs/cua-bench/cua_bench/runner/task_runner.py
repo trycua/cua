@@ -467,6 +467,18 @@ class TaskRunner:
             # 7. Cleanup and verify actual Docker resource absence.
             try:
                 await self._cleanup_task(task_id)
+            except Exception as exc:
+                # A cleanup error must not replace the task result before the
+                # independent resource inspection writes its receipt.
+                if completed_result is not None:
+                    completed_result.success = False
+                    detail = f"Task cleanup failed: {type(exc).__name__}"
+                    completed_result.error = (
+                        f"{completed_result.error}; {detail}"
+                        if completed_result.error else detail
+                    )
+                else:
+                    raise
             finally:
                 if output_dir:
                     try:

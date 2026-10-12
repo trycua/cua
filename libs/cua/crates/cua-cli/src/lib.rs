@@ -1758,12 +1758,17 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 // already has it; an embedded runtime gets it here), and
                 // an embedded runtime confirms on the terminal.
                 host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
-                if let Some(rt) = cua.embedded_runtime()
-                    && !rt.spaces().has_share_consent()
-                {
-                    let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
-                    rt.spaces()
-                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
+                if let Some(rt) = cua.embedded_runtime() {
+                    if !rt.spaces().has_share_consent() {
+                        rt.spaces()
+                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    }
+                } else if matches!(cmd, host::SpacesCmd::Share { .. }) {
+                    // The daemon asks for user presence on this computer.
+                    use std::io::IsTerminal as _;
+                    host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
+                    eprintln!("Confirm the share on this computer (Touch ID or your password).");
                 }
             }
             return host::run_spaces_sdk(&cua, cmd, json, out).await;

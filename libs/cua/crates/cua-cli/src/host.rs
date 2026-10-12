@@ -365,7 +365,9 @@ pub enum SpacesCmd {
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
-  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer")]
+  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+  # From a script or agent: confirm with Touch ID or your password here
+  cua spaces share local:studio bob@example.com --yes")]
     Share {
         /// Space id, address or display name.
         space: String,
@@ -374,10 +376,12 @@ pub enum SpacesCmd {
         /// `viewer`: presence and a view-only stream. `editor`: full use.
         #[arg(long, default_value = "viewer", value_parser = ["viewer", "editor"])]
         role: String,
-        /// Confirm without a prompt (needed without a terminal when no
-        /// daemon runs; a running daemon asks with Touch ID or your
-        /// password instead).
-        #[arg(long)]
+        /// Confirm without a terminal prompt. Without a daemon the share
+        /// happens at once. A running daemon still asks with Touch ID or
+        /// your password on this computer; without a terminal, `--yes`
+        /// says someone will answer there (otherwise the command fails
+        /// at once instead of waiting for a prompt nobody sees).
+        #[arg(long, short = 'y')]
         yes: bool,
     },
     /// Stop sharing a Space with one account at once, or with everyone.
@@ -428,6 +432,24 @@ pub enum SpacesCmd {
         /// Space id, address or display name.
         space: String,
     },
+}
+
+/// Checks a `cua spaces share` before it goes to a running daemon. The
+/// daemon confirms every share with user presence (Touch ID or the login
+/// password on this computer) and `--yes` cannot skip that. Without a
+/// terminal the caller is likely a script or agent with nobody at the
+/// screen, and the OS prompt would wait about two minutes before it
+/// fails, so this fails at once unless `--yes` says someone will answer.
+pub fn daemon_share_gate(yes: bool, terminal: bool) -> std::result::Result<(), CuaError> {
+    if yes || terminal {
+        return Ok(());
+    }
+    Err(CuaError::InvalidArgument(
+        "not shared: stdin is not a terminal, and the running cua daemon confirms every share \
+         with Touch ID or your password on this computer. Pass --yes (-y) when someone there \
+         will confirm it; sharing through the daemon cannot skip that confirmation"
+            .into(),
+    ))
 }
 
 /// Confirms a share on the terminal (the `cua` CLI without a daemon).
@@ -2303,6 +2325,20 @@ mod tests {
             );
         }
         assert!(TerminalConsent { yes: true }.confirm("x").is_ok());
+        match parse_spaces(&["share", "s", "bob@example.com", "-y"]).unwrap() {
+            SpacesCmd::Share { yes, .. } => assert!(yes),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn daemon_share_fails_fast_without_a_terminal_or_yes() {
+        let err = daemon_share_gate(false, false).unwrap_err().to_string();
+        assert!(err.contains("stdin is not a terminal"), "{err}");
+        assert!(err.contains("--yes (-y)"), "{err}");
+        assert!(daemon_share_gate(true, false).is_ok());
+        assert!(daemon_share_gate(false, true).is_ok());
+        assert!(daemon_share_gate(true, true).is_ok());
     }
 
     #[test]

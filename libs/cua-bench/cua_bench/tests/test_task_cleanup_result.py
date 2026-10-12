@@ -50,3 +50,35 @@ async def test_cleanup_exception_preserves_timeout_result_and_receipt(tmp_path, 
     assert "Task timed out" in result.error
     assert "Task cleanup failed: RuntimeError" in result.error
     assert events == ["cleanup", "receipt"]
+
+
+@pytest.mark.asyncio
+async def test_receipt_write_failure_keeps_original_timeout_reason(tmp_path, monkeypatch):
+    runner = module.TaskRunner()
+
+    async def noop(*args, **kwargs):
+        return None
+
+    async def timeout(*args, **kwargs):
+        raise asyncio.TimeoutError()
+
+    async def logs(*args, **kwargs):
+        return "logs"
+
+    async def broken_receipt(*args, **kwargs):
+        raise OSError("injected disk full")
+
+    monkeypatch.setattr(module, "create_network", noop)
+    monkeypatch.setattr(module, "wait_for_container", timeout)
+    monkeypatch.setattr(module, "get_container_logs", logs)
+    monkeypatch.setattr(runner, "_start_agent_container", noop)
+    monkeypatch.setattr(runner, "_cleanup_task", noop)
+    monkeypatch.setattr(runner, "_write_cleanup_receipt", broken_receipt)
+
+    result = await runner.run_task(
+        env_path=tmp_path, task_index=0, env_type="linux-docker",
+        provider_type="simulated", cleanup_before=False, output_dir=str(tmp_path),
+    )
+    assert result.success is False
+    assert "Task timed out" in result.error
+    assert "Unable to verify Docker cleanup: OSError" in result.error

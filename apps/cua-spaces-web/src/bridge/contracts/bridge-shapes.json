@@ -1910,6 +1910,39 @@
                 "boolean",
                 "null"
               ]
+            },
+            "keyvaultUnlockPrompt": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "keyvaultSiteIcons": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "keyvaultProtection": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "label",
+                  "value"
+                ]
+              }
             }
           }
         }
@@ -3200,6 +3233,12 @@
                           "type": "boolean"
                         },
                         "help": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "value": {
                           "type": [
                             "string",
                             "null"

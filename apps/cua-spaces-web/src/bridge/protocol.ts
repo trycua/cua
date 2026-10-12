@@ -108,6 +108,12 @@ export interface HostSettings {
   autoConnect?: boolean | null;
   /** The Keyvault wipes access from Spaces automatically. */
   keyvaultAutoWipe?: boolean | null;
+  /** The Keyvault explains unattended access before allowing it (off after "Never ask again"). */
+  keyvaultUnlockPrompt?: boolean | null;
+  /** The Keyvault loads site icons the browser had none for. */
+  keyvaultSiteIcons?: boolean | null;
+  /** The Keyvault's protection facts, as the host's Settings lists them. */
+  keyvaultProtection?: { label: string; value: string }[] | null;
 }
 
 export const DEFAULT_SETTINGS: SettingsValues = {

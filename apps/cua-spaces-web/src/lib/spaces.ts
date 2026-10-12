@@ -129,6 +129,39 @@ export function powerLabel(core: { tryCall<T>(op: string, args?: Record<string, 
   return on ? (suspends ? "Resume" : "Turn on") : suspends ? "Suspend" : "Turn off";
 }
 
+/** The core's power words (`sidebar::power_verb`): the press, then while it runs. */
+const POWER_WORDS = {
+  suspend: { on: ["Resume", "Resuming…"], off: ["Suspend", "Suspending…"] },
+  stop: { on: ["Turn on", "Turning on…"], off: ["Turn off", "Turning off…"] },
+} as const;
+
+/** A Space row's power button (the app core's `sidebar::PowerButton`). */
+export interface PowerButton {
+  /** "Turn off", "Resume", or "Suspending…" while it runs. */
+  help: string;
+  /** A press turns it on (else off). */
+  turnOn: boolean;
+  /** An action runs: a spinner instead, and no press. */
+  busy: boolean;
+}
+
+/**
+ * The power button a Space's row shows (the core's `sidebar.powerButton`,
+ * as the SwiftUI sidebar asks it): none for this machine, a Space being
+ * created or deleted, or one whose provider cannot turn it off. Without the
+ * core, the same rule and words.
+ */
+export function powerButton(core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined }, space: Space): PowerButton | null {
+  const fromCore = core.tryCall<PowerButton | null>("sidebar.powerButton", { space });
+  if (fromCore !== undefined) return fromCore ? { help: fromCore.help, turnOn: fromCore.turnOn, busy: fromCore.busy } : null;
+  const power = space.power;
+  if (!power || space.id === "this-mac" || space.progress || space.status === "deleting") return null;
+  const busy = power.turningOn !== undefined && power.turningOn !== null;
+  const turnOn = busy ? Boolean(power.turningOn) : power.off;
+  const [idle, running] = POWER_WORDS[power.control === "suspend" ? "suspend" : "stop"][turnOn ? "on" : "off"];
+  return { help: busy ? running : idle, turnOn, busy };
+}
+
 /** A power action is running now: "Starting…" or "Stopping…". */
 export function powerPending(space: Pick<Space, "power">): string | null {
   const on = space.power?.turningOn;

@@ -9,6 +9,7 @@ import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge"
 import { ChecklistTracker } from "@/components/getting-started";
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
+import { DevicesBanner } from "@/components/shell/devices-banner";
 import { Sidebar } from "@/components/shell/sidebar";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
 import { SpacesNotice } from "@/components/shell/spaces-notice";
@@ -64,6 +65,7 @@ function RootLayout() {
       {sidebarOpen ? <Sidebar /> : null}
       <div className="flex min-w-0 flex-1 flex-col bg-background">
         <TopBar />
+        <DevicesBanner />
         <SpacesNotice />
         <RelayAllowanceNotice />
         <main className="min-h-0 flex-1">

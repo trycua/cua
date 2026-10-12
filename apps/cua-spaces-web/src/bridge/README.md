@@ -92,7 +92,7 @@ Each is an existing Tauri command under a host-neutral name:
 | `machines.list` | `host_status` + `list_hosts` + `get_environment` |
 | `host.status` | `host_status` |
 | `settings.get` / `settings.set` `{key, value}` | UI storage (`ui_storage_set`), `telemetry_status`/`telemetry_set_enabled`, `get_default_location`/`set_default_location`, `login_item_status`/`login_item_set` (`launchAtLogin`). The Tauri updater has no channels, so `updateChannel` is `null` there. |
-| `settings.choose` `{row, option}` | none: the Tauri shell lays out none of the host's own rows (`SettingsSnapshot.hostSettings`: the SwiftUI app's Runtimes, auto-connect and Keyvault auto-wipe, which the page draws from the core's Settings page and changes with `settings.choose`; New Space's "Use built-in Lume" too). |
+| `settings.choose` `{row, option}` | none: the Tauri shell lays out none of the host's own rows (`SettingsSnapshot.hostSettings`: the SwiftUI app's Runtimes, auto-connect and Keyvault switches, which the page draws from the core's Settings page and changes with `settings.choose`; New Space's "Use built-in Lume" too). |
 | `keyvault.overview` | `keyvault_overview` |
 | `keyvault.unlock` `{passphrase?}` | `keyvault_unlock` / `keyvault_unlock_passphrase` |
 | `keyvault.setUnattended` `{itemIds, unattended}` | `keyvault_set_unattended` |

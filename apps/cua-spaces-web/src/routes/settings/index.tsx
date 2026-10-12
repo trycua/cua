@@ -30,6 +30,7 @@ import { Switch } from "@/components/ui/switch";
 import { lazy, Suspense } from "react";
 import { toastError } from "@/components/ui/toast";
 import { showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
+import { keyvaultRows } from "@/lib/keyvault";
 import { DEFAULT_KEYBINDINGS, type KeybindingCommand } from "@/lib/keybindings";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 
@@ -66,9 +67,6 @@ function SettingsPage() {
   return settings?.page ? <CoreGeneralPage page={settings.page} /> : <FallbackSettingsPage />;
 }
 
-/** The rows the Keyvault section shows here (the rest needs the broker's state). */
-const KEYVAULT_ROWS = new Set(["keyvault-auto-wipe", "keyvault-auto-wipe-note"]);
-
 function CoreGeneralPage({ page }: { page: CorePage }) {
   const { data: settings, updateSetting, chooseSetting } = useSettings();
   const { signIn, signOut, cancelSignIn, openExternal } = useSession();
@@ -82,11 +80,11 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
   const privacy = section("privacy");
   const keyvault = section("keyvault");
   const agents = section("agents");
-  const autoWipe = keyvault && { ...keyvault, rows: keyvault.rows.filter((r) => KEYVAULT_ROWS.has(r.id)) };
+  const keyvaultShown = keyvault && { ...keyvault, rows: keyvaultRows(keyvault.rows, settings?.hostSettings) };
   const mac = showsMacShellSettings();
 
   // What a row's choice changes: the settings every host has by key, the
-  // host's own (runtimes, auto-connect, auto-wipe) by row.
+  // host's own (runtimes, auto-connect, the Keyvault's switches) by row.
   const choose = (row: CoreRow, option: string) => {
     const done = fail(`Couldn't change ${row.label}`);
     switch (row.id) {
@@ -144,7 +142,7 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
 
       {runtimes?.rows.length ? <CoreSettingsSection section={runtimes} foldNotes onChoose={choose} /> : null}
       {privacy ? <CoreSettingsSection section={privacy} onChoose={choose} onPress={press} /> : null}
-      {autoWipe?.rows.length ? <CoreSettingsSection section={autoWipe} foldNotes onChoose={choose} /> : null}
+      {keyvaultShown?.rows.length ? <CoreSettingsSection section={keyvaultShown} foldNotes onChoose={choose} /> : null}
 
       {agents ? <AgentsSettingsSection section={agents} /> : null}
 

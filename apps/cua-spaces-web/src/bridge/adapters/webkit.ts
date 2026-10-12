@@ -201,6 +201,9 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   // them out again on the page (null: the host has none).
   const source = (id: string) => (rows.has(id) ? (active(rows.get(id)) ?? "auto") : null);
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
+  const protection = [...rows.values()]
+    .filter((r) => r.id.startsWith("keyvault-protection:"))
+    .map((r) => ({ label: r.label, value: r.value ?? "" }));
   return {
     values: {
       theme: page.theme,
@@ -230,6 +233,9 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       linuxSource: source("linux-runtime"),
       autoConnect: on("auto-connect"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
+      keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
+      keyvaultSiteIcons: on("keyvault-site-icons"),
+      keyvaultProtection: protection.length ? protection : null,
     },
   };
 }

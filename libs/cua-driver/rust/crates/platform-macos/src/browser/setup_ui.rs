@@ -1072,17 +1072,32 @@ fn press_pixel_checkbox(
         })();
         release_actionable_nodes(&current.nodes);
         let refreshed = validation?;
-        crate::input::mouse::click_at_xy_with_window_local(
-            pid,
-            refreshed.screen_x,
-            refreshed.screen_y,
-            refreshed.window_local_x,
-            refreshed.window_local_y,
-            window_id,
-            1,
-            &[],
-            delivery,
-        )?;
+        if matches!(delivery, crate::input::mouse::WindowClickDelivery::Background) {
+            let prepared = crate::input::mouse::prepare_background_pixel_click(pid, window_id);
+            exp_log(&format!("background click prepared={prepared}"));
+            crate::input::mouse::click_at_xy_chromium(
+                pid,
+                refreshed.screen_x,
+                refreshed.screen_y,
+                refreshed.window_local_x,
+                refreshed.window_local_y,
+                window_id,
+                1,
+                &[],
+            )?;
+        } else {
+            crate::input::mouse::click_at_xy_with_window_local(
+                pid,
+                refreshed.screen_x,
+                refreshed.screen_y,
+                refreshed.window_local_x,
+                refreshed.window_local_y,
+                window_id,
+                1,
+                &[],
+                delivery,
+            )?;
+        }
         std::thread::sleep(Duration::from_millis(100));
         Ok(())
     };

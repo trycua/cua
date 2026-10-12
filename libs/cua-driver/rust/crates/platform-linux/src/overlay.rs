@@ -4418,6 +4418,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
 
         let tiles = render_x11_tiles(&map);
@@ -4437,6 +4438,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         cursor.apply_command(OverlayCommand::BeginAction {
             action: CursorAction::Click,
             delivery: Some(cursor_overlay::DeliveryModifier::Foreground),
@@ -4448,6 +4450,27 @@ mod tests {
         assert_eq!(tiles.len(), 1);
         assert_eq!(tiles[0].bounds.width, 208);
         assert_eq!(tiles[0].bounds.height, 128);
+    }
+
+    #[test]
+    fn minimal_badge_keeps_a_lone_resting_cursor_tile_compact() {
+        let mut map = default_render_map();
+        map.platform.scr_w = 7680;
+        map.platform.scr_h = 2160;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Minimal);
+        cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
+        cursor.apply_command(OverlayCommand::BeginAction {
+            action: CursorAction::Click,
+            delivery: Some(cursor_overlay::DeliveryModifier::Background),
+            target: Some(cursor_overlay::TargetModifier::Pixel),
+        });
+
+        let tiles = render_x11_tiles(&map);
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].bounds.width, 128, "no name and no chips");
     }
 
     #[test]

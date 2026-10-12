@@ -72,23 +72,22 @@ pub async fn storage_report() -> StorageReport {
             .await
             .ok()
             .flatten();
-        (vol, pulled_containers(&entries).await)
+        let choice = tokio::time::timeout(
+            PROBE,
+            cua_vmm::managed::choose(Default::default(), cua_vmm::managed::LinuxSource::current()),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok);
+        let runtime_bytes = runtime_download_bytes(choice.as_ref(), cua_vmm::managed::exists());
+        (
+            vol,
+            pulled_containers(&entries, choice).await,
+            runtime_bytes,
+        )
     };
-    let ((lume, a), (qemu, b), (container, c)) = tokio::join!(lume, qemu, container);
-    let linux_runtime_download_bytes = if cua_vmm::managed::supported()
-        && !cua_vmm::managed::exists()
-        && matches!(
-            cua_vmm::managed::choose(
-                cua_vmm::container::ContainerConfig::default(),
-                cua_vmm::managed::LinuxSource::current(),
-            )
-            .await,
-            Ok(cua_vmm::managed::Choice::Builtin(_))
-        ) {
-        cua_vmm::managed::first_use_download()
-    } else {
-        0
-    };
+    let ((lume, a), (qemu, b), (container, c, linux_runtime_download_bytes)) =
+        tokio::join!(lume, qemu, container);
     StorageReport {
         linux_runtime_download_bytes,
         host_arch,
@@ -97,6 +96,14 @@ pub async fn storage_report() -> StorageReport {
         qemu,
         container,
         pulled: a.into_iter().chain(b).chain(c).collect(),
+    }
+}
+
+fn runtime_download_bytes(choice: Option<&cua_vmm::managed::Choice>, exists: bool) -> u64 {
+    if !exists && matches!(choice, Some(cua_vmm::managed::Choice::Builtin(_))) {
+        cua_vmm::managed::first_use_download()
+    } else {
+        0
     }
 }
 
@@ -121,7 +128,10 @@ fn pulled_lume(entries: &[&cua_image::catalog::CatalogEntry]) -> Vec<String> {
 }
 
 /// Container images the engine has at their published digest.
-async fn pulled_containers(entries: &[&cua_image::catalog::CatalogEntry]) -> Vec<String> {
+async fn pulled_containers(
+    entries: &[&cua_image::catalog::CatalogEntry],
+    choice: Option<cua_vmm::managed::Choice>,
+) -> Vec<String> {
     let wanted: Vec<_> = entries
         .iter()
         .filter(|e| e.local.as_deref() == Some("container"))
@@ -130,9 +140,10 @@ async fn pulled_containers(entries: &[&cua_image::catalog::CatalogEntry]) -> Vec
         return vec![];
     }
     // The engine Linux Spaces use; the built-in runtime only while it runs.
-    let Ok(Some(rt)) =
-        tokio::time::timeout(PROBE, cua_vmm::managed::connect_if_up(Default::default())).await
-    else {
+    let Some(choice) = choice else {
+        return vec![];
+    };
+    let Ok(Some(rt)) = tokio::time::timeout(PROBE, choice.connect_if_up()).await else {
         return vec![];
     };
     let mut out = vec![];
@@ -159,6 +170,20 @@ fn repo_of(reference: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_download_requires_a_known_absent_builtin() {
+        assert_eq!(runtime_download_bytes(None, false), 0);
+        assert_eq!(runtime_download_bytes(None, true), 0);
+        let choice = cua_vmm::managed::Choice::Builtin(std::sync::Arc::new(
+            cua_vmm::managed::ManagedContainers::new(Default::default()),
+        ));
+        assert_eq!(
+            runtime_download_bytes(Some(&choice), false),
+            cua_vmm::managed::first_use_download()
+        );
+        assert_eq!(runtime_download_bytes(Some(&choice), true), 0);
+    }
 
     #[test]
     fn repo_drops_tag_and_digest() {

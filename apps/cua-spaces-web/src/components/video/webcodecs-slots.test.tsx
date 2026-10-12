@@ -44,6 +44,8 @@ function fakeDesktop(reply: (args: { spaceId: string; tier: string }) => Reply =
   const desktop: CuaDesktopBridge = {
     invoke: async (channel: string, request?: unknown) => {
       const r = request as Request;
+      // Presence (the viewer joins it): none here; presence.test.ts covers it.
+      if (r.method.startsWith("presence.")) return { id: r.id, ok: false, error: { message: "no presence", code: "unsupported" } };
       calls.push({ channel, method: r.method, args: r.args });
       return { id: r.id, ...reply(r.args) };
     },
@@ -454,7 +456,8 @@ describe("<StreamSurface> in the Electron shell", () => {
     const calls: string[] = [];
     electron({
       invoke: (_channel: string, request?: unknown) => {
-        const r = request as { id: string; args: { spaceId: string } };
+        const r = request as { id: string; method: string; args: { spaceId: string } };
+        if (r.method !== "spaces.openStream") return Promise.resolve({ id: r.id, ok: false, error: { message: "no presence", code: "unsupported" } });
         calls.push(r.args.spaceId);
         return new Promise((resolve) => pending.push((reply) => resolve({ id: r.id, ...reply })));
       },

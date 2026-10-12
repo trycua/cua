@@ -95,6 +95,9 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.setupDriver": { agents: ["codex"] },
   "spaces.openStream": { spaceId: SPACE, tier: "tile" },
   "relay.usage": {},
+  "presence.join": { spaceId: SPACE },
+  "presence.publish": { handle: "p1", x: 0.5, y: 0.5, visible: true },
+  "presence.leave": { handle: "p1" },
   "about.get": {},
   "about.set": { channel: "beta" },
   "about.checkNow": {},
@@ -135,4 +138,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
 /** Operations the demo host refuses on purpose, and why. */
 export const DEMO_REFUSES: Partial<Record<OpName, string>> = {
   "spaces.openStream": "the demo host has no video; the page keeps its drawn thumbnail",
+  "presence.join": "the demo host has no video to draw cursors over",
+  "presence.publish": "the demo host has no video to draw cursors over",
+  "presence.leave": "the demo host has no video to draw cursors over",
 };

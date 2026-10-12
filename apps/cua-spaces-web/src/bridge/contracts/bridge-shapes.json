@@ -1756,6 +1756,79 @@
         "machine"
       ]
     },
+    "PresenceCursor": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "string"
+        },
+        "windowId": {
+          "type": "string"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "pressed": {
+          "type": "boolean"
+        },
+        "shape": {
+          "type": "string"
+        },
+        "shapeSource": {
+          "type": "string"
+        },
+        "atMs": {
+          "type": "number"
+        },
+        "receivedMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "displayId",
+        "x",
+        "y",
+        "visible",
+        "pressed",
+        "shape",
+        "shapeSource",
+        "atMs",
+        "receivedMs"
+      ]
+    },
+    "PresenceParticipant": {
+      "type": "object",
+      "properties": {
+        "participantId": {
+          "type": "string"
+        },
+        "principalId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "participantId",
+        "principalId",
+        "displayName",
+        "color",
+        "kind"
+      ]
+    },
     "RemoteWindow": {
       "type": "object",
       "properties": {
@@ -4210,6 +4283,53 @@
       }
     },
     "notifications.markAllRead": {
+      "type": "null"
+    },
+    "presence.join": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string"
+        },
+        "me": {
+          "$ref": "#/$defs/PresenceParticipant"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "participant": {
+                "$ref": "#/$defs/PresenceParticipant"
+              },
+              "cursor": {
+                "$ref": "#/$defs/PresenceCursor"
+              }
+            },
+            "required": [
+              "participant"
+            ]
+          }
+        },
+        "delayMs": {
+          "type": "number"
+        },
+        "datagrams": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "handle",
+        "me",
+        "members",
+        "delayMs",
+        "datagrams"
+      ]
+    },
+    "presence.leave": {
+      "type": "null"
+    },
+    "presence.publish": {
       "type": "null"
     },
     "relay.usage": {

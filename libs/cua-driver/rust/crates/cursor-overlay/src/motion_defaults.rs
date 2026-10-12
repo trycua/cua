@@ -136,7 +136,8 @@ pub fn apply_key(saved: &mut SavedMotionDefaults, key: &str, value: &Value) -> R
                     .ok_or_else(|| format!("{TIMING_KEY} must be a string, got {value}"))?;
                 Some(MotionTiming::parse(name).ok_or_else(|| {
                     format!(
-                        "unknown cursor motion timing `{name}`; expected native, fitts or fixed"
+                        "unknown cursor motion timing `{name}`; expected one of {}",
+                        MotionTiming::names()
                     )
                 })?)
             };
@@ -188,7 +189,7 @@ pub fn config_schema_properties() -> Map<String, Value> {
         TIMING_KEY.to_owned(),
         json!({
             "type": "string",
-            "enum": ["native", "fitts", "fixed"],
+            "enum": MotionTiming::ALL.map(MotionTiming::as_str),
             "description": "Saved default cursor move timing for new sessions."
         }),
     );
@@ -448,7 +449,7 @@ mod tests {
         }
         assert!(set_key_at(&path, TIMING_KEY, &json!("slow"))
             .unwrap_err()
-            .contains("native, fitts or fixed"));
+            .contains("native, fitts, fixed, relaxed, steady, calm, deliberate"));
         assert!(set_key_at(&path, "cursor.motion.effects.sparkle", &json!(true)).is_err());
         assert!(set_key_at(&path, "cursor.motion.effects.trail", &json!(3)).is_err());
         assert!(set_key_at(&path, STYLE_KEY, &json!(7)).is_err());

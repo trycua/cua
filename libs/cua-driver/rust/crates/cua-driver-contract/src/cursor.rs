@@ -255,14 +255,32 @@ pub enum CursorMotionTiming {
     Native,
     Fitts,
     Fixed,
+    Relaxed,
+    Steady,
+    Calm,
+    Deliberate,
 }
 
 impl CursorMotionTiming {
+    pub const ALL: [Self; 7] = [
+        Self::Native,
+        Self::Fitts,
+        Self::Fixed,
+        Self::Relaxed,
+        Self::Steady,
+        Self::Calm,
+        Self::Deliberate,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Native => "native",
             Self::Fitts => "fitts",
             Self::Fixed => "fixed",
+            Self::Relaxed => "relaxed",
+            Self::Steady => "steady",
+            Self::Calm => "calm",
+            Self::Deliberate => "deliberate",
         }
     }
 }

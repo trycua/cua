@@ -30,6 +30,10 @@ fn timing_in(timing: CursorMotionTiming) -> cm::MotionTiming {
         CursorMotionTiming::Native => cm::MotionTiming::Native,
         CursorMotionTiming::Fitts => cm::MotionTiming::Fitts,
         CursorMotionTiming::Fixed => cm::MotionTiming::Fixed,
+        CursorMotionTiming::Relaxed => cm::MotionTiming::Relaxed,
+        CursorMotionTiming::Steady => cm::MotionTiming::Steady,
+        CursorMotionTiming::Calm => cm::MotionTiming::Calm,
+        CursorMotionTiming::Deliberate => cm::MotionTiming::Deliberate,
     }
 }
 

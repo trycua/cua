@@ -1529,7 +1529,11 @@ const FfiConverterTypeCursorMotionStyle = (() => {
 export enum CursorMotionTiming {
     Native,
     Fitts,
-    Fixed
+    Fixed,
+    Relaxed,
+    Steady,
+    Calm,
+    Deliberate
 }
 
 const FfiConverterTypeCursorMotionTiming = (() => {
@@ -1541,6 +1545,10 @@ const FfiConverterTypeCursorMotionTiming = (() => {
                 case 1: return CursorMotionTiming.Native;
                 case 2: return CursorMotionTiming.Fitts;
                 case 3: return CursorMotionTiming.Fixed;
+                case 4: return CursorMotionTiming.Relaxed;
+                case 5: return CursorMotionTiming.Steady;
+                case 6: return CursorMotionTiming.Calm;
+                case 7: return CursorMotionTiming.Deliberate;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -1549,6 +1557,10 @@ const FfiConverterTypeCursorMotionTiming = (() => {
                 case CursorMotionTiming.Native: return ordinalConverter.write(1, into);
                 case CursorMotionTiming.Fitts: return ordinalConverter.write(2, into);
                 case CursorMotionTiming.Fixed: return ordinalConverter.write(3, into);
+                case CursorMotionTiming.Relaxed: return ordinalConverter.write(4, into);
+                case CursorMotionTiming.Steady: return ordinalConverter.write(5, into);
+                case CursorMotionTiming.Calm: return ordinalConverter.write(6, into);
+                case CursorMotionTiming.Deliberate: return ordinalConverter.write(7, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -1667,7 +1679,9 @@ export type CursorMotionSelection = {
     style?: CursorMotionStyle,
     /**
      * `native` uses the style's own timing; `fitts` scales the move time with distance and
-     * target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+     * target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
+     * `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
+     * with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
      */
     timing?: CursorMotionTiming,
     /**
@@ -5295,7 +5309,9 @@ export type SetAgentCursorMotionInput = {
     style?: CursorMotionStyle,
     /**
      * `native` uses the style's own timing; `fitts` scales the move time with distance and
-     * target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+     * target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
+     * `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
+     * with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
      */
     timing?: CursorMotionTiming,
     /**

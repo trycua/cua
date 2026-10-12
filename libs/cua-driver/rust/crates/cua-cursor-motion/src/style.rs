@@ -120,16 +120,38 @@ pub enum MotionTiming {
     Fitts,
     /// Every move takes `glide_duration_ms` (1430 ms when that is 0).
     Fixed,
+    /// The style's own timing, but no move is shorter than 450 ms, with a
+    /// gentler sine ease. Slows short hops; long moves keep their time.
+    Relaxed,
+    /// Like `relaxed` with a 600 ms floor.
+    Steady,
+    /// Like `relaxed` with a 750 ms floor.
+    Calm,
+    /// Fitts' law with a larger constant: `400 + 120 log2(D / W + 1)` ms,
+    /// clamped to 450..1300. Every distance is slower than `fitts`.
+    Deliberate,
 }
 
 impl MotionTiming {
-    pub const ALL: [Self; 3] = [Self::Native, Self::Fitts, Self::Fixed];
+    pub const ALL: [Self; 7] = [
+        Self::Native,
+        Self::Fitts,
+        Self::Fixed,
+        Self::Relaxed,
+        Self::Steady,
+        Self::Calm,
+        Self::Deliberate,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Native => "native",
             Self::Fitts => "fitts",
             Self::Fixed => "fixed",
+            Self::Relaxed => "relaxed",
+            Self::Steady => "steady",
+            Self::Calm => "calm",
+            Self::Deliberate => "deliberate",
         }
     }
 
@@ -137,6 +159,21 @@ impl MotionTiming {
         Self::ALL
             .into_iter()
             .find(|timing| timing.as_str() == value)
+    }
+
+    /// Minimum move time of the floor modes (`relaxed`, `steady`, `calm`).
+    pub const fn floor_ms(self) -> Option<f64> {
+        match self {
+            Self::Relaxed => Some(450.0),
+            Self::Steady => Some(600.0),
+            Self::Calm => Some(750.0),
+            _ => None,
+        }
+    }
+
+    /// The names, comma-separated, for error messages.
+    pub fn names() -> String {
+        Self::ALL.map(Self::as_str).join(", ")
     }
 }
 

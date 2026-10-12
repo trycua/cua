@@ -176,7 +176,8 @@ impl MotionConfig {
             Some(Value::String(name)) => {
                 out.timing = MotionTiming::parse(name).ok_or_else(|| {
                     format!(
-                        "unknown cursor motion timing `{name}`; expected native, fitts or fixed"
+                        "unknown cursor motion timing `{name}`; expected one of {}",
+                        MotionTiming::names()
                     )
                 })?;
             }

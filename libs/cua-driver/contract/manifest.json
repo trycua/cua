@@ -949,7 +949,11 @@
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -4152,11 +4156,15 @@
             "type": "string"
           },
           "timing": {
-            "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+            "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and\n`calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,\nwith a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).",
             "enum": [
               "native",
               "fitts",
-              "fixed"
+              "fixed",
+              "relaxed",
+              "steady",
+              "calm",
+              "deliberate"
             ],
             "type": "string"
           },
@@ -4244,7 +4252,11 @@
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -4727,11 +4739,15 @@
                 "type": "string"
               },
               "timing": {
-                "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+                "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and\n`calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,\nwith a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).",
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -4902,7 +4918,11 @@
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },

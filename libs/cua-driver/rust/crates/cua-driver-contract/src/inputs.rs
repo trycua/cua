@@ -465,7 +465,9 @@ pub struct CursorMotionSelection {
     #[schemars(schema_with = "cursor_motion_style_schema")]
     pub style: Option<crate::CursorMotionStyle>,
     /// `native` uses the style's own timing; `fitts` scales the move time with distance and
-    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
+    /// `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
+    /// with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
@@ -524,7 +526,9 @@ pub struct SetAgentCursorMotionInput {
     #[schemars(schema_with = "cursor_motion_style_schema")]
     pub style: Option<crate::CursorMotionStyle>,
     /// `native` uses the style's own timing; `fitts` scales the move time with distance and
-    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0). `relaxed`, `steady` and
+    /// `calm` keep the style's timing but make every move take at least 450, 600 or 750 ms,
+    /// with a gentler ease; `deliberate` is a slower Fitts curve (450..1300 ms).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,

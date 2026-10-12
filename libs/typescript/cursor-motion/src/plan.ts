@@ -19,6 +19,7 @@ import {
   DEFAULT_FIXED_MS,
   NO_EFFECTS,
   type MotionStyle,
+  timingFloorMs,
   type MotionTiming,
   type ResolvedEffects,
 } from './style';
@@ -128,6 +129,11 @@ const side = (c: Ctx) => naturalSide(c.from, c.aim);
 /** Global Fitts timing: `150 + 120 log2(D / W + 1)` ms, 300..1000. */
 export function fittsTimingMs(d: number, w: number): number {
   return Math.min(Math.max(150 + 120 * Math.log2(d / Math.max(w, 4) + 1), 300), 1000);
+}
+
+/** `deliberate` timing: `400 + 120 log2(D / W + 1)` ms, 450..1300. */
+export function deliberateTimingMs(d: number, w: number): number {
+  return Math.min(Math.max(400 + 120 * Math.log2(d / Math.max(w, 4) + 1), 450), 1300);
 }
 
 function generateSpec(spec: MotionSpec, c: Ctx): Raw[] {
@@ -265,11 +271,17 @@ function applyTiming(
 ) {
   const total = samples.length ? samples[samples.length - 1]!.t : 0;
   let want: number;
+  const last = samples.length ? samples[samples.length - 1]! : c.aim;
+  const d = dist(c.from, pt(last.x, last.y));
+  const w = Math.min(c.target[2], c.target[3]);
+  const floor = timingFloorMs(timing);
   if (timing === 'native') return;
   if (timing === 'fixed') want = fixedMs;
+  else if (timing === 'fitts') want = fittsTimingMs(d, w);
+  else if (timing === 'deliberate') want = deliberateTimingMs(d, w);
   else {
-    const last = samples.length ? samples[samples.length - 1]! : c.aim;
-    want = fittsTimingMs(dist(c.from, pt(last.x, last.y)), Math.min(c.target[2], c.target[3]));
+    if (floor === null || total >= floor) return;
+    want = floor;
   }
   if (total > 0) {
     retime(samples, want);
@@ -432,7 +444,13 @@ export function planMove(params: Partial<MotionParams>, req: MoveRequest): Traje
   const timing: MotionTiming = p.timing === 'native' && p.glideDurationMs > 0 ? 'fixed' : p.timing;
   if (req.reducedMotion) return reduced(q, p.style);
   if (p.style === 'classic') return planClassic(p, q, timing, fixedMs);
-  const spec = specForStyle(p.style, p);
+  let spec = specForStyle(p.style, p);
+  const floor = timingFloorMs(timing);
+  if (spec && floor !== null) {
+    // Floor timings stretch short moves and ease them gently in and out.
+    const ms = durationMs(spec.duration, ctxD(c), targetWidth(c));
+    spec = { ...spec, duration: { type: 'fixed', ms: Math.max(ms, floor) }, ease: 'in_out_sine' };
+  }
   let raw: Raw[];
   let snap: number | null = null;
   if (spec) raw = generateSpec(spec, c);

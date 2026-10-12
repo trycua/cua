@@ -13,7 +13,7 @@
 //! `tests/motion_parity.rs`.
 
 use crate::dubins::PathPlanner;
-use crate::ease::{self, bump_profile, wobble_profile};
+use crate::ease::{self, bump_profile, wobble_profile, Ease};
 use crate::effects::TrailSpec;
 use crate::geom::{anchor_for_pointer, dist, lerp, pointer_for_anchor, wrap_angle, Pt};
 use crate::params::MotionParams;
@@ -147,6 +147,12 @@ impl MoveCtx {
 /// Global Fitts timing mode (`plan.js fittsTimingMs`).
 pub fn fitts_timing_ms(d: f64, w: f64) -> f64 {
     (150.0 + 120.0 * (d / w.max(4.0) + 1.0).log2()).clamp(300.0, 1000.0)
+}
+
+/// `deliberate` timing: Fitts' law with a 400 ms constant, clamped to
+/// 450..1300 ms.
+pub fn deliberate_timing_ms(d: f64, w: f64) -> f64 {
+    (400.0 + 120.0 * (d / w.max(4.0) + 1.0).log2()).clamp(450.0, 1300.0)
 }
 
 /// Generate a custom motion in lab space (ms, hotspot), before heading.
@@ -366,7 +372,14 @@ pub fn generate(
     params: &MotionParams,
     rng: &mut Rng,
 ) -> (Vec<Raw>, Option<f64>) {
-    if let Some(spec) = MotionSpec::for_style(style, params) {
+    if let Some(mut spec) = MotionSpec::for_style(style, params) {
+        // Floor modes stretch short moves and ease them in and out gently,
+        // so a slow short hop does not linger at its ends.
+        if let Some(floor) = params.timing.floor_ms() {
+            let ms = spec.duration.ms(ctx.d(), ctx.target_width());
+            spec.duration = Duration::Fixed { ms: ms.max(floor) };
+            spec.ease = Ease::InOutSine;
+        }
         return (generate_spec(&spec, ctx), None);
     }
     match style {
@@ -385,12 +398,19 @@ pub fn apply_timing(
     fixed_ms: f64,
 ) {
     let total = samples.last().map_or(0.0, |s| s.t);
+    let last = samples.last().map_or(ctx.aim, |s| Pt::new(s.x, s.y));
+    let w = ctx.target[2].min(ctx.target[3]);
     let want = match timing {
         MotionTiming::Native => return,
         MotionTiming::Fixed => fixed_ms,
-        MotionTiming::Fitts => {
-            let last = samples.last().map_or(ctx.aim, |s| Pt::new(s.x, s.y));
-            fitts_timing_ms(dist(ctx.from, last), ctx.target[2].min(ctx.target[3]))
+        MotionTiming::Fitts => fitts_timing_ms(dist(ctx.from, last), w),
+        MotionTiming::Deliberate => deliberate_timing_ms(dist(ctx.from, last), w),
+        MotionTiming::Relaxed | MotionTiming::Steady | MotionTiming::Calm => {
+            let floor = timing.floor_ms().unwrap_or(0.0);
+            if total >= floor {
+                return;
+            }
+            floor
         }
     };
     if total > 0.0 {
@@ -981,6 +1001,70 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn floor_timings_slow_short_moves_and_keep_long_ones() {
+        let move_ms = |style, timing, d: f64| {
+            let traj = plan_move(
+                &motion(style, timing),
+                &req(Pt::new(0.0, 0.0), Pt::new(d, 0.0), None),
+            );
+            // Last moment the hotspot is off its final point.
+            let end = traj.end();
+            traj.samples
+                .iter()
+                .rev()
+                .find(|s| (s.x - end.x).hypot(s.y - end.y) > 1e-9)
+                .map_or(0.0, |s| s.t * 1000.0)
+        };
+        for style in [
+            MotionStyle::SignatureArc,
+            MotionStyle::SpringSettle,
+            MotionStyle::CometSwoop,
+            MotionStyle::Magnetic,
+            MotionStyle::Adaptive,
+        ] {
+            let native_short = move_ms(style, MotionTiming::Native, 20.0);
+            let native_long = move_ms(style, MotionTiming::Native, 900.0);
+            let mut last = native_short;
+            for timing in [
+                MotionTiming::Relaxed,
+                MotionTiming::Steady,
+                MotionTiming::Calm,
+            ] {
+                let floor = timing.floor_ms().unwrap();
+                let short = move_ms(style, timing, 20.0);
+                let total = plan_move(
+                    &motion(style, timing),
+                    &req(Pt::new(0.0, 0.0), Pt::new(20.0, 0.0), None),
+                )
+                .duration()
+                    * 1000.0;
+                assert!(
+                    total >= floor - DT_MS && short >= 0.8 * floor,
+                    "{style:?}/{timing:?}: {short}/{total} vs {floor}"
+                );
+                assert!(
+                    short >= last,
+                    "{style:?}/{timing:?} must not be faster than a lower floor"
+                );
+                last = short;
+                let long = move_ms(style, timing, 900.0);
+                assert!(
+                    long >= native_long - DT_MS && long <= native_long.max(floor) + DT_MS,
+                    "{style:?}/{timing:?}: long move {long} vs native {native_long}"
+                );
+            }
+            let deliberate = move_ms(style, MotionTiming::Deliberate, 20.0);
+            let fitts = move_ms(style, MotionTiming::Fitts, 20.0);
+            assert!(
+                deliberate > fitts + 100.0,
+                "{style:?}: {deliberate} vs {fitts}"
+            );
+        }
+        assert_eq!(MotionTiming::parse("steady"), Some(MotionTiming::Steady));
+        assert_eq!(MotionTiming::Native.floor_ms(), None);
     }
 
     #[test]

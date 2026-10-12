@@ -1146,7 +1146,7 @@ pub fn parse_command() -> Command {
     }
 }
 
-const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
+const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed|relaxed|steady|calm|deliberate] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
 
 /// Build `set_agent_cursor_motion` arguments from `cua-driver cursor motion`
 /// flags. Effects take `on`, `off` or `default` (the style's own choice).
@@ -1171,7 +1171,12 @@ fn cursor_motion_args(args: &[String]) -> Result<serde_json::Value, String> {
     if let Some(timing) = flag_value(args, "--timing") {
         let parsed: cua_driver_contract::CursorMotionTiming =
             serde_json::from_value(timing.clone().into()).map_err(|_| {
-                format!("unknown timing `{timing}`; expected native, fitts or fixed")
+                format!(
+                    "unknown timing `{timing}`; expected one of {}",
+                    cua_driver_contract::CursorMotionTiming::ALL
+                        .map(cua_driver_contract::CursorMotionTiming::as_str)
+                        .join(", ")
+                )
             })?;
         out.insert("timing".into(), parsed.as_str().into());
     }

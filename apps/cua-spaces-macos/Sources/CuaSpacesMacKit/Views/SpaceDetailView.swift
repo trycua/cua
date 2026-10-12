@@ -253,14 +253,21 @@ struct SpaceDetailView: View {
     }
 
     @ToolbarContentBuilder private func toolbar(_ detail: AppSpaceDetail) -> some ToolbarContent {
-        let actions = detail.actions
-        if actions.count > 0 { ToolbarItem { actionButton(actions[0]) } }
-        if actions.count > 1 { ToolbarItem { actionButton(actions[1]) } }
-        if actions.count > 2 { ToolbarItem { actionButton(actions[2]) } }
-        if actions.count > 3 { ToolbarItem { actionButton(actions[3]) } }
-        if actions.count > 4 { ToolbarItem { actionButton(actions[4]) } }
-        if actions.count > 5 { ToolbarItem { actionButton(actions[5]) } }
-        if actions.count > 6 { ToolbarItem { actionButton(actions[6]) } }
+        ToolbarItemGroup {
+            let more = detail.actions.filter { !$0.primary && $0.id != .cancel && $0.id != .power }
+            if !more.isEmpty {
+                Menu {
+                    ForEach(Array(more.enumerated()), id: \.offset) { _, action in
+                        actionButton(action)
+                    }
+                } label: {
+                    Label("More actions", systemImage: "ellipsis.circle")
+                }
+            }
+            ForEach(Array(detail.actions.enumerated()), id: \.offset) { _, action in
+                if !more.contains(action) { actionButton(action) }
+            }
+        }
     }
 
     @ViewBuilder private func actionButton(_ action: AppDetailAction) -> some View {

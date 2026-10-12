@@ -213,6 +213,18 @@ pub fn write_config_value(home: &Path, enabled: bool) -> std::io::Result<PathBuf
     Ok(path)
 }
 
+/// The Cua deployment (`prod` or `staging`), resolved as `cua_home::env`
+/// does: `CUA_ENV`, else the build's `CUA_DEFAULT_ENV`; anything else is
+/// `prod`. Kept here (not a cua-home dependency) so cua-driver, which links
+/// this crate, keeps building with its older toolchain.
+fn deployment(env: Env<'_>) -> &'static str {
+    let value = env("CUA_ENV").or_else(|| option_env!("CUA_DEFAULT_ENV").map(str::to_string));
+    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("staging") => "staging",
+        _ => "prod",
+    }
+}
+
 /// The PostHog project key events go to: `CUA_POSTHOG_KEY`, else the
 /// project of the `CUA_ENV` deployment. `None` when that deployment has no
 /// project yet (staging never falls back to production's).
@@ -222,11 +234,9 @@ pub fn posthog_key(env: Env<'_>) -> Option<String> {
     {
         return Some(k);
     }
-    let deployment =
-        cua_home::env::CuaEnv::try_from_value(env("CUA_ENV").as_deref()).unwrap_or_default();
-    let key = match deployment {
-        cua_home::env::CuaEnv::Prod => crate::sink::POSTHOG_API_KEY,
-        cua_home::env::CuaEnv::Staging => crate::sink::STAGING_POSTHOG_API_KEY,
+    let key = match deployment(env) {
+        "staging" => crate::sink::STAGING_POSTHOG_API_KEY,
+        _ => crate::sink::POSTHOG_API_KEY,
     };
     (!key.is_empty()).then(|| key.to_string())
 }
@@ -240,9 +250,7 @@ pub fn decide(env: Env<'_>, home: Option<&Path>) -> Decision {
         is_ci: ci,
     };
     if posthog_key(env).is_none() {
-        let deployment =
-            cua_home::env::CuaEnv::try_from_value(env("CUA_ENV").as_deref()).unwrap_or_default();
-        return d(false, Source::NoProject(deployment.name()));
+        return d(false, Source::NoProject(deployment(env)));
     }
     if env(ENV_DO_NOT_TRACK).is_some_and(|v| {
         let v = v.trim();

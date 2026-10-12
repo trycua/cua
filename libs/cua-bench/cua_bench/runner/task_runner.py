@@ -8,12 +8,12 @@ import asyncio
 import json
 import math
 import os
-import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ..evidence_contract import action_event_valid, oracle_receipt_valid
 from ..sessions.providers.local_environment import check_image_exists, pull_image
 from .docker_utils import (
     ContainerInfo,
@@ -377,40 +377,8 @@ class TaskRunner:
             if oracle_path and oracle_path.is_file():
                 try:
                     oracle_result = json.loads(oracle_path.read_text(encoding="utf-8"))
-                    if (
-                        oracle_result.get("schema_version") != "cua-bench-oracle-result/v1"
-                        or oracle_result.get("task_index") != task_index
-                        or oracle_result.get("execution_id") != task_id
-                        or oracle_result.get("evaluated") is not True
-                        or not isinstance(oracle_result.get("success"), bool)
-                    ):
-                        oracle_error = "Invalid oracle result receipt"
-                    else:
-                        # Recalculate the verdict from the numeric rewards.
-                        # Do not trust a self-asserted success boolean.
-                        rewards = oracle_result.get("rewards")
-                        threshold = oracle_result.get("success_threshold")
-                        valid_rewards = (
-                            isinstance(rewards, list) and bool(rewards)
-                            and all(
-                                isinstance(v, (int, float)) and not isinstance(v, bool)
-                                and math.isfinite(v)
-                                for v in rewards
-                            )
-                        )
-                        valid_threshold = (
-                            isinstance(threshold, (int, float))
-                            and not isinstance(threshold, bool)
-                            and math.isfinite(threshold) and 0.0 <= threshold <= 1.0
-                        )
-                        calculated = (
-                            valid_rewards and valid_threshold
-                            and all(v >= threshold for v in rewards)
-                        )
-                        if not valid_rewards or not valid_threshold or (
-                            oracle_result["success"] is not calculated
-                        ):
-                            oracle_error = "Inconsistent oracle reward and success verdict"
+                    if not oracle_receipt_valid(oracle_result, task_index, task_id):
+                        oracle_error = "Invalid or inconsistent oracle result receipt"
                 except (OSError, ValueError, TypeError):
                     oracle_error = "Unreadable oracle result receipt"
             else:
@@ -438,21 +406,7 @@ class TaskRunner:
                             for raw in records:
                                 record = json.loads(raw)
                                 sequence += 1
-                                if (
-                                    record.get("schema_version") != "cua-bench-executed-action/v1"
-                                    or record.get("execution_id") != task_id
-                                    or record.get("sequence") != sequence
-                                    or record.get("execution_status") not in ("returned", "failed")
-                                    or not isinstance(record.get("action"), dict)
-                                    or not all(
-                                        isinstance(record.get(phase), dict)
-                                        and isinstance(record[phase].get("sha256"), str)
-                                        and re.fullmatch(r"[0-9a-f]{64}", record[phase]["sha256"])
-                                        and type(record[phase].get("size_bytes")) is int
-                                        and record[phase]["size_bytes"] >= 0
-                                        for phase in ("before", "after")
-                                    )
-                                ):
+                                if not action_event_valid(record, sequence, task_id):
                                     raise ValueError("Invalid action evidence record")
                                 if record["execution_status"] == "failed":
                                     raise ValueError("Failed agent action cannot establish a successful run")

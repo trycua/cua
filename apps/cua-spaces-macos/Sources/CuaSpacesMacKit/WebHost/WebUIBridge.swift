@@ -117,6 +117,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var teleportPlans: [String: (json: String, plan: TeleportPlan, providerId: String?)] = [:]
     /// Asks whether to delete (the native alert); tests answer it.
     var askDelete: (@MainActor (KvDeleteConfirm) async -> Bool)?
+    /// Asks for the passphrase (the native sheet); tests fill the model's
+    /// fields and answer it.
+    var askPassphrase: (@MainActor (KvCredentialForm) async -> Bool)?
     /// Each Space's stream rows and picture-in-picture panels, as its
     /// detail view keeps them. A deleted Space's are closed and dropped
     /// (`pruneStreams`).
@@ -805,38 +808,49 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
-    /// Unlocks (or sets up) the vault with Touch ID, the daemon's prompt. A
-    /// passphrase vault unlocks in the native window: a passphrase never
-    /// crosses the bridge.
+    /// Unlocks the vault the way the core's form offers: Touch ID (the
+    /// daemon's prompt), or a passphrase typed in a native sheet on this
+    /// window (it never crosses the bridge).
     func unlockVault() async throws {
         let kv = model.keyvault
         guard let form = kv.page.form else { return }
-        guard form.method == .touchId else {
-            actions?.openMain()
-            model.selection = .keyvault(.category(category: .all))
-            throw Failure(code: "native_only", message: "Enter the passphrase in the Cua Spaces window")
-        }
+        try await askCredential(form, cancelled: "Unlock cancelled")
         await kv.submitCredential()
     }
 
-    /// "Set up Keyvault" on the web page: the core's setup form with Touch
-    /// ID, as the SwiftUI form sends it. A passphrase is typed only in the
-    /// native form (it never crosses the bridge). Answers the recovery key
-    /// to show once.
+    /// "Set up Keyvault" on the web page: the core's setup form, Touch ID
+    /// or a passphrase (asked as for unlock), sent as the SwiftUI form
+    /// sends it. Answers the recovery key to show once.
     func setUpVault() async throws -> String? {
         let kv = model.keyvault
         guard let form = kv.page.form, form.mode == .setup else {
             throw Failure(code: "failed", message: "Keyvault is already set up")
         }
-        guard form.method == .touchId else {
-            actions?.openMain()
-            model.selection = .keyvault(.category(category: .all))
-            throw Failure(code: "native_only", message: "Choose a passphrase in the Cua Spaces window")
-        }
+        try await askCredential(form, cancelled: "Set up cancelled")
         kv.recoveryKey = nil
         await kv.submitCredential()
         if let error = kv.error { throw Failure(code: "failed", message: error) }
         return kv.recoveryKey
+    }
+
+    /// A passphrase form: the sheet fills the model's fields. Closed
+    /// without sending: `cancelled`, and the fields are cleared.
+    func askCredential(_ form: KvCredentialForm, cancelled: String) async throws {
+        guard form.method == .passphrase else { return }
+        let kv = model.keyvault
+        let sent: Bool
+        if let askPassphrase {
+            sent = await askPassphrase(form)
+        } else if let host {
+            sent = await host.askPassphrase(form, keyvault: kv)
+        } else {
+            sent = false
+        }
+        guard sent, kv.canSubmitCredential else {
+            kv.passphrase = ""
+            kv.passphraseConfirm = ""
+            throw Failure(code: "cancelled", message: cancelled)
+        }
     }
 
     // MARK: - Arguments

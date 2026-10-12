@@ -111,6 +111,16 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
     }
 }
 
+/// A case of the parity flow `keyvault-unlock.json` (setup or unlock, Touch
+/// ID or a passphrase).
+func keyvaultUnlockCase(_ name: String) throws -> KeyvaultOverview {
+    let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
+    let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
+    let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
+    return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
+}
+
 func fixtureOverview() throws -> KeyvaultOverview {
     let url = ParityTests.dir.appendingPathComponent("keyvault-approve-deny.json")
     let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
@@ -1167,13 +1177,7 @@ struct ViewModelTests {
         #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
     }
 
-    func unlockCase(_ name: String) throws -> KeyvaultOverview {
-        let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
-        let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-        let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
-        let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
-        return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
-    }
+    func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }
 
     @Test func passphraseSetupAndUnlockGoOnlyToTheBroker() async throws {
         let fake = FakeKeyvault(try unlockCase("setup-passphrase"))

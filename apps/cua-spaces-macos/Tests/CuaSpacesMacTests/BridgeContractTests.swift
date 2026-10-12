@@ -274,8 +274,8 @@ struct BridgeContractTests {
         "devices.revoke": "changes the fixture account", "devices.confirmMachine": "changes the fixture account",
         "stream.pip": "opens a picture-in-picture window",
         "keyvault.delete": "asks in an alert; TeleportBridgeTests answers it",
-        "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID",
-        "keyvault.setup": "sets the vault up with Touch ID; keyvaultSetupRefusesASetUpVault covers the fixture",
+        "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID or a passphrase in a sheet",
+        "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
         "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
     ]
 

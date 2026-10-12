@@ -382,6 +382,21 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         return response == .alertFirstButtonReturn
     }
 
+    /// The Keyvault's passphrase form as a sheet on this window, bound to
+    /// `keyvault`'s fields. True when the user sends it; the passphrase
+    /// never reaches the page.
+    func askPassphrase(_ form: KvCredentialForm, keyvault: KeyvaultModel) async -> Bool {
+        showWindow(nil)
+        guard let window else { return false }
+        let sheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        sheet.isReleasedWhenClosed = false
+        sheet.contentViewController = NSHostingController(rootView: PassphraseSheet(keyvault: keyvault, form: form) { [weak window, weak sheet] sent in
+            guard let window, let sheet else { return }
+            window.endSheet(sheet, returnCode: sent ? .OK : .cancel)
+        })
+        return await window.beginSheet(sheet) == .OK
+    }
+
     // MARK: - Window
 
     public func windowDidEnterFullScreen(_ notification: Notification) { applyInset() }

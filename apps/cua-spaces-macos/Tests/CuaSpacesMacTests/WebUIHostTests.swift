@@ -171,8 +171,7 @@ struct WebUIHostTests {
     }
 
     /// "No Keyvault yet" on the web page: Set up Keyvault runs the core's
-    /// Touch ID setup and answers the recovery key once; a passphrase setup
-    /// stays in the native form.
+    /// Touch ID setup and answers the recovery key once.
     @Test func setupFromTheWebPageAnswersTheRecoveryKey() async throws {
         var none = KeyvaultFixtures.overview()
         none.availability = "no_vault"
@@ -191,11 +190,53 @@ struct WebUIHostTests {
         // Set up already: nothing to set up.
         #expect(await failure(bridge, "keyvault.setup", [:]) == "failed")
 
-        var passphraseOnly = none
-        passphraseOnly.status?.osProtectorAvailable = false
-        let (bridge2, model2) = self.bridge(kv: FakeKeyvault(passphraseOnly))
-        await model2.keyvault.refresh()
-        #expect(await failure(bridge2, "keyvault.setup", [:]) == "native_only")
+    }
+
+    /// A passphrase vault set up and unlocked from the web page: the native
+    /// sheet fills the model's fields and the bridge submits them as the
+    /// SwiftUI form does; the page's call carries no passphrase. Closing the
+    /// sheet answers `cancelled` and clears the fields.
+    @Test func passphraseSetupAndUnlockFromTheWebPageAskInTheSheet() async throws {
+        let fake = FakeKeyvault(try keyvaultUnlockCase("setup-passphrase"))
+        let (bridge, model) = bridge(kv: fake)
+        let kv = model.keyvault
+        await kv.refresh()
+        #expect(kv.page.form?.method == .passphrase && kv.page.form?.mode == .setup)
+
+        var asked: [KvCredentialForm] = []
+        bridge.askPassphrase = { form in
+            asked.append(form)
+            kv.passphrase = "orbit lantern"
+            return false
+        }
+        #expect(await failure(bridge, "keyvault.setup", [:]) == "cancelled")
+        #expect(kv.passphrase.isEmpty && fake.passphrases.isEmpty)
+
+        bridge.askPassphrase = { form in
+            asked.append(form)
+            kv.passphrase = "orbit lantern pickle harbor"
+            kv.passphraseConfirm = "orbit lantern pickle harbor"
+            return true
+        }
+        let r = try await bridge.handle("keyvault.setup", [:]) as? [String: Any]
+        #expect(r?["recoveryKey"] as? String == "ABCDE-FGHJK")
+        #expect(fake.passphrases == ["orbit lantern pickle harbor"])
+        #expect(fake.commands.isEmpty)
+        #expect(kv.passphrase.isEmpty && kv.passphraseConfirm.isEmpty)
+        #expect(asked.allSatisfy { $0.mode == .setup && $0.confirmLabel != nil })
+
+        fake.current = try keyvaultUnlockCase("unlock-passphrase")
+        await kv.refresh()
+        #expect(kv.page.canUnlock)
+        bridge.askPassphrase = { form in
+            asked.append(form)
+            kv.passphrase = "orbit lantern pickle harbor"
+            return true
+        }
+        _ = try await bridge.handle("keyvault.unlockVault", [:])
+        #expect(asked.last?.mode == .unlock)
+        #expect(fake.passphrases.count == 2)
+        #expect(kv.page.ready)
     }
 
     @Test func cancelCreateAnswersWithTheSDKsWords() async throws {

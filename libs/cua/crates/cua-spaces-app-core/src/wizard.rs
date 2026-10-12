@@ -3494,7 +3494,10 @@ mod tests {
         let s = on("ghcr.io/trycua/linux:24.04", &e);
         let v = view(&s, &e);
         let p = sizes("ghcr.io/trycua/linux:24.04", "arm64");
-        assert!(v.summary.iter().any(|f| f.label == "Linux runtime" && f.value.contains("455 MB one-time download")));
+        assert!(v.resource_facts.iter().all(|f| f.label != "Linux runtime"));
+        assert!(v.summary.iter().all(|f| f.label != "Linux runtime"));
+        assert_eq!(v.summary.iter().filter(|f| f.label == "Disk").count(), 1);
+        assert!(v.summary.iter().any(|f| f.label == "Disk" && f.value.contains("includes 455 MB one-time Linux runtime download")));
         assert!(v.summary.iter().any(
             |f| f.label == "Disk" && f.value.starts_with(&size_text(p.unpacked + (455 << 20)))
         ));
@@ -3513,6 +3516,18 @@ mod tests {
                 .iter()
                 .any(|f| f.label == "Linux runtime")
         );
+    }
+
+    #[test]
+    fn runtime_is_disclosed_without_catalog_sizes() {
+        let mut e = storage_env();
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
+        let s = on("ghcr.io/trycua/linux:24.04", &e);
+        let mut image = image_of(&s);
+        image.sizes = None;
+        let disk = disk_view(&s, &image, &e, SpaceOs::Linux);
+        assert_eq!(disk.facts.iter().filter(|f| f.id == "disk").count(), 1);
+        assert!(disk.facts.iter().any(|f| f.id == "disk" && f.value.contains("includes 455 MB one-time Linux runtime download")));
     }
 
     #[test]

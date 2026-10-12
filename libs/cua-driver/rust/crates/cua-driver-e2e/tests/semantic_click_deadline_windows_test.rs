@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! #5012: a synchronous modal UIA Invoke must not hold the MCP response open.
 //! Requires the repository WinForms modal fixture and an interactive desktop.
 #![cfg(target_os = "windows")]
@@ -83,6 +85,7 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
         click_args(&snap, "Normal semantic action", pid, wid),
     );
     assert!(!normal.is_error(), "{}", normal.text());
+    assert!(normal.text().contains("UIA Invoke"), "{}", normal.text());
     wait_count(&journal, "normal", 1);
 
     let snap = snapshot(&mut driver, pid, wid);
@@ -157,6 +160,8 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
         click_args(&snap, "Toggle semantic action", pid, wid),
     );
     assert!(!toggle.is_error(), "Toggle regression: {}", toggle.text());
+    assert_eq!(toggle.structured()["route"], "accessibility");
+    println!("checkbox_summary={}", toggle.text());
     wait_count(&journal, "toggled", 1);
     let snap = snapshot(&mut driver, pid, wid);
     let select = driver.call(
@@ -168,6 +173,8 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
         "Selection regression: {}",
         select.text()
     );
+    assert_eq!(select.structured()["route"], "accessibility");
+    println!("radio_summary={}", select.text());
     wait_count(&journal, "selected", 1);
     let snap = snapshot(&mut driver, pid, wid);
     let fallback = driver.call("click", click_args(&snap, "Coordinate fallback", pid, wid));
@@ -177,12 +184,17 @@ fn synchronous_modal_click_times_out_without_replay_and_recovers() {
         fallback.text()
     );
     wait_count(&journal, "fallback", 1);
+    assert_eq!(fallback.structured()["route"], "synthetic_events");
     let snap = snapshot(&mut driver, pid, wid);
     let expand = driver.call(
         "click",
         click_args(&snap, "Expand semantic action", pid, wid),
     );
     assert!(!expand.is_error(), "Expand regression: {}", expand.text());
+    // The legacy WinForms combo has no usable click pattern; a completed
+    // semantic miss must retain its existing coordinate fallback.
+    assert_eq!(expand.structured()["route"], "synthetic_events");
+    println!("combo_summary={}", expand.text());
     wait_count(&journal, "expanded", 1);
     assert_eq!(
         counts(&journal).get("opened"),

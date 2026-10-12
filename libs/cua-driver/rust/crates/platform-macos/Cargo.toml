@@ -54,6 +54,9 @@ objc2-app-kit = { version = "0.2", features = [
     "NSImage", "NSImageView", "NSTextField", "NSControl", "NSCell",
     # System cursor shape reporting (cursor_shape adapter).
     "NSCursor",
+    # Background existing-profile setup: stash and restore the pasteboard
+    # around the omnibox "Paste and Go" route.
+    "NSPasteboard", "NSPasteboardItem",
     "block2", "libc",
 ] }
 

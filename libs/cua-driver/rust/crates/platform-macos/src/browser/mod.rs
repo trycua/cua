@@ -3,6 +3,7 @@ pub mod browser_js;
 pub mod cdp_client;
 mod consent_ui;
 pub mod electron_js;
+mod pasteboard_stash;
 pub mod platform;
 mod setup_ui;
 pub mod wk_web_view;

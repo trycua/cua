@@ -378,6 +378,64 @@ fn new_tab_button(
     })
 }
 
+/// Open `element`'s context menu and press its item titled exactly `title`,
+/// all through accessibility: a background browser stays in the background
+/// (an opened menu only takes key focus, which the key-focus guard returns).
+/// Closes the menu and returns false when the item does not appear.
+fn press_context_menu_item(pid: i32, element: AXUIElementRef, title: &str) -> bool {
+    // AppKit tracks the menu modally, so this call can time out while the
+    // menu is open; the menu is there either way.
+    let _ = unsafe { perform_action(element, "AXShowMenu") };
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    loop {
+        let tree = walk_tree(pid, None, None);
+        let item = tree
+            .nodes
+            .iter()
+            .find(|node| {
+                node.role == "AXMenuItem"
+                    && node.title.as_deref() == Some(title)
+                    && has_action(node, "AXPress")
+            })
+            .map(|node| node.element_ptr);
+        if let Some(item) = item {
+            let pressed = unsafe { perform_action(item as AXUIElementRef, "AXPress") };
+            release_actionable_nodes(&tree.nodes);
+            return pressed == kAXErrorSuccess;
+        }
+        if Instant::now() >= deadline {
+            for node in tree
+                .nodes
+                .iter()
+                .filter(|node| node.role == "AXMenu" && has_action(node, "AXCancel"))
+            {
+                let _ = unsafe { perform_action(node.element_ptr as AXUIElementRef, "AXCancel") };
+            }
+            release_actionable_nodes(&tree.nodes);
+            return false;
+        }
+        release_actionable_nodes(&tree.nodes);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Open a new tab next to the approved window's selected tab through the
+/// tab's own context menu. Unlike the New Tab button, this does not make
+/// Chrome activate itself.
+fn open_tab_from_context_menu(pid: i32, nodes: &[AXNode]) -> bool {
+    let selected_tab = nodes
+        .iter()
+        .find(|node| {
+            node.role == "AXRadioButton"
+                && node.value.as_deref() == Some("1")
+                && has_action(node, "AXShowMenu")
+        })
+        .map(|node| node.element_ptr);
+    selected_tab.is_some_and(|tab| {
+        press_context_menu_item(pid, tab as AXUIElementRef, "New Tab to the Right")
+    })
+}
+
 fn is_same_element(left: usize, right: usize) -> bool {
     unsafe { CFEqual(left as CFTypeRef, right as CFTypeRef) != 0 }
 }
@@ -1313,15 +1371,20 @@ fn set_remote_debugging(
             injected_global_input: false,
         },
         Ok(None) => {
-            let new_tab = new_tab_button(&initial.nodes, descriptor);
-            let new_tab = match new_tab {
-                Ok(element) => element,
-                Err(error) => {
-                    release_actionable_nodes(&initial.nodes);
-                    return Err(error);
-                }
+            let opened_from_menu = open_tab_from_context_menu(pid, &initial.nodes);
+            let pressed = if opened_from_menu {
+                kAXErrorSuccess
+            } else {
+                let new_tab = new_tab_button(&initial.nodes, descriptor);
+                let new_tab = match new_tab {
+                    Ok(element) => element,
+                    Err(error) => {
+                        release_actionable_nodes(&initial.nodes);
+                        return Err(error);
+                    }
+                };
+                unsafe { perform_action(new_tab as AXUIElementRef, "AXPress") }
             };
-            let pressed = unsafe { perform_action(new_tab as AXUIElementRef, "AXPress") };
             if pressed != kAXErrorSuccess {
                 release_actionable_nodes(&initial.nodes);
                 return Err(refusal(
@@ -1456,7 +1519,23 @@ fn set_remote_debugging(
                     ),
                 ));
             }
-            if confirmed {
+            // Chrome's own "Paste and Go" navigates without keystrokes, so
+            // Chrome stays in the background. The user's pasteboard is put
+            // back right after.
+            let pasted = !confirmed
+                && super::pasteboard_stash::PasteboardStash::replace_with_text(
+                    descriptor.setup_url,
+                )
+                .is_some_and(|stash| {
+                    let pressed = press_context_menu_item(
+                        pid,
+                        omnibox as AXUIElementRef,
+                        &format!("Paste and Go to {}", descriptor.setup_url),
+                    );
+                    stash.restore();
+                    pressed
+                });
+            if confirmed || pasted {
                 unsafe { CFRelease(omnibox as CFTypeRef) };
             } else {
                 let deadline = Instant::now() + Duration::from_secs(2);

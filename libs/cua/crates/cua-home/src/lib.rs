@@ -2,7 +2,8 @@
 //!
 //! [`cua_home`] is `$CUA_HOME`, else `$HOME/.cua` (`%USERPROFILE%\.cua` on
 //! Windows): the directory that holds the Spaces registry, sandbox state,
-//! env tokens and credentials.
+//! env tokens and credentials. A non-production `CUA_ENV` (see [`env`])
+//! moves the default below it (`~/.cua/envs/staging`).
 //!
 //! [`guard_write`] refuses a write under the user's *real* `~/.cua` (the
 //! passwd home, or on Windows the account's profile directory; never
@@ -23,6 +24,8 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+
+pub mod env;
 
 /// Environment variable that marks a test process.
 pub const CUA_TEST_ENV: &str = "CUA_TEST";
@@ -74,7 +77,8 @@ pub fn bundled_cua_of(exe: &Path) -> Option<PathBuf> {
     file(dir.join("resources/native").join(CUA_FILE))
 }
 
-/// The cua home: `$CUA_HOME`, else `~/.cua`.
+/// The cua home: `$CUA_HOME`, else `~/.cua` (production) or
+/// `~/.cua/envs/<env>` (another `CUA_ENV`).
 pub fn cua_home() -> PathBuf {
     if let Some(h) = std::env::var_os("CUA_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(h);
@@ -84,7 +88,11 @@ pub fn cua_home() -> PathBuf {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".cua")
+    let base = home.join(".cua");
+    match env::CuaEnv::current().home_subdir() {
+        Some(sub) => base.join(sub),
+        None => base,
+    }
 }
 
 /// The user's real `~/.cua`, from the account database rather than `$HOME`

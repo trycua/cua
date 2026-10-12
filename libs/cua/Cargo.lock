@@ -2838,6 +2838,7 @@ name = "cua-spaces-app-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cua-home",
  "cua-keyvault",
  "cua-telemetry",
  "serde",
@@ -3042,6 +3043,7 @@ dependencies = [
 name = "cua-telemetry"
 version = "0.1.0"
 dependencies = [
+ "cua-home",
  "hex",
  "rand 0.9.5",
  "serde",

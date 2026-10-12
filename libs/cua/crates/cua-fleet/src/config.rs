@@ -93,6 +93,18 @@ impl FleetConfig {
         }
     }
 
+    /// Whether the signed-in user's session (`cua auth login`) may be sent
+    /// to this Fleet: always in production; under another `CUA_ENV` only to
+    /// a Fleet that `CUA_FLEET_BASE_URL` names, so the production Fleet never
+    /// receives a staging token.
+    pub fn accepts_session(&self) -> bool {
+        Self::accepts_session_in(cua_home::env::CuaEnv::current(), &self.base_url)
+    }
+
+    fn accepts_session_in(env: cua_home::env::CuaEnv, base_url: &str) -> bool {
+        env.is_prod() || base_url.trim_end_matches('/') != DEFAULT_FLEET_BASE_URL
+    }
+
     /// True when a static token or both client credentials are present.
     pub fn has_auth(&self) -> bool {
         self.fleet_token.is_some() || (self.client_id.is_some() && self.client_secret.is_some())
@@ -130,5 +142,26 @@ mod tests {
         assert!(c.has_auth());
         assert_eq!(c.fleet_token, None);
         assert!(!format!("{c:?}").contains("secret\""));
+    }
+
+    #[test]
+    fn staging_sessions_never_reach_the_production_fleet() {
+        use cua_home::env::CuaEnv;
+        assert!(FleetConfig::accepts_session_in(
+            CuaEnv::Prod,
+            DEFAULT_FLEET_BASE_URL
+        ));
+        assert!(!FleetConfig::accepts_session_in(
+            CuaEnv::Staging,
+            DEFAULT_FLEET_BASE_URL
+        ));
+        assert!(!FleetConfig::accepts_session_in(
+            CuaEnv::Staging,
+            "https://run.cua.ai/"
+        ));
+        assert!(FleetConfig::accepts_session_in(
+            CuaEnv::Staging,
+            "https://fleet.staging.example"
+        ));
     }
 }

@@ -236,7 +236,7 @@ public struct OnboardingView: View {
                 // A failed setup shows under the form, not inside its scroll.
                 VStack(alignment: .leading, spacing: 8) {
                     HostFormView(host: onboarding.host, buttons: false, showsFailure: false)
-                        .frame(height: 230)
+                        .frame(minHeight: 230, maxHeight: .infinity)
                     if let failure = onboarding.host.setupFailure {
                         HostSetupFailureView(failure: failure, retrying: onboarding.host.settingUp) {
                             Task { await onboarding.setUpHost() }
@@ -371,7 +371,7 @@ public struct OnboardingView: View {
                     ScrollView { agentGrid }
                         .scrollIndicators(.automatic)
                 }
-                .frame(maxHeight: Self.agentsListHeight)
+                .frame(maxHeight: Self.agentsListHeight, alignment: .top)
                 .accessibilityIdentifier("agents-list")
                 Divider()
                 HStack(spacing: 16) {
@@ -404,7 +404,7 @@ public struct OnboardingView: View {
                         if on { onboarding.agentSelection.insert(a.id) } else { onboarding.agentSelection.remove(a.id) }
                     }))
                     .toggleStyle(.checkbox)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .help([a.mcpConfig ?? a.skillsDir ?? "", a.error ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} "))
             }
         }
@@ -607,7 +607,7 @@ struct PromptTicker: View {
     static let speed: CGFloat = rowHeight / 4
 
     var body: some View {
-        let height = Self.rowHeight * CGFloat(Self.visibleRows)
+        let height = Self.rowHeight * CGFloat(Self.visibleRows + 1)
         Group {
             if reduceMotion || motionStill {
                 rows(Array(prompts.prefix(Self.visibleRows)))
@@ -621,8 +621,8 @@ struct PromptTicker: View {
                         .frame(height: height, alignment: .top)
                         .clipped()
                         .mask(LinearGradient(stops: [
-                            .init(color: .clear, location: 0), .init(color: .black, location: 0.25),
-                            .init(color: .black, location: 0.75), .init(color: .clear, location: 1),
+                            .init(color: .clear, location: 0), .init(color: .black, location: 0.125),
+                            .init(color: .black, location: 0.875), .init(color: .clear, location: 1),
                         ], startPoint: .top, endPoint: .bottom))
                 }
                 .onHover { inside in

@@ -254,8 +254,18 @@ struct SpaceDetailView: View {
 
     @ToolbarContentBuilder private func toolbar(_ detail: AppSpaceDetail) -> some ToolbarContent {
         ToolbarItemGroup {
+            let more = detail.actions.filter { !$0.primary && $0.id != .cancel && $0.id != .power }
+            if !more.isEmpty {
+                Menu {
+                    ForEach(Array(more.enumerated()), id: \.offset) { _, action in
+                        actionButton(action)
+                    }
+                } label: {
+                    Label("More actions", systemImage: "ellipsis.circle")
+                }
+            }
             ForEach(Array(detail.actions.enumerated()), id: \.offset) { _, action in
-                actionButton(action)
+                if !more.contains(action) { actionButton(action) }
             }
         }
     }

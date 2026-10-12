@@ -776,7 +776,10 @@ public final class AppModel {
         let pendingId = "pending:\(UUID().uuidString.lowercased())"
         startCreate(args, os: plan.image.os, pendingId: pendingId, select: plan.openDesktop)
         // A failure stays on its row.
-        Task { _ = try? await followCreate(args, pendingId: pendingId) }
+        Task {
+            guard let id = try? await followCreate(args, pendingId: pendingId), plan.openDesktop else { return }
+            WebUIWindowController.actions?.openSpace(id)
+        }
     }
 
     /// Runs a create from the core's create arguments: the native sheet's

@@ -85,7 +85,6 @@ Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_config--macos--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
 | <span id="set_config--macos--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
 | <span id="set_config--macos--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |
 
@@ -99,6 +98,8 @@ Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimensio
 The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today: see issue #1729).
 
 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
+
+`cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.
 
 **Linux parameters**
 
@@ -120,6 +121,7 @@ Known keys:
 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
 
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
+- `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -138,6 +140,7 @@ Returns the full updated config in the same shape as `get_config`.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="set_config--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
 | <span id="set_config--cursor-motion"></span>`cursor.motion` | `"default"` |  | Pass `default` to clear every saved cursor motion default. |
 | <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `"on" \| "off" \| "default"` |  | Saved default for the `glow` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `"on" \| "off" \| "default"` |  | Saved default for the `magnet` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |

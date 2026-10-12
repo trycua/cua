@@ -24,7 +24,7 @@
           pkgs = import nixpkgs { inherit system; };
 
           # cua-driver builds inside libs/: its crates reach the shared
-          # cua-telemetry crate in the libs/cua workspace (which inherits that
+          # cua-telemetry crate (and its cua-home dependency) in the libs/cua workspace (which inherits that
           # workspace's package fields and reads the image catalog and the
           # teleport target list at compile time), and platform-linux embeds
           # the GNOME Shell helper from wayland-helper.
@@ -32,6 +32,7 @@
             ./libs/cua-driver/rust
             ./libs/cua-driver/wayland-helper
             ./libs/cua/Cargo.toml
+            ./libs/cua/crates/cua-home
             ./libs/cua/crates/cua-telemetry
             ./libs/cua/crates/cua-teleport/src/ux/targets.json
             ./libs/images/sandbox-images.json

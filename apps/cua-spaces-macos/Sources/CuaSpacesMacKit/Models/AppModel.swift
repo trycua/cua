@@ -846,7 +846,8 @@ public final class AppModel {
             v.map { AppStorageVolume(availableBytes: $0.availableBytes, totalBytes: $0.totalBytes, name: $0.name) }
         }
         return AppLocalStorage(reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu),
-                               container: volume(s.container), pulled: s.pulled)
+                               container: volume(s.container), pulled: s.pulled,
+                               linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes)
     }
 
     /// "Create Space": the new Space shows in the list and the notch at

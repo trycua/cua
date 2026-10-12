@@ -3011,6 +3011,7 @@ pub struct AppLocalStorage {
     pub container: Option<AppStorageVolume>,
     /// Catalog refs already pulled here.
     pub pulled: Vec<String>,
+    pub linux_runtime_download_bytes: u64,
 }
 
 /// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,

@@ -15199,19 +15199,20 @@ class LocalStorage:
     """
     What local Spaces have room for (see [`Local::storage`]).
 """
-    def __init__(self, *, host_arch:str, reserve_bytes:int, lume:typing.Optional[StorageVolume], qemu:typing.Optional[StorageVolume], container:typing.Optional[StorageVolume], pulled:typing.List[str]):
+    def __init__(self, *, host_arch:str, reserve_bytes:int, lume:typing.Optional[StorageVolume], qemu:typing.Optional[StorageVolume], container:typing.Optional[StorageVolume], pulled:typing.List[str], linux_runtime_download_bytes:int):
         self.host_arch = host_arch
         self.reserve_bytes = reserve_bytes
         self.lume = lume
         self.qemu = qemu
         self.container = container
         self.pulled = pulled
+        self.linux_runtime_download_bytes = linux_runtime_download_bytes
 
 
 
 
     def __str__(self):
-        return "LocalStorage(host_arch={}, reserve_bytes={}, lume={}, qemu={}, container={}, pulled={})".format(self.host_arch, self.reserve_bytes, self.lume, self.qemu, self.container, self.pulled)
+        return "LocalStorage(host_arch={}, reserve_bytes={}, lume={}, qemu={}, container={}, pulled={}, linux_runtime_download_bytes={})".format(self.host_arch, self.reserve_bytes, self.lume, self.qemu, self.container, self.pulled, self.linux_runtime_download_bytes)
     def __eq__(self, other):
         if self.host_arch != other.host_arch:
             return False
@@ -15225,6 +15226,8 @@ class LocalStorage:
             return False
         if self.pulled != other.pulled:
             return False
+        if self.linux_runtime_download_bytes != other.linux_runtime_download_bytes:
+            return False
         return True
 
 class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
@@ -15237,6 +15240,7 @@ class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
             qemu=_UniffiFfiConverterOptionalTypeStorageVolume.read(buf),
             container=_UniffiFfiConverterOptionalTypeStorageVolume.read(buf),
             pulled=_UniffiFfiConverterSequenceString.read(buf),
+            linux_runtime_download_bytes=_UniffiFfiConverterUInt64.read(buf),
         )
 
     @staticmethod
@@ -15247,6 +15251,7 @@ class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeStorageVolume.check_lower(value.qemu)
         _UniffiFfiConverterOptionalTypeStorageVolume.check_lower(value.container)
         _UniffiFfiConverterSequenceString.check_lower(value.pulled)
+        _UniffiFfiConverterUInt64.check_lower(value.linux_runtime_download_bytes)
 
     @staticmethod
     def write(value, buf):
@@ -15256,6 +15261,7 @@ class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeStorageVolume.write(value.qemu, buf)
         _UniffiFfiConverterOptionalTypeStorageVolume.write(value.container, buf)
         _UniffiFfiConverterSequenceString.write(value.pulled, buf)
+        _UniffiFfiConverterUInt64.write(value.linux_runtime_download_bytes, buf)
 
 class _UniffiFfiConverterMapStringSequenceString(_UniffiConverterRustBuffer):
     @classmethod

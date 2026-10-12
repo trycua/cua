@@ -363,6 +363,7 @@ fn wizard_storage(
         qemu: vol(r.qemu),
         container: vol(r.container),
         pulled: r.pulled,
+        linux_runtime_download_bytes: r.linux_runtime_download_bytes,
     }
 }
 

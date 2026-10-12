@@ -49,6 +49,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: live-smoke
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GUI and Rust build dependencies
         run: |
           sudo apt-get update
@@ -84,6 +85,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: live-smoke
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build cua-driver
         shell: pwsh
         run: cargo build --release --locked -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml

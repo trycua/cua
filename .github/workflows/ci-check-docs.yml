@@ -193,6 +193,7 @@ jobs:
             libs/cua
             scripts/docs-generators/rustdoc-json
           key: docs-${{ matrix.library }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies (cua SDK)
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
         run: |

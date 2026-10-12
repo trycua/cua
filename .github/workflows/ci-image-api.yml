@@ -75,6 +75,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sandbox
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Linux build dependencies (cua SDK)
         run: |

@@ -50,6 +50,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: infinite-canvas-swift
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build and stage the cua SDK for Swift
         run: |
           (cd libs/cua && cargo build --locked --release -p cua-sdk)

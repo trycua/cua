@@ -56,6 +56,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: openkoalabot-example-ts
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -103,6 +104,7 @@ jobs:
         with:
           workspaces: libs/cua
           key: openkoalabot-example-swift
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build and stage the cua SDK for Swift
         run: |
           (cd libs/cua && cargo build --locked --release -p cua-sdk)

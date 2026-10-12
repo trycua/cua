@@ -943,6 +943,7 @@ dependencies = [
 name = "cua-telemetry"
 version = "0.1.0"
 dependencies = [
+ "cua-home",
  "hex",
  "rand 0.9.5",
  "serde",

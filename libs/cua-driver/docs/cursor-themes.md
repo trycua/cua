@@ -27,8 +27,9 @@ to every cursor at once:
   combo (such as ⌘C) shows a short chip: it waits about 0.1 seconds, holds for
   half a second and fades out, about one second in all. The session name shows
   only while the human pointer hovers over the cursor or while two or more
-  agent cursors are on screen. Nothing shows while the cursor moves; the chip
-  clock pauses during a move, so the chip plays once the cursor arrives.
+  agent cursors are on screen. Nothing shows while the cursor moves. The chip
+  plays once its action has ended and the cursor is at rest, because a real
+  foreground click can hide the overlay while it is delivered.
   Background delivery and target chips are not shown. The GNOME Shell helper
   draws one cursor and has no hover, so under `minimal` it shows only the
   foreground chip.

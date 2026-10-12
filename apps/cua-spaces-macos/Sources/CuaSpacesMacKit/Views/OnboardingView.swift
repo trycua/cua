@@ -165,6 +165,7 @@ public struct OnboardingView: View {
     private func hasCard(_ v: AppOnboardingView) -> Bool {
         switch v.step {
         case .signin: return onboarding.state.identity != nil || signInPhase != .idle
+        case .cli: return onboarding.state.cliError != nil
         default: return true
         }
     }
@@ -221,19 +222,8 @@ public struct OnboardingView: View {
                     }
             }
         case .cli:
-            if let cli = v.cli {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle(cli.label, isOn: Binding(
-                        get: { cli.checked },
-                        set: { onboarding.send(.cliToggled(on: $0)) }))
-                        .toggleStyle(.checkbox)
-                        .accessibilityIdentifier("onboarding-cli-install")
-                    Text(cli.note).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let error = onboarding.state.cliError {
-                        Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+            if let error = onboarding.state.cliError {
+                Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
         case .presentation:
             VStack(spacing: 10) {
@@ -550,7 +540,7 @@ public struct OnboardingView: View {
     private func advance(_ step: AppOnboardingStep) {
         switch step {
         case .welcome: onboarding.send(.start)
-        case .cli: Task { await onboarding.finishCli(install: onboarding.state.cliInstall) }
+        case .cli: Task { await onboarding.finishCli(install: true) }
         case .signin: onboarding.send(.signinDone)
         case .agents: onboarding.finishAgents(skipped: true)
         case .presentation: onboarding.send(.presentationDone)

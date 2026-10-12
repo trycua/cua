@@ -47,8 +47,6 @@ public final class OnboardingModel {
     /// The fixed words.
     public let copy = appOnboardingCopy()
 
-    /// The bundled `cua`'s install plan, then the install (nil until checked).
-    public private(set) var cliPlan: AppCliInstallPlan?
     /// Where Cua Spaces shows up was picked (menu bar only or not): the app
     /// saves it as the "Spaces tab in the notch" setting.
     public var onPresentation: ((Bool) -> Void)?
@@ -116,28 +114,19 @@ public final class OnboardingModel {
 
     // MARK: - The cua command
 
-    /// Reads what installing the bundled `cua` would do (writes nothing):
-    /// the Command line page shows when it needs installing.
+    /// Reads what installing the bundled `cua` would do (writes nothing).
     public func planCli() async {
-        guard let cli, cliPlan == nil else { return }
-        let plan = await cli.plan()
-        cliPlan = plan
-        send(.cliPlanned(plan: plan))
+        guard let cli, state.cliPlan == nil else { return }
+        send(.cliPlanned(plan: await cli.plan()))
     }
 
-    /// Continue (`install`: the page's switch) or Skip from Command line:
-    /// only with `install` on, installs the bundled `cua` onto the core's
-    /// target, adding its bin dir to the shell profile when it is not on
-    /// PATH, and leaves the page once it is installed (a failure stays, with
-    /// why). Done shows where it went.
+    /// Continue (`install`) or Skip from Command line.
     public func finishCli(install: Bool) async {
         guard !state.cliInstalling else { return }
         send(.cliDone(install: install))
-        guard state.cliInstalling, let cli, let plan = cliPlan else { return }
+        guard state.cliInstalling, let cli, let plan = state.cliPlan else { return }
         do {
-            let installed = try await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath))
-            cliPlan = installed
-            send(.cliInstalled(target: installed.target))
+            send(.cliPlanned(plan: try await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath))))
         } catch {
             send(.cliInstallFailed(error: LiveSpacesBackend.words(error)))
         }
@@ -147,7 +136,7 @@ public final class OnboardingModel {
     /// so typing `cua` runs it rather than the installed path Done shows:
     /// Done notes it under "cua command".
     public var cliShadowedBy: String? {
-        guard state.cliTarget != nil, let other = cliPlan?.shadowedBy, !other.isEmpty else { return nil }
+        guard state.cliTarget != nil, let other = state.cliPlan?.shadowedBy, !other.isEmpty else { return nil }
         return other
     }
 
@@ -383,9 +372,10 @@ public final class OnboardingModel {
         shownOnce = false
         host.closeForm()
         agentOutcomes = nil
+        let plan = state.cliPlan
         state = appOnboardingInitial(installerMode: state.installerMode, identity: state.identity)
         if let x = currentExperiments?() { send(.experimentsLoaded(experiments: x)) }
-        if let plan = cliPlan { send(.cliPlanned(plan: plan)) }
+        if let plan { send(.cliPlanned(plan: plan)) }
         Task { await checkDrive() }
     }
 

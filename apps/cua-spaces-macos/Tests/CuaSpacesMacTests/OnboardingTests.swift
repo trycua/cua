@@ -88,9 +88,8 @@ struct OnboardingTests {
     }
 
     /// A fresh first run in a temp HOME: launching writes nothing; the
-    /// Command line page follows Welcome, and Continue with its switch on
-    /// installs the bundled cua and the shell profile puts it on PATH (a new
-    /// shell resolves it).
+    /// Command line page follows Welcome, and Continue installs the bundled
+    /// cua and the shell profile puts it on PATH (a new shell resolves it).
     @Test func theCommandLinePageInstallsTheCliOntoPath() async throws {
         let tmp = try TempInstall()
         defer { tmp.remove() }
@@ -100,10 +99,9 @@ struct OnboardingTests {
         #expect(o.view.step == .welcome)
         o.send(.start)
         #expect(o.view.step == .cli)
-        #expect(o.view.cli?.label == "Install the cua command and add it to your PATH")
-        #expect(o.view.cli?.checked == true, "on by default")
+        #expect(o.view.title == "Install the cua command and add it to your PATH")
         #expect(!FileManager.default.fileExists(atPath: tmp.home.path), "nothing written on the page")
-        await o.finishCli(install: o.state.cliInstall)
+        await o.finishCli(install: true)
         #expect(o.view.step == .signin)
         let target = tmp.home.appendingPathComponent(".local/bin/cua").path
         #expect(FileManager.default.isExecutableFile(atPath: target))
@@ -133,7 +131,7 @@ struct OnboardingTests {
         // A second launch finds it current and writes nothing new.
         let again = OnboardingModel(statePath: nil, cli: tmp.installer())
         await again.planCli()
-        #expect(again.cliPlan?.upToDate == true && again.state.cliTarget == target)
+        #expect(again.state.cliPlan?.upToDate == true && again.state.cliTarget == target)
         again.send(.start)
         #expect(again.view.step == .signin, "no Command line page once current")
     }
@@ -144,8 +142,7 @@ struct OnboardingTests {
         let o = OnboardingModel(statePath: nil, cli: tmp.installer())
         await o.planCli()
         o.send(.start)
-        o.send(.cliToggled(on: false))
-        await o.finishCli(install: o.state.cliInstall)
+        await o.finishCli(install: false)
         #expect(o.view.step == .signin)
         o.send(.back)
         await o.finishCli(install: false)

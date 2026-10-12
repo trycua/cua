@@ -132,3 +132,15 @@ def test_failed_task_can_have_consistent_evidence(tmp_path):
     assert result["task_success"] is False
     assert result["run_accepted"] is False
     assert result["valid"] is False
+
+
+def test_finite_reward_above_one_is_consistent_with_solver_contract(tmp_path):
+    make_receipts(tmp_path)
+    p = tmp_path / "oracle-result.json"
+    value = json.loads(p.read_text())
+    value["rewards"] = [2.0]
+    write_json(p, value)
+    result = verify_execution(tmp_path, 0, "run-1")
+    assert result["checks"]["oracle"] is True
+    assert result["task_success"] is True
+    assert result["run_accepted"] is True

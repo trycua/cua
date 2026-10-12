@@ -1369,6 +1369,9 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // which brings Chrome to the front; hand the front back afterwards.
         let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
         let _guard = previous_front.map(|_| SelfActivationGuard::start(pid));
+        // The cleanup opens Chrome's context menus: keep the user's key focus
+        // and put their window back above Chrome when the menus close.
+        let _key_focus = previous_front.and_then(|_| crate::key_focus_guard::protect(pid));
         let result = run_committed_consent_cleanup(
             CONSENT_CLEANUP_PASSES,
             || super::consent_ui::dismiss(pid, window_id),

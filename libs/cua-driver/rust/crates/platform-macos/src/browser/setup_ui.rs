@@ -1072,7 +1072,10 @@ fn press_pixel_checkbox(
         })();
         release_actionable_nodes(&current.nodes);
         let refreshed = validation?;
-        if matches!(delivery, crate::input::mouse::WindowClickDelivery::Background) {
+        if matches!(
+            delivery,
+            crate::input::mouse::WindowClickDelivery::Background
+        ) {
             let prepared = crate::input::mouse::prepare_background_pixel_click(pid, window_id);
             exp_log(&format!("background click prepared={prepared}"));
             crate::input::mouse::click_at_xy_chromium(

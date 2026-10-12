@@ -43,6 +43,12 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
         case "computer_access_list": return ["grants": grants, "audit": []]
         case "computer_access_grant":
             grants = [["agent": "ada", "machine": args["machine"] ?? "", "revoked": false]]; return grants[0]
+        case "computer_access_revoke": grants = []; return [:]
+        case "volume_read": return ["path": args["path"] ?? "", "content": "# Ada\n", "encoding": "utf8"]
+        case "volume_history":
+            return ["versions": [["version": "v2", "modified_ms": now - 60_000, "deleted": false, "latest": true],
+                                 ["version": "v1", "modified_ms": now - 3_600_000, "deleted": false, "latest": false]]]
+        case "volume_restore", "routine_add", "routine_set_enabled", "routine_remove": return [:]
         case "volume_requests":
             return ["requests": [["id": "q1", "principal": "agent:ada", "prefix": "agents/writer/outputs/", "mode": "r", "reason": "cite the draft"]]]
         case "volume_grants": return ["grants": []]
@@ -80,6 +86,22 @@ struct AgentsPagesTests {
         await m.pollNotifications()
         #expect(posted.isEmpty, "the backlog is not posted on the first run")
         #expect(seen == UInt64(tools.now - 60_000))
+    }
+
+    /// The web UI's `agents.detail`, `agents.readFile` and change methods run
+    /// the tools the native page runs.
+    @Test func detailFileAndChangesUseTheNativeTools() async throws {
+        let tools = FakeAgentsTools()
+        let m = PersistentModel(tools: tools)
+        let d = try await m.detail("ada")
+        #expect((d["home"] as? [[String: Any]])?.compactMap { $0["path"] as? String } == ["agents/ada/hermes/MEMORY.md"])
+        #expect((d["routines"] as? [[String: Any]])?.first?["title"] as? String == "Morning")
+        let f = try await m.readFile("agents/ada/hermes/MEMORY.md")
+        #expect(f["text"] as? String == "# Ada\n")
+        #expect((f["versions"] as? [[String: Any]])?.count == 2)
+        try await m.perform(.addRoutine(agent: "ada", title: "Inbox", prompt: "Sort my inbox", everyMinutes: nil, dailyAt: "08:00", weeklyOn: nil))
+        try await m.perform(.removeRoutine(id: "R1"))
+        #expect(tools.calls.suffix(2) == ["routine_add", "routine_remove"])
     }
 
     @Test func snapshots() async throws {

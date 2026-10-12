@@ -30,6 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
+import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
@@ -64,6 +65,7 @@ export const WEBKIT_METHODS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
   ...KEYVAULT_MANAGE_WEBKIT_METHODS,

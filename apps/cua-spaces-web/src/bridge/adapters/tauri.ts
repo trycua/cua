@@ -34,6 +34,7 @@ import type { AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts
 import type { HostWindow } from "../detect";
 import { newSpaceTauriOps } from "../ops/new-space";
 import { tauriShareOps } from "../ops/share";
+import { tauriAgentDetailOps } from "../ops/agent-detail";
 import { tauriAgentKeysOps } from "../ops/agent-keys";
 import { KEYVAULT_MANAGE_TAURI_UNSUPPORTED } from "../ops/keyvault-manage";
 import { tauriKeyvaultSetupOps } from "../ops/keyvault-setup";
@@ -270,6 +271,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     ...newSpaceTauriOps(invoke, readUi),
     ...tauriTeleportOps(invoke, win.__TAURI_INTERNALS__, (e) => events.emit(e)),
     ...tauriShareOps(invoke),
+    ...tauriAgentDetailOps(invoke),
     ...tauriAgentKeysOps(invoke),
     ...tauriKeyvaultSetupOps(invoke),
     ...tauriVolumeOps(invoke, win),

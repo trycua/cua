@@ -54,6 +54,124 @@
         "checking"
       ]
     },
+    "AgentDetailInput": {
+      "type": "object",
+      "properties": {
+        "home": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "size": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "path",
+              "name",
+              "size"
+            ]
+          }
+        },
+        "routines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "label",
+              "enabled"
+            ]
+          }
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "machine": {
+                "type": "string"
+              },
+              "revoked": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "agent",
+              "machine",
+              "revoked"
+            ]
+          }
+        },
+        "audit": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tsMs": {
+                "type": "number"
+              },
+              "action": {
+                "type": "string"
+              },
+              "principal": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tsMs",
+              "action",
+              "principal",
+              "path",
+              "detail"
+            ]
+          }
+        },
+        "thisMachine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "home",
+        "routines",
+        "grants",
+        "audit",
+        "thisMachine"
+      ]
+    },
     "AgentKeysReport": {
       "type": "object",
       "properties": {
@@ -128,6 +246,52 @@
         "providers",
         "available",
         "unavailable"
+      ]
+    },
+    "AgentOpenFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "binary": {
+          "type": "boolean"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "modifiedMs": {
+                "type": "number"
+              },
+              "deleted": {
+                "type": "boolean"
+              },
+              "latest": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "version",
+              "modifiedMs",
+              "deleted",
+              "latest"
+            ]
+          }
+        }
+      },
+      "required": [
+        "path",
+        "text",
+        "binary",
+        "versions"
       ]
     },
     "AgentSetupRow": {
@@ -3527,11 +3691,20 @@
     "agentKeys.set": {
       "$ref": "#/$defs/AgentKeysReport"
     },
+    "agents.addRoutine": {
+      "type": "null"
+    },
+    "agents.allowComputer": {
+      "type": "null"
+    },
     "agents.configure": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.detail": {
+      "$ref": "#/$defs/AgentDetailInput"
     },
     "agents.events": {
       "type": "object",
@@ -3651,7 +3824,19 @@
     "agents.pause": {
       "type": "null"
     },
+    "agents.readFile": {
+      "$ref": "#/$defs/AgentOpenFile"
+    },
+    "agents.removeRoutine": {
+      "type": "null"
+    },
+    "agents.restoreFile": {
+      "type": "null"
+    },
     "agents.resume": {
+      "type": "null"
+    },
+    "agents.revokeComputer": {
       "type": "null"
     },
     "agents.runs": {
@@ -3704,6 +3889,9 @@
           "turn"
         ]
       }
+    },
+    "agents.setRoutine": {
+      "type": "null"
     },
     "agents.setup": {
       "type": "array",
@@ -4860,11 +5048,20 @@
         "available"
       ]
     },
+    "agents.addRoutine": {
+      "type": "null"
+    },
+    "agents.allowComputer": {
+      "type": "null"
+    },
     "agents.configure": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentSetupRow"
       }
+    },
+    "agents.detail": {
+      "$ref": "#/$defs/AgentDetailInput"
     },
     "agents.events": {
       "type": "object",
@@ -4982,7 +5179,19 @@
       }
     },
     "agents.pause": {},
+    "agents.readFile": {
+      "$ref": "#/$defs/AgentOpenFile"
+    },
+    "agents.removeRoutine": {
+      "type": "null"
+    },
+    "agents.restoreFile": {
+      "type": "null"
+    },
     "agents.resume": {},
+    "agents.revokeComputer": {
+      "type": "null"
+    },
     "agents.runs": {
       "type": "array",
       "items": {
@@ -5033,6 +5242,9 @@
           "turn"
         ]
       }
+    },
+    "agents.setRoutine": {
+      "type": "null"
     },
     "agents.setup": {
       "type": "array",

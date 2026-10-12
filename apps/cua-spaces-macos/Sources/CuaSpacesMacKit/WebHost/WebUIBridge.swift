@@ -68,6 +68,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure",
+        // A persistent agent's Memory, Routines and Access (`PersistentModel`).
+        "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
+        "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.set", "agentKeys.remove",
         // New Space's address form and Connect a cloud, Teleport and Share,
         // Cua Volume, Settings and Notifications, a Space's detail and This
@@ -259,6 +262,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure":
             return try await agents(method, args)
+        case "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
+             "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
+            return try await agentDetail(method, args)
 
         case "settings.get": return settings()
         case "settings.choose":
@@ -603,6 +609,52 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
             return BridgeValue.encode(model.agentRows ?? [])
+        default:
+            throw Failure.unimplemented(method)
+        }
+    }
+
+    /// One persistent agent's Memory, Routines and Access: what the native
+    /// Agents page reads (`PersistentModel.detail`, `readFile`) and the
+    /// changes it runs (`perform`), one method each. The page reduces and
+    /// draws with the app core itself.
+    func agentDetail(_ method: String, _ args: [String: Any]) async throws -> Any {
+        let persistent = model.persistent
+        guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+        switch method {
+        case "agents.detail":
+            var detail = try await persistent.detail(try string(args, "name"))
+            // As the native Agents page sets it when it opens.
+            let id = model.sidebar.thisMachine?.id
+            detail["thisMachine"] = id?.hasPrefix("relay:") == true ? id : NSNull()
+            return detail
+        case "agents.readFile":
+            return try await persistent.readFile(try string(args, "path"))
+        default:
+            try await persistent.perform(try agentsRequest(method, args))
+            return NSNull()
+        }
+    }
+
+    /// The core's request for one of the change methods.
+    func agentsRequest(_ method: String, _ args: [String: Any]) throws -> AppAgentsRequest {
+        let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+        switch method {
+        case "agents.restoreFile":
+            return .restore(path: try string(args, "path"), version: try string(args, "version"))
+        case "agents.addRoutine":
+            return .addRoutine(agent: try string(args, "agent"), title: try string(args, "title"), prompt: try string(args, "prompt"),
+                               everyMinutes: (args["everyMinutes"] as? NSNumber)?.uint32Value,
+                               dailyAt: text("dailyAt"), weeklyOn: text("weeklyOn"))
+        case "agents.setRoutine":
+            guard let enabled = args["enabled"] as? Bool else { throw Failure.badArgs("enabled: boolean") }
+            return .setRoutine(id: try string(args, "id"), enabled: enabled)
+        case "agents.removeRoutine":
+            return .removeRoutine(id: try string(args, "id"))
+        case "agents.allowComputer":
+            return .allow(agent: try string(args, "agent"), machine: try string(args, "machine"))
+        case "agents.revokeComputer":
+            return .revoke(agent: try string(args, "agent"), machine: try string(args, "machine"))
         default:
             throw Failure.unimplemented(method)
         }

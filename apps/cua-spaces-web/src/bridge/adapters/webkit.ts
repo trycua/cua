@@ -48,6 +48,7 @@ import { syncDragRegions } from "../drag-regions";
 import { requestNewSpace } from "../new-space";
 import { STOPPED_SHARING_ERROR, stoppedSharingLine, withNotSharing } from "../sharing";
 import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
+import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
@@ -567,6 +568,7 @@ export function createWebkitAdapter(
     ...webkitSettingsOps(request),
     ...webkitPageOps(request, toHostStatus, spaceToRow),
     ...webkitStartupOps(request),
+    ...webkitAgentDetailOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
     ...webkitKeyvaultSetupOps(request, () => new HostError("Enter the passphrase in the Cua Spaces window", "native_only")),

@@ -34,6 +34,7 @@ import type { SpaceOs, SpaceRow } from "./contracts/spaces";
 import { NEW_SPACE_OPERATIONS, type NewSpaceOperations } from "./ops/new-space";
 import { SHARE_OPERATIONS, type ShareOperations } from "./ops/share";
 import { AGENT_KEYS_OPERATIONS } from "./ops/agent-keys";
+import { AGENT_DETAIL_OPERATIONS } from "./ops/agent-detail";
 import { KEYVAULT_MANAGE_OPERATIONS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_OPERATIONS } from "./ops/keyvault-setup";
 import { TELEPORT_EVENTS, TELEPORT_OPERATIONS, type TeleportHostEvent, type TeleportOperations } from "./ops/teleport";
@@ -253,6 +254,7 @@ export const OPERATIONS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,
   ...SHARE_OPERATIONS,

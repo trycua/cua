@@ -16,6 +16,8 @@ export const METHODS = [
   "machines.list", "host.status",
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
   "agents.setup", "agents.configure",
+  "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
+  "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",
   "spaces.add", "clouds.status", "clouds.test", "clouds.connect",
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",

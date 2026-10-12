@@ -10352,7 +10352,7 @@
     },
     {
      "abstract": "Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<machine>`",
-     "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer",
+     "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer\n  # From a script or agent: confirm with Touch ID or your password here\n  cua spaces share local:studio bob@example.com --yes",
      "aliases": [],
      "arguments": [
       {
@@ -10381,11 +10381,11 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "Confirm without a prompt (needed without a terminal when no daemon runs; a running daemon asks with Touch ID or your password instead)",
+       "help": "Confirm without a terminal prompt. Without a daemon the share happens at once. A running daemon still asks with Touch ID or your password on this computer; without a terminal, `--yes` says someone will answer there (otherwise the command fails at once instead of waiting for a prompt nobody sees)",
        "hidden": false,
        "name": "yes",
        "repeatable": false,
-       "short_name": null,
+       "short_name": "y",
        "takes_value": false
       }
      ],

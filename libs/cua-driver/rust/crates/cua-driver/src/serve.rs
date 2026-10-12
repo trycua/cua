@@ -2879,7 +2879,7 @@ mod gate_tests {
     /// Each `cua-driver mcp` process is its own transport. A label its
     /// sessions used must not stay poisoned for the next process once that
     /// one has closed, while a live owner keeps its labels and its explicit
-    /// ends.
+    /// ends, and a label it ended explicitly still needs `start_session`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_closed_transports_session_labels_are_reusable() {
         let _runtime_guard = crate::test_runtime_lock().lock().await;
@@ -2974,8 +2974,22 @@ mod gate_tests {
         );
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
 
-        // The next transport reuses both labels.
+        // The next transport reuses the label A never ended.
         assert!(ran(&send("call", Some("probe"), Some("calc"), b).await));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 3);
+
+        // The label A ended explicitly stays refused for ordinary calls after
+        // A closed, and any other transport may restart it with start_session.
+        let still_ended = send("call", Some("probe"), Some("done"), b).await;
+        assert!(!still_ended.ok, "{:?}", still_ended.result);
+        assert!(still_ended
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("start_session"));
+        assert!(ran(
+            &send("call", Some("start_session"), Some("done"), b).await
+        ));
         assert!(ran(&send("call", Some("probe"), Some("done"), b).await));
         assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
 

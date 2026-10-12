@@ -277,7 +277,7 @@ impl SdkAdapter {
     /// from `transport_session`. Core recreates the session on the call, so
     /// it is not refused, when it is that transport's unnamed session
     /// reclaimed by the idle sweep, or a label whose owner transport has
-    /// closed since.
+    /// closed since and that was not ended with `end_session`.
     pub fn is_session_ended(&self, session: &str, transport_session: Option<&str>) -> bool {
         if !self
             .public_sessions

@@ -589,3 +589,35 @@ class TestEvaluatorRewardFailClosed:
             await runners.run_single_task(
                 tmp_path, agent_fn=lambda *_: DoneAction(), max_steps=budget
             )
+
+
+
+class TestBenchmarkDiscoveryFailClosed:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("parallel", [0, -1, True, 1.5, "2"])
+    async def test_invalid_parallelism_rejected_before_task_discovery(self, tmp_path, parallel):
+        import cua_bench.runners as runners
+        with pytest.raises(ValueError, match="max_parallel must be a positive integer"):
+            await runners.run_benchmark(tmp_path, max_parallel=parallel)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [0, -1, True, 1.5, "2"])
+    async def test_invalid_variant_limit_rejected(self, tmp_path, limit):
+        import cua_bench.runners as runners
+        with pytest.raises(ValueError, match="max_variants must be a positive integer"):
+            await runners.run_benchmark(tmp_path, max_variants=limit)
+
+    @pytest.mark.asyncio
+    async def test_variant_discovery_failure_is_not_silently_scored(self, tmp_path, monkeypatch):
+        import cua_bench.runners as runners
+
+        task_dir = tmp_path / "task"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text("# fixture\n")
+
+        def broken_make(*args, **kwargs):
+            raise RuntimeError("invalid task fixture")
+
+        monkeypatch.setattr(runners, "make", broken_make)
+        with pytest.raises(RuntimeError, match="Unable to discover variants"):
+            await runners.run_benchmark(tmp_path, oracle=True)

@@ -144,6 +144,13 @@ struct MainUIRouteTests {
         #expect(!MainWindowSwitch.replacesNative(webUi: true, ready: true, onboarded: false))
     }
 
+    /// A frame inside the screen (a CI runner's is small), so the window
+    /// server keeps it as given; `dx` tells two apart.
+    func onScreen(dx: CGFloat = 0) -> NSRect {
+        let v = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 700)
+        return NSRect(x: v.minX + 20 + dx, y: v.minY + 20, width: min(760, v.width - 80), height: min(480, v.height - 60))
+    }
+
     func nativeWindow(_ frame: NSRect) -> NSWindow {
         let w = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
         w.isReleasedWhenClosed = false
@@ -161,9 +168,9 @@ struct MainUIRouteTests {
     @Test func theNativeWindowOpeningWithNewUIOnIsReplacedInPlace() async {
         let m = model(webUi: true)
         m.onboarding.finish()
-        let frame = NSRect(x: 210, y: 160, width: 980, height: 660)
-        let w = nativeWindow(frame)
+        let w = nativeWindow(onScreen())
         w.orderFront(nil)
+        let frame = w.frame
         var opened: [NSRect?] = []
         MainWindowSwitch.nativeAppeared(w, model: m, web: { opened.append($0) })
         // Reported twice (its reader, its onAppear): replaced once.
@@ -177,7 +184,7 @@ struct MainUIRouteTests {
     @Test func theNativeWindowStaysWithNewUIOff() async {
         let m = model(webUi: false)
         m.onboarding.finish()
-        let w = nativeWindow(NSRect(x: 100, y: 100, width: 900, height: 600))
+        let w = nativeWindow(onScreen())
         w.orderFront(nil)
         defer { w.close() }
         var opened = 0
@@ -190,9 +197,9 @@ struct MainUIRouteTests {
     @Test func turningNewUIOnSwapsTheWindowInPlace() async {
         let m = model(webUi: true)
         m.onboarding.finish()
-        let frame = NSRect(x: 300, y: 200, width: 1000, height: 700)
-        let w = nativeWindow(frame)
+        let w = nativeWindow(onScreen())
         w.orderFront(nil)
+        let frame = w.frame
         MainWindowSwitch.nativeWindow = w
         var opened: [NSRect?] = []
         MainWindowSwitch.switchToWebUI(model: m, web: { opened.append($0) })
@@ -208,13 +215,14 @@ struct MainUIRouteTests {
     @Test func turningNewUIOffOpensTheNativeWindowInItsFrame() async {
         let m = model(webUi: false)
         m.onboarding.finish()
-        let webFrame = NSRect(x: 120, y: 90, width: 1180, height: 760)
+        let webFrame = onScreen(dx: 30)
         var opened = 0
         MainWindowSwitch.switchToNative(webFrame: webFrame, openMain: { opened += 1 })
         #expect(opened == 1)
-        let w = nativeWindow(NSRect(x: 0, y: 0, width: 980, height: 660))
+        let w = nativeWindow(onScreen())
         w.orderFront(nil)
         defer { w.close() }
+        #expect(w.frame != webFrame)
         MainWindowSwitch.nativeAppeared(w, model: m)
         await settle()
         #expect(w.frame == webFrame)

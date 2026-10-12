@@ -948,6 +948,12 @@ impl Drop for ForegroundTurn {
     }
 }
 
+/// Whether some thread holds a foreground turn right now (the driver is
+/// deliberately fronting a target).
+pub fn foreground_turn_active() -> bool {
+    FOREGROUND_LOCK.try_lock().is_err()
+}
+
 fn foreground_turn() -> ForegroundTurn {
     // An intentional activation ends the previous action's detached window
     // watch, whose wildcard lease would otherwise revert it.

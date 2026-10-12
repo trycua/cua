@@ -288,7 +288,22 @@ impl SelfActivationGuard {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
         std::thread::spawn(move || {
+            let mut epoch = crate::window_change_detector::intentional_epoch();
+            let mut quiet_until = std::time::Instant::now();
             while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                // Never revert the setup's own foreground turn: skip while one
+                // is held and for a moment after any intentional activation.
+                let now_epoch = crate::window_change_detector::intentional_epoch();
+                if now_epoch != epoch {
+                    epoch = now_epoch;
+                    quiet_until = std::time::Instant::now() + Duration::from_millis(400);
+                }
+                if crate::input::skylight::foreground_turn_active()
+                    || std::time::Instant::now() < quiet_until
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
                 drop(crate::key_focus_guard::protect(pid));
                 for _ in 0..15 {
                     if flag.load(std::sync::atomic::Ordering::SeqCst) {

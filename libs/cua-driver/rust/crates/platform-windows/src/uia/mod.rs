@@ -28,6 +28,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_ValueValuePropertyId,
 };
 
+pub(crate) mod element_click;
 pub mod fg_bypass;
 pub(crate) mod focused_document;
 pub mod scroll;

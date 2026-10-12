@@ -255,7 +255,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // New Space opens New UI's wizard while its experiment is on.
         model.openWebNewSpace = { on in WebUIWindowController.showNewSpace(model: model, on: on) }
         model.closeWebUI = { WebUIWindowController.closeShared() }
-        model.openSpaceWindow = { id in WebUIWindowController.actions?.openSpace(id) }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
         // Each of these shows its result in the main window: open it when

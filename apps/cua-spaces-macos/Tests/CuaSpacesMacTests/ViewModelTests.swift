@@ -732,7 +732,7 @@ struct ViewModelTests {
     /// The new Space is in the list, the notch and the selection the moment
     /// Create is pressed, follows the SDK's progress, and hands over to the
     /// registry row when ready; nothing waits on the create to show it.
-    @Test(arguments: [false, true])
+    @Test(.serialized, arguments: [false, true])
     func createShowsTheSpaceAtOnceAndFollowsItsProgress(openWhenReady: Bool) async throws {
         let backend = FixtureSpacesBackend()
         backend.holdCreates = true
@@ -744,7 +744,9 @@ struct ViewModelTests {
         ]
         let model = makeModel(backend)
         var opened: [String] = []
-        model.openSpaceWindow = { opened.append($0) }
+        let previous = WebUIWindowController.actions
+        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } }, openMain: {})
+        defer { WebUIWindowController.actions = previous }
         await model.refresh()
         await model.openNewSpace()
         let w = model.wizard

@@ -587,8 +587,6 @@ public final class AppModel {
     public var openWebNewSpace: ((_ on: String?) -> Bool)?
     /// Closes the New UI window (the `web_ui` experiment was turned off).
     public var closeWebUI: (() -> Void)?
-    /// Opens a Space's desktop in its own window, as its Open does.
-    public var openSpaceWindow: ((_ id: String) -> Void)?
 
     /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
     /// "New Space on <name>…".
@@ -780,7 +778,7 @@ public final class AppModel {
         // A failure stays on its row.
         Task {
             guard let id = try? await followCreate(args, pendingId: pendingId), plan.openDesktop else { return }
-            openSpaceWindow?(id)
+            WebUIWindowController.actions?.openSpace(id)
         }
     }
 

@@ -47,8 +47,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB)",
-          "Linux runtime: 456 MB one-time download, included in Disk; shared by Linux Spaces",
+          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
@@ -104,8 +103,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB)",
-          "Linux runtime: 456 MB one-time download, included in Disk; shared by Linux Spaces",
+          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
@@ -165,8 +163,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB)",
-          "Linux runtime: 456 MB one-time download, included in Disk; shared by Linux Spaces",
+          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
@@ -226,8 +223,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6 GB–3.2 GB initially; grows with use",
-          "Linux runtime: 456 MB one-time download, included in Disk; shared by Linux Spaces",
+          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -283,8 +279,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6 GB–3.2 GB initially; grows with use",
-          "Linux runtime: 456 MB one-time download, included in Disk; shared by Linux Spaces",
+          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -344,8 +339,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6 GB–3.2 GB initially; grows with use",
-          "Linux runtime: 456 MB one-time download, included in Disk; shared by Linux Spaces",
+          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -1786,7 +1780,6 @@
           "Architecture: ARM",
           "Runtime: Lume virtual machine (Apple silicon)",
           "Resources: 4 cores, 8 GB memory, 200 GB disk",
-          "Download: 22 GB",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ]

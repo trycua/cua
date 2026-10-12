@@ -72,19 +72,28 @@ pub async fn storage_report() -> StorageReport {
             .await
             .ok()
             .flatten();
-        let choice = tokio::time::timeout(
-            PROBE,
-            cua_vmm::managed::choose(Default::default(), cua_vmm::managed::LinuxSource::current()),
-        )
+        let wanted: Vec<_> = entries
+            .iter()
+            .copied()
+            .filter(|e| e.local.as_deref() == Some("container"))
+            .collect();
+        let (runtime_bytes, engine) = tokio::time::timeout(PROBE, async {
+            let choice = cua_vmm::managed::choose(
+                Default::default(),
+                cua_vmm::managed::LinuxSource::current(),
+            )
+            .await
+            .ok();
+            let bytes = runtime_download_bytes(choice.as_ref(), cua_vmm::managed::exists());
+            let engine = match choice.filter(|_| !wanted.is_empty()) {
+                Some(choice) => choice.connect_if_up().await,
+                None => None,
+            };
+            (bytes, engine)
+        })
         .await
-        .ok()
-        .and_then(Result::ok);
-        let runtime_bytes = runtime_download_bytes(choice.as_ref(), cua_vmm::managed::exists());
-        (
-            vol,
-            pulled_containers(&entries, choice).await,
-            runtime_bytes,
-        )
+        .unwrap_or((0, None));
+        (vol, pulled_containers(&wanted, engine).await, runtime_bytes)
     };
     let ((lume, a), (qemu, b), (container, c, linux_runtime_download_bytes)) =
         tokio::join!(lume, qemu, container);
@@ -130,24 +139,13 @@ fn pulled_lume(entries: &[&cua_image::catalog::CatalogEntry]) -> Vec<String> {
 /// Container images the engine has at their published digest.
 async fn pulled_containers(
     entries: &[&cua_image::catalog::CatalogEntry],
-    choice: Option<cua_vmm::managed::Choice>,
+    engine: Option<cua_vmm::container::ContainerRuntime>,
 ) -> Vec<String> {
-    let wanted: Vec<_> = entries
-        .iter()
-        .filter(|e| e.local.as_deref() == Some("container"))
-        .collect();
-    if wanted.is_empty() {
-        return vec![];
-    }
-    // The engine Linux Spaces use; the built-in runtime only while it runs.
-    let Some(choice) = choice else {
-        return vec![];
-    };
-    let Ok(Some(rt)) = tokio::time::timeout(PROBE, choice.connect_if_up()).await else {
+    let Some(rt) = engine else {
         return vec![];
     };
     let mut out = vec![];
-    for e in wanted {
+    for e in entries {
         let repo = repo_of(&e.reference);
         let pinned = format!("{repo}@{}", e.digest.as_deref().unwrap_or_default());
         if let Ok(Ok(_)) = tokio::time::timeout(PROBE, rt.docker().inspect_image(&pinned)).await {

@@ -2487,18 +2487,20 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
             0
         }
     });
+    let runtime_suffix = (runtime_download > 0).then(|| {
+        format!(
+            "includes {} one-time Linux runtime download, shared by Linux Spaces",
+            size_text(runtime_download)
+        )
+    });
     if let Some(s) = size {
         if bounds.is_none() {
+            let initial = s.unpacked.saturating_add(runtime_download);
             let footprint = if image.local == Some(LocalEngine::Container) {
                 format!(
                     "{}–{} initially; grows with use",
-                    size_text(s.unpacked.saturating_add(runtime_download)),
-                    size_text(
-                        s.unpacked
-                            .saturating_add(s.disk)
-                            .saturating_add(s.download)
-                            .saturating_add(runtime_download)
-                    )
+                    size_text(initial),
+                    size_text(initial.saturating_add(s.disk).saturating_add(s.download))
                 )
             } else {
                 size_text(s.disk)
@@ -2507,20 +2509,16 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
                 Some(d) => format!("{footprint} (download {})", size_text(d)),
                 None => footprint,
             };
+            let value = match &runtime_suffix {
+                Some(suffix) => format!("{value}; {suffix}"),
+                None => value,
+            };
             facts.push(fact_line("disk", "Disk", value));
         } else if let Some(d) = download {
             facts.push(fact_line("download", "Download", size_text(d)));
         }
-    }
-    if runtime_download > 0 {
-        facts.push(fact_line(
-            "linux-runtime",
-            "Linux runtime",
-            format!(
-                "{} one-time download, included in Disk; shared by Linux Spaces",
-                size_text(runtime_download)
-            ),
-        ));
+    } else if let Some(suffix) = runtime_suffix {
+        facts.push(fact_line("disk", "Disk", suffix));
     }
     let mut error = None;
     if local && let Some(v) = volume_of(image, env) {
@@ -2962,20 +2960,19 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             warning: None,
         });
     }
-    if local {
-        summary.extend(
-            disk.facts
-                .iter()
-                .filter(|f| matches!(f.id.as_str(), "disk" | "download" | "linux-runtime"))
-                .map(|f| Fact {
-                    label: f.label.clone(),
-                    value: f.value.clone(),
-                    copy: None,
-                    help: f.help.clone(),
-                    warning: None,
-                }),
-        );
-    }
+    summary.extend(
+        disk.facts
+            .iter()
+            .find(|f| f.id == "disk")
+            .filter(|_| local && image.local == Some(LocalEngine::Container))
+            .map(|f| Fact {
+                label: f.label.clone(),
+                value: f.value.clone(),
+                copy: None,
+                help: f.help.clone(),
+                warning: None,
+            }),
+    );
     // One short line; nothing when the cloud rates are unknown.
     if let Some(value) = price.clone() {
         summary.push(Fact {
@@ -3497,7 +3494,16 @@ mod tests {
         assert!(v.resource_facts.iter().all(|f| f.label != "Linux runtime"));
         assert!(v.summary.iter().all(|f| f.label != "Linux runtime"));
         assert_eq!(v.summary.iter().filter(|f| f.label == "Disk").count(), 1);
-        assert!(v.summary.iter().any(|f| f.label == "Disk" && f.value.contains("includes 455 MB one-time Linux runtime download")));
+        assert!(v.resource_facts.iter().any(|f| {
+            f.label == "Disk"
+                && f.value
+                    .contains("includes 455 MB one-time Linux runtime download")
+        }));
+        assert!(v.summary.iter().any(|f| {
+            f.label == "Disk"
+                && f.value
+                    .contains("includes 455 MB one-time Linux runtime download")
+        }));
         assert!(v.summary.iter().any(
             |f| f.label == "Disk" && f.value.starts_with(&size_text(p.unpacked + (455 << 20)))
         ));
@@ -3506,7 +3512,7 @@ mod tests {
             !view(&s, &e)
                 .summary
                 .iter()
-                .any(|f| f.label == "Linux runtime")
+                .any(|f| f.value.contains("one-time Linux runtime download"))
         );
         let mac = on("ghcr.io/trycua/macos:15", &e);
         e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
@@ -3514,7 +3520,21 @@ mod tests {
             !view(&mac, &e)
                 .summary
                 .iter()
-                .any(|f| f.label == "Linux runtime")
+                .any(|f| f.value.contains("one-time Linux runtime download"))
+        );
+        assert!(
+            view(&mac, &e)
+                .summary
+                .iter()
+                .all(|f| f.label != "Download" && f.label != "Disk")
+        );
+        let mut remote = s;
+        remote.placement = Location::Cloud;
+        assert!(
+            !view(&remote, &e)
+                .resource_facts
+                .iter()
+                .any(|f| f.value.contains("one-time Linux runtime download"))
         );
     }
 
@@ -3527,7 +3547,11 @@ mod tests {
         image.sizes = None;
         let disk = disk_view(&s, &image, &e, SpaceOs::Linux);
         assert_eq!(disk.facts.iter().filter(|f| f.id == "disk").count(), 1);
-        assert!(disk.facts.iter().any(|f| f.id == "disk" && f.value.contains("includes 455 MB one-time Linux runtime download")));
+        assert!(disk.facts.iter().any(|f| {
+            f.id == "disk"
+                && f.value
+                    .contains("includes 455 MB one-time Linux runtime download")
+        }));
     }
 
     #[test]

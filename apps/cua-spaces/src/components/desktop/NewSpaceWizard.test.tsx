@@ -320,10 +320,13 @@ describe("the Resources step", () => {
     });
     runOn("local");
     next();
-    expect(screen.getByText(/455 MB one-time download, included in Disk/)).toBeInTheDocument();
+    expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
+    expect(screen.queryByText("Linux runtime")).toBeNull();
     next();
     next();
-    expect(screen.getByText(/455 MB one-time download, included in Disk/)).toBeInTheDocument();
+    expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
+    expect(screen.queryByText("Linux runtime")).toBeNull();
+    expect(screen.getAllByText("Disk")).toHaveLength(1);
     expect(screen.getByText(/GB–.*GB initially; grows with use/)).toBeInTheDocument();
   });
 

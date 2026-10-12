@@ -90,6 +90,7 @@
     "fleet.pool",
     "fleet.pools",
     "host.config",
+    "host.pair",
     "host.remove",
     "host.setup",
     "host.share",

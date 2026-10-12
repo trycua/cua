@@ -86,6 +86,44 @@ struct State_ {
     /// What `GET /v1/usage` answers; none: 404, as a relay that does not
     /// meter.
     usage: Option<serde_json::Value>,
+    /// Pairing codes by canonical code.
+    pairing: BTreeMap<String, FakePairing>,
+}
+
+#[derive(Clone, Debug)]
+struct FakePairing {
+    id: String,
+    owner: Identity,
+    name: Option<String>,
+    team: Option<String>,
+    created_at: u64,
+    expires_at: u64,
+    used_at: Option<u64>,
+    machine: Option<String>,
+    revoked: bool,
+}
+
+impl FakePairing {
+    fn state(&self) -> &'static str {
+        if self.used_at.is_some() {
+            "used"
+        } else if self.revoked {
+            "revoked"
+        } else if now_secs() >= self.expires_at {
+            "expired"
+        } else {
+            "active"
+        }
+    }
+
+    fn view(&self, code: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id, "code": code.map(crate::pairing::display_pairing_code),
+            "state": self.state(), "name": self.name, "team": self.team,
+            "created_at": self.created_at, "expires_at": self.expires_at,
+            "used_at": self.used_at, "machine": self.machine,
+        })
+    }
 }
 
 impl State_ {
@@ -257,10 +295,36 @@ async fn register(
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         return err(status, "the fake relay failed this registration");
     }
-    let Some(Caller::Account(who)) = caller(&st, &headers) else {
-        return err(StatusCode::UNAUTHORIZED, "account token required");
-    };
     let id = body["id"].as_str().unwrap_or_default().to_string();
+    // A pairing code registers as the account that minted it, once.
+    let paired = bearer(&headers).and_then(|t| {
+        t.strip_prefix(crate::pairing::PAIRING_TOKEN_PREFIX)
+            .map(str::to_string)
+    });
+    let mut team = None;
+    let mut code_name = None;
+    let who = match paired {
+        Some(code) => {
+            let Some(p) = crate::pairing::normalize_pairing_code(&code)
+                .and_then(|c| st.pairing.get_mut(&c))
+                .filter(|p| p.state() == "active")
+            else {
+                return err(StatusCode::UNAUTHORIZED, "this pairing code is not valid");
+            };
+            if id.len() < 8 {
+                return err(StatusCode::BAD_REQUEST, "invalid machine id");
+            }
+            p.used_at = Some(now_secs());
+            p.machine = Some(id.clone());
+            team = p.team.clone();
+            code_name = p.name.clone();
+            p.owner.clone()
+        }
+        None => match caller(&st, &headers) {
+            Some(Caller::Account(who)) => who,
+            _ => return err(StatusCode::UNAUTHORIZED, "account token required"),
+        },
+    };
     if id.len() < 8 {
         return err(StatusCode::BAD_REQUEST, "invalid machine id");
     }
@@ -294,7 +358,7 @@ async fn register(
     let token = format!("cmt_{:032x}", rand::random::<u128>());
     let machine = Machine {
         id: id.clone(),
-        name: body["name"].as_str().unwrap_or_default().to_string(),
+        name: code_name.unwrap_or_else(|| body["name"].as_str().unwrap_or_default().to_string()),
         owner: who.clone(),
         role: "owner".into(),
         online: false,
@@ -316,6 +380,7 @@ async fn register(
             .map(|o| {
                 o.iter()
                     .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                    .chain(team.map(|t| ("cua.team".to_string(), t)))
                     .collect()
             })
             .unwrap_or_default(),
@@ -336,6 +401,83 @@ async fn register(
         })),
     )
         .into_response()
+}
+
+async fn pairing_mint(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    if let Err(r) = st.gate(&headers) {
+        return r;
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::UNAUTHORIZED, "account token required");
+    };
+    let code: String = (0..12)
+        .map(|_| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(rand::random::<u32>() % 32) as usize] as char)
+        .collect();
+    let now = now_secs();
+    let p = FakePairing {
+        id: format!("pc_{:016x}", rand::random::<u64>()),
+        owner: who,
+        name: body["name"].as_str().map(str::to_string),
+        team: body["team"].as_str().map(str::to_string),
+        created_at: now,
+        expires_at: now + body["ttl_secs"].as_u64().unwrap_or(1800).clamp(60, 86_400),
+        used_at: None,
+        machine: None,
+        revoked: false,
+    };
+    let view = p.view(Some(&code));
+    st.pairing.insert(code, p);
+    (StatusCode::CREATED, Json(view)).into_response()
+}
+
+async fn pairing_list(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    if let Err(r) = st.gate(&headers) {
+        return r;
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::UNAUTHORIZED, "account token required");
+    };
+    let mut codes: Vec<&FakePairing> = st
+        .pairing
+        .values()
+        .filter(|p| p.owner.id == who.id)
+        .collect();
+    codes.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+    let codes: Vec<_> = codes.into_iter().map(|p| p.view(None)).collect();
+    Json(serde_json::json!({ "codes": codes })).into_response()
+}
+
+async fn pairing_revoke(
+    State(s): State<S>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    if let Err(r) = st.gate(&headers) {
+        return r;
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::UNAUTHORIZED, "account token required");
+    };
+    match st
+        .pairing
+        .values_mut()
+        .find(|p| p.id == id && p.owner.id == who.id)
+    {
+        Some(p) => {
+            if p.state() == "active" {
+                p.revoked = true;
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
+        None => err(StatusCode::NOT_FOUND, "no such pairing code"),
+    }
 }
 
 async fn list(State(s): State<S>, headers: HeaderMap) -> Response {
@@ -975,6 +1117,11 @@ impl FakeRelay {
             )
             .route("/v1/teams/{id}/audit", get(team_audit))
             .route("/v1/usage", get(usage))
+            .route("/v1/pairing-codes", get(pairing_list).post(pairing_mint))
+            .route(
+                "/v1/pairing-codes/{id}",
+                axum::routing::delete(pairing_revoke),
+            )
             .fallback(proxied)
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))

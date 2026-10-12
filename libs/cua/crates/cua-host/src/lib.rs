@@ -37,6 +37,7 @@ pub mod direct;
 pub mod driver;
 mod host;
 pub mod machine;
+pub mod pairing;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
@@ -57,6 +58,10 @@ pub use host::{
     SpacesDaemon, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
+pub use pairing::{
+    PairingCode, PairingCodeRequest, PairingCodeToken, add_machine_url, display_pairing_code,
+    install_command, normalize_pairing_code, pairing_link_relay,
+};
 pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,
 };

@@ -881,6 +881,11 @@ uint64_t uniffi_cua_sdk_fn_method_devices_check_enrolled(uint64_t ptr
 uint64_t uniffi_cua_sdk_fn_method_devices_confirm_machine(uint64_t ptr, RustBuffer machine_id
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_CREATE_PAIRING_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_CREATE_PAIRING_CODE
+uint64_t uniffi_cua_sdk_fn_method_devices_create_pairing_code(uint64_t ptr, RustBuffer team, RustBuffer ttl_secs
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_DEVICE_ID
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_DEVICE_ID
 RustBuffer uniffi_cua_sdk_fn_method_devices_device_id(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -889,6 +894,11 @@ RustBuffer uniffi_cua_sdk_fn_method_devices_device_id(uint64_t ptr, RustCallStat
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_ENROLL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_ENROLL
 uint64_t uniffi_cua_sdk_fn_method_devices_enroll(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_PAIRING_CODES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_PAIRING_CODES
+uint64_t uniffi_cua_sdk_fn_method_devices_pairing_codes(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RELAY_URL
@@ -904,6 +914,11 @@ uint64_t uniffi_cua_sdk_fn_method_devices_rename(uint64_t ptr, RustBuffer id, Ru
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE_PAIRING_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE_PAIRING_CODE
+uint64_t uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(uint64_t ptr, RustBuffer id
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SNAPSHOT
@@ -3988,6 +4003,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_confirm_machine(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_CREATE_PAIRING_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_CREATE_PAIRING_CODE
+uint16_t uniffi_cua_sdk_checksum_method_devices_create_pairing_code(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_DEVICE_ID
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_DEVICE_ID
 uint16_t uniffi_cua_sdk_checksum_method_devices_device_id(void
@@ -3997,6 +4018,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_device_id(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_ENROLL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_ENROLL
 uint16_t uniffi_cua_sdk_checksum_method_devices_enroll(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_PAIRING_CODES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_PAIRING_CODES
+uint16_t uniffi_cua_sdk_checksum_method_devices_pairing_codes(void
 
 );
 #endif
@@ -4015,6 +4042,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_rename(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 uint16_t uniffi_cua_sdk_checksum_method_devices_revoke(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE_PAIRING_CODE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE_PAIRING_CODE
+uint16_t uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(void
 
 );
 #endif

@@ -261,6 +261,13 @@ async def run_benchmark(
             max_parallel=4,
         )
     """
+    if type(max_parallel) is not int or max_parallel < 1:
+        raise ValueError("max_parallel must be a positive integer")
+    if max_variants is not None and (type(max_variants) is not int or max_variants < 1):
+        raise ValueError("max_variants must be a positive integer or None")
+    if type(max_steps) is not int or max_steps < 1:
+        raise ValueError("max_steps must be a positive integer")
+
     start_time = time.time()
 
     # Validate dataset path
@@ -294,10 +301,12 @@ async def run_benchmark(
                 variant_count = len(env.tasks_config_fn())
             else:
                 variant_count = 1
-        except Exception:
-            variant_count = 1
+        except Exception as exc:
+            raise RuntimeError(f"Unable to discover variants for {task_path}") from exc
 
-        if max_variants:
+        if type(variant_count) is not int or variant_count < 1:
+            raise ValueError(f"Invalid variant count for {task_path}: {variant_count!r}")
+        if max_variants is not None:
             variant_count = min(variant_count, max_variants)
 
         for variant_id in range(variant_count):

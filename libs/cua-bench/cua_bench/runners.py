@@ -158,6 +158,16 @@ async def run_single_task(
         if isinstance(result, (int, float)) and not isinstance(result, bool):
             raw_reward = result
         elif isinstance(result, list) and result:
+            # Multi-criterion evaluators must not mask a malformed later
+            # reward by returning a valid first item.
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0
+                for value in result
+            ):
+                raise ValueError("Evaluator reward list contains invalid values")
             raw_reward = result[0]
         elif isinstance(result, dict) and "reward" in result:
             raw_reward = result["reward"]

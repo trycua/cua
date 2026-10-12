@@ -46,10 +46,10 @@ fn def() -> &'static ToolDef {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid"],
+            "required": [],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid":           { "type": "integer", "description": "Target process ID." },
+                "pid":           { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
                 "window_id":     { "type": "integer", "description": "CGWindowID. Omit when element_token is supplied (the token carries it)." },

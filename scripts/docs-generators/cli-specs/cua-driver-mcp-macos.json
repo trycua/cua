@@ -629,7 +629,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -649,16 +649,14 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "double_click",
    "read_only": false
   },
   {
-   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.\n\n- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always required.",
+   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.\n\n- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -685,7 +683,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -705,9 +703,7 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "right_click",
@@ -1071,7 +1067,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "scope": {
@@ -1153,7 +1149,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -1170,7 +1166,6 @@
      }
     },
     "required": [
-     "pid",
      "value"
     ],
     "type": "object"

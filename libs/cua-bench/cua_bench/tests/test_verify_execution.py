@@ -76,3 +76,27 @@ def test_oracle_only_mode_allows_no_agent_stream(tmp_path):
     result = verify_execution(tmp_path, 0, "run-1", require_actions=False)
     assert result["valid"] is True
     assert result["checks"]["actions"] is None
+
+
+def test_finite_negative_reward_uses_explicit_threshold(tmp_path):
+    make_receipts(tmp_path)
+    p = tmp_path / "oracle-result.json"
+    value = json.loads(p.read_text())
+    value["rewards"] = [-0.25]
+    value["success_threshold"] = 0.0
+    value["success"] = False
+    write_json(p, value)
+    result = verify_execution(tmp_path, 0, "run-1")
+    assert result["checks"]["oracle"] is False
+    assert "oracle_invalid_or_unsuccessful" in result["errors"]
+
+
+def test_failed_action_cannot_prove_successful_execution(tmp_path):
+    make_receipts(tmp_path)
+    p = tmp_path / "task_0_agent_logs" / "executed-actions.jsonl"
+    value = json.loads(p.read_text())
+    value["execution_status"] = "failed"
+    write_json(p, value)
+    result = verify_execution(tmp_path, 0, "run-1")
+    assert result["valid"] is False
+    assert result["checks"]["actions"] is False

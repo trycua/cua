@@ -63,7 +63,7 @@ fn def() -> &'static ToolDef {
             "required": ["keys"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
+                "pid": { "type": "integer", "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid)." },
                 "keys": {
                     "type": "array",
                     "items": { "type": "string" },

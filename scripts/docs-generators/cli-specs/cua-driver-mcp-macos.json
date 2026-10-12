@@ -1067,7 +1067,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID. Optional with element_token (the token carries the pid).",
+      "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "scope": {

@@ -75,11 +75,16 @@ run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Supp
 
 ## New UI (preview)
 
-Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) adds
-File, "Open New UI (preview)" (⇧⌘U) and a "New UI" toolbar button. They open
-`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`): a `WKWebView`
-with the shared React UI (`apps/cua-spaces-web`) in a window without a title
-bar. The notch, the menu bar extra, Touch ID, the updater and video stay
+Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) makes
+`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`) the main window: a
+`WKWebView` with the shared React UI (`apps/cua-spaces-web`) in a window
+without a title bar. Turning it on puts that window where the native one was
+(same frame) and closes the native one; turning it off does the reverse
+(`MainWindowSwitch`). While it is on, everything that opens the main window
+opens it instead, at the matching page (`MainUIRouter`): the Dock icon, the
+menu bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
+Started and the app's notifications; the native window, opened any other way
+(the Window menu), gives way to it. The notch, the menu bar extra, Touch ID, the updater and video stay
 native; a Space's desktop opens in its native window.
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,

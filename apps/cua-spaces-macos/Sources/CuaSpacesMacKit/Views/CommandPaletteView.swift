@@ -73,20 +73,24 @@ struct NavigationCommands: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Command Palette…") { inMain { model.showingPalette = true } }
+        Button("Command Palette…") { inMain(.home) { model.showingPalette = true } }
             .keyboardShortcut(SharedShortcuts.shortcut("commandPalette.toggle"))
         Divider()
         ForEach(NavTarget.all(model)) { target in
-            Button(target.label) { inMain { model.go(target.command) } }
+            Button(target.label) { inMain(MainUIRouter.route(forNav: target.command)) { model.go(target.command) } }
                 .keyboardShortcut(SharedShortcuts.shortcut(target.command))
         }
     }
 
-    private func inMain(_ then: () -> Void) {
+    /// The native main window, then `then`; New UI's window at `route`
+    /// while it is on (its page handles these keys itself when in front).
+    private func inMain(_ route: MainUIRoute?, _ then: () -> Void) {
         if WebUIWindowController.shared?.window?.isKeyWindow == true { return }
         guard model.startup.isReady, model.onboarding.completed else { return }
-        openWindow(id: "main")
-        then()
+        MainUIRouter(model: model).open(route ?? .home) {
+            openWindow(id: "main")
+            then()
+        }
     }
 }
 

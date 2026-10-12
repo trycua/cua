@@ -9491,7 +9491,7 @@
     },
     {
      "abstract": "Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. Codes work once and expire (30 minutes by default). Run from an enrolled device",
-     "after_help": "Examples:\n  cua host pair\n  cua host pair --team team-aigis --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef",
+     "after_help": "Examples:\n  cua host pair\n  cua host pair --name build-box --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -9515,7 +9515,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Add the machine for this team (its id)",
+       "help": "Add the machine for this team (its id). Experimental: needs CUA_EXPERIMENTAL_TEAMS=1",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -11259,7 +11259,7 @@
    "usage": "cua devices [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Teams: share machines with every member and their agents. Owners and admins invite (email or link), approve member devices, add machines and read the audit log",
+   "abstract": "Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1): teams share machines with every member and their agents. Owners and admins invite (email or link), approve member devices, add machines and read the audit log",
    "after_help": "Examples:\n  cua team create AIGIS\n  cua team invite AIGIS dillon@example.com\n  cua team add-machine AIGIS local:build-box\n  cua team approve AIGIS dev_0123456789abcdef01234567\n  cua team audit AIGIS",
    "aliases": [],
    "arguments": [],

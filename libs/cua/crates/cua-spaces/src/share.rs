@@ -147,9 +147,11 @@ pub fn normalize_who(who: &str) -> Result<String> {
         )));
     }
     if w.starts_with("team:") || w.starts_with("org:") || w.starts_with("group:") {
-        return Err(Error::invalid(
-            "share with an account (email or account id), or with a team as team:<id> (`cua team ls`)",
-        ));
+        return Err(Error::invalid(if cua_home::experimental::teams_enabled() {
+            "share with an account (email or account id), or with a team as team:<id> (`cua team ls`)"
+        } else {
+            "share with an account (email or account id)"
+        }));
     }
     if w.contains('@') {
         let (local, domain) = w.split_once('@').unwrap_or_default();
@@ -177,8 +179,20 @@ pub fn normalize_who(who: &str) -> Result<String> {
 /// Sharing with a team makes the Space a team machine: every member (and
 /// their agents) sees it and opens it as an editor from a device a team
 /// admin approved.
+/// Teams are experimental: with them off ([`cua_home::experimental`]) a
+/// `team:<id>` invitee is refused.
 pub fn team_of(who: &str) -> Option<Result<String>> {
+    team_of_with(who, cua_home::experimental::teams_enabled())
+}
+
+fn team_of_with(who: &str, teams: bool) -> Option<Result<String>> {
     let id = who.trim().strip_prefix("team:")?;
+    if !teams {
+        return Some(Err(Error::invalid(format!(
+            "{} Share with people (email or account id).",
+            cua_home::experimental::TEAMS_UNAVAILABLE
+        ))));
+    }
     let ok = id.starts_with("team-")
         && id.len() <= 64
         && id
@@ -399,8 +413,13 @@ impl Spaces {
         let m = client.machine(&token, machine).await?;
         let mut shares = entries(&m);
         // Teams it is a machine of (best effort: a relay without teams, or
-        // a device not enrolled, lists none).
-        if let Ok(list) = client.teams(&token).await {
+        // a device not enrolled, lists none; none while Teams are off).
+        let teams = if cua_home::experimental::teams_enabled() {
+            client.teams(&token).await.ok()
+        } else {
+            None
+        };
+        if let Some(list) = teams {
             shares.extend(
                 list.teams
                     .iter()
@@ -810,11 +829,20 @@ mod tests {
                 "{bad}"
             );
         }
-        let e = normalize_who("team:design").unwrap_err().to_string();
-        assert!(e.contains("team:<id>"), "{e}");
-        assert_eq!(team_of("team:team-0a1b").unwrap().unwrap(), "team-0a1b");
-        assert!(team_of("team:design").unwrap().is_err());
-        assert!(team_of("bob@x.io").is_none());
+        assert!(normalize_who("team:design").is_err());
+        assert_eq!(
+            team_of_with("team:team-0a1b", true).unwrap().unwrap(),
+            "team-0a1b"
+        );
+        assert!(team_of_with("team:design", true).unwrap().is_err());
+        assert!(team_of_with("bob@x.io", true).is_none());
+        assert!(team_of_with("bob@x.io", false).is_none());
+        // With Teams off, a team is refused whatever its id.
+        let e = team_of_with("team:team-0a1b", false)
+            .unwrap()
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Teams isn't available yet."), "{e}");
     }
 
     #[test]

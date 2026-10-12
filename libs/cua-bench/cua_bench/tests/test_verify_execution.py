@@ -89,7 +89,9 @@ def test_finite_negative_reward_uses_explicit_threshold(tmp_path):
     write_json(p, value)
     result = verify_execution(tmp_path, 0, "run-1")
     assert result["checks"]["oracle"] is False
-    assert "oracle_invalid_or_unsuccessful" in result["errors"]
+    assert result["evidence_consistent"] is True
+    assert result["task_success"] is False
+    assert result["run_accepted"] is False
 
 
 def test_failed_action_cannot_prove_successful_execution(tmp_path):
@@ -100,7 +102,10 @@ def test_failed_action_cannot_prove_successful_execution(tmp_path):
     write_json(p, value)
     result = verify_execution(tmp_path, 0, "run-1")
     assert result["valid"] is False
-    assert result["checks"]["actions"] is False
+    assert result["checks"]["actions"] is True
+    assert result["evidence_consistent"] is True
+    assert result["failed_action_count"] == 1
+    assert result["run_accepted"] is False
 
 
 def test_missing_screenshot_observation_fails_closed(tmp_path):
@@ -112,3 +117,18 @@ def test_missing_screenshot_observation_fails_closed(tmp_path):
     result = verify_execution(tmp_path, 0, "run-1")
     assert result["valid"] is False
     assert result["checks"]["actions"] is False
+
+
+def test_failed_task_can_have_consistent_evidence(tmp_path):
+    make_receipts(tmp_path)
+    p = tmp_path / "oracle-result.json"
+    value = json.loads(p.read_text())
+    value["rewards"] = [0.0]
+    value["success"] = False
+    write_json(p, value)
+    result = verify_execution(tmp_path, 0, "run-1")
+    assert result["checks"]["oracle"] is True
+    assert result["evidence_consistent"] is True
+    assert result["task_success"] is False
+    assert result["run_accepted"] is False
+    assert result["valid"] is False

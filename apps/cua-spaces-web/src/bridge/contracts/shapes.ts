@@ -58,6 +58,7 @@ import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow,
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
+import type { RelayUsage } from "../ops/relay-usage";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
 import type { HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
@@ -686,6 +687,22 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.setupDriver": list(obj<AgentSetupOutcome>()({ agents: strings, target: str, item: str, change: str, detail: str })),
 
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
+  "relay.usage": nullable(
+    obj<RelayUsage>()({
+      metered: bool,
+      period: str,
+      plan: str,
+      team: nullable(object({ id: str, seats: num })),
+      liveSessions: num,
+      liveSessionsLimit: nullable(num),
+      hoursUsed: num,
+      hoursLimit: nullable(num),
+      myHoursUsed: num,
+      softLimitReached: bool,
+      reasons: strings,
+      upgradeUrl: nullable(str),
+    }),
+  ),
 
   "about.get": AboutShape,
   "about.set": AboutShape,

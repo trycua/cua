@@ -11715,6 +11715,37 @@
    "usage": "cua team [OPTIONS] <COMMAND>"
   },
   {
+   "abstract": "Your relay allowance this month: live sessions, relay hours, and your plan. Spaces on your own network use none of it",
+   "after_help": "Examples:\n  cua usage\n  cua usage --json",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "usage",
+   "options": [
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "relay",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "RELAY"
+    }
+   ],
+   "subcommand_optional": false,
+   "subcommands": [],
+   "usage": "cua usage [OPTIONS]"
+  },
+  {
    "abstract": "Move a desktop app session (tabs, profile, sign-in) into a sandbox",
    "aliases": [],
    "arguments": [],

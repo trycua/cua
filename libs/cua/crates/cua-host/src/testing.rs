@@ -83,6 +83,9 @@ struct State_ {
     teams: BTreeMap<String, crate::team::Team>,
     /// invite code → (team, role, email)
     team_codes: BTreeMap<String, (String, crate::team::TeamRole, Option<String>)>,
+    /// What `GET /v1/usage` answers; none: 404, as a relay that does not
+    /// meter.
+    usage: Option<serde_json::Value>,
 }
 
 impl State_ {
@@ -766,6 +769,18 @@ async fn audit(State(s): State<S>, headers: HeaderMap) -> Response {
     Json(serde_json::json!({ "events": events })).into_response()
 }
 
+async fn usage(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let Some(usage) = st.usage.clone() else {
+        return err(StatusCode::NOT_FOUND, "not found");
+    };
+    match caller(&st, &headers) {
+        Some(Caller::Account(_)) => Json(usage).into_response(),
+        Some(Caller::Machine(_)) => err(StatusCode::FORBIDDEN, "account token required"),
+        None => err(StatusCode::UNAUTHORIZED, "account token required"),
+    }
+}
+
 async fn proxied(
     State(s): State<S>,
     method: axum::http::Method,
@@ -959,6 +974,7 @@ impl FakeRelay {
                 post(team_approve),
             )
             .route("/v1/teams/{id}/audit", get(team_audit))
+            .route("/v1/usage", get(usage))
             .fallback(proxied)
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -1114,6 +1130,12 @@ impl FakeRelay {
             .entry(id.to_string())
             .or_default()
             .push((prefix.to_string(), target.to_string()));
+    }
+
+    /// Answers `GET /v1/usage` with `usage` (the relay's JSON) for every
+    /// account; none: 404, as a relay that does not meter.
+    pub fn set_usage(&self, usage: Option<serde_json::Value>) {
+        self.state.lock().unwrap().usage = usage;
     }
 
     /// The current machine token of `id`.

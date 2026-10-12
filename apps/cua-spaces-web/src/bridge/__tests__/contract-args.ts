@@ -86,6 +86,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "volume.reveal": { path: "/Users/ada/Cua Volume/public" },
   "agents.setupDriver": { agents: ["codex"] },
   "spaces.openStream": { spaceId: SPACE, tier: "tile" },
+  "relay.usage": {},
   "about.get": {},
   "about.set": { channel: "beta" },
   "about.checkNow": {},

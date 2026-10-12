@@ -8,7 +8,9 @@ import {
   useBridge,
   useExperiments,
   useLoginItem,
+  relayUsageLine,
   useMachines,
+  useRelayUsage,
   useSession,
   useSettings,
   useStorageSettings,
@@ -123,7 +125,12 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
 
   return (
     <>
-      {account ? <SettingsGroup title={account.title}>{rows(account)}</SettingsGroup> : null}
+      {account ? (
+        <SettingsGroup title={account.title}>
+          {rows(account)}
+          <RelayUsageRow />
+        </SettingsGroup>
+      ) : null}
 
       <SettingsGroup title={general?.title ?? "General"}>
         <LaunchAtLoginRows />
@@ -154,6 +161,19 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         ))}
       </SettingsGroup>
     </>
+  );
+}
+
+/** The relay allowance this month, where the host reads it (Electron). */
+function RelayUsageRow() {
+  const usage = useRelayUsage();
+  if (!usage) return null;
+  const team = usage.team ? ` · Team pool, ${usage.team.seats} ${usage.team.seats === 1 ? "seat" : "seats"}` : "";
+  const plan = usage.plan ? `${usage.plan[0]!.toUpperCase()}${usage.plan.slice(1)} plan` : "";
+  return (
+    <div data-relay-usage="">
+      <SettingsRow label="Relay usage" description={relayUsageLine(usage) + team} control={<span className="text-[13px] text-muted-foreground">{plan}</span>} />
+    </div>
   );
 }
 
@@ -238,6 +258,7 @@ function FallbackSettingsPage() {
             )
           }
         />
+        <RelayUsageRow />
       </SettingsGroup>
 
       <SettingsGroup title="Privacy">

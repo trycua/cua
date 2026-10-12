@@ -57,6 +57,7 @@ mod telemetry_cmd;
 pub mod teleport;
 pub mod teleport_session;
 mod trajectory;
+mod usage_cmd;
 pub mod util;
 
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -244,6 +245,16 @@ enum Command {
   cua team audit AIGIS"
     )]
     Team(team_cmd::TeamCmd),
+    /// Your relay allowance this month: live sessions, relay hours, and
+    /// your plan. Spaces on your own network use none of it.
+    #[command(after_help = "Examples:
+  cua usage
+  cua usage --json")]
+    Usage {
+        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        #[arg(long)]
+        relay: Option<String>,
+    },
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
     #[command(subcommand)]
     Teleport(teleport::TeleportCmd),
@@ -1698,6 +1709,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Team(cmd) => {
             return team_cmd::run(cmd, &util::cua_home(), json, out).await;
         }
+        Command::Usage { relay } => {
+            return usage_cmd::run(relay, &util::cua_home(), json, out).await;
+        }
         // A machine that provides Spaces over its direct address: kept in
         // this cua home's registry, which the daemon reads too.
         Command::Spaces(cmd @ host::SpacesCmd::Add { host: true, .. }) => {
@@ -2086,6 +2100,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Cloud(_)
         | Command::Devices(_)
         | Command::Team(_)
+        | Command::Usage { .. }
         | Command::Fleet(_)
         | Command::Teleport(_)
         | Command::Cache(_)

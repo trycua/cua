@@ -55,6 +55,7 @@ import {
 import { tauriHostSetupOps } from "../ops/host-setup";
 import { TAURI_SPACE_DETAIL_UNSUPPORTED, tauriSpaceDetailOps } from "../ops/space-detail";
 import { STREAM_OPERATIONS } from "../ops/stream";
+import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -85,6 +86,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...TAURI_SETTINGS_UNSUPPORTED,
   ...TAURI_SPACE_DETAIL_UNSUPPORTED,
   ...STREAM_OPERATIONS,
+  ...RELAY_USAGE_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */

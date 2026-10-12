@@ -112,3 +112,4 @@ export {
   type ChecklistState,
   type ChecklistStep,
 } from "./checklist";
+export { formatHours, relayUsageLine, useRelayUsage, RELAY_USAGE_FOCUS_MS, RELAY_USAGE_POLL_MS, type RelayUsage } from "./relay-usage";

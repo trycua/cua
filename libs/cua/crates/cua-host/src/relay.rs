@@ -19,6 +19,7 @@
 //! PATCH  /v1/devices/{id}                 enrolled device     -> DeviceView
 //! DELETE /v1/devices/{id}                 enrolled device     -> DeviceView
 //! GET    /v1/audit                        account             -> {events}
+//! GET    /v1/usage                        account             -> RelayUsage
 //! ```
 //!
 //! Account calls other than registering a machine carry the client
@@ -381,6 +382,52 @@ pub struct AuditEvent {
     pub detail: Option<String>,
 }
 
+/// The account's relay allowance this month (`GET /v1/usage`). A live
+/// session is a connection to one remote machine through the relay; relay
+/// hours are the time with at least one. Past the allowance nothing stops:
+/// the relay only says so (`soft_limit_reached`). Every field has a
+/// default, so older and newer relays both parse.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelayUsage {
+    /// The relay meters this account (false: no allowance applies).
+    pub metered: bool,
+    /// The month counted (`2026-10`).
+    pub period: String,
+    /// `free`, `pro`, `team`, ...
+    pub plan: String,
+    /// The team whose allowance is pooled, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<RelayUsageTeam>,
+    /// Live sessions now.
+    pub live_sessions: u32,
+    /// Live sessions allowed at once (none: no limit).
+    pub live_sessions_limit: Option<u32>,
+    /// Relay hours used this month (the team's, when pooled).
+    pub hours_used: f64,
+    /// Relay hours allowed this month (none: no limit).
+    pub hours_limit: Option<f64>,
+    /// This account's own relay hours this month.
+    pub my_hours_used: f64,
+    /// Past the allowance (sessions keep working).
+    pub soft_limit_reached: bool,
+    /// What is past it: `sessions` and/or `hours`.
+    pub reasons: Vec<String>,
+    /// Where to get more.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_url: Option<String>,
+}
+
+/// The team behind a pooled allowance.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelayUsageTeam {
+    /// Team id.
+    pub id: String,
+    /// Seats sharing the allowance.
+    pub seats: u32,
+}
+
 #[derive(Deserialize)]
 struct DeviceReply {
     device: DeviceView,
@@ -683,6 +730,19 @@ impl RelayClient {
         Ok(list.events)
     }
 
+    /// The account's relay allowance this month; `None` from a relay that
+    /// does not meter (no `/v1/usage`).
+    pub async fn usage(&self, account_token: &str) -> Result<Option<RelayUsage>> {
+        match self
+            .send(self.http.get(self.url("/v1/usage")), account_token)
+            .await
+        {
+            Ok(usage) => Ok(Some(usage)),
+            Err(Error::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Machines the account owns or that are shared with it.
     pub async fn machines(&self, account_token: &str) -> Result<Vec<Machine>> {
         let list: MachineList = self
@@ -866,5 +926,21 @@ mod tests {
         assert_eq!(m.connected_at, None);
         let bare: Machine = serde_json::from_str(r#"{"id":"abcd1234"}"#).unwrap();
         assert!(!bare.online);
+    }
+
+    #[test]
+    fn usage_parses_with_missing_and_unknown_fields() {
+        let u: RelayUsage = serde_json::from_str(
+            r#"{"metered":true,"period":"2026-10","plan":"free","team":{"id":"acme","seats":2},
+                "live_sessions":1,"live_sessions_limit":2,"hours_used":3.4,"hours_limit":20,
+                "my_hours_used":3.4,"soft_limit_reached":true,"reasons":["hours"],
+                "upgrade_url":"https://cua.ai/pricing","later":1}"#,
+        )
+        .unwrap();
+        assert_eq!(u.team.as_ref().unwrap().seats, 2);
+        assert_eq!(u.hours_limit, Some(20.0));
+        assert_eq!(u.reasons, ["hours"]);
+        let bare: RelayUsage = serde_json::from_str("{}").unwrap();
+        assert!(!bare.metered && bare.live_sessions_limit.is_none());
     }
 }

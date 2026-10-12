@@ -270,6 +270,13 @@ describe("electron adapter", () => {
     expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "spaces.openStream", args: { spaceId: "local:a", tier: "tile" } }));
   });
 
+  it("asks the shell for the relay allowance (the SwiftUI app does not read it yet)", async () => {
+    const usage = { metered: true, period: "2026-10", plan: "free", team: null, liveSessions: 1, liveSessionsLimit: 2, hoursUsed: 6.5, hoursLimit: 20, myHoursUsed: 6.5, softLimitReached: false, reasons: [], upgradeUrl: null };
+    const { win, invoke } = electronHost(bridged(() => ({ ok: true, result: usage })));
+    expect(await createElectronAdapter(win).call("relay.usage", {})).toEqual(usage);
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "relay.usage" }));
+  });
+
   it("reads the first run from the shell and finishes it there (the SwiftUI app's is native)", async () => {
     const sent: [string, unknown][] = [];
     let completed = false;

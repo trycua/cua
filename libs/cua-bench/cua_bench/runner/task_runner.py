@@ -278,11 +278,7 @@ class TaskRunner:
         completed_result: Optional[TaskResult] = None
         overlay_path: Optional[Path] = None
         try:
-            # Create task overlay for QEMU types (protects golden image)
-            if not is_simulated and config.get("use_overlays"):
-                overlay_path = self._create_task_overlay(task_id)
-
-            # Track task for cleanup
+            # Register resources before creation, including partial overlay failures.
             self._running_tasks[task_id] = {
                 "network": network_name,
                 "env_container": env_container_name if not is_simulated else None,
@@ -294,6 +290,11 @@ class TaskRunner:
                 "is_simulated": is_simulated,
             }
 
+            # Register the overlay before creation to clean up partial failures.
+            if not is_simulated and config.get("use_overlays"):
+                self._running_tasks[task_id]["overlay_path"] = get_overlays_path() / task_id
+                overlay_path = self._create_task_overlay(task_id)
+
             # Do not let artifacts from an earlier run masquerade as this execution.
             # Leave unrelated user files alone; only clear known generated receipts.
             if output_dir:
@@ -301,8 +302,6 @@ class TaskRunner:
                 task_output.mkdir(parents=True, exist_ok=True)
                 for receipt_name in ("oracle-result.json", "cleanup-result.json"):
                     (task_output / receipt_name).unlink(missing_ok=True)
-
-            # Track log streaming process for cleanup
 
             # 1. Create network
             await create_network(network_name)

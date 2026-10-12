@@ -1616,22 +1616,24 @@ fn set_remote_debugging(
                 if confirmed {
                     break;
                 }
-                let pressed = super::pasteboard_stash::PasteboardStash::replace_with_text(
+                // Chrome runs the menu command after the menu closes and
+                // reads the pasteboard then, so the user's contents go back
+                // only once the navigation is seen (or the wait ends).
+                let Some(stash) = super::pasteboard_stash::PasteboardStash::replace_with_text(
                     descriptor.setup_url,
-                )
-                .is_some_and(|stash| {
-                    let pressed = press_context_menu_item(
-                        pid,
-                        omnibox as AXUIElementRef,
-                        &format!("Paste and Go to {}", descriptor.setup_url),
-                    );
-                    stash.restore();
-                    pressed
-                });
+                ) else {
+                    break;
+                };
+                let pressed = press_context_menu_item(
+                    pid,
+                    omnibox as AXUIElementRef,
+                    &format!("Paste and Go to {}", descriptor.setup_url),
+                );
                 let deadline = Instant::now() + Duration::from_millis(2500);
                 while pressed && Instant::now() < deadline && !showing_setup_page() {
                     std::thread::sleep(Duration::from_millis(100));
                 }
+                stash.restore();
                 pasted = pressed && showing_setup_page();
                 exp_log(&format!(
                     "paste attempt {attempt}: pressed={pressed} navigated={pasted}"

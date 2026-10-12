@@ -69,7 +69,15 @@ public enum AppEnvironment {
         // until then the window shows the launch, on stand-ins that wait
         // for them. Nothing here reads the keychain or waits on the daemon.
         let gate = LiveGate<LiveServices>()
-        let backend: SpacesBackend = fixtures ? FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env)) : PendingSpacesBackend(gate: gate)
+        let backend: SpacesBackend
+        if fixtures {
+            let fixture = FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env))
+            fixture.fixtureRuns["local:aurora"] = FixtureSpacesBackend.sampleRuns
+            fixture.fixtureEvents = FixtureSpacesBackend.sampleEvents
+            backend = fixture
+        } else {
+            backend = PendingSpacesBackend(gate: gate)
+        }
         let keyvault = KeyvaultModel(client: fixtures ? nil : KeyvaultClient(cuaHome: nil))
         if !fixtures {
             // Icons: caches survive restarts; fixtures never resolve apps or

@@ -580,7 +580,9 @@ impl QemuRuntime {
             }
             match QmpClient::connect(&format!("127.0.0.1:{qmp_port}")).await {
                 Ok(q) => break q,
-                Err(e) if tokio::time::Instant::now() >= deadline => return Err(e),
+                Err(e) if tokio::time::Instant::now() >= deadline && host::pid_alive(pid) => {
+                    return Err(e);
+                }
                 Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
             }
         };

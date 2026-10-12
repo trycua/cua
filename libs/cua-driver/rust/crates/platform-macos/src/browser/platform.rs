@@ -287,6 +287,34 @@ impl SelfActivationGuard {
     fn start(pid: i32) -> Self {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
+        // Experiment switch: "tight" polls WindowServer's front process every
+        // 2 ms and reverts at once, instead of pulsing the key-focus guard.
+        let tight = std::env::var("CUA_EXP_GUARD_MODE").as_deref() == Ok("tight")
+            || std::fs::read_to_string("/tmp/cua-exp-guard-mode")
+                .is_ok_and(|mode| mode.trim() == "tight");
+        if tight {
+            let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+            std::thread::spawn(move || {
+                let Some(front) = user_front else { return };
+                let mut epoch = crate::window_change_detector::intentional_epoch();
+                let mut quiet_until = std::time::Instant::now();
+                while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    let now_epoch = crate::window_change_detector::intentional_epoch();
+                    if now_epoch != epoch {
+                        epoch = now_epoch;
+                        quiet_until = std::time::Instant::now() + Duration::from_millis(400);
+                    }
+                    if !crate::input::skylight::foreground_turn_active()
+                        && std::time::Instant::now() >= quiet_until
+                        && crate::input::skylight::front_process_pid() == Some(pid)
+                    {
+                        crate::key_focus_guard::revert_now(pid, front);
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            });
+            return Self { stop, pid };
+        }
         std::thread::spawn(move || {
             let mut epoch = crate::window_change_detector::intentional_epoch();
             let mut quiet_until = std::time::Instant::now();

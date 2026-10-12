@@ -389,6 +389,7 @@ fn press_context_menu_item(pid: i32, element: AXUIElementRef, title: &str) -> bo
     let deadline = Instant::now() + Duration::from_millis(1500);
     loop {
         let tree = walk_tree(pid, None, None);
+        exp_log(&format!("menu scan for {title:?}: {} nodes, items {:?}", tree.nodes.len(), tree.nodes.iter().filter(|n| n.role == "AXMenuItem" && n.title.as_deref().is_some_and(|t| t.contains("Paste") || t.contains("Tab"))).map(|n| (n.title.clone(), n.actions.clone())).take(6).collect::<Vec<_>>()));
         let item = tree
             .nodes
             .iter()
@@ -434,6 +435,14 @@ fn open_tab_from_context_menu(pid: i32, nodes: &[AXNode]) -> bool {
     selected_tab.is_some_and(|tab| {
         press_context_menu_item(pid, tab as AXUIElementRef, "New Tab to the Right")
     })
+}
+
+fn exp_log(line: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/bp-setup.log") {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let _ = writeln!(file, "{ms} {line}");
+    }
 }
 
 fn is_same_element(left: usize, right: usize) -> bool {
@@ -1371,7 +1380,9 @@ fn set_remote_debugging(
             injected_global_input: false,
         },
         Ok(None) => {
+            exp_log(&format!("tabs: {:?}", initial.nodes.iter().filter(|n| n.role == "AXRadioButton").map(|n| (n.value.clone(), n.actions.clone())).collect::<Vec<_>>()));
             let opened_from_menu = open_tab_from_context_menu(pid, &initial.nodes);
+            exp_log(&format!("opened_from_menu={opened_from_menu}"));
             let pressed = if opened_from_menu {
                 kAXErrorSuccess
             } else {
@@ -1535,6 +1546,7 @@ fn set_remote_debugging(
                     stash.restore();
                     pressed
                 });
+            exp_log(&format!("confirmed={confirmed} pasted={pasted}"));
             if confirmed || pasted {
                 unsafe { CFRelease(omnibox as CFTypeRef) };
             } else {
@@ -1697,6 +1709,7 @@ fn set_remote_debugging(
     loop {
         let tree = walk_tree(pid, Some(window_id), None);
         let checkbox = exact_setup_checkbox(&tree, descriptor);
+        exp_log(&format!("ready-loop: nodes={} checkbox={:?} cb_nodes={:?}", tree.nodes.len(), checkbox.as_ref().map(|c| c.is_some()).map_err(|e| e.message.clone()), tree.nodes.iter().filter(|n| n.role == "AXCheckBox").map(|n| (n.title.clone(), n.description.clone(), n.actions.clone())).collect::<Vec<_>>()));
         match checkbox {
             Ok(Some(element)) => {
                 let value = unsafe { copy_binary_attr(element as AXUIElementRef, "AXValue") };

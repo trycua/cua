@@ -621,3 +621,55 @@ class TestBenchmarkDiscoveryFailClosed:
         monkeypatch.setattr(runners, "make", broken_make)
         with pytest.raises(RuntimeError, match="Unable to discover variants"):
             await runners.run_benchmark(tmp_path, oracle=True)
+
+
+    @pytest.mark.asyncio
+    async def test_discovery_environment_is_closed_before_execution(self, tmp_path, monkeypatch):
+        import cua_bench.runners as runners
+
+        task_dir = tmp_path / "task"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text("# fixture\n")
+
+        calls = {"closed": 0}
+
+        class DiscoveryEnvironment:
+            def tasks_config_fn(self):
+                return [object()]
+
+            async def close(self):
+                calls["closed"] += 1
+
+        def make_for_discovery(*args, **kwargs):
+            return DiscoveryEnvironment()
+
+        async def fake_run(*args, **kwargs):
+            assert calls["closed"] == 1
+            return runners.TaskResult(
+                task_path=str(task_dir), variant_id=0, success=False,
+                reward=0.0, steps=0, error="not executed"
+            )
+
+        monkeypatch.setattr(runners, "make", make_for_discovery)
+        monkeypatch.setattr(runners, "run_single_task", fake_run)
+        await runners.run_benchmark(tmp_path)
+        assert calls["closed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_discovery_cleanup_failure_blocks_benchmark(self, tmp_path, monkeypatch):
+        import cua_bench.runners as runners
+
+        task_dir = tmp_path / "task"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text("# fixture\n")
+
+        class DiscoveryEnvironment:
+            def tasks_config_fn(self):
+                return [object()]
+
+            async def close(self):
+                raise RuntimeError("cleanup failure")
+
+        monkeypatch.setattr(runners, "make", lambda *a, **k: DiscoveryEnvironment())
+        with pytest.raises(RuntimeError, match="Unable to close discovery environment"):
+            await runners.run_benchmark(tmp_path)

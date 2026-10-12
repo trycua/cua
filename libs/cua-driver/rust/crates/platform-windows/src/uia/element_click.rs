@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Bounded element-token UIA activation. The worker retains the element and
 //! the shared UIA permit until the provider returns, including after timeout.
 

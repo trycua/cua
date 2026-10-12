@@ -5,8 +5,7 @@ Usage: python -m cua_bench.verify_execution OUTPUT_DIR --task-index 0 --executio
 """
 import argparse
 import json
-import math
-import re
+from .evidence_contract import action_event_valid, oracle_receipt_valid
 from pathlib import Path
 
 
@@ -15,16 +14,6 @@ def _json(path):
     if not isinstance(value, dict):
         raise ValueError(f"{path.name}: expected object")
     return value
-
-
-def _valid_observation(value):
-    return (
-        isinstance(value, dict)
-        and isinstance(value.get("sha256"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is not None
-        and type(value.get("size_bytes")) is int
-        and value["size_bytes"] >= 0
-    )
 
 
 def verify_execution(root: Path, task_index: int, execution_id: str, *, require_actions=True):
@@ -42,17 +31,7 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
         oracle = _json(oracle_path)
         rewards = oracle.get("rewards")
         threshold = oracle.get("success_threshold")
-        valid = (
-            oracle.get("schema_version") == "cua-bench-oracle-result/v1"
-            and oracle.get("task_index") == task_index
-            and oracle.get("execution_id") == execution_id
-            and oracle.get("evaluated") is True
-            and isinstance(rewards, list) and len(rewards) > 0
-            and all(type(v) in (float, int) and math.isfinite(v) for v in rewards)
-            and type(threshold) in (float, int) and math.isfinite(threshold) and 0 <= threshold <= 1
-            and type(oracle.get("success")) is bool
-            and oracle["success"] == all(v >= threshold for v in rewards)
-        )
+        valid = oracle_receipt_valid(oracle, task_index, execution_id)
         checks["oracle"] = bool(valid)
         task_success = bool(valid and oracle["success"])
         if not checks["oracle"]:
@@ -85,16 +64,7 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
                 for line in stream:
                     record = json.loads(line)
                     action_count += 1
-                    if (
-                        not isinstance(record, dict)
-                        or record.get("schema_version") != "cua-bench-executed-action/v1"
-                        or record.get("execution_id") != execution_id
-                        or record.get("sequence") != action_count
-                        or record.get("execution_status") not in ("returned", "failed")
-                        or not isinstance(record.get("action"), dict)
-                        or not _valid_observation(record.get("before"))
-                        or not _valid_observation(record.get("after"))
-                    ):
+                    if not action_event_valid(record, action_count, execution_id):
                         raise ValueError("Invalid action event")
                     failed_action_count += record["execution_status"] == "failed"
             checks["actions"] = action_count > 0

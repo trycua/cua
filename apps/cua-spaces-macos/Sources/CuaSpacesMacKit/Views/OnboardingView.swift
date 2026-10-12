@@ -230,6 +230,9 @@ public struct OnboardingView: View {
                         .accessibilityIdentifier("onboarding-cli-install")
                     Text(cli.note).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let error = onboarding.state.cliError {
+                        Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         case .presentation:
@@ -524,6 +527,7 @@ public struct OnboardingView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
+                .disabled(onboarding.state.cliInstalling)
         }
     }
 

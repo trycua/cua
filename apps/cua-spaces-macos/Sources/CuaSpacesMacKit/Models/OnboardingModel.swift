@@ -128,13 +128,18 @@ public final class OnboardingModel {
     /// Continue (`install`: the page's switch) or Skip from Command line:
     /// only with `install` on, installs the bundled `cua` onto the core's
     /// target, adding its bin dir to the shell profile when it is not on
-    /// PATH. Done shows where it went.
+    /// PATH, and leaves the page once it is installed (a failure stays, with
+    /// why). Done shows where it went.
     public func finishCli(install: Bool) async {
+        guard !state.cliInstalling else { return }
         send(.cliDone(install: install))
-        guard install, let cli, let plan = cliPlan, !plan.upToDate, plan.source != nil else { return }
-        if let installed = try? await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath)) {
+        guard state.cliInstalling, let cli, let plan = cliPlan else { return }
+        do {
+            let installed = try await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath))
             cliPlan = installed
             send(.cliInstalled(target: installed.target))
+        } catch {
+            send(.cliInstallFailed(error: LiveSpacesBackend.words(error)))
         }
     }
 

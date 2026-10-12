@@ -35,6 +35,20 @@ final class FakeHost: HostRunning, @unchecked Sendable {
     func configure(change: HostSettingsChange) async throws -> HostStatus { FixtureHost.unconfigured }
 }
 
+final class FailingCli: CliInstallRunning, @unchecked Sendable {
+    let planned: AppCliInstallPlan
+    var installs = 0
+
+    init(plan: AppCliInstallPlan) { planned = plan }
+
+    func plan() async -> AppCliInstallPlan { planned }
+
+    func install(request: AppCliInstallRequest) async throws -> AppCliInstallPlan {
+        installs += 1
+        throw CuaError.Runtime(message: "Permission denied")
+    }
+}
+
 /// A temp directory with a fake bundled `cua` next to a fake app executable.
 /// Nothing outside it is read or written.
 struct TempInstall {
@@ -138,6 +152,23 @@ struct OnboardingTests {
         #expect(o.view.step == .signin)
         #expect(o.state.cliTarget == nil)
         #expect(!FileManager.default.fileExists(atPath: tmp.home.path))
+    }
+
+    @Test func aFailedInstallStaysOnTheCommandLinePageAndSaysWhy() async throws {
+        let tmp = try TempInstall()
+        defer { tmp.remove() }
+        let cli = FailingCli(plan: await tmp.installer().plan())
+        let o = OnboardingModel(statePath: nil, cli: cli)
+        await o.planCli()
+        o.send(.start)
+        await o.finishCli(install: true)
+        #expect(o.view.step == .cli)
+        #expect(o.state.cliError?.contains("Permission denied") == true)
+        #expect(o.state.cliTarget == nil)
+        #expect(!o.state.cliInstalling && o.view.canSkip)
+        await o.finishCli(install: false)
+        #expect(o.view.step == .signin)
+        #expect(cli.installs == 1)
     }
 
     /// Another `cua` earlier on PATH (a stale Python cua-cli, say): Done

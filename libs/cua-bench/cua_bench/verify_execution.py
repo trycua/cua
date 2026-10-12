@@ -31,6 +31,8 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
     """Return a machine-readable fail-closed independent verification report."""
     errors = []
     checks = {}
+    task_success = False
+    failed_action_count = 0
     root = Path(root)
     oracle_path = root / "oracle-result.json"
     cleanup_path = root / "cleanup-result.json"
@@ -51,9 +53,10 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
             and type(oracle.get("success")) is bool
             and oracle["success"] == all(v >= threshold for v in rewards)
         )
-        checks["oracle"] = bool(valid and oracle["success"])
+        checks["oracle"] = bool(valid)
+        task_success = bool(valid and oracle["success"])
         if not checks["oracle"]:
-            errors.append("oracle_invalid_or_unsuccessful")
+            errors.append("oracle_invalid")
     except (OSError, ValueError, TypeError, KeyError) as exc:
         checks["oracle"] = False
         errors.append(f"oracle_unreadable:{type(exc).__name__}")
@@ -87,12 +90,13 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
                         or record.get("schema_version") != "cua-bench-executed-action/v1"
                         or record.get("execution_id") != execution_id
                         or record.get("sequence") != action_count
-                        or record.get("execution_status") != "returned"
+                        or record.get("execution_status") not in ("returned", "failed")
                         or not isinstance(record.get("action"), dict)
                         or not _valid_observation(record.get("before"))
                         or not _valid_observation(record.get("after"))
                     ):
                         raise ValueError("Invalid action event")
+                    failed_action_count += record["execution_status"] == "failed"
             checks["actions"] = action_count > 0
             if not checks["actions"]:
                 errors.append("actions_empty")
@@ -102,11 +106,17 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
     else:
         checks["actions"] = None
 
+    evidence_consistent = not errors
+    run_accepted = evidence_consistent and task_success and failed_action_count == 0
     return {
         "schema_version": "cua-bench-verification/v1",
         "execution_id": execution_id,
         "task_index": task_index,
-        "valid": not errors,
+        "valid": run_accepted,
+        "evidence_consistent": evidence_consistent,
+        "task_success": task_success,
+        "run_accepted": run_accepted,
+        "failed_action_count": failed_action_count,
         "checks": checks,
         "verified_action_count": action_count,
         "errors": errors,

@@ -540,8 +540,10 @@ fn background_unavailable(reason: String) -> ToolResult {
     let message = format!(
         "{reason}. invoke_menu does not activate a background app: macOS keeps this menu item \
          unavailable while the app is behind the user's window. If the user allows it, call \
-         bring_to_front for this window first, then invoke_menu; or use the app's keyboard \
-         shortcut with hotkey, or the control in the window."
+         bring_to_front for this window first, then invoke_menu, or send the app's keyboard \
+         shortcut with hotkey and delivery_mode:\"foreground\". A background hotkey does not \
+         help: the disabled item ignores its shortcut too. Otherwise use the control in the \
+         window."
     );
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
@@ -753,6 +755,8 @@ mod tests {
         let message = structured["refusal"]["message"].as_str().unwrap();
         assert!(message.contains("does not activate a background app"));
         assert!(message.contains("bring_to_front"));
+        assert!(message.contains("delivery_mode:\"foreground\""));
+        assert!(message.contains("A background hotkey does not help"));
     }
 
     #[test]

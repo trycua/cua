@@ -1,6 +1,47 @@
 use super::{background_element_click_result, ActionTransport};
 
 #[test]
+fn semantic_deadline_stops_the_route_and_preserves_unknown_effect() {
+    use super::element_uia_unavailable_result;
+    use crate::uia::windows_enum::UiaDeadlineError;
+    use cua_driver_core::action_record::{ActionEffect, ActionExecutionRecord};
+    for (error, status, effect) in [
+        (UiaDeadlineError::Busy, "busy", ActionEffect::Refused),
+        (
+            UiaDeadlineError::Timeout,
+            "timeout",
+            ActionEffect::Unverifiable,
+        ),
+        (
+            UiaDeadlineError::Unavailable,
+            "unavailable",
+            ActionEffect::Unverifiable,
+        ),
+    ] {
+        let result = element_uia_unavailable_result(error);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.as_ref().unwrap();
+        assert_eq!(data["code"], "background_unavailable");
+        assert_eq!(data["uia_status"], status);
+        assert_eq!(data["path"], "ax");
+        assert_eq!(data["verified"], false);
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            data,
+        )
+        .expect("existing ActionResult contract");
+        assert_eq!(record.effect, effect);
+        record.public_result().expect("valid public projection");
+        assert!(record.fallbacks.is_empty());
+        assert!(
+            record.escalation.is_none(),
+            "unknown effects must not recommend immediate replay"
+        );
+    }
+}
+
+#[test]
 fn raw_fallback_reports_its_physical_transport() {
     for (transport, path) in [
         (ActionTransport::WindowsTargetedInjection, "pixel"),

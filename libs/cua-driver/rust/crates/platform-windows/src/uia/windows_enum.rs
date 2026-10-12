@@ -58,11 +58,12 @@ const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 /// Desktop child enumeration: one wedged provider must not stall list_windows.
 const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Subtree scans: keep the pre-existing interactive operation budget.
-const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
+pub(crate) const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
 /// Health probes can tolerate the same budget without delaying window listing.
 const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
-enum UiaDeadlineError {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiaDeadlineError {
     Timeout,
     Busy,
     Unavailable,
@@ -150,7 +151,7 @@ where
     run_uia_with_deadline_cancelable(stage, timeout, fallback, |_| f())
 }
 
-fn run_uia_with_deadline_cancelable<T, F>(
+pub(crate) fn run_uia_with_deadline_cancelable<T, F>(
     stage: &'static str,
     timeout: Duration,
     fallback: &'static str,
@@ -163,12 +164,12 @@ where
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
-struct ComInit {
+pub(crate) struct ComInit {
     needs_uninit: bool,
 }
 
 impl ComInit {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
         if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
             tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");

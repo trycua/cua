@@ -413,6 +413,10 @@ if ($suite -in @("native", "all")) {
         "test", "-p", "cua-driver-e2e", "--test", "harness_winui3_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "Windows semantic UIA deadline" @(
+        "test", "-p", "cua-driver-e2e", "--test", "semantic_click_deadline_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
     Invoke-CargoTest "Windows web harnesses" @(
         "test", "-p", "cua-driver-e2e", "--test", "harness_web_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"

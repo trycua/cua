@@ -117,6 +117,8 @@ export interface AgentSummary {
   /** The run the detail opens: its current run, else its latest in its Space. */
   run: RunRef | null;
   lastError: string | null;
+  /** The host's record, as the core's Agents page reads it (the detail's Memory, Routines and Access). */
+  record: PersistentAgent;
 }
 
 export interface AgentRunSummary extends SpaceAgentRun {
@@ -1023,6 +1025,7 @@ export class BridgeStore {
           lastActivityMs: Math.max(a.savedMs, current?.status === "running" ? now : 0),
           run: latest ? { spaceId: latest.spaceId, runId: latest.runId } : null,
           lastError: a.lastError ?? null,
+          record: a,
         },
       ];
     });

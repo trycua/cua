@@ -29,6 +29,7 @@ export {
   type SpacesHook,
 } from "./hooks";
 
+export { useAgentDetail, type AgentDetailHook } from "./agent-detail";
 export type { BridgeMode, DataAdapter } from "./adapter";
 export { HostError, UnsupportedOperationError, isNativeHost, isUnsupported } from "./adapter";
 export { createAdapter, createDemoAdapter, createElectronAdapter, createTauriAdapter, createWebkitAdapter } from "./adapters";

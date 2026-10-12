@@ -37,6 +37,7 @@ import { BridgeProvider, useSpaces } from "@/bridge";
 | `useKeyvault()` | `{ overview, groups, views, vaultState }`. `views` holds the core's `page`, `sidebar` and `vault` (the list grouped by app, then site). Actions: `unlock(passphrase?)`, `lockItem(id)`, `lockItems(ids)`, `unlockItems(ids)`, `setDisabled`, `approve`, `deny`, `revokeGrant`, `vaultAction(action)` (search, select, open), and `pane(selection)`. |
 | `useSession()` | `{ fleet, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
 | `useAgents()` | `{ agents, runs, unread, canList }`: persistent agents (state `running`, `paused` or `idle`, the core's row line and action label, the run the detail opens) and the runs in every running Space, in the core's order. Actions: `pauseAgent(name)`, `resumeAgent(name)`, `agentSetup()`, `configureAgents(agents?)`. |
+| `useAgentDetail(agent)` | A persistent agent's Memory, Routines and Access to this computer (`agent-detail.ts`): `{ view, busy, error, unsupported, thisMachine, act(action) }`. The page runs the core's `agents.pageReduce` / `agents.pageView`, as `PersistentModel` does natively, and the host runs each command (`ops/agent-detail.ts`). |
 | `useAgentTimeline(run)` | One run's conversation while mounted: `{ items, status, phase, caughtUp, isLoading, error, unsupported, lastEventMs }`. It reads `agents.events` with a cursor (every 500 ms while a turn runs, 4 s otherwise) and folds the events like cua-agents' `Transcript` (`transcript.ts`). Items are immutable, so a row memoized by item re-renders only when its item changed. |
 | `useOnboarding()` | The first run from the core (`onboarding.initial/reduce/view/copy`): `{ state, view, copy, signInText, permissions, hostConfigured, images }`. Actions: `send(action)`, `skip()`, `finish()`, `restart()`. See below. |
 | `useSavedOnboarding()` | `{ state, skipped }`: the saved progress the shell reads to reopen or offer the first run. |
@@ -104,6 +105,7 @@ Each is an existing Tauri command under a host-neutral name:
 | `agents.events` `{spaceId, runId, cursor, max?}` | none yet: unsupported (`TAURI_UNSUPPORTED`) |
 | `agents.pause` / `.resume` `{name}` | `agents_tool` `agent_pause` / `agent_resume` |
 | `agents.setup` / `.configure` `{agents}` | `agent_setup_detect` / `agent_setup_configure` |
+| `agents.detail`, `.readFile`, `.restoreFile`, `.addRoutine`, `.setRoutine`, `.removeRoutine`, `.allowComputer`, `.revokeComputer` | `agents_tool` (the tools `PersistentModel` runs; see `ops/agent-detail.ts`) |
 
 Events (`HostEvent`): `spaces.changed`, `spaces.createProgress`,
 `machines.changed`, `settings.changed`, `keyvault.changed`,

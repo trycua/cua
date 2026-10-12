@@ -112,7 +112,10 @@ struct BridgeContractTests {
 
         func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
             if tool.hasPrefix("agent_keys.") { return try await keys.agentsTool(tool, args) }
-            if tool.hasPrefix("volume_") && !["volume_requests", "volume_grants"].contains(tool) {
+            // An agent's home and its files: the Agents fake.
+            let home = ["volume_read", "volume_history", "volume_restore"].contains(tool)
+                || (tool == "volume_ls" && (args["path"] as? String ?? "").hasPrefix("agents/"))
+            if tool.hasPrefix("volume_") && !["volume_requests", "volume_grants"].contains(tool) && !home {
                 return try await drive.agentsTool(tool, args)
             }
             return try await agents.agentsTool(tool, args)
@@ -204,6 +207,13 @@ struct BridgeContractTests {
             ("machines.list", [:]), ("host.status", [:]),
             ("agents.list", [:]), ("agents.runs", ["spaceId": "local:aurora"]), ("agents.setup", [:]),
             ("agents.configure", ["agents": ["claude-code"]]),
+            ("agents.detail", ["name": "ada"]), ("agents.readFile", ["path": "agents/ada/hermes/MEMORY.md"]),
+            ("agents.restoreFile", ["path": "agents/ada/hermes/MEMORY.md", "version": "v1"]),
+            ("agents.addRoutine", ["agent": "ada", "title": "Inbox", "prompt": "Sort my inbox", "everyMinutes": NSNull(),
+                                   "dailyAt": "08:00", "weeklyOn": NSNull()]),
+            ("agents.setRoutine", ["id": "R1", "enabled": false]), ("agents.removeRoutine", ["id": "R1"]),
+            ("agents.allowComputer", ["agent": "ada", "machine": "relay:0123"]),
+            ("agents.revokeComputer", ["agent": "ada", "machine": "relay:0123"]),
             ("agentKeys.list", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),

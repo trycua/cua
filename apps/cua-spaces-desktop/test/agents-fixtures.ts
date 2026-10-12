@@ -52,6 +52,23 @@ export class FakeAgentsTools {
       case "computer_access_grant":
         this.grants = [{ agent: "ada", machine: args.machine ?? "", revoked: false }];
         return this.grants[0];
+      case "computer_access_revoke":
+        this.grants = [];
+        return {};
+      case "volume_read":
+        return { path: args.path, content: "# Ada\n", encoding: "utf8" };
+      case "volume_history":
+        return {
+          versions: [
+            { version: "v2", modified_ms: this.now - 60_000, deleted: false, latest: true },
+            { version: "v1", modified_ms: this.now - 3_600_000, deleted: false, latest: false },
+          ],
+        };
+      case "volume_restore":
+      case "routine_add":
+      case "routine_set_enabled":
+      case "routine_remove":
+        return {};
       case "agent_events":
         return { run_id: args.run_id, status: "idle", phase: "idle", events: [], cursor: args.cursor, caught_up: true };
       default:

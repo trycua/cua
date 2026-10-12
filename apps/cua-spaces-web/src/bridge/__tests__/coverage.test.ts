@@ -9,6 +9,7 @@ import { createTauriAdapter } from "../adapters/tauri";
 import { createWebkitAdapter } from "../adapters/webkit";
 import { HOST_COVERAGE, WEBKIT_HOST_ONLY } from "../coverage";
 import { NEW_SPACE_ARGS } from "../ops/new-space";
+import { AGENT_DETAIL_ARGS } from "../ops/agent-detail";
 import { AGENT_KEYS_ARGS } from "../ops/agent-keys";
 import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
@@ -51,6 +52,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
   ...KEYVAULT_SETUP_ARGS,

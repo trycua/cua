@@ -22,7 +22,7 @@
  * contract test fails when it is out of date.
  */
 
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
+import type { AgentDetailInput, AgentEventsPage, AgentOpenFile, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
 import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode } from "./devices";
 import type {
   CancelOutcome,
@@ -567,6 +567,25 @@ const KvGrantShape = ref(
 
 const hostStatusOrNull = HostStatusShape;
 const agentSetupRows = list(AgentSetupRowShape);
+const AgentDetailShape = ref(
+  "AgentDetailInput",
+  obj<AgentDetailInput>()({
+    home: list(object({ path: str, name: str, size: num })),
+    routines: list(object({ id: str, title: str, label: str, enabled: bool })),
+    grants: list(object({ agent: str, machine: str, revoked: bool })),
+    audit: list(object({ tsMs: num, action: str, principal: str, path: str, detail: str })),
+    thisMachine: nullable(str),
+  }),
+);
+const AgentOpenFileShape = ref(
+  "AgentOpenFile",
+  obj<AgentOpenFile>()({
+    path: str,
+    text: str,
+    binary: bool,
+    versions: list(object({ version: str, modifiedMs: num, deleted: bool, latest: bool })),
+  }),
+);
 const shares = list(ShareShape);
 
 export const OP_SHAPES: Record<OpName, Schema> = {
@@ -634,6 +653,14 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.detail": AgentDetailShape,
+  "agents.readFile": AgentOpenFileShape,
+  "agents.restoreFile": nul,
+  "agents.addRoutine": nul,
+  "agents.setRoutine": nul,
+  "agents.removeRoutine": nul,
+  "agents.allowComputer": nul,
+  "agents.revokeComputer": nul,
 
   "spaces.createOptions": NewSpaceOptionsShape,
   "spaces.add": SpaceRowShape,
@@ -997,6 +1024,14 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
+  "agents.detail": AgentDetailShape,
+  "agents.readFile": AgentOpenFileShape,
+  "agents.restoreFile": nul,
+  "agents.addRoutine": nul,
+  "agents.setRoutine": nul,
+  "agents.removeRoutine": nul,
+  "agents.allowComputer": nul,
+  "agents.revokeComputer": nul,
   "agentKeys.list": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,

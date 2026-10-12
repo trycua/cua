@@ -29,7 +29,6 @@ pub const BADGE_CHIP_GROUP_GAP: f32 = 7.0;
 const FONT_BYTES: &[u8] = include_bytes!("../assets/Inter.ttf");
 const FONT_SIZE: f32 = 11.5;
 const HORIZONTAL_PADDING: f32 = 10.0;
-const TEXT_OPTICAL_Y_OFFSET: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BadgeExtents {
@@ -200,6 +199,12 @@ pub fn sanitize_session_label(input: &str) -> Option<String> {
         result.push('…');
     }
     Some(result)
+}
+
+/// Height of a capital letter above the baseline at `font_size`.
+fn cap_height(font: &fontdue::Font, font_size: f32) -> f32 {
+    let metrics = font.metrics('H', font_size);
+    metrics.height as f32 + metrics.ymin as f32
 }
 
 fn rounded_rect(rect: Rect, radius: f32) -> Option<Path> {
@@ -376,12 +381,30 @@ pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadge
     let rect = Rect::from_xywh(x, y, badge_width, badge_height)?;
     let corner_radius = badge_height * 0.5;
 
-    let mut cursor_x = x + HORIZONTAL_PADDING * scale;
+    // Centre the label and chips as one group, so a short label in a
+    // minimum-width pill is not left-aligned.
+    let group_gap = if label_data.is_some() && chip_count > 0 {
+        BADGE_CHIP_GROUP_GAP * scale
+    } else {
+        0.0
+    };
+    let content_width = text_width + group_gap + chip_width;
+    let mut cursor_x = x + ((badge_width - content_width) * 0.5).max(HORIZONTAL_PADDING * scale);
+    // Vertically, names centre the font's cap height so every name shares
+    // one baseline. Labels without lowercase (key combos such as ⌘A, whose
+    // symbols reach below the baseline) centre their own ink instead. Both
+    // snap to whole device pixels so the glyph rounding cannot shift them.
+    let baseline = y + badge_height * 0.5 + cap_height(font, font_size) * 0.5;
+    let ascent = font
+        .horizontal_line_metrics(font_size)
+        .map_or(font_size * 0.8, |metrics| metrics.ascent);
     let label = label_data.map(|(text, bounds)| {
-        let origin = (
-            cursor_x - bounds.min_x,
-            y + (badge_height - bounds.height) * 0.5 - bounds.min_y + TEXT_OPTICAL_Y_OFFSET * scale,
-        );
+        let origin_y = if text.chars().any(char::is_lowercase) {
+            baseline - ascent
+        } else {
+            y + (badge_height - bounds.height) * 0.5 - bounds.min_y
+        };
+        let origin = (cursor_x - bounds.min_x, origin_y.round());
         cursor_x += bounds.width + BADGE_CHIP_GROUP_GAP * scale;
         BadgeLabelLayout { text, origin }
     });
@@ -671,6 +694,111 @@ mod tests {
         .unwrap();
         let label = layout.label.unwrap();
         assert!((label.origin.0 - (layout.rect.x() + HORIZONTAL_PADDING)).abs() < 1.5);
+    }
+
+    /// Painted ink box of a badge label, `(left, top, right, bottom)` in
+    /// device pixels, using the same rounding as `paint_session_badge`.
+    fn label_ink(layout: &SessionBadgeLayout) -> (f32, f32, f32, f32) {
+        let font = font().unwrap();
+        let label = layout.label.as_ref().unwrap();
+        let text = text_layout(font, &label.text, FONT_SIZE * layout.scale);
+        let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for glyph in text.glyphs() {
+            if glyph.width == 0 || glyph.height == 0 {
+                continue;
+            }
+            let x = (label.origin.0 + glyph.x).round();
+            let y = (label.origin.1 + glyph.y).round();
+            l = l.min(x);
+            t = t.min(y);
+            r = r.max(x + glyph.width as f32);
+            b = b.max(y + glyph.height as f32);
+        }
+        (l, t, r, b)
+    }
+
+    #[test]
+    fn every_badge_kind_centres_its_content_at_every_scale() {
+        // Labels whose ink spans exactly the cap height are vertically
+        // centred; every label and chip group is horizontally centred.
+        let cases: &[(&str, bool, bool)] = &[
+            ("⌘A", false, true),
+            ("⌘C", false, true),
+            ("⇧⌘Z", false, true),
+            ("⌃⌥⇧⌘K", false, true),
+            ("CTRL+C", false, true),
+            ("Ctrl+C", false, false),
+            ("research", false, false),
+            ("writer", false, false),
+            ("foreground", true, false),
+            ("⌘V", true, true),
+            ("A very long public session label", false, false),
+        ];
+        for scale in [1.0f32, 2.0, 3.0] {
+            for &(text, foreground, caps) in cases {
+                let layout = session_badge_layout(SessionBadgeInput {
+                    label: Some(text),
+                    delivery: foreground.then_some(DeliveryModifier::Foreground),
+                    target: None,
+                    cursor: (400.0 * scale, 60.0 * scale),
+                    backing_scale: scale,
+                    label_alpha: 1.0,
+                    chip_alpha: 1.0,
+                    clip: None,
+                })
+                .unwrap();
+                let rect = layout.rect;
+                let (l, t, r, b) = label_ink(&layout);
+                let right_edge = layout
+                    .delivery_chip
+                    .map_or(r, |chip| chip.rect.x() + chip.rect.width());
+                let left_gap = l - rect.x();
+                let right_gap = rect.x() + rect.width() - right_edge;
+                let tolerance = 1.0 * scale.max(1.0) + 0.01;
+                assert!(
+                    (left_gap - right_gap).abs() <= tolerance,
+                    "{text} @{scale}x horizontal: left {left_gap} right {right_gap}"
+                );
+                if caps {
+                    let top_gap = t - rect.y();
+                    let bottom_gap = rect.y() + rect.height() - b;
+                    assert!(
+                        (top_gap - bottom_gap).abs() <= tolerance,
+                        "{text} @{scale}x vertical: top {top_gap} bottom {bottom_gap}"
+                    );
+                }
+                if let Some(chip) = layout.delivery_chip {
+                    let chip_mid = chip.rect.y() + chip.rect.height() * 0.5;
+                    assert!((chip_mid - (rect.y() + rect.height() * 0.5)).abs() < 0.01);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn labels_share_one_baseline() {
+        for scale in [1.0f32, 2.0] {
+            let origin_y = |text: &str| {
+                session_badge_layout(SessionBadgeInput {
+                    label: Some(text),
+                    delivery: None,
+                    target: None,
+                    cursor: (200.0, 60.0),
+                    backing_scale: scale,
+                    label_alpha: 1.0,
+                    chip_alpha: 0.0,
+                    clip: None,
+                })
+                .unwrap()
+                .label
+                .unwrap()
+                .origin
+                .1
+            };
+            assert_eq!(origin_y("research"), origin_y("Typing"));
+            assert_eq!(origin_y("research"), origin_y("writer"));
+            assert_eq!(origin_y("research"), origin_y("Ctrl+C"));
+        }
     }
 
     #[test]

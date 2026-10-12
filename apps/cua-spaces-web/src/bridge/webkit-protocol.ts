@@ -164,6 +164,8 @@ export type HostMethod = WebkitMethod | (typeof ELECTRON_HOST_METHODS)[number];
 
 /** The app menu's Settings command (⌘,) while the SwiftUI app's New UI window is in front: go to Settings. */
 export const WEBKIT_OPEN_SETTINGS_EVENT = "settings.openRequested";
+/** The SwiftUI app's notch and menu bar item while New UI is on: go to `payload.path` (`/spaces/<id>`, `/settings`, ...). */
+export const WEBKIT_OPEN_ROUTE_EVENT = "route.openRequested";
 /** The app menu's Help > Getting Started: show the getting-started checklist again. */
 export const WEBKIT_OPEN_CHECKLIST_EVENT = "checklist.openRequested";
 

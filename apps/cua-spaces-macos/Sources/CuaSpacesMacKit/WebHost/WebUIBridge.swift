@@ -124,6 +124,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var pendingNewSpace: String??
     /// Settings asked for before the page listened.
     var pendingSettings = false
+    /// A route asked for before the page listened (the latest wins).
+    var pendingRoute: String?
     /// Local paths the user picked or dropped here: the only ones
     /// `spaces.sendFiles` sends (WebUIBridge+Files.swift).
     var offeredPaths: Set<String> = []
@@ -195,6 +197,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         if pendingSettings {
             pendingSettings = false
             DispatchQueue.main.async { [weak self] in self?.emitSettings() }
+        }
+        if let path = pendingRoute {
+            pendingRoute = nil
+            DispatchQueue.main.async { [weak self] in self?.emitRoute(path) }
         }
     }
 
@@ -455,6 +461,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     func emitSettings() {
         host?.emit("settings.openRequested")
+    }
+
+    // MARK: - Routes (the notch and the menu bar item open the page at one)
+
+    /// Asks the page to go to `path` (`/spaces/<id>`, `/settings`, ...);
+    /// queued until the page listens.
+    func requestRoute(_ path: String) {
+        if pageListening { emitRoute(path) } else { pendingRoute = path }
+    }
+
+    func emitRoute(_ path: String) {
+        host?.emit("route.openRequested", payload: ["path": path])
     }
 
     /// `spaces.createOptions`: the env the native New Space sheet opens

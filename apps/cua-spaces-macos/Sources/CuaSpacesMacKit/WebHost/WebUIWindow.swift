@@ -55,6 +55,18 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         c.load()
     }
 
+    /// Opens the window (or brings it forward) at `route`. A drop on a
+    /// notch tile is kept for the page, which asks for it by name
+    /// (`spaces.droppedFiles`).
+    public static func show(model: AppModel, at route: MainUIRoute) {
+        notchDrop = route.dropped
+        show(model: model)
+        shared?.bridge.requestRoute(route.webPath)
+    }
+
+    /// The apps and files last dropped on a notch tile, until the page takes them.
+    static var notchDrop: [URL] = []
+
     /// Closes the New UI window, if open (its experiment was turned off),
     /// and shows the native main window in its place.
     public static func closeShared() {

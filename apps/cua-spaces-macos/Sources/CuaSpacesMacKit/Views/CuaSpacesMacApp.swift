@@ -170,17 +170,20 @@ struct MenuBarContent: View {
     }
 
     private func run(_ id: AppMenuItemId) {
+        let router = MainUIRouter(model: model)
         switch id {
-        case .open: activate(); openWindow(id: "main")
+        case .open: router.open(.home) { activate(); openWindow(id: "main") }
         case .newSpace:
             activate()
             // The native sheet needs the main window; New UI opens its own.
             if !model.settings.experiments.webUi { openWindow(id: "main") }
             Task { await model.openNewSpace() }
-        case .settings: activate(); openSettings()
+        case .settings: router.open(.settings) { activate(); openSettings() }
         case .volumeConflicts:
-            activate(); openWindow(id: "main")
-            model.selection = .drive
+            router.open(.drive) {
+                activate(); openWindow(id: "main")
+                model.selection = .drive
+            }
         case .quit: NSApp.terminate(nil)
         case .status, .separator: break
         }
@@ -257,35 +260,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.closeWebUI = { WebUIWindowController.closeShared() }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
-        // Each of these shows its result in the main window: open it when
-        // it was closed (the notch stays up without it), or a drop would
-        // commit to nothing visible.
+        // Each of these shows its result in the main window (the New UI
+        // window while its experiment is on): open it when it was closed
+        // (the notch stays up without it), or a drop would commit to
+        // nothing visible.
+        let router = MainUIRouter(model: model)
         controller.onOpenSpace = { [weak controller] id in
             model.select(id)
-            NSApp.activate()
-            controller?.showMain?()
+            router.open(.space(id)) {
+                NSApp.activate()
+                controller?.showMain?()
+            }
+        }
+        controller.onOpenList = { [weak controller] in
+            router.open(.home) { controller?.showMain?() }
+        }
+        controller.onOpenSettings = { [weak controller] in
+            router.open(.settings) { controller?.showSettings?() }
         }
         controller.onOpenAccess = { [weak controller] in
-            model.selection = .keyvault(.category(category: .access))
-            NSApp.activate()
-            controller?.showMain?()
+            router.open(.access) {
+                model.selection = .keyvault(.category(category: .access))
+                NSApp.activate()
+                controller?.showMain?()
+            }
         }
         controller.onDismissAccess = { model.keyvault.dismiss() }
         controller.onTeleport = { [weak controller] spaceId, entry in
             model.select(spaceId)
-            model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: [])
-            NSApp.activate()
-            controller?.showMain?()
+            // The page opens Teleport at the app as for a drop of it.
+            let app = entry?.hostPath.map { URL(fileURLWithPath: $0) }
+            router.open(.space(spaceId, dropped: app.map { [$0] } ?? [])) {
+                model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: [])
+                NSApp.activate()
+                controller?.showMain?()
+            }
         }
         controller.onDropURLs = { [weak controller] spaceId, urls in
             model.select(spaceId)
-            Task {
-                guard let context = try? await model.backend.teleportContext(id: spaceId) else { return }
-                let parsed = context.0.parseDrop(items: urls.map(\.path))
-                let entry = parsed.apps.first.flatMap { try? context.0.catalogEntryForPath(path: $0, options: nil) }
-                model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: parsed.files)
-                NSApp.activate()
-                controller?.showMain?()
+            router.open(.space(spaceId, dropped: urls)) {
+                Task {
+                    guard let context = try? await model.backend.teleportContext(id: spaceId) else { return }
+                    let parsed = context.0.parseDrop(items: urls.map(\.path))
+                    let entry = parsed.apps.first.flatMap { try? context.0.catalogEntryForPath(path: $0, options: nil) }
+                    model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: parsed.files)
+                    NSApp.activate()
+                    controller?.showMain?()
+                }
             }
         }
         // "Spaces tab in the notch": applied now and on every change.

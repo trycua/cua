@@ -120,6 +120,9 @@ cua-driver config set cursor.motion.style magnetic
 # Scale cursor move time with distance and target size
 cua-driver config set cursor.motion.timing fitts
 
+# Drop the 600 ms floor of the default steady timing
+cua-driver config set cursor.motion.timing native
+
 # Turn the cursor trail on by default
 cua-driver config set cursor.motion.effects.trail true
 ```

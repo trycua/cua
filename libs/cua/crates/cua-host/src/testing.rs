@@ -1531,7 +1531,7 @@ async fn team_add_machine(
     if macos {
         return err(
             StatusCode::FORBIDDEN,
-            "macOS Spaces (uVisor-backed or any other virtual macOS) cannot be shared with a team: macOS licensing allows one user per macOS copy",
+            "macOS Spaces cannot be shared with a team: macOS licensing allows one user per macOS copy",
         );
     }
     let t = match require_team_manager(&mut st, &id, &who) {

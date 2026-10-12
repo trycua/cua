@@ -1146,7 +1146,7 @@ pub fn parse_command() -> Command {
     }
 }
 
-const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
+const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed|relaxed|steady|calm|deliberate] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
 
 /// Build `set_agent_cursor_motion` arguments from `cua-driver cursor motion`
 /// flags. Effects take `on`, `off` or `default` (the style's own choice).
@@ -1171,7 +1171,12 @@ fn cursor_motion_args(args: &[String]) -> Result<serde_json::Value, String> {
     if let Some(timing) = flag_value(args, "--timing") {
         let parsed: cua_driver_contract::CursorMotionTiming =
             serde_json::from_value(timing.clone().into()).map_err(|_| {
-                format!("unknown timing `{timing}`; expected native, fitts or fixed")
+                format!(
+                    "unknown timing `{timing}`; expected one of {}",
+                    cua_driver_contract::CursorMotionTiming::ALL
+                        .map(cua_driver_contract::CursorMotionTiming::as_str)
+                        .join(", ")
+                )
             })?;
         out.insert("timing".into(), parsed.as_str().into());
     }
@@ -4653,6 +4658,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px"),
         ("cua-driver config set cursor.motion.style magnetic", "Make magnetic the default cursor motion for new sessions"),
         ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
+        ("cua-driver config set cursor.motion.timing native", "Drop the 600 ms floor of the default steady timing"),
         ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
     ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),

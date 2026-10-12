@@ -208,7 +208,7 @@ fn team_of_with(who: &str, teams: bool) -> Option<Result<String>> {
 }
 
 /// Why a macOS Space cannot be a team machine.
-pub const MACOS_TEAM_REFUSED: &str = "macOS Spaces (uVisor-backed or any other virtual macOS) cannot be shared with a team: macOS licensing allows one user per macOS copy. Share a Linux or Windows Space, or a whole Mac set up with `cua host setup`";
+pub const MACOS_TEAM_REFUSED: &str = "macOS Spaces cannot be shared with a team: macOS licensing allows one user per macOS copy. Share a Linux or Windows Space, or a whole Mac set up with `cua host setup`";
 
 /// Moves `who` onto the list for `role` (or off both with `None`).
 pub fn apply_share(

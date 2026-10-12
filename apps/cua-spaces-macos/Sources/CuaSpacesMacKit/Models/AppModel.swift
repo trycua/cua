@@ -1075,8 +1075,8 @@ public final class AppModel {
     }
 
     /// The menu bar item's status line.
-    /// Counts the Spaces the user can open, the notch's count (This machine
-    /// only while it is shared and reachable).
+    /// Counts the Spaces the user can open, the notch's count (never This
+    /// machine or another of your machines, even while they provide Spaces).
     public var statusLine: String { appStatusLine(count: appOpenableCount(spaces: spaces)) }
 
     /// The menu bar item's menu: the count, Cua Volume's sync state next to

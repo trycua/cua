@@ -2850,9 +2850,11 @@ mod motion_equivalence_tests {
             for (fx_name, effects) in [("default", MotionEffects::default()), ("all_on", all_on)] {
                 for capable in [true, false] {
                     let mut core = RenderStateCore::new(CursorConfig::default());
+                    // The fixture pins the pre-crate driver, which had native timing.
                     core.motion = MotionConfig {
                         style,
                         effects,
+                        timing: MotionTiming::Native,
                         ..MotionConfig::default()
                     };
                     core.effects_capable = capable;

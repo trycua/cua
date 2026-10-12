@@ -2734,6 +2734,14 @@ class CursorMotionTiming(enum.Enum):
 
     FIXED = 2
 
+    RELAXED = 3
+
+    STEADY = 4
+
+    CALM = 5
+
+    DELIBERATE = 6
+
 
 
 class _UniffiFfiConverterTypeCursorMotionTiming(_UniffiConverterRustBuffer):
@@ -2746,6 +2754,14 @@ class _UniffiFfiConverterTypeCursorMotionTiming(_UniffiConverterRustBuffer):
             return CursorMotionTiming.FITTS
         if variant == 3:
             return CursorMotionTiming.FIXED
+        if variant == 4:
+            return CursorMotionTiming.RELAXED
+        if variant == 5:
+            return CursorMotionTiming.STEADY
+        if variant == 6:
+            return CursorMotionTiming.CALM
+        if variant == 7:
+            return CursorMotionTiming.DELIBERATE
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -2755,6 +2771,14 @@ class _UniffiFfiConverterTypeCursorMotionTiming(_UniffiConverterRustBuffer):
         if value == CursorMotionTiming.FITTS:
             return
         if value == CursorMotionTiming.FIXED:
+            return
+        if value == CursorMotionTiming.RELAXED:
+            return
+        if value == CursorMotionTiming.STEADY:
+            return
+        if value == CursorMotionTiming.CALM:
+            return
+        if value == CursorMotionTiming.DELIBERATE:
             return
         raise ValueError(value)
 
@@ -2766,6 +2790,14 @@ class _UniffiFfiConverterTypeCursorMotionTiming(_UniffiConverterRustBuffer):
             buf.write_i32(2)
         if value == CursorMotionTiming.FIXED:
             buf.write_i32(3)
+        if value == CursorMotionTiming.RELAXED:
+            buf.write_i32(4)
+        if value == CursorMotionTiming.STEADY:
+            buf.write_i32(5)
+        if value == CursorMotionTiming.CALM:
+            buf.write_i32(6)
+        if value == CursorMotionTiming.DELIBERATE:
+            buf.write_i32(7)
 
 
 

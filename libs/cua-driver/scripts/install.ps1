@@ -1249,6 +1249,20 @@ function Get-ReleaseFile([string]$name, [string]$destPath) {
     }
 }
 
+function Invoke-CosignVerifyBlob($cosign, [string]$bundlePath, [string]$identity, [string]$zipPath) {
+    # Returns cosign's exit code. cosign reports success ("Verified OK") on
+    # stderr, and Windows PowerShell 5.1 turns a native command's redirected
+    # stderr into error records; under the script-wide
+    # $ErrorActionPreference = "Stop" the first one aborts the install even
+    # though verification succeeded. Relax the preference for this call only
+    # (the assignment is local to this function) and decide on the exit code.
+    $ErrorActionPreference = "Continue"
+    & $cosign verify-blob --bundle $bundlePath `
+        --certificate-identity $identity `
+        --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
+    return $LASTEXITCODE
+}
+
 function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
     $zipName = Split-Path -Leaf $zipPath
     $tag = $Script:CuaDriverRsReleaseTag
@@ -1305,10 +1319,8 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
         $cosign = Get-Command cosign -ErrorAction SilentlyContinue
         if ($cosign) {
             $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
-            & $cosign verify-blob --bundle $bundlePath `
-                --certificate-identity $identity `
-                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
-            if ($LASTEXITCODE -ne 0) {
+            $cosignExit = Invoke-CosignVerifyBlob $cosign $bundlePath $identity $zipPath
+            if ($cosignExit -ne 0) {
                 Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
                 exit 1
             }

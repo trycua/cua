@@ -13,6 +13,7 @@
 //!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
+pub mod badge_mode;
 pub mod bezier;
 pub mod capture_exclusion;
 pub mod capture_utils;
@@ -30,6 +31,7 @@ pub use cua_cursor_motion::dubins as path_planner;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
+pub use badge_mode::BadgeMode;
 pub use bezier::CubicBezier;
 pub use motion::{
     MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
@@ -117,6 +119,7 @@ impl CursorConfig {
         // Load the saved `cursor.motion.*` defaults; the render map layers
         // them under each cursor it creates.
         motion_defaults::load_active();
+        badge_mode::load_active();
         Self::parse(&args[1..])
     }
 
@@ -402,6 +405,9 @@ pub enum OverlayCommand {
     },
     /// Set the sanitized public label shown beneath this cursor.
     SetSessionLabel(String),
+    /// Keys of a combo the agent is pressing (such as `["cmd", "c"]`). The
+    /// minimal badge shows it briefly; other badge modes ignore it.
+    ShowKeyCombo(Vec<String>),
     /// Show a focus-highlight rectangle around an AX-targeted element.
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.

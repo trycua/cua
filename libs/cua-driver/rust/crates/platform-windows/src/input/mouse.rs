@@ -145,7 +145,6 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
             // Win32 controls do not infer a double-click from two posted DOWN
             // messages. The second press must use WM_*BUTTONDBLCLK.
             PostMessageW(hwnd, press_msg, wdown, lparam)?;
-            sleep(Duration::from_millis(CLICK_DELAY_MS));
             PostMessageW(hwnd, up_msg, wup, lparam)?;
         }
         if i + 1 < count {
@@ -1077,8 +1076,94 @@ mod nc_hit_tests {
 
 #[cfg(test)]
 mod wheel_tests {
-    use super::{posted_press_message, wheel_mouse_data};
-    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDBLCLK, WM_LBUTTONDOWN};
+    use super::{post_click_on, posted_press_message, wheel_mouse_data};
+    use windows::core::w;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, PeekMessageW, MSG, PM_REMOVE, WINDOW_EX_STYLE,
+        WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WS_POPUP,
+    };
+
+    struct HiddenWindow(HWND);
+
+    impl HiddenWindow {
+        fn create() -> Self {
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    w!(""),
+                    WS_POPUP,
+                    0,
+                    0,
+                    100,
+                    100,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .expect("create hidden STATIC window");
+            Self(hwnd)
+        }
+
+        fn drain_mouse_messages(&self) -> Vec<(u32, u32)> {
+            let mut messages = Vec::new();
+            let mut msg = MSG::default();
+            while unsafe {
+                PeekMessageW(&mut msg, self.0, WM_MOUSEMOVE, WM_LBUTTONDBLCLK, PM_REMOVE)
+            }
+            .as_bool()
+            {
+                messages.push((msg.message, msg.time));
+            }
+            messages
+        }
+    }
+
+    impl Drop for HiddenWindow {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DestroyWindow(self.0);
+            }
+        }
+    }
+
+    #[test]
+    fn posted_click_queues_press_and_release_without_a_gap() {
+        let window = HiddenWindow::create();
+        post_click_on(window.0, 5, 5, 2, "left").expect("post click");
+        let [move1, down1, up1, move2, down2, up2] =
+            <[(u32, u32); 6]>::try_from(window.drain_mouse_messages())
+                .expect("two MOVE, press, UP bursts");
+
+        assert_eq!(
+            [move1.0, down1.0, up1.0, move2.0, up2.0],
+            [
+                WM_MOUSEMOVE,
+                WM_LBUTTONDOWN,
+                WM_LBUTTONUP,
+                WM_MOUSEMOVE,
+                WM_LBUTTONUP
+            ]
+        );
+        assert!(matches!(down2.0, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK));
+        for (mv, up) in [(move1, up1), (move2, up2)] {
+            assert!(
+                up.1.wrapping_sub(mv.1) < 31,
+                "MOVE at {} ms, UP at {} ms",
+                mv.1,
+                up.1
+            );
+        }
+        assert!(
+            move2.1.wrapping_sub(up1.1) >= 62,
+            "first UP at {} ms, second MOVE at {} ms",
+            up1.1,
+            move2.1
+        );
+    }
 
     #[test]
     fn posted_double_click_uses_the_win32_double_click_message() {

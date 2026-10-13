@@ -1362,6 +1362,79 @@ async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() 
 }
 
 #[tokio::test]
+async fn existing_profile_sessions_share_one_browser_connection_across_session_ends() {
+    // Chrome asks the person to approve every new browser-level WebSocket.
+    // Sessions for the same browser instance must therefore multiplex over
+    // the one approved socket, survive each other's session end, and let a
+    // later session reuse the parked socket without a new browser prompt.
+    let (f, _provider) = protected_existing_profile_fixture().await;
+    let prepare = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let prepared = BrowserPrepareTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport,
+                    "strategy": { "kind": "existing_profile" }
+                }))
+                .await;
+            structured(&prepared).clone()
+        }
+    };
+    let state = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let state = GetBrowserStateTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport
+                }))
+                .await;
+            structured(&state).clone()
+        }
+    };
+
+    let a = prepare("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a["status"], "ok", "{a}");
+    let after_first_attach = f._server.accepted_connections();
+    assert!(after_first_attach >= 1);
+
+    let b = prepare("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b["status"], "ok", "{b}");
+    assert_eq!(b["side_effects"]["displayed_consent_prompt"], false);
+    let a_state = state("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a_state["status"], "ok", "{a_state}");
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+    assert_eq!(
+        f._server.accepted_connections(),
+        after_first_attach,
+        "a second session must not open another browser-level socket"
+    );
+
+    // Ending A must neither close nor invalidate B's use of the socket.
+    crate::session::fire_session_end("shared-transport-a");
+    tokio::task::yield_now().await;
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+
+    // After every session ended, the next approved session reuses the
+    // parked socket instead of dialing (which would prompt again).
+    crate::session::fire_session_end("shared-transport-b");
+    tokio::task::yield_now().await;
+    let c = prepare("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c["status"], "ok", "{c}");
+    let c_state = state("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c_state["status"], "ok", "{c_state}");
+    assert_eq!(f._server.accepted_connections(), after_first_attach);
+    crate::session::fire_session_end("shared-transport-c");
+}
+
+#[tokio::test]
 async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_grant() {
     const PROTECTED_SESSION: &str = "protected-provider-v2";
     const PROTECTED_TRANSPORT: &str = "protected-transport-v2";

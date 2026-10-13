@@ -208,6 +208,15 @@ authorize generic pixel interaction.
 On macOS this attachment cannot stay in the background. Chrome brings itself
 to the front to show its "Allow remote debugging?" prompt for every new
 DevTools connection, and turning remote debugging on needs Chrome in front.
+Chrome does not prompt again for tabs or targets reached over a connection it
+already allowed, so the driver keeps one approved connection per running
+Chrome and every session for that Chrome shares it: a second session, or a new
+session after the previous one ended, attaches without another prompt. Each
+session still needs its own `browser_prepare` approval from the driver, and
+only sees the targets it bound. The shared connection closes after 30 minutes
+without a session, 8 hours after the prompt that opened it, when the daemon
+restarts, on `cua-driver revoke --all`, or when the driver turns remote
+debugging back off; the next session after that prompts once again.
 When the Chrome window is on another Space than the user's, the attach runs in
 the background: the driver turns remote debugging on without bringing Chrome
 forward, and reverts Chrome's own brief activations (its consent window opens

@@ -635,7 +635,10 @@ impl BrowserPrepareTool {
                 endpoint, and close the temporary tab. Every visible effect is reported; \
                 ambiguity is refused. Where attaching would bring the browser in front of \
                 the user's app (macOS Chrome shows its own remote-debugging prompt in front \
-                for every new connection), existing-profile attachment refuses with \
+                whenever the driver opens a new browser connection; sessions for the same \
+                browser share one approved connection, kept for up to 30 minutes idle and \
+                8 hours in total, so later sessions do not prompt again), existing-profile \
+                attachment refuses with \
                 background_unavailable unless delivery_mode is \"foreground\" (the app that \
                 was in front is brought back afterwards) or the browser window is on another \
                 Space than the user's, where it attaches in the background while the driver \

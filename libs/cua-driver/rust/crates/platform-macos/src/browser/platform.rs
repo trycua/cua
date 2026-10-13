@@ -897,8 +897,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // only navigates on real keystrokes.
         Some(
             "Chrome brings itself to the front to show its \"Allow remote debugging?\" prompt \
-             for every new DevTools connection, and turning remote debugging on needs Chrome in \
-             front",
+             whenever a new DevTools connection opens (sessions then share that one connection), \
+             and turning remote debugging on needs Chrome in front",
         )
     }
 

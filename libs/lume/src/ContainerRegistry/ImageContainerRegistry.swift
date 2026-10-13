@@ -2086,11 +2086,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Cache pull simulation completed successfully with partition table preservation")
     }
 
-<<<<<<< HEAD
-    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
-=======
-    private func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL, stagingRoot: URL? = nil, rawRoot: URL? = nil)
->>>>>>> 6799c567c (feat(lume): integrate owned GHCR preparation work roots)
+    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL, stagingRoot: URL? = nil, rawRoot: URL? = nil)
         async throws
     {
         Logger.debug("Copying from cache...")

@@ -82,8 +82,8 @@ public struct OnboardingView: View {
         .task { if !onboarding.state.driveChecked { await onboarding.checkDrive() } }
     }
 
-    /// The Sign in page's Teams line: the website's waitlist (the app
-    /// collects nothing).
+    /// The Sign in page's Teams line: a link to the account app (app.cua.ai),
+    /// which administers teams.
     @ViewBuilder private var teamsLine: some View {
         let copy = onboarding.copy
         HStack(spacing: 4) {

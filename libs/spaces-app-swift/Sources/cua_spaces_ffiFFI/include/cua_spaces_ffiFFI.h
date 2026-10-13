@@ -690,6 +690,12 @@ int8_t uniffi_cua_spaces_ffi_fn_func_app_about_restart_daemon(RustBuffer check, 
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_about_view(RustBuffer input, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_ACCOUNT_APP_URL
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_ACCOUNT_APP_URL
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_account_app_url(RustCallStatus *_Nonnull out_status
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_AGENT_KEY_FORM
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_AGENT_KEY_FORM
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_agent_key_form(RustBuffer input, RustBuffer form, RustCallStatus *_Nonnull out_status
@@ -1795,6 +1801,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_stream_pip_reduce(RustBuffer open, 
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_stream_section(RustBuffer input, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TEAMS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TEAMS
+uint64_t uniffi_cua_spaces_ffi_fn_func_app_teams(RustBuffer account_token
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TELEMETRY_CREATES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TELEMETRY_CREATES
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_telemetry_creates(RustBuffer state, RustBuffer action, int64_t now_ms, RustCallStatus *_Nonnull out_status
@@ -2447,6 +2458,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_about_restart_daemon(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_ABOUT_VIEW
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_ABOUT_VIEW
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_about_view(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_ACCOUNT_APP_URL
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_ACCOUNT_APP_URL
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_account_app_url(void
 
 );
 #endif
@@ -3749,6 +3766,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_stream_pip_reduce(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_STREAM_SECTION
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_STREAM_SECTION
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_stream_section(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TEAMS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TEAMS
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_teams(void
 
 );
 #endif

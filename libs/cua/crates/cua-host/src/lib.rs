@@ -44,6 +44,7 @@ pub mod relay;
 pub mod service;
 #[cfg(test)]
 mod setup_tests;
+pub mod spaces_api;
 pub mod team;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

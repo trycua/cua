@@ -143,6 +143,28 @@ export function appAboutView(input: AppAboutInput): AppAboutView {
     }
 
 /**
+ * The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
+ * `https://app.cua.ai`, or `https://app.staging.cua.ai` under
+ * `CUA_ENV=staging`): billing, plans and team administration, which the
+ * apps open in the browser.
+ */
+export function appAccountAppUrl(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_account_app_url(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The add or replace sheet.
  */
 export function appAgentKeyForm(input: AppAgentKeysInput, form: AppAgentKeyFormInput): AppAgentKeyFormView {
@@ -4668,6 +4690,44 @@ export function appStreamSection(input: AppStreamSectionInput): AppStreamSection
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+
+/**
+ * The account's Teams (the organizations of `GET /v1/me` on the Spaces
+ * API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
+ * with its members and pending invites, read with `account_token`.
+ * Both Spaces apps read Teams here; Settings words them
+ * (`app_settings_page`'s `teams`).
+ */
+export async function appTeams(accountToken: string, asyncOpts_?: { signal: AbortSignal }): Promise<AppTeamsInput> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_teams(FfiConverterString.lower(accountToken, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeAppTeamsInput.lift.bind(FfiConverterTypeAppTeamsInput),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
 
 /**
@@ -27044,16 +27104,15 @@ export type AppOnboardingCopy = {
      */
     openSettings: string,
     /**
-     * The Sign in page's Teams line ("Teams · coming soon").
+     * The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
      */
     teams: string,
     /**
-     * Its link ("Join the waitlist").
+     * Its link ("Open the account app").
      */
     teamsLink: string,
     /**
-     * The link's URL: the website's Teams waitlist (the app collects
-     * nothing).
+     * The link's URL: the account app, which administers teams.
      */
     teamsUrl: string
 }
@@ -32586,6 +32645,438 @@ const FfiConverterTypeAppSignInPhase = (() => {
     return new FFIConverter();
 })();
 
+export type AppTeamPersonInput = {
+    email: string,
+    /**
+     * `owner`, `admin` or `member`.
+     */
+    role: string
+}
+
+/**
+ * Generated factory for {@link AppTeamPersonInput} record objects.
+ */
+export const AppTeamPersonInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppTeamPersonInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppTeamPersonInput>,
+    });
+})();
+
+const FfiConverterTypeAppTeamPersonInput = (() => {
+    type TypeName = AppTeamPersonInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                email: FfiConverterString.read(from),
+                role: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.email, into);
+            FfiConverterString.write(value.role, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.email) +
+             FfiConverterString.allocationSize(value.role);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppTeamInput = {
+    id: string,
+    /**
+     * The org's slug.
+     */
+    alias: string,
+    /**
+     * Its display name (empty: use the alias).
+     */
+    name: string,
+    /**
+     * The account's role in it.
+     */
+    role: string,
+    /**
+     * `free`, `teams`, ...
+     */
+    plan: string,
+    /**
+     * Paid seats.
+     */
+    seats: bigint,
+    members: Array<AppTeamPersonInput>,
+    /**
+     * Pending invites' emails (only owners and admins can read them).
+     */
+    invites: Array<string>
+}
+
+/**
+ * Generated factory for {@link AppTeamInput} record objects.
+ */
+export const AppTeamInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppTeamInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppTeamInput>,
+    });
+})();
+
+const FfiConverterTypeAppTeamInput = (() => {
+    type TypeName = AppTeamInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                alias: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                role: FfiConverterString.read(from),
+                plan: FfiConverterString.read(from),
+                seats: FfiConverterInt64.read(from),
+                members: FfiConverterSequenceTypeAppTeamPersonInput.read(from),
+                invites: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.alias, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.role, into);
+            FfiConverterString.write(value.plan, into);
+            FfiConverterInt64.write(value.seats, into);
+            FfiConverterSequenceTypeAppTeamPersonInput.write(value.members, into);
+            FfiConverterSequenceString.write(value.invites, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.alias) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.role) +
+             FfiConverterString.allocationSize(value.plan) +
+             FfiConverterInt64.allocationSize(value.seats) +
+             FfiConverterSequenceTypeAppTeamPersonInput.allocationSize(value.members) +
+             FfiConverterSequenceString.allocationSize(value.invites);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+
+// Enum: AppTeamsState
+export enum AppTeamsState_Tags {
+    SignedOut = "SignedOut",
+    Unread = "Unread",
+    Loading = "Loading",
+    Failed = "Failed",
+    Ready = "Ready"
+}
+export const AppTeamsState = (() => {
+
+    type SignedOut__interface = {
+        tag: AppTeamsState_Tags.SignedOut
+    };
+    /**
+     * Not signed in.
+     */
+    class SignedOut_ extends UniffiEnum implements SignedOut__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppTeamsState";
+        readonly tag = AppTeamsState_Tags.SignedOut;
+        constructor() {
+            super("AppTeamsState", "SignedOut");
+        }
+
+        static new(): SignedOut_ {
+            return new SignedOut_();
+        }
+
+        static instanceOf(obj: any): obj is SignedOut_ {
+            return obj.tag === AppTeamsState_Tags.SignedOut;
+        }
+
+    }
+
+    type Unread__interface = {
+        tag: AppTeamsState_Tags.Unread
+    };
+    /**
+     * Signed in, but this host does not read teams: only the links.
+     */
+    class Unread_ extends UniffiEnum implements Unread__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppTeamsState";
+        readonly tag = AppTeamsState_Tags.Unread;
+        constructor() {
+            super("AppTeamsState", "Unread");
+        }
+
+        static new(): Unread_ {
+            return new Unread_();
+        }
+
+        static instanceOf(obj: any): obj is Unread_ {
+            return obj.tag === AppTeamsState_Tags.Unread;
+        }
+
+    }
+
+    type Loading__interface = {
+        tag: AppTeamsState_Tags.Loading
+    };
+    /**
+     * Being read.
+     */
+    class Loading_ extends UniffiEnum implements Loading__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppTeamsState";
+        readonly tag = AppTeamsState_Tags.Loading;
+        constructor() {
+            super("AppTeamsState", "Loading");
+        }
+
+        static new(): Loading_ {
+            return new Loading_();
+        }
+
+        static instanceOf(obj: any): obj is Loading_ {
+            return obj.tag === AppTeamsState_Tags.Loading;
+        }
+
+    }
+
+    type Failed__interface = {
+        tag: AppTeamsState_Tags.Failed;
+        inner:
+Readonly<{message: string}>
+    };
+    /**
+     * The read failed.
+     */
+    class Failed_ extends UniffiEnum implements Failed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppTeamsState";
+        readonly tag = AppTeamsState_Tags.Failed;
+        readonly inner:
+Readonly<{message: string}>;
+        constructor(
+inner: {message: string }) {
+            super("AppTeamsState", "Failed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {message: string }): Failed_ {
+            return new Failed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Failed_ {
+            return obj.tag === AppTeamsState_Tags.Failed;
+        }
+
+    }
+
+    type Ready__interface = {
+        tag: AppTeamsState_Tags.Ready;
+        inner:
+Readonly<{teams: Array<AppTeamInput>}>
+    };
+    /**
+     * The account's teams (maybe none).
+     */
+    class Ready_ extends UniffiEnum implements Ready__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppTeamsState";
+        readonly tag = AppTeamsState_Tags.Ready;
+        readonly inner:
+Readonly<{teams: Array<AppTeamInput>}>;
+        constructor(
+inner: {teams: Array<AppTeamInput> }) {
+            super("AppTeamsState", "Ready");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {teams: Array<AppTeamInput> }): Ready_ {
+            return new Ready_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Ready_ {
+            return obj.tag === AppTeamsState_Tags.Ready;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is AppTeamsState {
+        return obj[uniffiTypeNameSymbol] === "AppTeamsState";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  SignedOut: SignedOut_,
+  Unread: Unread_,
+  Loading: Loading_,
+  Failed: Failed_,
+  Ready: Ready_
+    });
+
+})();
+export type AppTeamsState = InstanceType<
+    typeof AppTeamsState['SignedOut' | 'Unread' | 'Loading' | 'Failed' | 'Ready']
+>;
+
+// FfiConverter for enum AppTeamsState
+const FfiConverterTypeAppTeamsState = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppTeamsState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new AppTeamsState.SignedOut();
+                case 2: return new AppTeamsState.Unread();
+                case 3: return new AppTeamsState.Loading();
+                case 4: return new AppTeamsState.Failed({message: FfiConverterString.read(from) });
+                case 5: return new AppTeamsState.Ready({teams: FfiConverterSequenceTypeAppTeamInput.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case AppTeamsState_Tags.SignedOut: {
+                    ordinalConverter.write(1, into);
+                    return;
+                }
+                case AppTeamsState_Tags.Unread: {
+                    ordinalConverter.write(2, into);
+                    return;
+                }
+                case AppTeamsState_Tags.Loading: {
+                    ordinalConverter.write(3, into);
+                    return;
+                }
+                case AppTeamsState_Tags.Failed: {
+                    ordinalConverter.write(4, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.message, into);
+                    return;
+                }
+                case AppTeamsState_Tags.Ready: {
+                    ordinalConverter.write(5, into);
+                    const inner = value.inner;
+                    FfiConverterSequenceTypeAppTeamInput.write(inner.teams, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that AppTeamsState_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case AppTeamsState_Tags.SignedOut: {
+                    return ordinalConverter.allocationSize(1);
+                }
+                case AppTeamsState_Tags.Unread: {
+                    return ordinalConverter.allocationSize(2);
+                }
+                case AppTeamsState_Tags.Loading: {
+                    return ordinalConverter.allocationSize(3);
+                }
+                case AppTeamsState_Tags.Failed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(4);
+                    size += FfiConverterString.allocationSize(inner.message);
+                    return size;
+                }
+                case AppTeamsState_Tags.Ready: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(5);
+                    size += FfiConverterSequenceTypeAppTeamInput.allocationSize(inner.teams);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type AppTeamsInput = {
+    /**
+     * The account app for this environment (`https://app.cua.ai`, or
+     * `https://app.staging.cua.ai` under `CUA_ENV=staging`).
+     */
+    accountAppUrl: string,
+    state: AppTeamsState
+}
+
+/**
+ * Generated factory for {@link AppTeamsInput} record objects.
+ */
+export const AppTeamsInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppTeamsInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppTeamsInput>,
+    });
+})();
+
+const FfiConverterTypeAppTeamsInput = (() => {
+    type TypeName = AppTeamsInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                accountAppUrl: FfiConverterString.read(from),
+                state: FfiConverterTypeAppTeamsState.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.accountAppUrl, into);
+            FfiConverterTypeAppTeamsState.write(value.state, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.accountAppUrl) +
+             FfiConverterTypeAppTeamsState.allocationSize(value.state);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppSettingsInput = {
     /**
      * The signed-in account.
@@ -32632,6 +33123,12 @@ export type AppSettingsInput = {
      * Agents with an action running.
      */
     agentsPending: Array<string>,
+    /**
+     * Teams from the Spaces API (the host reads them), with the account
+     * app's URL. None: the Teams section shows the production account
+     * app's links only.
+     */
+    teams?: AppTeamsInput,
     /**
      * The account's Cua Cloud billing, once read (signed in).
      */
@@ -32713,6 +33210,7 @@ const FfiConverterTypeAppSettingsInput = (() => {
                 agents: FfiConverterOptionalSequenceTypeAppAgentSettingsRow.read(from),
                 agentsBusy: FfiConverterBool.read(from),
                 agentsPending: FfiConverterSequenceString.read(from),
+                teams: FfiConverterOptionalTypeAppTeamsInput.read(from),
                 billing: FfiConverterOptionalTypeAppBillingStatus.read(from),
                 loginItem: FfiConverterOptionalTypeAppLoginItemInput.read(from),
                 experiments: FfiConverterTypeAppExperiments.read(from),
@@ -32737,6 +33235,7 @@ const FfiConverterTypeAppSettingsInput = (() => {
             FfiConverterOptionalSequenceTypeAppAgentSettingsRow.write(value.agents, into);
             FfiConverterBool.write(value.agentsBusy, into);
             FfiConverterSequenceString.write(value.agentsPending, into);
+            FfiConverterOptionalTypeAppTeamsInput.write(value.teams, into);
             FfiConverterOptionalTypeAppBillingStatus.write(value.billing, into);
             FfiConverterOptionalTypeAppLoginItemInput.write(value.loginItem, into);
             FfiConverterTypeAppExperiments.write(value.experiments, into);
@@ -32760,6 +33259,7 @@ const FfiConverterTypeAppSettingsInput = (() => {
              FfiConverterOptionalSequenceTypeAppAgentSettingsRow.allocationSize(value.agents) +
              FfiConverterBool.allocationSize(value.agentsBusy) +
              FfiConverterSequenceString.allocationSize(value.agentsPending) +
+             FfiConverterOptionalTypeAppTeamsInput.allocationSize(value.teams) +
              FfiConverterOptionalTypeAppBillingStatus.allocationSize(value.billing) +
              FfiConverterOptionalTypeAppLoginItemInput.allocationSize(value.loginItem) +
              FfiConverterTypeAppExperiments.allocationSize(value.experiments) +
@@ -58649,6 +59149,15 @@ const FfiConverterSequenceTypeAppAgentSettingsRow = new FfiConverterArray(FfiCon
 // FfiConverter for Array<AppAgentSettingsRow> | undefined
 const FfiConverterOptionalSequenceTypeAppAgentSettingsRow = new FfiConverterOptional(FfiConverterSequenceTypeAppAgentSettingsRow);
 
+// FfiConverter for Array<AppTeamPersonInput>
+const FfiConverterSequenceTypeAppTeamPersonInput = new FfiConverterArray(FfiConverterTypeAppTeamPersonInput);
+
+// FfiConverter for Array<AppTeamInput>
+const FfiConverterSequenceTypeAppTeamInput = new FfiConverterArray(FfiConverterTypeAppTeamInput);
+
+// FfiConverter for AppTeamsInput | undefined
+const FfiConverterOptionalTypeAppTeamsInput = new FfiConverterOptional(FfiConverterTypeAppTeamsInput);
+
 // FfiConverter for AppBillingStatus | undefined
 const FfiConverterOptionalTypeAppBillingStatus = new FfiConverterOptional(FfiConverterTypeAppBillingStatus);
 
@@ -59006,6 +59515,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_view() !== 65075) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_view");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_account_app_url() !== 9943) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_account_app_url");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() !== 42778) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form");
@@ -59660,6 +60172,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_stream_section() !== 40082) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_stream_section");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_teams() !== 64616) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_teams");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_creates() !== 25911) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_telemetry_creates");
@@ -60357,6 +60872,10 @@ export default Object.freeze({
     FfiConverterTypeAppSwitcherTheme,
     FfiConverterTypeAppSystemNote,
     FfiConverterTypeAppTabView,
+    FfiConverterTypeAppTeamInput,
+    FfiConverterTypeAppTeamPersonInput,
+    FfiConverterTypeAppTeamsInput,
+    FfiConverterTypeAppTeamsState,
     FfiConverterTypeAppTelemetryInput,
     FfiConverterTypeAppTelemetrySignal,
     FfiConverterTypeAppTeleportCapability,

@@ -1058,12 +1058,11 @@ pub struct OnboardingCopy {
     pub permissions_title: String,
     /// The permission rows' button.
     pub open_settings: String,
-    /// The Sign in page's Teams line ("Teams · coming soon").
+    /// The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
     pub teams: String,
-    /// Its link ("Join the waitlist").
+    /// Its link ("Open the account app").
     pub teams_link: String,
-    /// The link's URL: the website's Teams waitlist (the app collects
-    /// nothing).
+    /// The link's URL: the account app, which administers teams.
     pub teams_url: String,
 }
 
@@ -1101,7 +1100,7 @@ pub fn copy() -> OnboardingCopy {
             crate::settings::TEAMS_VALUE.to_lowercase()
         ),
         teams_link: crate::settings::TEAMS_BUTTON.into(),
-        teams_url: crate::settings::TEAMS_WAITLIST_URL.into(),
+        teams_url: crate::settings::TEAMS_URL.into(),
     }
 }
 

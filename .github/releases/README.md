@@ -59,6 +59,16 @@ creates one for a tag without a draft). Release Please bumps
 package; `validate_release_versions.py --product packages` keeps them equal to
 the manifest.
 
+The first Release Please release after each package's last legacy tag (listed
+in `release_notes.py` as `LEGACY_BASELINE_TAGS`) can have a short changelog:
+Release Please searches only the newest 500 merges and drops the file list of
+the 5,276-file launch merge (#4397). Its GitHub release notes still list every
+change, because they come from git; the changelog-citation check resumes with
+the next release. Check that release PR's version against the notes: for
+cua-sandbox-apps, #4397 is a `feat`, so prepare it with
+**Release: Prepare component releases** (component `sandbox-apps`, bump
+`minor`) for 0.2.0 rather than the 0.1.3 Release Please proposes.
+
 To release one of them: merge pull requests with conventional titles
 (`fix(core): ...`, `feat(agent): ...`); Release Please opens or updates
 `chore(main): release <component> <version>`. Review the version and changelog

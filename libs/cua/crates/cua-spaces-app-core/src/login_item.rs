@@ -15,10 +15,10 @@
 //! the daemon back after a restart, and with it the Spaces this machine
 //! provides, its persistent agents and Cua Volume.
 //!
-//! The default: on once the first run finishes (the Done checkbox, ticked
-//! unless unticked). An install that finished its first run before this
-//! setting existed is turned on only when it provides Spaces or runs
-//! persistent agents ([`launch_plan`]). Once the user has chosen, the app
+//! The default: on for unattended access, off for accessing other machines
+//! (the Done checkbox can override either). An install that finished its
+//! first run before this setting existed is turned on only when it provides
+//! Spaces or runs persistent agents ([`launch_plan`]). Once the user has chosen, the app
 //! never changes it again.
 
 use serde::{Deserialize, Serialize};

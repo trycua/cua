@@ -1,0 +1,50 @@
+{
+  "name": "machines",
+  "about": "The Machines page lists each computer once: a Mac on the relay and the enrolled device on it (named after its hostname) are one row, with the machine's id and friendlier name, online when the app reached it or the relay sees it connected. Two Macs that share a name are never merged. A device that is none of the machines is listed on its own (online after a session in the last 15 minutes), and is never a Run on choice.",
+  "now": 1800000000,
+  "cases": [
+    {
+      "name": "a Mac on the relay and its enrolled device, the app's probe timed out",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true },
+        { "id": "96fedb7e1be65c3d31fa18587febde2c", "name": "gamma-4 Mac Studio", "online": false, "presence": true, "os": "macos" }
+      ],
+      "devices": [
+        { "id": "dev_2278814aabab5c117d348c6b", "name": "gamma-4.example.com", "platform": "macos", "lastSeen": 1799000000, "state": "enrolled" },
+        { "id": "dev_c3961dbae4080a90e6849a43", "name": "juno-2.example.com", "platform": "macos", "lastSeen": 1799999000, "current": true, "state": "enrolled" }
+      ]
+    },
+    {
+      "name": "the hostname its cua-spacesd reported names the device",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true },
+        { "id": "m-mini", "name": "Spare Mac mini", "online": true, "hostname": "build-box.lan", "os": "macos" }
+      ],
+      "devices": [
+        { "id": "dev_b", "name": "Build-Box.lan", "platform": "macOS", "lastSeen": 1799999900 }
+      ]
+    },
+    {
+      "name": "two Macs that share a name, one device",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true },
+        { "id": "m1", "name": "studio Mac Studio", "online": true, "os": "macos" },
+        { "id": "m2", "name": "studio Mac mini", "online": false, "presence": false, "os": "macos" }
+      ],
+      "devices": [
+        { "id": "dev_s", "name": "studio.lan", "platform": "macos", "lastSeen": 1799999500 }
+      ]
+    },
+    {
+      "name": "devices that are no machine of yours",
+      "machines": [
+        { "id": "this-mac", "name": "This Mac", "online": true, "os": "macos", "current": true }
+      ],
+      "devices": [
+        { "id": "dev_w", "name": "Work laptop", "platform": "windows", "lastSeen": 1799999400, "state": "enrolled" },
+        { "id": "dev_o", "name": "Old laptop", "platform": "linux", "lastSeen": 1797300000, "state": "expired" },
+        { "id": "dev_x", "name": "Lost phone", "platform": "ios", "state": "revoked" }
+      ]
+    }
+  ]
+}

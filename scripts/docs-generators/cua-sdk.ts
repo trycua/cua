@@ -725,7 +725,7 @@ export const PAGES: PageSpec[] = [
     title: 'Spaces app core',
     description: 'The view models the Cua Spaces apps share: Space list, New Space wizard, teleport review, notch and Keyvault.',
     intro:
-      'The Tauri and SwiftUI Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Build your own Spaces UI on it. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
+      'The Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
     items: ['cua_spaces_register'],
     modules: ['app_core', 'app_core_types'],
     catalog: true,
@@ -811,6 +811,7 @@ export const PAGES: PageSpec[] = [
       'AppCloudPricing',
       'AppGpuChoice',
       'AppGpuRow',
+      'AppRuntimeSwitch',
     ],
     prefixes: ['AppWizard', 'app_wizard_', 'AppAddress', 'AppStep'],
     spaces: true,
@@ -1006,6 +1007,16 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
+    slug: 'spaces/app-core/relay',
+    title: 'Relay usage',
+    description: 'The Relay usage row in Settings and the notice past the monthly relay allowance.',
+    intro:
+      '`app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does) with the session\'s `Devices` and an account token. `app_relay_usage_view` derives the Settings row (`AppRelayUsageView`) and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade, dismissed per month and reason. Nothing stops at the limit.',
+    items: [],
+    prefixes: ['AppRelay', 'app_relay_'],
+    spaces: true,
+  },
+  {
     slug: 'spaces/app-core/this-machine',
     title: 'This machine',
     description: 'The This machine roster entry, its page and the host setup form.',
@@ -1017,8 +1028,8 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/window',
     title: 'Window, menu bar and Settings',
-    description: 'The window chrome, a Space\'s toolbar and sections, the menu bar menu, Settings and the coding agents\' rows.',
-    intro: '`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space\'s sections; the agent functions turn `AgentSetup` results into Settings rows. `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.',
+    description: 'The window chrome, a Space\'s toolbar and sections, the menu bar menu and Settings.',
+    intro: '`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space\'s sections. The coding agents\' rows of Settings are on [Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys). `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.',
     items: [
       'app_display_name',
       'app_display_path',
@@ -1040,6 +1051,7 @@ export const PAGES: PageSpec[] = [
       'AppTelemetryInput',
       'app_menu',
       'AppMenuInput',
+      'app_menu_input_from_json',
       'app_openable_count',
     ],
     prefixes: [
@@ -1056,10 +1068,6 @@ export const PAGES: PageSpec[] = [
       'AppSettingsOption',
       'app_settings_page',
       'app_settings_input_',
-      'AppAgentSetup',
-      'AppAgentSettingsRow',
-      'app_agent_setup',
-      'app_agent_settings_',
       'AppLoginItem',
       'app_login_item_',
     ],
@@ -1070,9 +1078,20 @@ export const PAGES: PageSpec[] = [
     title: 'Devices',
     description: 'Settings > Devices: this device\'s enrollment, the account\'s devices, Recent Access, and the enroll and approval sheets.',
     intro:
-      '`app_devices_view` derives the Devices page from `app_devices_input` (a `Devices.snapshot`): this device\'s enrollment, the account\'s devices with their buttons, approval prompts that ask for presence, and Recent Access in words. `app_enroll_reduce` / `app_enroll_view` drive the enroll sheet (sign in again, or a one-time code approved elsewhere); `app_approve_reduce` / `app_approve_view` drive the approval sheet, whose `request` goes to `Devices.approve` after Touch ID or the login password. `app_machine_access_notice` says why a device that is signed in but not enrolled cannot open the account\'s machines, for their greyed-out Connect.',
+      '`app_devices_view` derives the Devices page from `app_devices_input` (a `Devices.snapshot`): this device\'s enrollment, the account\'s devices with their buttons, approval prompts that ask for presence, and Recent Access in words. `app_enroll_reduce` / `app_enroll_view` drive the enroll sheet (sign in again, or a one-time code approved elsewhere); `app_approve_reduce` / `app_approve_view` drive the approval sheet, whose `request` goes to `Devices.approve` after Touch ID or the login password; `app_confirm_presence` asks for that confirmation with the system\'s own prompt (Touch ID or the login password on macOS, Windows Hello, polkit on Linux). `app_machine_access_notice` says why a device that is signed in but not enrolled cannot open the account\'s machines, for their greyed-out Connect.',
     items: ['AppAuditInput', 'AppActivityRow', 'AppBannerTone', 'AppThisDevice', 'AppEnrollmentKind', 'AppApprovalPrompt', 'AppMachineInput', 'AppUnconfirmedMachine', 'app_machine_access_notice', 'AppMachineAccessNotice'],
     prefixes: ['AppDevice', 'app_devices_', 'AppEnroll', 'app_enroll_', 'AppApprove', 'app_approve_'],
+    modules: ['presence'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/agent-keys',
+    title: 'Settings, Agents',
+    description: 'Settings > Agents: the coding agents\' rows, the provider keys saved in the keychain, and the add or replace sheet.',
+    intro:
+      'The `app_agent_setup*` and `app_agent_settings_*` functions turn `AgentSetup` results into the coding agents\' rows. `app_agent_keys_view` derives the key rows from `app_agent_keys_input_from_json` (the daemon\'s `agent_keys.list` answer: each saved key\'s provider, the variable a run gets it as, its last four characters and when it was added). `app_agent_key_form` drives the add or replace sheet, with `app_agent_key_name_problem` for an Other key\'s variable name; `app_agent_key_remove_confirm` is the confirmation before a key is removed.',
+    items: [],
+    prefixes: ['AppAgentSetup', 'AppAgentSettingsRow', 'app_agent_setup', 'app_agent_settings_', 'AppAgentKey', 'app_agent_key'],
     spaces: true,
   },
   {
@@ -1083,6 +1102,16 @@ export const PAGES: PageSpec[] = [
       '`app_share_view` derives the Share sheet from `AppShareInput` (the Space and its `Space.shares`): one row per person with a role menu, the email field and why sharing is unavailable. `app_share_reduce` applies an action; its `request` goes to `Space.share` or `Space.unshare`, which ask for presence first.',
     items: [],
     prefixes: ['AppShare', 'app_share_', 'AppRoleOption'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-checklist-palette',
+    title: 'Getting started and the command palette',
+    description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
+    intro:
+      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, or what the app shows now) and returns the new `AppChecklistState` with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
+    items: [],
+    prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
     spaces: true,
   },
   {

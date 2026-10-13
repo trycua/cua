@@ -335,10 +335,26 @@ where
                 has_keyboard_focus,
             });
         }
-        matches.push(select_language_independent_actions(&candidates)?);
+        let (allow, cancel) = select_language_independent_actions(&candidates)?;
+        let rect_of = |ptr: usize| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.element_ptr == ptr)
+                .map(|candidate| candidate.rect)
+        };
+        let geometry = (node_name(&nodes[start]), rect_of(allow), rect_of(cancel));
+        // The same prompt can bind twice in one walk (a nested surface, or
+        // UIA repeating its rows with fresh element pointers). Its title and
+        // exact button geometry identify it; any other prompt still refuses.
+        if !matches
+            .iter()
+            .any(|(_, existing_geometry)| *existing_geometry == geometry)
+        {
+            matches.push(((allow, cancel), geometry));
+        }
     }
     match matches.as_slice() {
-        [element] => Ok(Some(*element)),
+        [(element, _)] => Ok(Some(*element)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "multiple bound native Chromium consent prompts exposed structural allow actions",
@@ -742,6 +758,21 @@ mod tests {
             exact_allow_button_with(&browser_root, properties).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn matcher_binds_one_prompt_reported_twice_with_the_same_geometry() {
+        let mut nodes = pane_rooted_prompt("same title", ["A", "B", "C"]);
+        let mut repeated = pane_rooted_prompt("same title", ["A", "B", "C"]);
+        for node in &mut repeated {
+            if node.element_ptr != 0 {
+                node.element_ptr += 1000;
+            }
+        }
+        nodes.extend(repeated);
+        assert!(exact_allow_button_with(&nodes, properties)
+            .unwrap()
+            .is_some());
     }
 
     #[test]

@@ -84,8 +84,10 @@ jobs:
             sleep 1
             CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --yes --no-onboarding --mode client
             /usr/local/bin/cua --version
-            test -x /usr/local/bin/cua-spaces
-            grep -qx client "$HOME/.cua/spaces-install-mode"
+            # Cua Spaces is macOS-only for now: Linux skips the app.
+            test ! -e /usr/local/bin/cua-spaces
+            # --pair installs the CLI and adds the machine with the code.
+            CUA_INSTALL_BASE_URL=http://127.0.0.1:8765 sh /w/install.sh --dry-run --pair K7QM-4XPB-2RHD | grep -q "host setup --pair K7QM-4XPB-2RHD"
           '
 
   installer-smoke-macos:

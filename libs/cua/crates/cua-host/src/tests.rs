@@ -278,6 +278,42 @@ async fn direct_setup_serves_with_a_local_token_and_stop_stops_the_service() {
 }
 
 #[tokio::test]
+async fn relay_usage_is_none_where_the_relay_does_not_meter() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner", "user-1", None);
+    let f = fixture();
+    let status = f
+        .host()
+        .setup(f.relay_opts(&relay.url), &StaticToken("owner".into()))
+        .await
+        .unwrap();
+    let client = RelayClient::new(&relay.url).unwrap();
+    assert_eq!(client.usage("owner").await.unwrap(), None);
+
+    relay.set_usage(Some(serde_json::json!({
+        "metered": true, "period": "2026-10", "plan": "free",
+        "live_sessions": 2, "live_sessions_limit": 2, "hours_used": 20.5, "hours_limit": 20,
+        "my_hours_used": 20.5, "soft_limit_reached": true, "reasons": ["sessions", "hours"],
+        "upgrade_url": "https://cua.ai/pricing"
+    })));
+    let usage = client.usage("owner").await.unwrap().unwrap();
+    assert!(usage.soft_limit_reached);
+    assert_eq!(usage.live_sessions_limit, Some(2));
+    assert_eq!(usage.reasons, ["sessions", "hours"]);
+    assert!(usage.team.is_none());
+    // Only people have an allowance: a machine token is refused.
+    let machine_token = relay.machine_token(&status.machine_id.unwrap()).unwrap();
+    assert!(matches!(
+        client.usage(&machine_token).await.unwrap_err(),
+        Error::PermissionDenied(_)
+    ));
+    assert!(matches!(
+        client.usage("wrong").await.unwrap_err(),
+        Error::Unauthenticated(_)
+    ));
+}
+
+#[tokio::test]
 async fn relay_directory_lists_owned_and_shared_machines() {
     let relay = FakeRelay::start().await;
     relay.add_account("owner", "user-1", Some("ada@example.com"));

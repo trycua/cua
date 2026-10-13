@@ -9,7 +9,9 @@
 //! - Your cloud ([`Experiment::YourCloud`]): the New Space wizard's
 //!   connected clouds (AWS, Google Cloud, Modal), "Connect a cloud…" and a
 //!   default location in a cloud;
-//! - Sharing ([`Experiment::Sharing`]): a Space's Share button.
+//! - Sharing ([`Experiment::Sharing`]): a Space's Share button;
+//! - New UI (preview) ([`Experiment::WebUi`]): the shared web UI in a
+//!   window of its own (the macOS shell's "Open New UI (preview)").
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -36,6 +38,8 @@ pub struct Experiments {
     pub your_cloud: bool,
     /// Sharing a Space with other accounts.
     pub sharing: bool,
+    /// The shared web UI, previewed in its own window.
+    pub web_ui: bool,
 }
 
 /// One experiment.
@@ -48,23 +52,27 @@ pub enum Experiment {
     YourCloud,
     /// Sharing.
     Sharing,
+    /// New UI (preview).
+    WebUi,
 }
 
 /// Every experiment, in the order Settings lists them.
-pub const ALL: [Experiment; 3] = [
+pub const ALL: [Experiment; 4] = [
     Experiment::CuaVolume,
     Experiment::YourCloud,
     Experiment::Sharing,
+    Experiment::WebUi,
 ];
 
 impl Experiment {
-    /// The stable id (`cua_volume`, `your_cloud`, `sharing`): the Settings
+    /// The stable id (`cua_volume`, `your_cloud`, `sharing`, `web_ui`): the Settings
     /// row's suffix and the telemetry word.
     pub fn id(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "cua_volume",
             Experiment::YourCloud => "your_cloud",
             Experiment::Sharing => "sharing",
+            Experiment::WebUi => "web_ui",
         }
     }
 
@@ -79,6 +87,7 @@ impl Experiment {
             Experiment::CuaVolume => "Cua Volume",
             Experiment::YourCloud => "Your cloud",
             Experiment::Sharing => "Sharing",
+            Experiment::WebUi => "New UI (preview)",
         }
     }
 
@@ -90,6 +99,7 @@ impl Experiment {
                 "Create Spaces in your own AWS, Google Cloud or Modal account."
             }
             Experiment::Sharing => "Share a Space with other Cua accounts.",
+            Experiment::WebUi => "Try the new Spaces window, built on the shared web UI.",
         }
     }
 }
@@ -101,6 +111,7 @@ impl Experiments {
             Experiment::CuaVolume => self.cua_volume,
             Experiment::YourCloud => self.your_cloud,
             Experiment::Sharing => self.sharing,
+            Experiment::WebUi => self.web_ui,
         }
     }
 
@@ -110,6 +121,7 @@ impl Experiments {
             Experiment::CuaVolume => self.cua_volume = on,
             Experiment::YourCloud => self.your_cloud = on,
             Experiment::Sharing => self.sharing = on,
+            Experiment::WebUi => self.web_ui = on,
         }
         self
     }
@@ -214,6 +226,8 @@ mod tests {
                 "experiment:your_cloud-note",
                 "experiment:sharing",
                 "experiment:sharing-note",
+                "experiment:web_ui",
+                "experiment:web_ui-note",
             ]
         );
         for r in switches(&p) {
@@ -249,7 +263,7 @@ mod tests {
         assert_eq!(choose(&x, "experiment:nope", "on"), x);
         assert_eq!(
             Experiments::all_on().on_ids(),
-            ["cua_volume", "your_cloud", "sharing"]
+            ["cua_volume", "your_cloud", "sharing", "web_ui"]
         );
     }
 
@@ -257,11 +271,11 @@ mod tests {
     fn stored_keys_are_forward_compatible() {
         let x: Experiments =
             serde_json::from_str(r#"{"cuaVolume":true,"someFutureExperiment":true}"#).unwrap();
-        assert!(x.cua_volume && !x.your_cloud && !x.sharing);
+        assert!(x.cua_volume && !x.your_cloud && !x.sharing && !x.web_ui);
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "yourCloud": false, "sharing": false})
+            serde_json::json!({"cuaVolume": true, "yourCloud": false, "sharing": false, "webUi": false})
         );
         assert_eq!(
             serde_json::from_str::<Experiments>("{}").unwrap(),

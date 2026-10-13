@@ -950,3 +950,58 @@ async fn discovery_refusal_daemon_socket() {
 async fn discovery_refusal_daemon_loopback() {
     discovery_refusal(Topology::DaemonLoopback).await;
 }
+
+/// A `cua auth login` session as relay account tokens, as the daemon and
+/// the apps configure it (`SessionTokens`).
+struct Session(cua_auth::Session);
+
+#[async_trait::async_trait]
+impl cua_host::AccountTokens for Session {
+    async fn access_token(&self) -> cua_host::Result<String> {
+        self.0
+            .access_token(false)
+            .await
+            .map_err(|e| cua_host::Error::Unauthenticated(e.to_string()))
+    }
+    async fn signed_in(&self) -> bool {
+        !matches!(self.0.credentials(), Ok(None))
+    }
+}
+
+/// Signed out (an empty session store), the list is this machine's Spaces
+/// (no relay error): the apps show local Spaces before anyone signs in.
+async fn signed_out_lists(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let store = tempfile::tempdir().unwrap();
+    let session = cua_auth::Session::new(
+        cua_auth::Oidc::from_env(),
+        cua_auth::Store::File(store.path().join("credentials.json")),
+    );
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(Session(session)),
+        )),
+    )
+    .await;
+    let listed = cua.spaces().list().await.unwrap();
+    assert!(
+        listed.iter().all(|s| !s.id.starts_with("relay:")),
+        "{listed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_embedded() {
+    signed_out_lists(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_socket() {
+    signed_out_lists(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_loopback() {
+    signed_out_lists(Topology::DaemonLoopback).await;
+}

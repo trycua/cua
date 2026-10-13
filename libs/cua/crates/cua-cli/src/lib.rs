@@ -23,6 +23,7 @@
 //! and `--daemon <addr>` force one.
 
 mod agent_cmd;
+mod agent_keys_cmd;
 mod agents;
 mod auth;
 mod browse;
@@ -51,10 +52,12 @@ mod shell;
 mod skills;
 #[doc(hidden)]
 pub mod stream_probe;
+mod team_cmd;
 mod telemetry_cmd;
 pub mod teleport;
 pub mod teleport_session;
 mod trajectory;
+mod usage_cmd;
 pub mod util;
 
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -229,6 +232,30 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
+    /// Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1):
+    /// teams share machines with every member and their agents. Owners
+    /// and admins invite (email or link), approve member devices, add
+    /// machines and read the audit log.
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua team create AIGIS
+  cua team invite AIGIS dillon@example.com
+  cua team add-machine AIGIS local:build-box
+  cua team approve AIGIS dev_0123456789abcdef01234567
+  cua team audit AIGIS"
+    )]
+    Team(team_cmd::TeamCmd),
+    /// Your relay allowance this month: live sessions, relay hours, and
+    /// your plan. Spaces on your own network use none of it.
+    #[command(after_help = "Examples:
+  cua usage
+  cua usage --json")]
+    Usage {
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
+        #[arg(long)]
+        relay: Option<String>,
+    },
     /// Move a desktop app session (tabs, profile, sign-in) into a sandbox.
     #[command(subcommand)]
     Teleport(teleport::TeleportCmd),
@@ -322,6 +349,20 @@ enum AuthCmd {
   cua auth status
   cua auth status --json")]
     Status,
+    /// Whether this cua can read the Cua items in the macOS keychain
+    /// without a prompt (JSON; for the Spaces app, which asks before it
+    /// starts anything that reads the session). A Cua-signed cua gives
+    /// every item it reads the Cua access list, so later Cua builds read it
+    /// without a prompt.
+    #[command(hide = true)]
+    Keychain {
+        /// Let macOS ask for access (its keychain prompt) where needed.
+        #[arg(long)]
+        prompt: bool,
+        /// Remove the stored session without reading it (to sign in again).
+        #[arg(long, conflicts_with = "prompt")]
+        forget: bool,
+    },
     /// The active Fleet identity, verified against Fleet.
     #[command(after_help = "Examples:
   cua auth whoami")]
@@ -1117,10 +1158,12 @@ fn exit_code(e: &CuaError) -> i32 {
     }
 }
 
-/// For a `cua` inside an app bundle: why the running daemon is not the
-/// bundle's own build ([`cua_daemon::identity`]), or `None` when it is (or
-/// when this `cua` is not in a bundle, or no daemon answers).
-async fn stranger_daemon() -> Option<String> {
+/// For a `cua` inside an app bundle: what to do with the running daemon
+/// ([`cua_daemon::identity::verdict`]: its own, another app's of the same or
+/// a newer version to keep, one this app yields to, or a stranger to
+/// replace), or `None` when this
+/// `cua` is not in a bundle or no daemon answers.
+async fn stranger_daemon() -> Option<cua_daemon::identity::Verdict> {
     let own = cua_daemon::identity::bundled_cua()?;
     let info = cua_daemon::client::existing_daemon()
         .await
@@ -1128,7 +1171,12 @@ async fn stranger_daemon() -> Option<String> {
         .info()
         .await
         .ok()?;
-    cua_daemon::identity::stranger(&info.executable, &info.build_id, &own)
+    Some(cua_daemon::identity::verdict(
+        &info.version,
+        &info.executable,
+        &info.build_id,
+        &own,
+    ))
 }
 
 /// The SDK handle. `with_session` passes the `cua auth login` session to
@@ -1223,7 +1271,12 @@ fn all_command_paths() -> Vec<String> {
 /// Whether a command records a `cua_cli_command` event (not `cua telemetry`
 /// itself, and not the internal docs dump).
 fn records_telemetry(c: &Command) -> bool {
-    !matches!(c, Command::Telemetry(_) | Command::DumpDocs { .. })
+    // `cua auth keychain` is the Spaces app's own launch check: no usage
+    // event, and never the first-run notice (the app shows its own).
+    !matches!(
+        c,
+        Command::Telemetry(_) | Command::DumpDocs { .. } | Command::Auth(AuthCmd::Keychain { .. })
+    )
 }
 
 fn print(out: &mut dyn Write, v: serde_json::Value, json: bool, text: impl FnOnce() -> String) {
@@ -1244,6 +1297,13 @@ async fn env_at(
 
 async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     let json = cli.json;
+    // Teams are experimental: refused (before any sign-in, daemon or relay
+    // call) unless CUA_EXPERIMENTAL_TEAMS is set.
+    if uses_teams(&cli.command) && !cua_home::experimental::teams_enabled() {
+        return Err(CuaError::InvalidArgument(
+            cua_home::experimental::TEAMS_UNAVAILABLE.into(),
+        ));
+    }
     // Commands that need no SDK handle.
     match &cli.command {
         Command::Images(cmd) => {
@@ -1425,6 +1485,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                         vars: vars.clone(),
                         assume: assume.clone(),
                         scope: scope.clone(),
+                        caps: None,
                     })?;
                     if json {
                         util::json_line(out, &v);
@@ -1476,6 +1537,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
                 AuthCmd::Logout => auth::logout(out).await,
                 AuthCmd::Status => auth::status(json, out).await,
+                AuthCmd::Keychain { prompt, forget } => auth::keychain(*prompt, *forget, out),
                 AuthCmd::Whoami => auth::whoami(json, out).await,
                 AuthCmd::Keys(KeysCmd::Ls) => auth::keys_list(json, out).await,
                 AuthCmd::Keys(KeysCmd::Create { name, scope }) => {
@@ -1636,6 +1698,28 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Devices(cmd) => {
             return devices_cmd::run(cmd, &util::cua_home(), json, out).await;
         }
+        // Adding a machine is sharing the Space with the team: the same
+        // path as `cua spaces share <space> team:<id>` (attach, confirm).
+        Command::Team(team_cmd::TeamCmd::AddMachine { team, space, yes }) => {
+            let auth = devices_cmd::device_auth(&host::relay_url(None, &util::cua_home()))?;
+            let id = team_cmd::resolve_team(&auth, &team).await?;
+            let share = Cli {
+                command: Command::Spaces(host::SpacesCmd::Share {
+                    space,
+                    who: format!("team:{id}"),
+                    role: "editor".into(),
+                    yes,
+                }),
+                ..cli
+            };
+            return Box::pin(run(share, out)).await;
+        }
+        Command::Team(cmd) => {
+            return team_cmd::run(cmd, &util::cua_home(), json, out).await;
+        }
+        Command::Usage { relay } => {
+            return usage_cmd::run(relay, &util::cua_home(), json, out).await;
+        }
         // A machine that provides Spaces over its direct address: kept in
         // this cua home's registry, which the daemon reads too.
         Command::Spaces(cmd @ host::SpacesCmd::Add { host: true, .. }) => {
@@ -1682,12 +1766,17 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 // already has it; an embedded runtime gets it here), and
                 // an embedded runtime confirms on the terminal.
                 host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
-                if let Some(rt) = cua.embedded_runtime()
-                    && !rt.spaces().has_share_consent()
-                {
-                    let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
-                    rt.spaces()
-                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
+                if let Some(rt) = cua.embedded_runtime() {
+                    if !rt.spaces().has_share_consent() {
+                        rt.spaces()
+                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    }
+                } else if matches!(cmd, host::SpacesCmd::Share { .. }) {
+                    // The daemon asks for user presence on this computer.
+                    use std::io::IsTerminal as _;
+                    host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
+                    eprintln!("Confirm the share on this computer (Touch ID or your password).");
                 }
             }
             return host::run_spaces_sdk(&cua, cmd, json, out).await;
@@ -2023,6 +2112,8 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Spaces(_)
         | Command::Cloud(_)
         | Command::Devices(_)
+        | Command::Team(_)
+        | Command::Usage { .. }
         | Command::Fleet(_)
         | Command::Teleport(_)
         | Command::Cache(_)
@@ -2112,22 +2203,51 @@ async fn daemon_start(
             // A daemon without an extension this `cua` carries (an MIT
             // daemon when this is the Cua Spaces build) is replaced, so the
             // Spaces apps and their tools find what they ship with. So is,
-            // for a `cua` inside an app bundle, any daemon but the bundle's
-            // own build (another app's, or its own before a rebuild or
-            // update): its Spaces would run with that app's build and
-            // permissions.
-            let missing = extension::missing_daemon_extensions().await;
-            let why = if missing.is_empty() {
-                stranger_daemon().await
+            // for a `cua` inside an app bundle, another app's daemon older
+            // than this build (or of an unknown version), and its own
+            // before a rebuild or update: its Spaces would run with that
+            // build and permissions. Another app's of the same or a newer
+            // version is kept, so two apps never keep replacing each other's,
+            // and so is one this app replaced once that its app started
+            // again (`CUA_DAEMON_KEEP`): an older app restarts its own.
+            use cua_daemon::identity::Verdict;
+            let stranger = stranger_daemon().await;
+            let missing = if matches!(stranger, Some(Verdict::Yield(_))) {
+                Vec::new()
             } else {
-                Some(format!("it lacks {}", missing.join(", ")))
+                extension::missing_daemon_extensions().await
+            };
+            let why = if missing.is_empty() {
+                stranger
+            } else {
+                Some(Verdict::Replace(format!("it lacks {}", missing.join(", "))))
             };
             match why {
-                None => {
+                None | Some(Verdict::Own) => {
                     line(out, format!("cua daemon already running (pid {})", d.pid));
                     return Ok(0);
                 }
-                Some(why) => {
+                Some(Verdict::Keep(whose)) => {
+                    line(
+                        out,
+                        format!(
+                            "cua daemon already running (pid {}): {whose}; using it",
+                            d.pid
+                        ),
+                    );
+                    return Ok(0);
+                }
+                Some(Verdict::Yield(whose)) => {
+                    line(
+                        out,
+                        format!(
+                            "cua daemon already running (pid {}): {whose}; using it",
+                            d.pid
+                        ),
+                    );
+                    return Ok(0);
+                }
+                Some(Verdict::Replace(why)) => {
                     line(
                         out,
                         format!("replacing the running cua daemon (pid {}): {why}", d.pid),
@@ -2371,13 +2491,64 @@ fn keep_stdio_out_of_children() {
     }
 }
 
+/// How this process shows the first-run telemetry notice. A daemon the
+/// Spaces app starts (`CUA_DAEMON_STARTED_BY=app`) leaves it to the app:
+/// its stderr is a pipe nobody reads, so printing the notice there and
+/// marking it shown would let it (and the app) send before the person saw
+/// the app's Welcome page and its usage-data switch. The app acknowledges
+/// the notice when Welcome is left with the switch on; until then this
+/// daemon sends nothing.
+fn notice_mode(started_by: Option<&str>) -> cua_telemetry::NoticeMode {
+    match started_by {
+        Some("app") => cua_telemetry::NoticeMode::External,
+        _ => cua_telemetry::NoticeMode::Stderr,
+    }
+}
+
+/// Whether `cmd` is a Teams command: `cua team`, `cua host pair --team`,
+/// or sharing a Space with (or unsharing it from) `team:<id>`.
+fn uses_teams(cmd: &Command) -> bool {
+    let team = |who: &str| who.trim().starts_with("team:");
+    match cmd {
+        Command::Team(_) => true,
+        Command::Host(host::HostCmd::Pair { team: Some(_), .. }) => true,
+        Command::Spaces(host::SpacesCmd::Share { who, .. }) => team(who),
+        Command::Spaces(host::SpacesCmd::Unshare { who: Some(who), .. }) => team(who),
+        _ => false,
+    }
+}
+
+/// The clap command `cua` parses with. Teams are experimental: without
+/// them, `cua team` and `cua host pair --team` stay out of help (they still
+/// parse, and are refused with a short reason).
+fn cli_command(teams: bool) -> clap::Command {
+    let cmd = Cli::command();
+    if teams {
+        return cmd;
+    }
+    cmd.mut_subcommand("team", |c| c.hide(true))
+        .mut_subcommand("host", |h| {
+            h.mut_subcommand("pair", |p| p.mut_arg("team", |a| a.hide(true)))
+        })
+}
+
 /// The `cua` command: parses this process's arguments, runs them and exits.
 /// The Cua Spaces build registers its [`extension`] first.
 pub fn main() {
     #[cfg(windows)]
     keep_stdio_out_of_children();
     promote_spacesd_env_vars();
-    let matches = Cli::command().get_matches();
+    // `CUA_ENV` picks every endpoint and the cua home: a typo must not fall
+    // back to production silently.
+    if let Err(e) = cua_home::env::CuaEnv::try_current() {
+        eprintln!("error: {e}");
+        std::process::exit(2);
+    }
+    // SAFETY: still first in `main`, before any other thread exists. Pins
+    // `CUA_HOME` for a non-production `CUA_ENV` so every component and
+    // child process (the daemon) uses that environment's home.
+    unsafe { cua_home::env::pin_home() };
+    let matches = cli_command(cua_home::experimental::teams_enabled()).get_matches();
     let command = command_path(&matches);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let daemon_process = matches!(cli.command, Command::Daemon(DaemonCmd::Start { .. }));
@@ -2387,6 +2558,9 @@ pub fn main() {
     );
     let record = records_telemetry(&cli.command);
     let json_output = cli.json;
+    telemetry.set_notice_mode(notice_mode(
+        std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
+    ));
     // The first-run notice goes to stderr before anything could be sent
     // (not for `cua telemetry` / `cua config`, which are how you answer it).
     if record && !matches!(cli.command, Command::Config(_)) {
@@ -2487,6 +2661,60 @@ pub fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Spaces app's launch check (`cua auth keychain`) records no usage
+    /// event and never shows the first-run notice; other auth commands do.
+    #[test]
+    fn the_app_keychain_check_records_nothing() {
+        let cli = Cli::try_parse_from(["cua", "auth", "keychain", "--prompt"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Auth(AuthCmd::Keychain {
+                prompt: true,
+                forget: false
+            })
+        ));
+        assert!(!records_telemetry(&cli.command));
+        assert!(Cli::try_parse_from(["cua", "auth", "keychain", "--prompt", "--forget"]).is_err());
+        let status = Cli::try_parse_from(["cua", "auth", "status"]).unwrap();
+        assert!(records_telemetry(&status.command));
+        // One compact JSON line (the app reads it). A test build is not
+        // Cua-signed, so its store is a file and no keychain is touched.
+        if std::env::var_os("CUA_CREDENTIAL_STORE").is_none() {
+            let mut out = Vec::new();
+            assert_eq!(auth::keychain(false, false, &mut out).unwrap(), 0);
+            let text = String::from_utf8(out).unwrap();
+            assert_eq!(text.lines().count(), 1, "{text}");
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["state"], "not_used");
+        }
+    }
+
+    /// A daemon the Spaces app starts never shows or acknowledges the
+    /// first-run notice (the app's Welcome page does), so it sends nothing
+    /// before the person answered it; every other process prints it.
+    #[test]
+    fn an_app_started_daemon_leaves_the_notice_to_the_app() {
+        use cua_telemetry::{NoticeMode, Telemetry};
+        assert_eq!(notice_mode(Some("app")), NoticeMode::External);
+        for other in [None, Some("cli"), Some("launchd")] {
+            assert_eq!(notice_mode(other), NoticeMode::Stderr, "{other:?}");
+        }
+        let home = tempfile::tempdir().unwrap();
+        let t = Telemetry::builder()
+            .home(home.path())
+            .env(|k| (k == "CUA_TELEMETRY").then(|| "1".to_string()))
+            .build();
+        t.set_notice_mode(notice_mode(Some("app")));
+        if !t.is_enabled() {
+            return; // telemetry forced off in this environment
+        }
+        assert!(!t.show_notice_if_needed());
+        assert!(!t.notice_shown(), "the app's Welcome page acknowledges it");
+        t.set_notice_mode(notice_mode(None));
+        assert!(t.show_notice_if_needed());
+        assert!(t.notice_shown());
+    }
 
     /// Every CLI command path is in the telemetry vocabulary, so a new
     /// command cannot silently report as `other` (or leak its name). With

@@ -34,7 +34,7 @@ spaces-hotspot = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Cua Volume mounted in a Space's guest, served from this host.
 spaces-volume = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Agent CLIs in a Space as detached, tagged spacesd processes.
-spaces-agents = ["dep:cua-agents", "dep:reqwest", "dep:tar"]
+spaces-agents = ["dep:cua-agents", "dep:cua-auth", "dep:reqwest", "dep:tar"]
 # The Spaces MCP server (stdio). Hosted by `cua daemon mcp`.
 mcp = []
 # The same server over MCP streamable HTTP.
@@ -57,6 +57,8 @@ cua-spacesd-client.workspace = true
 cua-home.workspace = true
 cua-icon-cache.workspace = true
 cua-agents = { workspace = true, optional = true }
+# Agent provider keys saved in the OS credential vault (agents::keys).
+cua-auth = { workspace = true, optional = true }
 cua-fleet.workspace = true
 cua-image.workspace = true
 cua-sandbox-core.workspace = true

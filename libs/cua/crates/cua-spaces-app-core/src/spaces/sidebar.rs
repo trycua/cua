@@ -300,17 +300,20 @@ pub fn effective_selection<'a>(spaces: &'a [Space], selected_id: &str) -> Option
         .or_else(|| spaces.iter().find(|s| s.id != THIS_MACHINE_ID))
 }
 
+/// Whether a search `query` keeps a row with these `fields` (a Space's
+/// name, detail and id): an empty query keeps every row, else any field
+/// holds the trimmed query, ignoring case. The sidebar's search and the
+/// web UI's Spaces filter box both use it.
+pub fn matches(query: &str, fields: &[&str]) -> bool {
+    let needle = query.trim().to_lowercase();
+    needle.is_empty() || fields.iter().any(|f| f.to_lowercase().contains(&needle))
+}
+
 /// Builds the sidebar for `spaces` filtered by `query`.
 pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView {
-    let needle = query.trim().to_lowercase();
     let visible: Vec<&Space> = spaces
         .iter()
-        .filter(|s| {
-            needle.is_empty()
-                || [&s.name, &s.detail, &s.id]
-                    .iter()
-                    .any(|f| f.to_lowercase().contains(&needle))
-        })
+        .filter(|s| matches(query, &[&s.name, &s.detail, &s.id]))
         .collect();
     let selected = effective_selection(spaces, selected_id).map(|s| s.id.clone());
     let sel = selected.as_deref();
@@ -336,7 +339,7 @@ pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView 
         })
         .collect();
     let empty_text = sections.is_empty().then(|| {
-        if needle.is_empty() {
+        if query.trim().is_empty() {
             "No Spaces yet".to_string()
         } else {
             "No matches".to_string()
@@ -1153,6 +1156,18 @@ mod tests {
 
     /// Only This machine is not a Space to open: an empty id selects nothing,
     /// choosing it does, and a real Space wins over it.
+    #[test]
+    fn matches_name_detail_or_id_ignoring_case_and_spaces() {
+        let f = ["Design Review", "Agent testing", "relay:mini/space-1"];
+        assert!(matches("", &f));
+        assert!(matches("   ", &f));
+        assert!(matches("  design ", &f));
+        assert!(matches("TESTING", &f));
+        assert!(matches("mini/", &f));
+        assert!(!matches("ubuntu", &f));
+        assert!(!matches("x", &[]));
+    }
+
     #[test]
     fn this_machine_alone_selects_nothing() {
         use crate::host::this_machine_space;

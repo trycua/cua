@@ -468,8 +468,7 @@ export class AppModel {
       defaultLocation: this.settings.defaultLocation,
       cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
-      // Lume runs macOS VMs on a Mac; elsewhere Docker is the only local runtime.
-      localReason: backends && backends.length === 0 ? (process.platform === "darwin" ? "No local runtime found (Docker or Lume)." : "No local runtime found. Install Docker to run Spaces on this computer.") : undefined,
+      localReason: backends && backends.length === 0 ? "No local runtime found (Docker or Lume)." : undefined,
       localBackends: backends,
       localDetails: runtimes?.details,
       maxCpus: this.maxCpus,

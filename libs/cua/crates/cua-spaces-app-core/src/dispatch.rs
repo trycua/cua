@@ -546,12 +546,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("entry")?,
             &a.get::<Option<Vec<String>>>("files")?.unwrap_or_default(),
         )),
-        // `hostOs`: the shell's system, for "leaves this PC" (macOS when absent).
-        "flow.review" => out(flow::review_on(
-            &a.get("state")?,
-            a.get::<Option<SpaceOs>>("hostOs")?
-                .unwrap_or(SpaceOs::Macos),
-        )),
+        "flow.review" => out(flow::review(&a.get("state")?)),
         "flow.sensitiveOptions" => out(flow::sensitive_options(&a.get("state")?)),
         "flow.planSensitive" => out(flow::plan_sensitive(&a.get("state")?)),
         "flow.requiresCuaApp" => out(flow::requires_cua_app(

@@ -58,7 +58,6 @@ struct HTTPResponse {
     enum StatusCode: Int {
         case ok = 200
         case accepted = 202
-        case conflict = 409
         case badRequest = 400
         case conflict = 409
         case notFound = 404

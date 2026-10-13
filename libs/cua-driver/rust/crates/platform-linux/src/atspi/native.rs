@@ -7408,6 +7408,14 @@ mod budget_tests {
     use super::*;
 
     #[test]
+    fn application_attributes_wake_once_per_pid() {
+        assert!(first_application_walk(u32::MAX));
+        assert!(!first_application_walk(u32::MAX));
+        assert!(first_application_walk(u32::MAX - 1));
+        assert!(!first_application_walk(u32::MAX - 1));
+    }
+
+    #[test]
     fn focus_log_tracks_latest_focused_object_per_bus_and_clears_on_blur() {
         let bus = ":9.test-focus-log";
         note_focus_event(bus, "/a", true);

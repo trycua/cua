@@ -8,7 +8,7 @@
 //! open that page; Fleet refuses app tokens on its Stripe session routes
 //! (trycua/cloud#7933).
 
-use crate::{Error, FleetClient, Result, SdkError};
+use crate::{FleetClient, Result};
 use serde::{Deserialize, Serialize};
 
 /// The saved card, as Fleet describes it (never its number).

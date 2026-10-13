@@ -279,10 +279,7 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     } else {
         line(
             out,
-            format!(
-                "Logged in to Cua. Access token expires {}.",
-                c.expires_at
-            ),
+            format!("Logged in to Cua. Access token expires {}.", c.expires_at),
         );
     }
     Ok(0)

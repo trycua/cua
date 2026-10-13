@@ -210,10 +210,7 @@ async fn login_falls_back_to_device_when_loopback_is_not_allowed_and_remote_skip
     o.ok();
     assert!(o.stdout.contains("using a device code instead"), "{o:?}");
     assert!(o.stdout.contains("WXYZ-1234"), "{o:?}");
-    assert!(
-        o.stdout.contains("Logged in to Cua as tester"),
-        "{o:?}"
-    );
+    assert!(o.stdout.contains("Logged in to Cua as tester"), "{o:?}");
     // Non-interactive with no --agents: no onboarding.
     assert!(!o.stdout.contains("AI coding agents"), "{o:?}");
     assert!(log.lock().unwrap().challenge.is_some(), "the preflight ran");

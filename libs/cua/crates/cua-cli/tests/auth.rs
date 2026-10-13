@@ -90,10 +90,7 @@ async fn device_login_session_drives_fleet_then_refresh_and_logout() {
     let o = h.run(&["auth", "login", "--no-browser"]).await;
     o.ok();
     assert!(o.stdout.contains("ABCD-EFGH"), "{o:?}");
-    assert!(
-        o.stdout.contains("Logged in to Cua as tester."),
-        "{o:?}"
-    );
+    assert!(o.stdout.contains("Logged in to Cua as tester."), "{o:?}");
     let cred_file = h.cua_home().join("credentials.json");
     let creds = read_json(&cred_file);
     assert_eq!(creds["refresh_token"], "rt-1");

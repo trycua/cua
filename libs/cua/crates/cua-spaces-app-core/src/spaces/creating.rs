@@ -713,6 +713,103 @@ pub fn failure_text(
     failure_text_on(raw, phase, provider, None, gpu)
 }
 
+/// The cause of a failed create that the app knows how to explain, read
+/// from the SDK's error text ([`failure_cause`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureCause {
+    /// Not enough disk space for the image or the VM.
+    Disk,
+    /// macOS Local Network privacy keeps the app (or a host's service) from
+    /// reaching its new VM.
+    LocalNetwork,
+    /// Apple's two macOS VMs per Mac are already running.
+    VmLimit,
+    /// GPU acceleration was asked for and could not be turned on.
+    Gpu,
+    /// The Space's service, or a relay host, refused the sign-in.
+    Unauthenticated,
+    /// The Space booted but its service did not answer in time.
+    ServiceTimeout,
+    /// The image download did not finish in time.
+    PullTimeout,
+}
+
+impl FailureCause {
+    /// The error enum case name telemetry records for it (`error_kind`
+    /// `insufficient_disk`, `local_network`, `vm_limit`, ...): a fixed word,
+    /// never the message.
+    pub fn variant(self) -> &'static str {
+        match self {
+            Self::Disk => "InsufficientDisk",
+            Self::LocalNetwork => "LocalNetwork",
+            Self::VmLimit => "VmLimit",
+            Self::Gpu => "Unsupported",
+            Self::Unauthenticated => "Unauthenticated",
+            Self::ServiceTimeout | Self::PullTimeout => "Timeout",
+        }
+    }
+}
+
+/// Which known cause the SDK's `raw` error is, if any. `phase` is where it
+/// failed and `gpu` whether GPU acceleration was asked for, when known.
+pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<FailureCause> {
+    let l = crate::errors::plain_error(raw).to_ascii_lowercase();
+    if l.contains("not enough disk space")
+        || l.contains("insufficient disk")
+        || l.contains("insufficient_disk")
+        || l.contains("no space left on device")
+    {
+        return Some(FailureCause::Disk);
+    }
+    // macOS Local Network privacy: the process that runs the VM (this
+    // app's daemon, or a host's cua-spacesd service) may not reach the
+    // guest on vmnet. The SDK says "Local Network access is not available:
+    // ... cannot reach the VM at 192.168.64.x (No route to host)"; older
+    // ones only the bare `EHOSTUNREACH` to a vmnet address.
+    let vmnet = l.contains("192.168.64.");
+    if l.contains("local network access")
+        || (vmnet && (l.contains("no route to host") || l.contains("os error 65")))
+    {
+        return Some(FailureCause::LocalNetwork);
+    }
+    // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
+    // of virtual machines exceeds the limit"): Apple's two macOS VMs per Mac.
+    if l.contains("virtualmachinelimitexceeded")
+        || ((l.contains("virtual machine") || l.contains("vms"))
+            && l.contains("limit")
+            && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
+    {
+        return Some(FailureCause::VmLimit);
+    }
+    if gpu && (l.contains("gpu") || l.contains("paravirtual")) {
+        return Some(FailureCause::Gpu);
+    }
+    if l.contains("unauthenticated") {
+        return Some(FailureCause::Unauthenticated);
+    }
+    let timed_out =
+        l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
+    if l.contains("cua-spacesd did not answer within ") {
+        return Some(FailureCause::ServiceTimeout);
+    }
+    match phase {
+        Some("waiting_for_services") if timed_out => Some(FailureCause::ServiceTimeout),
+        Some("pulling") if timed_out => Some(FailureCause::PullTimeout),
+        _ => None,
+    }
+}
+
+/// The error enum case name a failed create records in telemetry: what
+/// the shell sent, unless that is none or a generic case (`Runtime`,
+/// `Other`, as most are) and the text names a known cause
+/// ([`failure_cause`]).
+pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
+    if !matches!(shell.trim(), "" | "Runtime" | "Other") {
+        return shell;
+    }
+    failure_cause(raw, phase, gpu).map_or(shell, |c| c.variant())
+}
+
 /// [`failure_text`] for a create on one of your machines named `host_name`:
 /// the causes that are about the Mac that runs the Space (Local Network
 /// access, Apple's two macOS VMs) name that machine, not this Mac.
@@ -725,91 +822,65 @@ pub fn failure_text_on(
 ) -> String {
     let plain = crate::errors::plain_error(raw);
     let l = plain.to_ascii_lowercase();
-    if l.contains("not enough disk space")
-        || l.contains("insufficient disk")
-        || l.contains("insufficient_disk")
-        || l.contains("no space left on device")
-    {
-        return disk_text(&plain);
-    }
-    // macOS Local Network privacy: the process that runs the VM (this
-    // app's daemon, or a host's cua-spacesd service) may not reach the
-    // guest on vmnet. The SDK says "Local Network access is not available:
-    // ... cannot reach the VM at 192.168.64.x (No route to host)"; older
-    // ones only the bare `EHOSTUNREACH` to a vmnet address.
-    let vmnet = l.contains("192.168.64.");
-    if l.contains("local network access")
-        || (vmnet && (l.contains("no route to host") || l.contains("os error 65")))
-    {
-        let who = machine_subject(provider, host_name);
-        return format!(
-            "{who} can't reach its new VM because Cua doesn't have Local Network access there. \
+    match failure_cause(raw, phase, gpu) {
+        Some(FailureCause::Disk) => disk_text(&plain),
+        Some(FailureCause::LocalNetwork) => format!(
+            "{} can't reach its new VM because Cua doesn't have Local Network access there. \
              On that Mac, open System Settings > Privacy & Security > Local Network, turn on Cua \
-             Spaces (or cua-spacesd), then try again."
-        );
-    }
-    // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
-    // of virtual machines exceeds the limit"): Apple's two macOS VMs per Mac.
-    if l.contains("virtualmachinelimitexceeded")
-        || ((l.contains("virtual machine") || l.contains("vms"))
-            && l.contains("limit")
-            && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
-    {
-        return format!(
+             Spaces (or cua-spacesd), then try again.",
+            machine_subject(provider, host_name)
+        ),
+        Some(FailureCause::VmLimit) => format!(
             "{} is already running two macOS VMs, the most Apple's macOS license allows at once. \
              Stop one, then try again; the image is downloaded now, so it is quicker.",
             machine_subject(provider, host_name)
-        );
-    }
-    if gpu && (l.contains("gpu") || l.contains("paravirtual")) {
-        return format!(
+        ),
+        Some(FailureCause::Gpu) => format!(
             "GPU acceleration could not be turned on here ({plain}). Create the Space again \
              with GPU acceleration off."
-        );
-    }
-    if l.contains("unauthenticated") {
-        return if provider == Some(SpaceProvider::Relay) {
-            "Your other Mac did not accept the sign-in: its Cua sign-in may have expired or \
-             belong to another account. Open Cua Spaces on that Mac, sign in again, then try \
-             again."
-                .into()
-        } else {
-            format!(
-                "The new Space's service did not accept the app's token ({plain}). Try again; if \
-                 it keeps happening, run `cua doctor` in Terminal."
-            )
-        };
-    }
-    let spacesd = "cua-spacesd did not answer within ";
-    let timed_out =
-        l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
-    if let Some(at) = l.find(spacesd) {
-        let token = l[at + spacesd.len()..]
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
-        let within = debug_duration_secs(token)
-            .filter(|s| *s >= 5.0)
-            .map(|s| format!(" within {}", short_duration(s)));
-        return match within {
-            Some(within) => format!(
-                "The Space booted, but its service did not answer{within}. The image is \
-                 downloaded now, so trying again usually works."
-            ),
-            None => "The Space booted, but the time allowed for creating it ran out before its \
-                     service answered. The image is downloaded now, so trying again usually \
-                     works."
-                .into(),
-        };
-    }
-    match phase {
-        Some("waiting_for_services") if timed_out => "The Space booted, but its service did not \
-             answer in time. The image is downloaded now, so trying again usually works."
-            .into(),
-        Some("pulling") if timed_out => "The image download did not finish in the time \
+        ),
+        Some(FailureCause::Unauthenticated) => {
+            if provider == Some(SpaceProvider::Relay) {
+                "Your other Mac did not accept the sign-in: its Cua sign-in may have expired or \
+                 belong to another account. Open Cua Spaces on that Mac, sign in again, then try \
+                 again."
+                    .into()
+            } else {
+                format!(
+                    "The new Space's service did not accept the app's token ({plain}). Try again; \
+                     if it keeps happening, run `cua doctor` in Terminal."
+                )
+            }
+        }
+        Some(FailureCause::ServiceTimeout) => {
+            let spacesd = "cua-spacesd did not answer within ";
+            let within = l.find(spacesd).map(|at| {
+                let token = l[at + spacesd.len()..]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                debug_duration_secs(token)
+                    .filter(|s| *s >= 5.0)
+                    .map(|s| format!(" within {}", short_duration(s)))
+            });
+            match within {
+                Some(Some(within)) => format!(
+                    "The Space booted, but its service did not answer{within}. The image is \
+                     downloaded now, so trying again usually works."
+                ),
+                Some(None) => "The Space booted, but the time allowed for creating it ran out \
+                               before its service answered. The image is downloaded now, so \
+                               trying again usually works."
+                    .into(),
+                None => "The Space booted, but its service did not answer in time. The image \
+                         is downloaded now, so trying again usually works."
+                    .into(),
+            }
+        }
+        Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
-        _ => plain,
+        None => plain,
     }
 }
 

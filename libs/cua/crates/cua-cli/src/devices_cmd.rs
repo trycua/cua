@@ -20,7 +20,7 @@ pub enum DevicesCmd {
     #[command(after_help = "Examples:
   cua devices status")]
     Status {
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long)]
         relay: Option<String>,
     },

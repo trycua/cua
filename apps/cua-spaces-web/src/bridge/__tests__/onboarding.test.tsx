@@ -2,29 +2,59 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDemoAdapter } from "../adapters/demo";
 import type { CoreClient } from "../core";
 import { BridgeProvider, useOnboarding, useSession, useSettings, type OnboardingHook, type SessionHook, type SettingsHook } from "../index";
+import type { HostOs } from "../host-os";
 import {
   firstSpaceImages,
+  hasNotch,
   onboardingInitial,
   onboardingReduce,
   onboardingTelemetry,
   onboardingView,
+  passedSteps,
   permissionRows,
   readSavedOnboarding,
   resetSavedOnboardingCache,
 } from "../onboarding";
 import { noCore, testCore, wasmBuilt } from "./testCore";
 
-const ctx = { menuBar: false };
+// Off a Mac: no notch, so the flow passes through Menu bar.
+const ctx = { menuBar: false, os: "linux" as HostOs };
+
+/** The host the hooks see (`hostOs()` reads the browser's platform). */
+const onPlatform = (platform: string) => vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
 
 beforeEach(() => {
   localStorage.clear();
   resetSavedOnboardingCache();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+describe("the Menu bar page per host", () => {
+  it.each([
+    ["macos", true],
+    ["windows", false],
+    ["linux", false],
+  ] as const)("%s: notch %s", (os, notch) => {
+    expect(hasNotch(os)).toBe(notch);
+    expect(passedSteps(os)).toEqual(notch ? [] : ["presentation"]);
+  });
+
+  it("follows the host's platform (the Mac app's web view, Electron on each system)", () => {
+    onPlatform("MacIntel");
+    expect(hasNotch()).toBe(true);
+    onPlatform("Win32");
+    expect(hasNotch()).toBe(false);
+    onPlatform("Linux x86_64");
+    expect(hasNotch()).toBe(false);
+  });
+});
 
 describe.each([
   ["wasm core", testCore],
@@ -33,10 +63,11 @@ describe.each([
   it("walks the web pages in the core's order, past the native-only ones", async () => {
     const core = await getCore();
     let s = onboardingInitial(core, null);
-    expect(onboardingView(core, s).dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "This machine", "Done"]);
+    expect(onboardingView(core, s, "linux").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "This machine", "Done"]);
     s = onboardingReduce(core, s, { type: "start" }, ctx);
     expect(s.step).toBe("signin");
-    expect(onboardingView(core, s).canSkip).toBe(true);
+    expect(onboardingView(core, s, "linux").canSkip).toBe(true);
+    expect(onboardingView(core, s, "linux").lede).toBe("Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.");
     s = onboardingReduce(core, s, { type: "signin-done" }, ctx);
     expect(s.step).toBe("agents");
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
@@ -46,9 +77,10 @@ describe.each([
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
     s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, ctx);
     expect(s.step).toBe("done");
-    const v = onboardingView(core, s);
+    const v = onboardingView(core, s, "linux");
     expect(v.title).toBe("You're all set");
     expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
+    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
     // Where the app stays: the menu bar on a Mac, the tray on Windows and Linux.
     expect(onboardingView(core, s, "macos").lede).toBe("Cua Spaces is in your menu bar.");
     expect(onboardingView(core, s, "windows").lede).toBe("Cua Spaces is in your system tray.");
@@ -58,18 +90,57 @@ describe.each([
   it("keeps the presentation setting the machine has", async () => {
     const core = await getCore();
     let s = onboardingReduce(core, onboardingInitial(core, null), { type: "start" }, ctx);
-    s = onboardingReduce(core, s, { type: "signin-done" }, { menuBar: true });
-    s = onboardingReduce(core, s, { type: "agents-done", configured: [] }, { menuBar: true });
+    s = onboardingReduce(core, s, { type: "signin-done" }, { ...ctx, menuBar: true });
+    s = onboardingReduce(core, s, { type: "agents-done", configured: [] }, { ...ctx, menuBar: true });
     expect(s.menuBar).toBe(true);
+  });
+
+  it("asks where the app shows on a Mac, and Done says it", async () => {
+    const core = await getCore();
+    const mac = { menuBar: false, os: "macos" as HostOs };
+    let s = onboardingInitial(core, null);
+    expect(onboardingView(core, s, "macos").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "Menu bar", "This machine", "Done"]);
+    s = onboardingReduce(core, s, { type: "start" }, mac);
+    s = onboardingReduce(core, s, { type: "signin-done" }, mac);
+    s = onboardingReduce(core, s, { type: "agents-done", configured: [] }, mac);
+    expect(s.step).toBe("presentation");
+    let v = onboardingView(core, s, "macos");
+    expect(v.title).toBe("Where should Cua Spaces show up?");
+    expect(v.lede).toBe("You can change this in Settings.");
+    expect(v.presentations?.map((c) => [c.id, c.title, c.selected])).toEqual([
+      ["onboarding-notch", "Notch and menu bar", true],
+      ["onboarding-menu-bar", "Menu bar only", false],
+    ]);
+    s = onboardingReduce(core, s, { type: "presentation-picked", menuBar: true }, mac);
+    expect(onboardingView(core, s, "macos").presentations?.find((c) => c.selected)?.title).toBe("Menu bar only");
+    s = onboardingReduce(core, s, { type: "presentation-done" }, { ...mac, menuBar: true });
+    expect(s.step).toBe("mode");
+    s = onboardingReduce(core, s, { type: "back" }, { ...mac, menuBar: true });
+    expect(s.step).toBe("presentation");
+    s = onboardingReduce(core, s, { type: "presentation-done" }, { ...mac, menuBar: true });
+    s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, { ...mac, menuBar: true });
+    v = onboardingView(core, s, "macos");
+    expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "Shows in", "This machine"]);
+    expect(v.summary.find((f) => f.label === "Shows in")?.value).toBe("Menu bar only");
+  });
+
+  it("starts the Menu bar choice from the setting now", async () => {
+    const core = await getCore();
+    let s = onboardingInitial(core, null);
+    s = onboardingReduce(core, s, { type: "start" }, { menuBar: false, os: "macos" });
+    s = onboardingReduce(core, s, { type: "signin-done" }, { menuBar: false, os: "macos" });
+    // Changed in Settings since the flow started.
+    s = onboardingReduce(core, s, { type: "agents-done", configured: [] }, { menuBar: true, os: "macos" });
+    expect(s).toMatchObject({ step: "presentation", menuBar: true });
   });
 
   it("shows the usage switch from the setting, and locks it when the environment decides", async () => {
     const core = await getCore();
     let s = onboardingInitial(core, null);
     s = onboardingReduce(core, s, { type: "telemetry-loaded", telemetry: { enabled: false, lockedBy: null } }, ctx);
-    expect(onboardingView(core, s).usage).toMatchObject({ on: false, enabled: true });
+    expect(onboardingView(core, s, "linux").usage).toMatchObject({ on: false, enabled: true });
     s = onboardingReduce(core, s, { type: "usage-data-toggled", on: true }, ctx);
-    expect(onboardingView(core, s).usage?.on).toBe(true);
+    expect(onboardingView(core, s, "linux").usage?.on).toBe(true);
 
     const locked = onboardingTelemetry({
       enabled: false,
@@ -81,7 +152,7 @@ describe.each([
     });
     s = onboardingReduce(core, onboardingInitial(core, null), { type: "telemetry-loaded", telemetry: locked }, ctx);
     s = onboardingReduce(core, s, { type: "usage-data-toggled", on: true }, ctx);
-    expect(onboardingView(core, s).usage).toMatchObject({ on: false, enabled: false, help: "Set by env DO_NOT_TRACK" });
+    expect(onboardingView(core, s, "linux").usage).toMatchObject({ on: false, enabled: false, help: "Set by env DO_NOT_TRACK" });
   });
 
   it("lists only the permissions still to grant, and one image per OS", async () => {
@@ -128,6 +199,8 @@ function mount(core: CoreClient, mode?: "electron") {
 }
 
 describe.skipIf(!wasmBuilt)("useOnboarding over the demo adapter", () => {
+  beforeEach(() => onPlatform("Linux x86_64"));
+
   it("saves progress, follows sign-in, writes the usage switch and finishes", async () => {
     const { probe, adapter } = mount(await testCore());
     await waitFor(() => expect(probe.flow.view?.usage).toBeTruthy());
@@ -173,38 +246,60 @@ describe.skipIf(!wasmBuilt)("useOnboarding over the demo adapter", () => {
     });
     await waitFor(() => expect(probe.flow.state?.identity).toBeNull());
   });
-});
 
-describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
-  const toDone = async (probe: Probe) => {
-    await waitFor(() => expect(probe.flow.state).toBeTruthy());
+  it("on a Mac, the Menu bar pick writes the notch setting Settings shows", async () => {
+    onPlatform("MacIntel");
+    const { probe, adapter, calls } = mount(await testCore());
+    await waitFor(() => expect(probe.flow.state && probe.settings.data).toBeTruthy());
     act(() => probe.flow.send({ type: "start" }));
     act(() => probe.flow.send({ type: "signin-done" }));
     act(() => probe.flow.send({ type: "agents-done", configured: [] }));
+    expect(probe.flow.view?.step).toBe("presentation");
+    act(() => probe.flow.send({ type: "presentation-picked", menuBar: true }));
+    await waitFor(() => expect(adapter.state.settings.menuBar).toBe(true));
+    expect(calls).toContainEqual(["settings.set", { key: "menuBar", value: true }]);
+    expect(probe.flow.view?.presentations?.find((c) => c.selected)?.id).toBe("onboarding-menu-bar");
+    act(() => probe.flow.send({ type: "presentation-done" }));
+    expect(probe.flow.view?.step).toBe("mode");
     act(() => probe.flow.send({ type: "mode-chosen", mode: "client" }));
-    await waitFor(() => expect(probe.flow.view?.step).toBe("done"));
+    expect(probe.flow.view?.summary).toContainEqual({ label: "Shows in", value: "Menu bar only" });
+  });
+});
+
+describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
+  beforeEach(() => onPlatform("Linux x86_64"));
+  const toDone = async (probe: Probe) => {
+    await waitFor(() => expect(probe.flow.state).toBeTruthy());
+    act(() => probe.flow.send({ type: 'start' }));
+    act(() => probe.flow.send({ type: 'signin-done' }));
+    act(() => probe.flow.send({ type: 'agents-done', configured: [] }));
+    act(() => probe.flow.send({ type: 'presentation-done' }));
+    act(() => probe.flow.send({ type: 'mode-chosen', mode: 'client' }));
+    await waitFor(() => expect(probe.flow.view?.step).toBe('done'));
   };
 
-  it("shows where the host applies it (Electron), and finishes with the choice", async () => {
-    const { probe, calls } = mount(await testCore(), "electron");
+  it('shows where the host applies it (Electron), and finishes with the choice', async () => {
+    const { probe, calls } = mount(await testCore(), 'electron');
     await toDone(probe);
-    expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
+    expect(probe.flow.launchAtLogin).toMatchObject({ checked: false });
     expect(probe.flow.launchAtLogin?.label).toBeTruthy();
-    act(() => probe.flow.send({ type: "launch-at-login-toggled", on: false }));
-    await waitFor(() => expect(probe.flow.launchAtLogin?.checked).toBe(false));
     await act(async () => {
       await probe.flow.finish();
     });
-    expect(calls.filter(([op]) => op === "session.completeOnboarding")).toEqual([["session.completeOnboarding", { mode: "client", launchAtLogin: false }]]);
+    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
+      ['session.completeOnboarding', { mode: 'client', launchAtLogin: false }],
+    ]);
   });
 
-  it("is not offered where the host does not apply it", async () => {
+  it('is not offered where the host does not apply it', async () => {
     const { probe, calls } = mount(await testCore());
     await toDone(probe);
     expect(probe.flow.launchAtLogin).toBeNull();
     await act(async () => {
       await probe.flow.finish();
     });
-    expect(calls.filter(([op]) => op === "session.completeOnboarding")).toEqual([["session.completeOnboarding", { mode: "client" }]]);
+    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
+      ['session.completeOnboarding', { mode: 'client' }],
+    ]);
   });
 });

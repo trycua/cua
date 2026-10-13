@@ -7,14 +7,17 @@ import { useEffect, useState } from "react";
 
 import {
   isUnsupported,
+  useAgentDetail,
   useAgents,
   useAgentTimeline,
   useSession,
   type AgentRunSummary,
   type AgentsData,
   type AgentSummary,
+  type AgentTab,
   type AgentTimeline,
 } from "@/bridge";
+import { AgentPanel } from "@/components/agents/agent-panels";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { Timeline } from "@/components/agents/timeline";
 import { EmptyState, PageHeader } from "@/components/page";
@@ -305,8 +308,11 @@ function AgentDetail({ agent, run, runRef }: { agent: AgentSummary | null; run: 
   const { pauseAgent, resumeAgent } = useAgents();
   const { openExternal } = useSession();
   const timeline = useAgentTimeline(runRef);
+  const detail = useAgentDetail(agent?.record ?? null);
   const now = useNow();
   const [busy, setBusy] = useState(false);
+  // The run's conversation, or one of the core's tabs (Memory, Routines, Access).
+  const [pane, setPane] = useState<"run" | AgentTab>("run");
 
   const harness = agent?.harnessName ?? run?.harnessName ?? "";
   const space = spaceLabel(agent?.spaceName ?? run?.spaceName ?? "");
@@ -363,8 +369,53 @@ function AgentDetail({ agent, run, runRef }: { agent: AgentSummary | null; run: 
           {needsAgentKey(agent.lastError) ? <AgentKeysLink size="sm" /> : null}
         </div>
       ) : null}
-      <DetailBody agent={agent} run={run} hasRun={runRef !== null} timeline={timeline} onOpenLink={(url) => void openExternal(url)} />
+      {detail.view ? (
+        <AgentTabs
+          tabs={[{ tab: "run", label: "Conversation" }, ...detail.view.tabs]}
+          selected={pane}
+          onSelect={(tab) => {
+            setPane(tab);
+            if (tab !== "run") detail.act({ type: "set-tab", tab });
+          }}
+        />
+      ) : null}
+      {pane !== "run" && detail.view ? (
+        <AgentPanel tab={pane} detail={detail} />
+      ) : (
+        <DetailBody agent={agent} run={run} hasRun={runRef !== null} timeline={timeline} onOpenLink={(url) => void openExternal(url)} />
+      )}
     </>
+  );
+}
+
+function AgentTabs({
+  tabs,
+  selected,
+  onSelect,
+}: {
+  tabs: { tab: "run" | AgentTab; label: string }[];
+  selected: "run" | AgentTab;
+  onSelect: (tab: "run" | AgentTab) => void;
+}) {
+  return (
+    <div role="tablist" aria-label="Agent" className="flex shrink-0 gap-1 border-b bg-card px-4">
+      {tabs.map((t) => (
+        <button
+          key={t.tab}
+          type="button"
+          role="tab"
+          aria-selected={selected === t.tab}
+          onClick={() => onSelect(t.tab)}
+          data-agent-tab={t.tab}
+          className={cn(
+            "-mb-px cursor-default border-b-2 border-transparent px-2 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:text-foreground",
+            selected === t.tab && "border-foreground text-foreground",
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -385,7 +436,7 @@ function DetailBody({
     return (
       <Centered title={agent?.state === "paused" ? `${agent.name} is paused` : "No runs yet"}>
         {agent?.state === "paused"
-          ? `Its home is saved and its routines are on hold. Resume it to let it work in ${spaceLabel(agent.spaceName)} again.`
+          ? `Its home is saved. Resume it to let it work in ${spaceLabel(agent.spaceName)} again.`
           : `Runs show up here once ${agent?.name ?? "this agent"} starts working.`}
       </Centered>
     );

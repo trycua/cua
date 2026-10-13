@@ -51,10 +51,10 @@ fn def() -> &'static ToolDef {
             A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "value"],
+            "required": ["value"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "window_id": {
                     "type": "integer",
                     "description": "Window ID. Omit with element_token."
@@ -223,6 +223,9 @@ impl Tool for SetValueTool {
                     "verified": verified,
                     "effect": if verified { "confirmed" } else { "unverifiable" },
                 });
+                if let Some(edited) = outcome.document_edited {
+                    structured["document_key_edit_sent"] = serde_json::json!(edited);
+                }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
                         "recommended": "px",
@@ -335,6 +338,9 @@ struct SetValueOutcome {
     /// The read-back still showed the old value after a short settle: the app
     /// took the accessibility write but did not apply it.
     not_applied: bool,
+    /// The document's edited mark after the write; `None` outside a
+    /// document or when the value did not move.
+    document_edited: Option<bool>,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -375,6 +381,7 @@ fn set_value_blocking(
                 verified: None,
                 changed: None,
                 not_applied: false,
+                document_edited: None,
             }
         })
     } else {
@@ -432,13 +439,24 @@ fn set_value_blocking(
                 (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
                 (None, _) => " Value is not readable through AX; could not confirm.",
             };
+            // An AX write bypasses NSTextView's edit model, so a document is
+            // not marked edited and would never save the new text (DS-07).
+            let document = if changed == Some(true) {
+                unsafe { crate::document_edit::ensure_marked_after_ax_write(pid, element, true) }
+            } else {
+                crate::document_edit::DocumentEdited::NotADocument
+            };
             Ok(SetValueOutcome {
-                detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
+                detail: format!(
+                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{}",
+                    document.note()
+                ),
                 verified,
                 changed,
                 // A secure text field reads back empty or masked, so its
                 // read-back proves nothing either way.
                 not_applied: !secure && write_not_applied(verified, changed),
+                document_edited: document.structured(),
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
@@ -454,6 +472,7 @@ fn set_value_blocking(
                     verified,
                     changed,
                     not_applied: false,
+                    document_edited: None,
                 })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
@@ -1225,6 +1244,7 @@ mod tests {
             verified: Some(true),
             changed: Some(true),
             not_applied: false,
+            document_edited: None,
         };
         apply_surface_trust(&mut outcome, true);
         assert_eq!(outcome.verified, Some(false));
@@ -1239,6 +1259,7 @@ mod tests {
             verified: Some(true),
             changed: Some(true),
             not_applied: false,
+            document_edited: None,
         };
         apply_surface_trust(&mut outcome, false);
         assert_eq!(outcome.verified, Some(true));
@@ -1253,6 +1274,7 @@ mod tests {
             verified: Some(false),
             changed: Some(false),
             not_applied: false,
+            document_edited: None,
         };
         apply_verification_label(&mut outcome);
         assert_eq!(

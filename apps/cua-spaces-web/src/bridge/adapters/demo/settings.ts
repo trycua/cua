@@ -8,7 +8,8 @@
  */
 
 import { HostError } from "../../adapter";
-import type { DevicesInput } from "../../contracts/devices";
+import type { DeviceInput, DevicesInput, PairingCode } from "../../contracts/devices";
+import type { MachineRow } from "../../contracts/host";
 import type { NotificationInput } from "../../contracts/notifications";
 import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, StorageInput } from "../../contracts/settings";
 import { NO_EXPERIMENTS } from "../../contracts/volume";
@@ -31,7 +32,26 @@ export interface DemoSettingsContext {
   experiments?: Experiments;
   /** The machine the demo runs on (a Mac unless the shell says). */
   platform?: DemoPlatform;
+  /** A machine joined with a pairing code: the host lists it from now on. */
+  addMachine?: (machine: MachineRow) => void;
+  /** This device is not on the relay until Enroll… signs in again. */
+  unenrolled?: boolean;
 }
+
+/** How many times "Add a machine" reads the codes before the demo's other
+ * computer runs the command (about ten seconds at its three-second poll). */
+export const DEMO_PAIRING_POLLS = 3;
+
+/** The computer the demo adds with a pairing code. */
+export const DEMO_PAIRED_MACHINE: MachineRow = {
+  id: "m_pair_demo",
+  name: "Office PC",
+  via: "relay",
+  online: true,
+  os: "linux",
+  model: "Ubuntu 24.04",
+  limits: [],
+};
 
 type Ops = SettingsOperations & NotificationsOperations;
 type Handlers = { [K in keyof Ops]: (args: Ops[K]["args"]) => Promise<Ops[K]["result"]> | Ops[K]["result"] };
@@ -39,13 +59,16 @@ type Handlers = { [K in keyof Ops]: (args: Ops[K]["args"]) => Promise<Ops[K]["re
 const DAY = 86_400;
 const GIB = 1024 ** 3;
 
-/** The account's devices: this Mac, a Linux desktop, one waiting, one due. */
-export function demoDevices(nowMs: number): DevicesInput {
+/** This Mac, enrolled. */
+const thisDemoDevice = (now: number): DeviceInput => ({ id: "dev_mac", name: "MacBook Pro", state: "enrolled", current: true, platform: "macos", enrolledUntil: now + 24 * DAY, lastSeen: now - 60 });
+
+/** The account's devices: this Mac (unless not enrolled yet), a Linux desktop, one waiting, one due. */
+export function demoDevices(nowMs: number, unenrolled = false): DevicesInput {
   const now = Math.floor(nowMs / 1000);
   return {
     localDeviceId: "dev_mac",
     devices: [
-      { id: "dev_mac", name: "MacBook Pro", state: "enrolled", current: true, platform: "macos", enrolledUntil: now + 24 * DAY, lastSeen: now - 60 },
+      ...(unenrolled ? [] : [thisDemoDevice(now)]),
       { id: "dev_studio", name: "Studio", state: "enrolled", platform: "linux", enrolledUntil: now + 12 * DAY, lastSeen: now - 3 * 3600 },
       { id: "dev_work", name: "Work laptop", state: "pending", platform: "windows" },
       { id: "dev_old", name: "Old laptop", state: "expired", platform: "linux", enrolledUntil: now - 2 * DAY, lastSeen: now - 33 * DAY },
@@ -102,7 +125,18 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
   let autoCheck = true;
   let autoInstall = false;
   let experiments: Experiments = { ...NO_EXPERIMENTS, ...ctx.experiments };
-  let devices = demoDevices(now());
+  let devices = demoDevices(now(), ctx.unenrolled);
+  // One code made earlier (`cua host pair`) that nobody used yet; only the
+  // codes made here join a computer.
+  const t0 = Math.floor(now() / 1000);
+  let pairing: { code: PairingCode; polls: number; joins: boolean }[] = [
+    {
+      code: { id: "pc_demo0", code: null, url: null, installSh: null, installPowershell: null, state: "active", team: null, createdAt: t0 - 600, expiresAt: t0 + 1200, usedAt: null, machine: null },
+      polls: 0,
+      joins: false,
+    },
+  ];
+  let pairingSeq = 0;
   let feed = demoNotifications(feedEpoch(now()));
   const platform = ctx.platform ?? MAC_DEMO_PLATFORM;
   const machine = demoMachine(platform);
@@ -181,7 +215,14 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your devices", "signed_out");
       return structuredClone(devices);
     },
-    "devices.enroll": () => ({ enrolled: true, code: null }),
+    // Signing in again enrolls this device at once.
+    "devices.enroll": () => {
+      if (!devices.devices?.some((d) => d.id === "dev_mac")) {
+        devices = { ...devices, devices: [thisDemoDevice(Math.floor(now() / 1000)), ...(devices.devices ?? [])] };
+        audit("device_enrolled", "dev_mac");
+      }
+      return { enrolled: true, code: null };
+    },
     "devices.checkEnrolled": () => true,
     "devices.approve": async ({ code, deviceId }) => {
       await wait(stepMs);
@@ -208,6 +249,52 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
     "devices.confirmMachine": ({ id }) => {
       devices = { ...devices, machines: devices.machines?.map((m) => (m.id === id ? { ...m, confirmed: true } : m)) };
+      return null;
+    },
+
+    // Works like the relay: one code per machine, 30 minutes, shown once.
+    // The demo's other computer runs the command after a few reads.
+    "devices.createPairingCode": async ({ team }) => {
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to add a machine", "signed_out");
+      await wait(stepMs / 2);
+      const t = Math.floor(now() / 1000);
+      pairingSeq += 1;
+      const code = `K7QM-4XPB-${["2RHD", "9TCW", "5JNF", "8LGV"][(pairingSeq - 1) % 4]}`;
+      const made: PairingCode = {
+        id: `pc_demo${pairingSeq}`,
+        code,
+        url: `https://spaces.cua.ai/add/${code}`,
+        installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
+        installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
+        state: "active",
+        team: team ?? null,
+        createdAt: t,
+        expiresAt: t + 30 * 60,
+        usedAt: null,
+        machine: null,
+      };
+      pairing = [{ code: made, polls: 0, joins: true }, ...pairing];
+      return structuredClone(made);
+    },
+    "devices.pairingCodes": () => {
+      const t = Math.floor(now() / 1000);
+      pairing = pairing.map((p) => {
+        const c = p.code;
+        if (c.state === "active" && t >= c.expiresAt) return { ...p, code: { ...c, state: "expired" } };
+        if (c.state !== "active" || !p.joins) return p;
+        const polls = p.polls + 1;
+        if (polls < DEMO_PAIRING_POLLS) return { ...p, polls };
+        ctx.addMachine?.({ ...DEMO_PAIRED_MACHINE, lastSeen: t });
+        return { ...p, polls, code: { ...c, state: "used", usedAt: t, machine: DEMO_PAIRED_MACHINE.id } };
+      });
+      // Listed without the codes, as the relay lists them.
+      return pairing.map(({ code: c }) => ({ ...c, code: null, url: null, installSh: null, installPowershell: null }));
+    },
+    "devices.revokePairingCode": ({ id }) => {
+      const p = pairing.find((x) => x.code.id === id);
+      if (!p) throw new HostError(`no pairing code ${id}`, "not_found");
+      if (p.code.state !== "active") throw new HostError(`This code was already ${p.code.state}.`, "conflict");
+      pairing = pairing.map((x) => (x === p ? { ...x, code: { ...x.code, state: "revoked" } } : x));
       return null;
     },
 

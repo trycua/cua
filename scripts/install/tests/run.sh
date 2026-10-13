@@ -209,6 +209,25 @@ check "CUA_INSTALL_NONINTERACTIVE + --select host: runs 'cua host setup'" sh -c 
 inst -- --yes --only host --prefix "$work/h2"
 check "--only host: runs 'cua host setup', no app" sh -c "[ $status = 0 ] && grep -qx 'host setup' '$home/cua.log' && [ ! -e '$work/h2/bin/cua-spaces' ]"
 
+inst -- --pair k7qm-4xpb-2rhd --prefix "$work/pr1"
+check "--pair: runs 'cua host setup --pair', no sign-in, no checklist" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair k7qm-4xpb-2rhd' '$home/cua.log' && ! grep -q 'auth login' '$home/cua.log' && grep -q 'This machine is added' '$work/out'"
+
+inst -- --pair K7QM-4XPB-2RHD --relay https://relay.example.com --cli-only --prefix "$work/pr2"
+check "--pair --relay --cli-only: passes the relay on" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com' '$home/cua.log'"
+
+inst -- --pair 'K7QM;rm -rf /' --prefix "$work/pr3"
+check "--pair: refuses a code with shell characters before installing" sh -c "[ $status != 0 ] && grep -q 'not a pairing code' '$work/out' && [ ! -e '$work/pr3/bin/cua' ]"
+
+inst -- --pair K7QM-4XPB-2RHD --relay http://evil.example --prefix "$work/pr4"
+check "--pair: refuses a plain-http relay" sh -c "[ $status != 0 ] && grep -q 'must be an https' '$work/out'"
+
+inst -- --pair K7QM-4XPB-2RHD --relay http://localhost.evil.example --prefix "$work/pr5"
+check "--pair: refuses a plain-http relay that only starts like localhost" sh -c "[ $status != 0 ] && grep -q 'must be an https' '$work/out'"
+
+inst -- --pair K7QM-4XPB-2RHD --relay http://127.0.0.1:8080 --prefix "$work/pr6"
+check "--pair: allows a local plain-http relay" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --relay http://127.0.0.1:8080' '$home/cua.log'"
+check "--pair: no sign-in next steps" sh -c "! grep -q 'cua auth login' '$work/out'"
+
 inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver,host --prefix "$work/dr"
 check "--dry-run prints the driver, agents and host steps" sh -c "grep -q 'dry-run. download $driver_url' '$work/out' && grep -q 'dry-run. bash cua-driver-install.sh --bin-dir' '$work/out' && grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes' '$work/out' && grep -q 'dry-run. .* host setup' '$work/out'"
 check "--dry-run runs nothing" sh -c "[ ! -e '$home/cua.log' ] && [ ! -e '$home/driver.log' ] && [ ! -e '$work/dr' ]"

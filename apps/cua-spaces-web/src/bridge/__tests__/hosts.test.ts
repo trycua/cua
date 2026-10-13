@@ -270,6 +270,13 @@ describe("electron adapter", () => {
     expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "spaces.openStream", args: { spaceId: "local:a", tier: "tile" } }));
   });
 
+  it("asks the shell for the relay allowance (the SwiftUI app does not read it yet)", async () => {
+    const usage = { metered: true, period: "2026-10", plan: "free", team: null, liveSessions: 1, liveSessionsLimit: 2, hoursUsed: 6.5, hoursLimit: 20, myHoursUsed: 6.5, softLimitReached: false, reasons: [], upgradeUrl: null };
+    const { win, invoke } = electronHost(bridged(() => ({ ok: true, result: usage })));
+    expect(await createElectronAdapter(win).call("relay.usage", {})).toEqual(usage);
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_BRIDGE_CHANNEL, expect.objectContaining({ method: "relay.usage" }));
+  });
+
   it("reads the first run from the shell and finishes it there (the SwiftUI app's is native)", async () => {
     const sent: [string, unknown][] = [];
     let completed = false;
@@ -495,6 +502,14 @@ describe("webkit adapter", () => {
     const snap = await createWebkitAdapter(win).call("settings.get", {});
     expect(snap.values).toMatchObject({ menuBar: true, telemetry: false, defaultLocation: "cloud", launchAtLogin: null, updateChannel: null });
     expect(snap.defaultLocation).toMatchObject({ source: "env", env: "CUA_ON" });
+  });
+
+  it("reads the global shortcut the host registered, and none from a host without one", async () => {
+    const taken = { label: "\u2318\u21e7Space", registered: false };
+    const withShortcut = createWebkitAdapter(webkitHost(() => ok({ ...settingsPage, globalShortcut: taken })).win);
+    expect((await withShortcut.call("settings.get", {})).globalShortcut).toEqual(taken);
+    const without = createWebkitAdapter(webkitHost(() => ok(settingsPage)).win);
+    expect((await without.call("settings.get", {})).globalShortcut).toBeNull();
   });
 
   it("reads launch at login and the update channel when the host sends them, and sets them by row", async () => {
@@ -788,13 +803,29 @@ describe("webkit adapter", () => {
         sections: [
           { id: "general", rows: [toggle("auto-connect", false)] },
           { id: "runtimes", rows: [choice("macos-runtime", "builtin"), choice("linux-runtime", "system")] },
-          { id: "keyvault", rows: [toggle("keyvault-auto-wipe", true)] },
+          {
+            id: "keyvault",
+            rows: [
+              toggle("keyvault-auto-wipe", true),
+              toggle("keyvault-unlock-prompt", false),
+              toggle("keyvault-site-icons", true),
+              { id: "keyvault-protection:Unlock", kind: "text", label: "Unlock", value: "Mac login", enabled: true, options: [] },
+            ],
+          },
         ],
       },
     };
     const { win, sent } = webkitHost(() => ok(page));
     const a = createWebkitAdapter(win);
-    expect((await a.call("settings.get", {})).hostSettings).toEqual({ lumeSource: "builtin", linuxSource: "system", autoConnect: false, keyvaultAutoWipe: true });
+    expect((await a.call("settings.get", {})).hostSettings).toEqual({
+      lumeSource: "builtin",
+      linuxSource: "system",
+      autoConnect: false,
+      keyvaultAutoWipe: true,
+      keyvaultUnlockPrompt: false,
+      keyvaultSiteIcons: true,
+      keyvaultProtection: [{ label: "Unlock", value: "Mac login" }],
+    });
     await a.call("settings.choose", { row: "macos-runtime", option: "system" });
     expect(sent.slice(-2).map((r) => [r.method, r.args])).toEqual([
       ["settings.choose", { row: "macos-runtime", option: "system" }],
@@ -802,7 +833,15 @@ describe("webkit adapter", () => {
     ]);
     // A host without these rows has none of them.
     const { win: bare } = webkitHost(() => ok(settingsPage));
-    expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({ lumeSource: null, linuxSource: null, autoConnect: null, keyvaultAutoWipe: null });
+    expect((await createWebkitAdapter(bare).call("settings.get", {})).hostSettings).toEqual({
+      lumeSource: null,
+      linuxSource: null,
+      autoConnect: null,
+      keyvaultAutoWipe: null,
+      keyvaultUnlockPrompt: null,
+      keyvaultSiteIcons: null,
+      keyvaultProtection: null,
+    });
   });
 
   it("maps Teleport's records onto the core's words, and keeps the host's keys for the plan and run", async () => {

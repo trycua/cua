@@ -596,7 +596,7 @@ impl DeviceAuth {
     /// identically on the retry (its session fails for the same reason
     /// again), so this never masks a real enrollment problem: it only
     /// costs one extra round trip, and only right after a restart.
-    async fn with_session_retry<T, Fut>(
+    pub(crate) async fn with_session_retry<T, Fut>(
         &self,
         call: impl Fn(RelayClient, String) -> Fut,
     ) -> Result<T>

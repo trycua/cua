@@ -1024,6 +1024,10 @@
        "description": "Scale cursor move time with distance and target size"
       },
       {
+       "command": "cua-driver config set cursor.motion.timing native",
+       "description": "Drop the 600 ms floor of the default steady timing"
+      },
+      {
        "command": "cua-driver config set cursor.motion.effects.trail true",
        "description": "Turn the cursor trail on by default"
       }
@@ -2268,5 +2272,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.34.0"
+ "version": "0.35.1"
 }

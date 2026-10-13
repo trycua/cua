@@ -209,7 +209,8 @@ struct ParityTests {
         }
         return AppLocalStorage(reserveBytes: (s["reserveBytes"] as! NSNumber).uint64Value,
                                lume: volume(s["lume"]), qemu: volume(s["qemu"]),
-                               container: volume(s["container"]), pulled: s["pulled"] as! [String])
+                               container: volume(s["container"]), pulled: s["pulled"] as! [String],
+                               linuxRuntimeDownloadBytes: (s["linuxRuntimeDownloadBytes"] as? NSNumber)?.uint64Value ?? 0)
     }
 
     /// `id: Label [placeholder] !error (advanced)`, as `parity.rs` writes it.

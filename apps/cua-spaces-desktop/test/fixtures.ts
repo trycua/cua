@@ -18,6 +18,7 @@ import type {
   SpaceAppIconRequest,
   SpaceCreateProgress,
   SpaceLike,
+  SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
 import type { LocalRuntimes, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
@@ -249,6 +250,10 @@ export class FixtureSpacesBackend implements SpacesBackend {
   }
   teleportHandle() {
     return this.teleport;
+  }
+  /** Presence: no Space here has it. */
+  async joinPresence(id: string): Promise<SpacePresenceLike> {
+    throw new Error(`${id} has no presence`);
   }
   async appIcons(_id: string, requests: SpaceAppIconRequest[]) {
     this.iconRequests.push(requests);

@@ -81,7 +81,7 @@ fn schema_delivery_mode() -> Value {
         "type": "string",
         "enum": ["background", "foreground"],
         "default": "background",
-        "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
+        "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
     })
 }
 
@@ -625,7 +625,13 @@ impl BrowserPrepareTool {
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
-                ambiguity is refused."
+                ambiguity is refused. Where attaching would bring the browser in front of \
+                the user's app (macOS Chrome shows its own remote-debugging prompt in front \
+                for every new connection), existing-profile attachment refuses with \
+                background_unavailable unless delivery_mode is \"foreground\" (the app that \
+                was in front is brought back afterwards) or the browser window is on another \
+                Space than the user's, where it attaches in the background while the driver \
+                reverts the browser's own brief activations."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -654,6 +660,12 @@ impl BrowserPrepareTool {
                         },
                         "required": ["kind"],
                         "additionalProperties": false
+                    },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "default": "background",
+                        "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
                     },
                     "session": schema_session(),
                 },
@@ -704,6 +716,10 @@ impl Tool for BrowserPrepareTool {
             },
         };
         let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let foreground = match parse_delivery_mode(&args) {
+            Ok(foreground) => foreground,
+            Err(error) => return ToolResult::error(error),
+        };
         let pid = match args.get("pid") {
             None => None,
             Some(_) => match args.require_i64("pid") {
@@ -726,6 +742,7 @@ impl Tool for BrowserPrepareTool {
             strategy,
             profile,
             allow_launch,
+            foreground,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -750,6 +767,24 @@ impl Tool for BrowserPrepareTool {
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))
+            }
+            Err(refusal) if refusal.code == BrowserRefusalCode::BackgroundUnavailable => {
+                let reason = refusal
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.get("limitation"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("attaching would bring the browser to the front")
+                    .to_owned();
+                crate::delivery::background_unavailable_result(
+                    format!("browser_prepare refused: {}", refusal.message),
+                    refusal.code.as_str(),
+                    reason,
+                    json!({
+                        "status": "refused",
+                        "refusal": refusal,
+                    }),
+                )
             }
             Err(refusal) => refusal.to_tool_result(),
         }
@@ -907,7 +942,8 @@ impl BrowserClickTool {
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture unless \
                 delivery_mode=\"foreground\" accepts that the browser window may \
-                activate (Linux Chromium; for example a browser inside a sandbox). \
+                activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; \
+                for example a browser inside a sandbox). \
                 input_route=\"dom_event\" (synthetic \
                 el.click(), ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \

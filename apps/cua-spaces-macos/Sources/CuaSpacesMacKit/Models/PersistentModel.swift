@@ -146,7 +146,10 @@ public final class PersistentModel {
         return try await call("agent_events", args)
     }
 
-    private func loadDetail(_ name: String) async throws {
+    /// The selected agent's home (`agents/<name>/`, recursively, files only),
+    /// its routines, every computer grant and the recent audit: the core's
+    /// input records (`AgentsInput`). The web UI's `agents.detail` answers it.
+    func detail(_ name: String) async throws -> [String: Any] {
         var files: [[String: Any]] = []
         var queue = ["agents/\(name)/"]
         var folders = 0
@@ -163,10 +166,47 @@ public final class PersistentModel {
              "enabled": (r["isEnabled"] as? Bool) ?? true] as [String: Any]
         }
         let access = try await call("computer_access_list", ["audit": 20])
-        agentsInput["home"] = files
-        agentsInput["routines"] = routines
-        agentsInput["grants"] = access.arr("grants").map { ["agent": $0["agent"] ?? "", "machine": $0["machine"] ?? "", "revoked": $0["revoked"] ?? false] }
-        agentsInput["audit"] = access.arr("audit").map { ["tsMs": $0["ts_ms"] ?? 0, "action": $0["action"] ?? "", "principal": $0["principal"] ?? "", "path": $0["path"] ?? "", "detail": $0["detail"] ?? ""] }
+        return [
+            "home": files,
+            "routines": routines,
+            "grants": access.arr("grants").map { ["agent": $0["agent"] ?? "", "machine": $0["machine"] ?? "", "revoked": $0["revoked"] ?? false] },
+            "audit": access.arr("audit").map { ["tsMs": $0["ts_ms"] ?? 0, "action": $0["action"] ?? "", "principal": $0["principal"] ?? "", "path": $0["path"] ?? "", "detail": $0["detail"] ?? ""] },
+        ]
+    }
+
+    private func loadDetail(_ name: String) async throws {
+        for (k, v) in try await detail(name) { agentsInput[k] = v }
+    }
+
+    /// A home file's text and versions (`OpenFileInput`).
+    func readFile(_ path: String) async throws -> [String: Any] {
+        async let f = call("volume_read", ["path": path])
+        async let h = call("volume_history", ["path": path])
+        let (file, history) = try await (f, h)
+        let binary = file["encoding"] as? String == "base64"
+        return ["path": path, "text": binary ? "" : (file["content"] ?? ""), "binary": binary,
+                "versions": history.arr("versions").map { ["version": $0["version"] ?? "", "modifiedMs": $0["modified_ms"] ?? 0, "deleted": $0["deleted"] ?? false, "latest": $0["latest"] ?? false] }]
+    }
+
+    /// Runs one of the core's changes (`AgentsRequest`) with the daemon's tools.
+    func perform(_ request: AppAgentsRequest) async throws {
+        switch request {
+        case .load, .readFile: break
+        case let .pause(name): _ = try await call("agent_pause", ["name": name])
+        case let .resume(name): _ = try await call("agent_resume", ["name": name])
+        case let .restore(path, version):
+            _ = try await call("volume_restore", ["path": path, "version": version])
+        case let .addRoutine(agent, title, prompt, everyMinutes, dailyAt, weeklyOn):
+            var args: [String: Any] = ["agent": agent, "title": title, "prompt": prompt]
+            if let m = everyMinutes { args["every_minutes"] = m }
+            if let d = dailyAt { args["daily_at"] = d }
+            if let w = weeklyOn { args["weekly_on"] = w }
+            _ = try await call("routine_add", args)
+        case let .setRoutine(id, enabled): _ = try await call("routine_set_enabled", ["id": id, "enabled": enabled])
+        case let .removeRoutine(id): _ = try await call("routine_remove", ["id": id])
+        case let .allow(agent, machine): _ = try await call("computer_access_grant", ["agent": agent, "machine": machine])
+        case let .revoke(agent, machine): _ = try await call("computer_access_revoke", ["agent": agent, "machine": machine])
+        }
     }
 
     public func send(_ action: AppAgentsAction) async {
@@ -176,33 +216,12 @@ public final class PersistentModel {
         do {
             switch request {
             case let .load(name): try await loadDetail(name)
-            case let .readFile(path):
-                async let f = call("volume_read", ["path": path])
-                async let h = call("volume_history", ["path": path])
-                let (file, history) = try await (f, h)
-                let binary = file["encoding"] as? String == "base64"
-                agentsInput["file"] = ["path": path, "text": binary ? "" : (file["content"] ?? ""), "binary": binary,
-                                       "versions": history.arr("versions").map { ["version": $0["version"] ?? "", "modifiedMs": $0["modified_ms"] ?? 0, "deleted": $0["deleted"] ?? false, "latest": $0["latest"] ?? false] }] as [String: Any]
-            case let .pause(name):
-                _ = try await call("agent_pause", ["name": name]); await loadAgents()
-            case let .resume(name):
-                _ = try await call("agent_resume", ["name": name]); await loadAgents()
-            case let .restore(path, version):
-                _ = try await call("volume_restore", ["path": path, "version": version])
-            case let .addRoutine(agent, title, prompt, everyMinutes, dailyAt, weeklyOn):
-                var args: [String: Any] = ["agent": agent, "title": title, "prompt": prompt]
-                if let m = everyMinutes { args["every_minutes"] = m }
-                if let d = dailyAt { args["daily_at"] = d }
-                if let w = weeklyOn { args["weekly_on"] = w }
-                _ = try await call("routine_add", args)
-            case let .setRoutine(id, enabled): _ = try await call("routine_set_enabled", ["id": id, "enabled": enabled])
-            case let .removeRoutine(id): _ = try await call("routine_remove", ["id": id])
-            case let .allow(agent, machine): _ = try await call("computer_access_grant", ["agent": agent, "machine": machine])
-            case let .revoke(agent, machine): _ = try await call("computer_access_revoke", ["agent": agent, "machine": machine])
-            }
-            switch request {
-            case .load, .readFile, .pause, .resume: break
-            default: if let n = agentsState.selected { try? await loadDetail(n) }
+            case let .readFile(path): agentsInput["file"] = try await readFile(path)
+            case .pause, .resume:
+                try await perform(request); await loadAgents()
+            default:
+                try await perform(request)
+                if let n = agentsState.selected { try? await loadDetail(n) }
             }
             agentsState = appAgentsReduce(input: typedAgents(), state: agentsState, action: .done)
         } catch {
@@ -309,6 +328,8 @@ final class AgentNotifier {
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
         let center = UNUserNotificationCenter.current()
+        // Its click opens the main UI too.
+        center.delegate = DeviceNotifier.shared
         let content = UNMutableNotificationContent()
         content.title = note.title
         content.body = note.body

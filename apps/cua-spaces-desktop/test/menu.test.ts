@@ -3,7 +3,7 @@
 
 // The application menu (menu.ts), as the SwiftUI app's: Settings… (⌘,) in
 // the app menu, New Space (⌘N) in File, Enter Full Screen only in View (no
-// reload or zoom outside development), "Cua Spaces Help" opening the docs,
+// reload or zoom outside development), Getting Started and "Cua Spaces Help" (the docs) in Help,
 // and no "Quit and Keep Windows"; Windows and Linux carry the same items.
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
@@ -26,7 +26,7 @@ const names = (items: Item[]) => items.map((i) => (i.type === "separator" ? "---
 
 function actions() {
   const log: string[] = [];
-  return { log, actions: { newSpace: () => log.push("new"), settings: () => log.push("settings") } };
+  return { log, actions: { newSpace: () => log.push("new"), settings: () => log.push("settings"), gettingStarted: () => log.push("getting-started") } };
 }
 
 describe("the macOS menu", () => {
@@ -57,8 +57,10 @@ describe("the macOS menu", () => {
     expect(log).toEqual(["new"]);
     expect(names(sub(t, "View"))).toEqual(["togglefullscreen"]);
     const help = sub(t, "help");
-    expect(names(help)).toEqual(["Cua Spaces Help"]);
+    expect(names(help)).toEqual(["Getting Started", "Cua Spaces Help"]);
     (help[0]!.click as () => void)();
+    expect(log).toEqual(["new", "getting-started"]);
+    (help[1]!.click as () => void)();
     expect(openExternal).toHaveBeenCalledWith(HELP_URL);
   });
 
@@ -91,7 +93,7 @@ describe("the Windows and Linux menu", () => {
       for (const i of file) (i.click as (() => void) | undefined)?.();
       expect(log).toEqual(["new", "settings"]);
       expect(names(sub(t, "View"))).toEqual(["togglefullscreen"]);
-      expect(names(sub(t, "help"))).toEqual(["Cua Spaces Help"]);
+      expect(names(sub(t, "help"))).toEqual(["Getting Started", "Cua Spaces Help"]);
     }
   });
 });

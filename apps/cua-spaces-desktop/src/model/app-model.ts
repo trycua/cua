@@ -777,5 +777,5 @@ export class AppModel {
 /** The SDK's storage probe as the wizard env takes it. */
 export function wizardStorage(s: LocalStorage): AppLocalStorage {
   const volume = (v: LocalStorage["lume"]) => (v ? { availableBytes: v.availableBytes, totalBytes: v.totalBytes, name: v.name } : undefined);
-  return { reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu), container: volume(s.container), pulled: s.pulled };
+  return { reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu), container: volume(s.container), pulled: s.pulled, linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes };
 }

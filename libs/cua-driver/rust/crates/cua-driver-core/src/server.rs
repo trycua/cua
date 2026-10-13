@@ -256,6 +256,9 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
+            // Not a browser-specific code: the shared background refusal is
+            // classified through `ToolErrorClass::BackgroundUnavailable`.
+            BrowserRefusalCode::BackgroundUnavailable => Self::Other,
         }
     }
 }

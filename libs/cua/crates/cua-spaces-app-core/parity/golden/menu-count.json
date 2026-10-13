@@ -17,15 +17,15 @@
     {
       "agree": true,
       "case": "this machine hosting",
-      "count": 1,
+      "count": 0,
       "menu": [
-        "status: 1 Space (disabled)",
+        "status: No Spaces (disabled)",
         "open: Open Cua Spaces",
         "new-space: New Space…",
         "settings: Settings…",
         "quit: Quit Cua Spaces"
       ],
-      "notch": "1"
+      "notch": "0"
     },
     {
       "agree": true,
@@ -69,15 +69,15 @@
     {
       "agree": true,
       "case": "remote spaces and hosting",
-      "count": 3,
+      "count": 2,
       "menu": [
-        "status: 3 Spaces (disabled)",
+        "status: 2 Spaces (disabled)",
         "open: Open Cua Spaces",
         "new-space: New Space…",
         "settings: Settings…",
         "quit: Quit Cua Spaces"
       ],
-      "notch": "3"
+      "notch": "2"
     },
     {
       "agree": true,

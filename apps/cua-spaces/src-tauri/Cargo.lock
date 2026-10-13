@@ -1653,6 +1653,7 @@ name = "cua-spaces-app-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cua-home",
  "cua-keyvault",
  "cua-telemetry",
  "serde",

@@ -84,6 +84,8 @@ public final class TeleportModel {
     private var sdkEntries: [String: TeleportCatalogEntry] = [:]
     private var sdkPlan: TeleportPlan?
     /// A run started (true) or ended (false): the notch shows a transfer.
+    /// An app was teleported (the getting-started checklist).
+    public var onTeleported: (() -> Void)?
     public var onTransfer: ((Bool) -> Void)?
     /// Streams one of the Space's windows here (From <Space>).
     public var onStreamWindow: ((String) -> Void)?
@@ -462,6 +464,7 @@ public final class TeleportModel {
                 listener: RunEvents { [weak self] event in
                     Task { @MainActor in self?.send(.progress(event: appTeleportRunEvent(event: event))) }
                 })
+            onTeleported?()
             send(.finished(report: AppTeleportRunReport(
                 appId: report.appId, installed: report.installed, sent: report.sent,
                 imported: report.imported, skipped: report.skipped, launched: report.launched)))

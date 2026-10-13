@@ -10,6 +10,7 @@ import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
+import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
 import { installBridgeIpc } from "./bridge/ipc";
@@ -21,7 +22,7 @@ import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, notchThumbnail, openSpaceFromNotch, type NotchFeedUi } from "./notch-feed";
+import { dropOnSpace, feedNotch, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
@@ -86,7 +87,7 @@ function migrateSwiftApp() {
 }
 
 /** The native host: the library, the model on it and the bridge. */
-async function startNativeHost(showRoute: (route: string) => void) {
+async function startNativeHost(showRoute: (route: string) => void, globalShortcut: GlobalShortcut | null) {
   const dir = nativeDir({
     platform: process.platform,
     arch: process.arch,
@@ -124,7 +125,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute }),
+    system: makeSystem({ native, showRoute, globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -182,12 +183,17 @@ async function startNativeHost(showRoute: (route: string) => void) {
       openAccess: () => showRoute("/keyvault?view=access"),
       // Hides the indicator and the tiles' key; nothing is revoked or wiped.
       dismissAccess: () => model.keyvault.dismiss(),
-      // No window-drag monitor yet (no `teleport` below), so no drag commits.
-      teleport: (spaceId) => showRoute(`/spaces/${encodeURIComponent(spaceId)}`),
+      // A window dragged onto a tile: the Teleport review for its app there.
+      teleport: (spaceId, app) => void teleportFromNotch(model, notchUi, spaceId, app),
       drop: (spaceId, paths) => void dropOnSpace(model, notchUi, spaceId, paths),
     },
+    teleport: notchTeleport(() => model.backend.teleportHandle()),
   });
-  if (notch) feedNotch(notch, model);
+  if (notch) {
+    feedNotch(notch, model);
+    // Window drags need the SDK: look again once it is in.
+    if (!model.startup.isReady) model.startup.onReady.push(() => notch.recheckPermission());
+  }
   return { env, bridge, background };
 }
 
@@ -237,22 +243,30 @@ if (!app.requestSingleInstanceLock()) {
   // The page's New Space wizard; Settings (the page's own route, without reloading it).
   const newSpace = () => tellMain("spaces.newRequested", { on: null });
   const openSettings = () => tellMain("settings.openRequested");
+  const gettingStarted = () => tellMain("checklist.openRequested");
 
   app.on("second-instance", showMain);
 
   app.whenReady().then(async () => {
     migrateSwiftApp();
     initTheme();
-    installMenu({ newSpace, settings: openSettings });
+    installMenu({ newSpace, settings: openSettings, gettingStarted });
     handleViewerKeyboard();
     if (process.platform !== "darwin") handleOverlayDim();
     const { webRoot } = handleAppProtocol();
     if (process.env.CUA_SPACES_LOG_STARTUP) console.log(`[cua-spaces] serving ${webRoot}`);
 
+    // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
+    const shortcut = E2E_DEMO
+      ? null
+      : installGlobalShortcut(process.platform, () => {
+          app.focus({ steal: true });
+          showMain();
+        });
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {
-        host = await startNativeHost(showRoute);
+        host = await startNativeHost(showRoute, shortcut);
       } catch (error) {
         // A broken install: say so plainly, never show the app without its data.
         const why = error instanceof Error ? error.message : String(error);

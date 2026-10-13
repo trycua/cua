@@ -208,6 +208,21 @@ Describe 'install.ps1' {
         Join-Path $prefix 'bin/cua.exe' | Should -Not -Exist
     }
 
+    It 'dry run: -Pair installs the CLI and runs host setup with the code, no sign-in or checklist' {
+        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'https://relay.example.com' }
+        $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com'
+        $out | Should -Not -Match 'auth login'
+        $out | Should -Not -Match 'Choose what to install'
+    }
+
+    It '-Pair refuses codes and relays with shell characters' {
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM;calc' } } | Should -Throw '*not a pairing code*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://localhost.evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Relay = 'https://relay.example.com' } } | Should -Throw '*goes with -Pair*'
+    }
+
     It 'rejects -CliOnly with -AppOnly' {
         { Invoke-Installer @{ CliOnly = $true; AppOnly = $true } } | Should -Throw '*mutually exclusive*'
     }

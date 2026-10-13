@@ -202,6 +202,32 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+// ---- Getting started -----------------------------------------------------------
+
+/// The getting-started checklist's steps, in the order it lists them.
+pub const CHECKLIST_STEPS: &[&str] = &[
+    "add_machine",
+    "create_space",
+    "teleport",
+    "share",
+    "run_agent",
+];
+
+/// What happens to the checklist itself.
+const CHECKLIST_EVENTS: &[&str] = &["shown", "completed", "dismissed", "reopened"];
+
+/// One getting-started checklist event as `cua_onboarding_step`
+/// `checklist_<event>`: `shown` (first time on screen), one of
+/// [`CHECKLIST_STEPS`] (that step done, once per install), `completed`
+/// (every step done), `dismissed` or `reopened`. Anything else: nothing.
+pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
+    if CHECKLIST_STEPS.contains(&event) || CHECKLIST_EVENTS.contains(&event) {
+        vec![step(&format!("checklist_{event}"), true)]
+    } else {
+        vec![]
+    }
+}
+
 // ---- First run ---------------------------------------------------------------
 
 /// A page's telemetry name.
@@ -489,13 +515,24 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             _ => vec![],
         },
         CreateAction::Fail {
-            id, error_variant, ..
+            id,
+            error,
+            error_variant,
         } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
                 vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), error_variant, now_ms)]
+                // The shell's enum case is often `Runtime` or none: the
+                // cause the app reads from the text (Local Network, Apple's
+                // VM limit, disk) says more.
+                let variant = crate::spaces::creating::failure_variant(
+                    error,
+                    Some(&p.phase),
+                    p.gpu,
+                    error_variant,
+                );
+                vec![create_event(p, "error", stalled(p), variant, now_ms)]
             }
             _ => vec![],
         },
@@ -850,6 +887,34 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checklist_events_are_fixed_steps_in_the_schema() {
+        let all: Vec<&str> = CHECKLIST_STEPS
+            .iter()
+            .chain(CHECKLIST_EVENTS)
+            .copied()
+            .collect();
+        for e in &all {
+            assert_eq!(steps_of(&checklist(e)), [format!("checklist_{e}")]);
+            #[cfg(feature = "telemetry")]
+            assert!(
+                cua_telemetry::schema::ONBOARDING_STEPS
+                    .contains(&format!("checklist_{e}").as_str()),
+                "checklist_{e} is not in cua-telemetry's step vocabulary"
+            );
+        }
+        for bad in [
+            "",
+            "Share",
+            "checklist_share",
+            "me@example.com",
+            "/Users/x",
+            "share ",
+        ] {
+            assert!(checklist(bad).is_empty(), "{bad:?} accepted");
+        }
+    }
     use crate::drive_settings::DriveMountInput;
     use crate::model::{SpaceOs, SpaceProvider};
     use crate::onboarding::{initial, reduce};
@@ -1163,6 +1228,40 @@ mod tests {
             TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
                 if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
+        // A cause the app reads from the text replaces the shell's generic case.
+        for (error, shell, want) in [
+            (
+                "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
+                "Runtime",
+                "LocalNetwork",
+            ),
+            (
+                "lume: The number of virtual machines exceeds the limit",
+                "",
+                "VmLimit",
+            ),
+            ("something else at /Users/alice", "Runtime", "Runtime"),
+            // A specific case from the shell stays.
+            (
+                "cua-spacesd timed out",
+                "SpacesdNotAvailable",
+                "SpacesdNotAvailable",
+            ),
+        ] {
+            let failed = creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: error.into(),
+                    error_variant: shell.into(),
+                },
+                5_000,
+            );
+            assert!(matches!(
+                &failed[0],
+                TelemetrySignal::SpaceCreate { error_variant, .. } if error_variant == want
+            ));
+        }
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
         let st = CreatesState {

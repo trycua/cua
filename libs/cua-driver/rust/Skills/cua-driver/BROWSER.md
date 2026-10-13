@@ -202,9 +202,14 @@ authorize generic pixel interaction.
 On macOS this attachment cannot stay in the background. Chrome brings itself
 to the front to show its "Allow remote debugging?" prompt for every new
 DevTools connection, and turning remote debugging on needs Chrome in front.
-So when another app is in front, `browser_prepare` with
-`strategy.kind:"existing_profile"` refuses with `background_unavailable`
-before it opens a tab or connects. Pass `delivery_mode:"foreground"` only when
+When the Chrome window is on another Space than the user's, the attach runs in
+the background: the driver turns remote debugging on without bringing Chrome
+forward, and reverts Chrome's own brief activations (its consent window opens
+on Chrome's Space, out of the user's sight) within milliseconds, giving the
+user's window front and key status back. On the user's Space, while another
+app is in front, `browser_prepare` with `strategy.kind:"existing_profile"`
+refuses with `background_unavailable` before it opens a tab or connects. Keep
+or put Chrome on another Space, or pass `delivery_mode:"foreground"` only when
 nobody is using the screen or the user agreed to Chrome coming forward; the
 driver then brings the previous app back and reports
 `side_effects.restored_frontmost_app`. If the user is working in another app,

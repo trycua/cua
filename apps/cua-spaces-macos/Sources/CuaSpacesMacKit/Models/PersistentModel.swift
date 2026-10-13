@@ -328,6 +328,8 @@ final class AgentNotifier {
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
         let center = UNUserNotificationCenter.current()
+        // Its click opens the main UI too.
+        center.delegate = DeviceNotifier.shared
         let content = UNMutableNotificationContent()
         content.title = note.title
         content.body = note.body

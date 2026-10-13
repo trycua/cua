@@ -666,7 +666,11 @@ public final class AppModel {
     /// false when there is no New UI window to show it in. Set by the New UI
     /// window while the `web_ui` experiment is on.
     public var openWebNewSpace: ((_ on: String?) -> Bool)?
-    /// Closes the New UI window (the `web_ui` experiment was turned off).
+    /// Puts the New UI window in the native main window's place (the
+    /// `web_ui` experiment was turned on).
+    public var openWebUI: (() -> Void)?
+    /// Closes the New UI window and puts the native one in its place (the
+    /// `web_ui` experiment was turned off).
     public var closeWebUI: (() -> Void)?
 
     /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
@@ -842,7 +846,8 @@ public final class AppModel {
             v.map { AppStorageVolume(availableBytes: $0.availableBytes, totalBytes: $0.totalBytes, name: $0.name) }
         }
         return AppLocalStorage(reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu),
-                               container: volume(s.container), pulled: s.pulled)
+                               container: volume(s.container), pulled: s.pulled,
+                               linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes)
     }
 
     /// "Create Space": the new Space shows in the list and the notch at
@@ -1212,7 +1217,8 @@ public final class AppModel {
         saveSettings()
         telemetry?.record(signals)
         onboarding.send(.experimentsLoaded(experiments: after))
-        // New UI off: its window goes with it (the native one takes over).
+        // New UI on: its window takes the native one's place; off: the reverse.
+        if !before.webUi, after.webUi { openWebUI?() }
         if before.webUi, !after.webUi { closeWebUI?() }
         wizard.update(env: wizardEnv(from: wizard.env))
         // The Volume page went with Cua Volume: back to the Spaces.

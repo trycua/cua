@@ -203,7 +203,10 @@ Returned by [`app_onboarding_initial`](#app_onboarding_initial), [`app_onboardin
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `step` | [`AppOnboardingStep`](#apponboardingstep-enum) |  | Page. |
-| `cli_target` / `cliTarget` | `Option<String>` |  | Where `cua` was installed on first launch, when it was. |
+| `cli_target` / `cliTarget` | `Option<String>` |  | Where `cua` was installed, when it was. |
+| `cli_plan` / `cliPlan` | [`Option<AppCliInstallPlan>`](/cua-sdk/reference/spaces/app-core/about#appcliinstallplan-record) |  | The bundled `cua`'s install plan, as the shell read it. |
+| `cli_installing` / `cliInstalling` | `bool` |  | Continue on Command line: the shell is installing. |
+| `cli_error` / `cliError` | `Option<String>` |  | Why the install failed. |
 | `menu_bar` / `menuBar` | `bool` |  | Menu bar only (no notch). The same setting as Settings' "Spaces tab in the notch". |
 | `identity` | `Option<String>` |  | Signed-in identity. |
 | `agents` | `Vec<String>` |  | Agents configured. |
@@ -342,6 +345,9 @@ Returned by [`app_settings_load`](#app_settings_load).
 ```swift
 .start
 .cliInstalled(target: String?)
+.cliPlanned(plan: AppCliInstallPlan)
+.cliDone(install: Bool)
+.cliInstallFailed(error: String)
 .presentationPicked(menuBar: Bool)
 .presentationDone
 .signedIn(identity: String)
@@ -371,6 +377,9 @@ Returned by [`app_settings_load`](#app_settings_load).
 ```rust
 AppOnboardingAction::Start
 AppOnboardingAction::CliInstalled { target: Option<String> }
+AppOnboardingAction::CliPlanned { plan: AppCliInstallPlan }
+AppOnboardingAction::CliDone { install: bool }
+AppOnboardingAction::CliInstallFailed { error: String }
 AppOnboardingAction::PresentationPicked { menu_bar: bool }
 AppOnboardingAction::PresentationDone
 AppOnboardingAction::SignedIn { identity: String }
@@ -401,6 +410,9 @@ AppOnboardingAction::ExperimentsLoaded { experiments: AppExperiments }
 | --- | --- |
 | `Start` | "Get started". |
 | `CliInstalled` | The app installed its bundled `cua` on first launch (any page). Fields: `target: Option<String>` |
+| `CliPlanned` | The bundled `cua`'s install plan, read or installed (any page). Fields: `plan: AppCliInstallPlan` |
+| `CliDone` | Continue (`install`) or Skip from Command line. Fields: `install: bool` |
+| `CliInstallFailed` | The Command line page's install failed. Fields: `error: String` |
 | `PresentationPicked` | A presentation card was picked (it stays on the page). Fields: `menu_bar: bool` |
 | `PresentationDone` | Continue from the presentation page. |
 | `SignedIn` | Signed in. Fields: `identity: String` |
@@ -456,6 +468,7 @@ AppOnboardingMode::Host
 
 ```swift
 .welcome
+.cli
 .signin
 .agents
 .presentation
@@ -469,6 +482,7 @@ AppOnboardingMode::Host
 
 ```rust
 AppOnboardingStep::Welcome
+AppOnboardingStep::Cli
 AppOnboardingStep::Signin
 AppOnboardingStep::Agents
 AppOnboardingStep::Presentation
@@ -483,6 +497,7 @@ AppOnboardingStep::Done
 | Variant | Description |
 | --- | --- |
 | `Welcome` | Welcome. |
+| `Cli` | Install the bundled `cua`, while its plan needs it. |
 | `Signin` | Sign in to Cua. |
 | `Agents` | Coding agents: cua skills and the cua MCP server. |
 | `Presentation` | Where Cua Spaces shows up: the notch and the menu bar, or the menu bar only (the "Spaces tab in the notch" setting). |

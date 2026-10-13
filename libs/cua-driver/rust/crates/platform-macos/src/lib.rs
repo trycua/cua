@@ -12,6 +12,8 @@
 #![allow(clippy::result_large_err)]
 
 #[cfg(target_os = "macos")]
+pub mod apple_events;
+#[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
 pub mod ax;

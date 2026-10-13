@@ -14,8 +14,8 @@ import SwiftUI
 /// in the corner), page dots centred between them. Done adds the example
 /// prompts under both columns, scrolling slowly. Pages, copy, cards,
 /// which buttons show and the answers are the core's (`appOnboardingView`);
-/// only the placement is this view's, the same as the Tauri app's. There is
-/// no command-line page, the bundled `cua` installs on first launch.
+/// only the placement is this view's, the same as the Tauri app's. The
+/// bundled `cua` installs only from its Command line page.
 public struct OnboardingView: View {
     @Bindable var onboarding: OnboardingModel
     var onSignIn: (() async -> String?)?
@@ -78,7 +78,7 @@ public struct OnboardingView: View {
             footer(v).layoutPriority(1)
         }
         .frame(minWidth: 720, minHeight: 520)
-        .task { await onboarding.installCliSilently() }
+        .task { await onboarding.planCli() }
         .task { if !onboarding.state.driveChecked { await onboarding.checkDrive() } }
     }
 
@@ -165,6 +165,7 @@ public struct OnboardingView: View {
     private func hasCard(_ v: AppOnboardingView) -> Bool {
         switch v.step {
         case .signin: return onboarding.state.identity != nil || signInPhase != .idle
+        case .cli: return onboarding.state.cliError != nil
         default: return true
         }
     }
@@ -219,6 +220,10 @@ public struct OnboardingView: View {
                             await onboarding.checkDrive()
                         }
                     }
+            }
+        case .cli:
+            if let error = onboarding.state.cliError {
+                Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
         case .presentation:
             VStack(spacing: 10) {
@@ -513,6 +518,7 @@ public struct OnboardingView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
+                .disabled(onboarding.state.cliInstalling)
         }
     }
 
@@ -525,6 +531,7 @@ public struct OnboardingView: View {
 
     private func skip(_ step: AppOnboardingStep) {
         switch step {
+        case .cli: Task { await onboarding.finishCli(install: false) }
         case .signin: onboarding.send(.signinDone)
         case .agents: onboarding.finishAgents(skipped: true)
         default: advance(step)
@@ -534,6 +541,7 @@ public struct OnboardingView: View {
     private func advance(_ step: AppOnboardingStep) {
         switch step {
         case .welcome: onboarding.send(.start)
+        case .cli: Task { await onboarding.finishCli(install: true) }
         case .signin: onboarding.send(.signinDone)
         case .agents: onboarding.finishAgents(skipped: true)
         case .presentation: onboarding.send(.presentationDone)

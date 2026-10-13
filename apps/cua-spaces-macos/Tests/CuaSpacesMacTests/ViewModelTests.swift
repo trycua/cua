@@ -711,7 +711,7 @@ struct ViewModelTests {
             lume: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             qemu: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             container: StorageVolume(availableBytes: 40 * gb, totalBytes: 100 * gb, name: "Colima"),
-            pulled: [])
+            pulled: [], linuxRuntimeDownloadBytes: 0)
         let model = makeModel(backend)
         await model.openNewSpace()
         let w = model.wizard

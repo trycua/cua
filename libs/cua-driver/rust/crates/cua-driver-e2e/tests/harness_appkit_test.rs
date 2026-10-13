@@ -934,7 +934,9 @@ fn harness_appkit_invoke_menu_live_path() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")),
+                    .is_some_and(
+                        |message| message.contains("path segment 2 \"Missing\" was not found")
+                    ),
                 "{}",
                 refused.raw
             );
@@ -946,6 +948,40 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+
+            // invoke_menu does not activate a background app (#4955): with
+            // the distractor in front, the item stays disabled and the call
+            // refuses without touching the fixture.
+            let background = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                background.is_error(),
+                "a disabled background menu item was invoked: {}",
+                background.raw
+            );
+            assert_eq!(
+                background.structured()["refusal"]["code"],
+                "background_unavailable",
+                "{}",
+                background.raw
+            );
+            assert!(snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
+
+            // The foreground route the refusal names: bring the exact window
+            // to front, then invoke the menu.
+            let raised = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid, "window_id": wid}),
+            );
+            assert!(!raised.is_error(), "bring_to_front failed: {}", raised.raw);
 
             let invoked = driver.call(
                 "invoke_menu",
@@ -1031,7 +1067,8 @@ fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")
+                    .is_some_and(|message| message
+                        .contains("path segment 2 \"Missing\" was not found")
                         && message.contains("No menu window this call opened is still on screen")),
                 "{}",
                 refused.raw

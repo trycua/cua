@@ -29,7 +29,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -40,6 +40,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ],
@@ -74,7 +75,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -85,6 +86,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ],
@@ -119,7 +121,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -130,6 +132,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ],
@@ -163,7 +166,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -251,7 +254,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -294,7 +297,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -340,7 +343,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -437,7 +440,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -448,6 +451,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ],
@@ -481,7 +485,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -520,7 +524,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 1,
         "summary": [
@@ -559,7 +563,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -595,7 +599,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -628,7 +632,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -639,6 +643,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ],
@@ -662,7 +667,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -673,6 +678,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
+          "Disk: 2.8 GB–6.8 GB initially; grows with use",
           "Name: Chosen automatically",
           "When ready: Open the desktop"
         ],

@@ -107,4 +107,139 @@ struct MainUIRouteTests {
         c.run(.settings)
         #expect(calls == ["main", "native settings", "list", "settings"])
     }
+
+    // MARK: - One main window: New UI replaces the native one
+
+    /// A new window loads the page at its route (query included) rather
+    /// than asking a page that may not listen yet.
+    @Test func aNewWindowStartsAtItsRoute() {
+        let base = URL(string: "cua-spaces://app/")!
+        #expect(WebUIWindowController.url("/settings", in: base).absoluteString == "cua-spaces://app/settings")
+        #expect(WebUIWindowController.url(MainUIRoute.access.webPath, in: base).absoluteString
+                == "cua-spaces://app/keyvault?view=access")
+        #expect(WebUIWindowController.url("spaces/s1", in: base).absoluteString == "cua-spaces://app/spaces/s1")
+        let dev = URL(string: "http://localhost:5174/")!
+        #expect(WebUIWindowController.url("/spaces/a%20b?dropped=%5B%5D", in: dev).absoluteString
+                == "http://localhost:5174/spaces/a%20b?dropped=%5B%5D")
+        let c = WebUIWindowController(model: model(webUi: true), route: MainUIRoute.settings.webPath)
+        defer { c.window?.close() }
+        #expect(c.startURL.absoluteString.hasSuffix("/settings"))
+    }
+
+    @Test func theViewMenusPagesHaveTheirRoutes() {
+        #expect(MainUIRouter.route(forNav: "nav.spaces") == .home)
+        #expect(MainUIRouter.route(forNav: "nav.machines")?.webPath == "/machines")
+        #expect(MainUIRouter.route(forNav: "nav.agents")?.webPath == "/agents")
+        #expect(MainUIRouter.route(forNav: "nav.keyvault")?.webPath == "/keyvault")
+        #expect(MainUIRouter.route(forNav: "nav.settings") == .settings)
+        #expect(MainUIRouter.route(forNav: "nav.nope") == nil)
+    }
+
+    /// Only the main UI gives way: the launch and the first run stay in
+    /// the native window.
+    @Test func onlyTheMainUIGivesWayToNewUI() {
+        #expect(MainWindowSwitch.replacesNative(webUi: true, ready: true, onboarded: true))
+        #expect(!MainWindowSwitch.replacesNative(webUi: false, ready: true, onboarded: true))
+        #expect(!MainWindowSwitch.replacesNative(webUi: true, ready: false, onboarded: true))
+        #expect(!MainWindowSwitch.replacesNative(webUi: true, ready: true, onboarded: false))
+    }
+
+    /// A frame inside the screen (a CI runner's is small), so the window
+    /// server keeps it as given; `dx` tells two apart.
+    func onScreen(dx: CGFloat = 0) -> NSRect {
+        let v = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 700)
+        return NSRect(x: v.minX + 20 + dx, y: v.minY + 20, width: min(760, v.width - 80), height: min(480, v.height - 60))
+    }
+
+    func nativeWindow(_ frame: NSRect) -> NSWindow {
+        let w = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
+        w.isReleasedWhenClosed = false
+        w.setFrame(frame, display: false)
+        return w
+    }
+
+    func settle() async {
+        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
+        await withCheckedContinuation { k in DispatchQueue.main.async { k.resume() } }
+    }
+
+    /// Whatever opens the native window while New UI is on (the Dock, the
+    /// Window menu, a path not routed) gets New UI in its frame; it closes.
+    @Test func theNativeWindowOpeningWithNewUIOnIsReplacedInPlace() async {
+        let m = model(webUi: true)
+        m.onboarding.finish()
+        let w = nativeWindow(onScreen())
+        w.orderFront(nil)
+        let frame = w.frame
+        var opened: [NSRect?] = []
+        MainWindowSwitch.nativeAppeared(w, model: m, web: { opened.append($0) })
+        // Reported twice (its reader, its onAppear): replaced once.
+        MainWindowSwitch.nativeAppeared(nil, model: m, web: { opened.append($0) })
+        #expect(opened == [frame])
+        await settle()
+        #expect(!w.isVisible)
+        #expect(w.alphaValue == 1)
+    }
+
+    @Test func theNativeWindowStaysWithNewUIOff() async {
+        let m = model(webUi: false)
+        m.onboarding.finish()
+        let w = nativeWindow(onScreen())
+        w.orderFront(nil)
+        defer { w.close() }
+        var opened = 0
+        MainWindowSwitch.nativeAppeared(w, model: m, web: { _ in opened += 1 })
+        await settle()
+        #expect(opened == 0 && w.isVisible)
+    }
+
+    /// Turning New UI on with the native window up: New UI in its frame.
+    @Test func turningNewUIOnSwapsTheWindowInPlace() async {
+        let m = model(webUi: true)
+        m.onboarding.finish()
+        let w = nativeWindow(onScreen())
+        w.orderFront(nil)
+        let frame = w.frame
+        MainWindowSwitch.nativeWindow = w
+        var opened: [NSRect?] = []
+        MainWindowSwitch.switchToWebUI(model: m, web: { opened.append($0) })
+        #expect(opened == [frame])
+        await settle()
+        #expect(!w.isVisible)
+        // With no native window up (only Settings), New UI opens as at launch.
+        MainWindowSwitch.switchToWebUI(model: m, web: { opened.append($0) })
+        #expect(opened == [frame, nil])
+    }
+
+    /// Turning it off: the native window opens where New UI was.
+    @Test func turningNewUIOffOpensTheNativeWindowInItsFrame() async {
+        let m = model(webUi: false)
+        m.onboarding.finish()
+        let webFrame = onScreen(dx: 30)
+        var opened = 0
+        MainWindowSwitch.switchToNative(webFrame: webFrame, openMain: { opened += 1 })
+        #expect(opened == 1)
+        let w = nativeWindow(onScreen())
+        w.orderFront(nil)
+        defer { w.close() }
+        #expect(w.frame != webFrame)
+        MainWindowSwitch.nativeAppeared(w, model: m)
+        await settle()
+        #expect(w.frame == webFrame)
+        #expect(MainWindowSwitch.pendingNativeFrame == nil)
+    }
+
+    /// The setting's switch: on puts New UI in the native window's place,
+    /// off the reverse.
+    @Test func theSwitchSwapsTheWindows() {
+        let m = model(webUi: false)
+        var calls: [String] = []
+        m.openWebUI = { calls.append("open") }
+        m.closeWebUI = { calls.append("close") }
+        m.chooseExperiment(row: "experiment:web_ui", option: "on")
+        #expect(m.settings.experiments.webUi)
+        m.chooseExperiment(row: "experiment:web_ui", option: "on")
+        m.chooseExperiment(row: "experiment:web_ui", option: "off")
+        #expect(calls == ["open", "close"])
+    }
 }

@@ -724,6 +724,10 @@ struct FixtureFocus {
     attach_activates_browser: bool,
     frontmost: StdMutex<Option<i64>>,
     restores: StdMutex<Vec<(i64, i64)>>,
+    /// The browser window is on another Space than the user's: the platform
+    /// can guard a background attach.
+    browser_off_space: bool,
+    guards: StdMutex<Vec<(i64, u64)>>,
 }
 
 #[async_trait]
@@ -741,6 +745,22 @@ impl BrowserPlatform for FixturePlatform {
 
     fn frontmost_app_pid(&self) -> Option<i64> {
         *self.focus.frontmost.lock().unwrap()
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        if !self.focus.browser_off_space {
+            return None;
+        }
+        self.focus
+            .guards
+            .lock()
+            .unwrap()
+            .push((browser_pid, window_id));
+        Some(Box::new(()))
     }
 
     fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
@@ -1077,6 +1097,13 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
 async fn foreground_attach_fixture(
     frontmost: i64,
 ) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    attach_fixture_with_space(frontmost, false).await
+}
+
+async fn attach_fixture_with_space(
+    frontmost: i64,
+    browser_off_space: bool,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
@@ -1084,6 +1111,8 @@ async fn foreground_attach_fixture(
         attach_activates_browser: true,
         frontmost: StdMutex::new(Some(frontmost)),
         restores: StdMutex::new(Vec::new()),
+        browser_off_space,
+        guards: StdMutex::new(Vec::new()),
     });
     let provider = Arc::new(FixtureProtectedProvider {
         consent_seen: AtomicBool::new(false),
@@ -1412,6 +1441,66 @@ async fn background_existing_profile_attach_refuses_before_any_visible_effect() 
         "a background refusal must not ask for consent"
     );
     assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off_space() {
+    // pid 99 (the user's app) is in front on its Space; the browser window is
+    // on another Space, so the platform guards a background attach.
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["action"], "attached_existing_profile");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(*focus.guards.lock().unwrap(), vec![(1, 7)]);
+    // The user's app is brought back if the browser is left in front.
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_on_the_users_space_still_refuses() {
+    let (f, focus, _) = attach_fixture_with_space(99, false).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(
+        refused["refusal"]["detail"]["background_attach_requires"],
+        "browser_window_on_another_space"
+    );
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_does_not_use_the_background_guard() {
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    assert!(focus.guards.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

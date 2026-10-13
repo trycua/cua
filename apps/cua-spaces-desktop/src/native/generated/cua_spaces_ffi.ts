@@ -22937,7 +22937,8 @@ export type AppLocalStorage = {
     /**
      * Catalog refs already pulled here.
      */
-    pulled: Array<string>
+    pulled: Array<string>,
+    linuxRuntimeDownloadBytes: bigint
 }
 
 /**
@@ -22965,7 +22966,8 @@ const FfiConverterTypeAppLocalStorage = (() => {
                 lume: FfiConverterOptionalTypeAppStorageVolume.read(from),
                 qemu: FfiConverterOptionalTypeAppStorageVolume.read(from),
                 container: FfiConverterOptionalTypeAppStorageVolume.read(from),
-                pulled: FfiConverterSequenceString.read(from)
+                pulled: FfiConverterSequenceString.read(from),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -22974,13 +22976,15 @@ const FfiConverterTypeAppLocalStorage = (() => {
             FfiConverterOptionalTypeAppStorageVolume.write(value.qemu, into);
             FfiConverterOptionalTypeAppStorageVolume.write(value.container, into);
             FfiConverterSequenceString.write(value.pulled, into);
+            FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt64.allocationSize(value.reserveBytes) +
              FfiConverterOptionalTypeAppStorageVolume.allocationSize(value.lume) +
              FfiConverterOptionalTypeAppStorageVolume.allocationSize(value.qemu) +
              FfiConverterOptionalTypeAppStorageVolume.allocationSize(value.container) +
-             FfiConverterSequenceString.allocationSize(value.pulled);
+             FfiConverterSequenceString.allocationSize(value.pulled) +
+             FfiConverterUInt64.allocationSize(value.linuxRuntimeDownloadBytes);
 
         }
     };
@@ -26687,6 +26691,10 @@ export enum AppOnboardingStep {
      */
     Welcome = "welcome",
     /**
+     * Install the bundled `cua`, while its plan needs it.
+     */
+    Cli = "cli",
+    /**
      * Sign in to Cua.
      */
     Signin = "signin",
@@ -26721,24 +26729,26 @@ const FfiConverterTypeAppOnboardingStep = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return AppOnboardingStep.Welcome;
-                case 2: return AppOnboardingStep.Signin;
-                case 3: return AppOnboardingStep.Agents;
-                case 4: return AppOnboardingStep.Presentation;
-                case 5: return AppOnboardingStep.Drive;
-                case 6: return AppOnboardingStep.Mode;
-                case 7: return AppOnboardingStep.Done;
+                case 2: return AppOnboardingStep.Cli;
+                case 3: return AppOnboardingStep.Signin;
+                case 4: return AppOnboardingStep.Agents;
+                case 5: return AppOnboardingStep.Presentation;
+                case 6: return AppOnboardingStep.Drive;
+                case 7: return AppOnboardingStep.Mode;
+                case 8: return AppOnboardingStep.Done;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         write(value: TypeName, into: RustBuffer): void {
             switch (value) {
                 case AppOnboardingStep.Welcome: return ordinalConverter.write(1, into);
-                case AppOnboardingStep.Signin: return ordinalConverter.write(2, into);
-                case AppOnboardingStep.Agents: return ordinalConverter.write(3, into);
-                case AppOnboardingStep.Presentation: return ordinalConverter.write(4, into);
-                case AppOnboardingStep.Drive: return ordinalConverter.write(5, into);
-                case AppOnboardingStep.Mode: return ordinalConverter.write(6, into);
-                case AppOnboardingStep.Done: return ordinalConverter.write(7, into);
+                case AppOnboardingStep.Cli: return ordinalConverter.write(2, into);
+                case AppOnboardingStep.Signin: return ordinalConverter.write(3, into);
+                case AppOnboardingStep.Agents: return ordinalConverter.write(4, into);
+                case AppOnboardingStep.Presentation: return ordinalConverter.write(5, into);
+                case AppOnboardingStep.Drive: return ordinalConverter.write(6, into);
+                case AppOnboardingStep.Mode: return ordinalConverter.write(7, into);
+                case AppOnboardingStep.Done: return ordinalConverter.write(8, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -27486,9 +27496,21 @@ export type AppOnboardingState = {
      */
     step: AppOnboardingStep,
     /**
-     * Where `cua` was installed on first launch, when it was.
+     * Where `cua` was installed, when it was.
      */
     cliTarget?: string,
+    /**
+     * The bundled `cua`'s install plan, as the shell read it.
+     */
+    cliPlan?: AppCliInstallPlan,
+    /**
+     * Continue on Command line: the shell is installing.
+     */
+    cliInstalling: boolean,
+    /**
+     * Why the install failed.
+     */
+    cliError?: string,
     /**
      * Menu bar only (no notch). The same setting as Settings' "Spaces tab
      * in the notch".
@@ -27603,6 +27625,9 @@ const FfiConverterTypeAppOnboardingState = (() => {
             return {
                 step: FfiConverterTypeAppOnboardingStep.read(from),
                 cliTarget: FfiConverterOptionalString.read(from),
+                cliPlan: FfiConverterOptionalTypeAppCliInstallPlan.read(from),
+                cliInstalling: FfiConverterBool.read(from),
+                cliError: FfiConverterOptionalString.read(from),
                 menuBar: FfiConverterBool.read(from),
                 identity: FfiConverterOptionalString.read(from),
                 agents: FfiConverterSequenceString.read(from),
@@ -27628,6 +27653,9 @@ const FfiConverterTypeAppOnboardingState = (() => {
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypeAppOnboardingStep.write(value.step, into);
             FfiConverterOptionalString.write(value.cliTarget, into);
+            FfiConverterOptionalTypeAppCliInstallPlan.write(value.cliPlan, into);
+            FfiConverterBool.write(value.cliInstalling, into);
+            FfiConverterOptionalString.write(value.cliError, into);
             FfiConverterBool.write(value.menuBar, into);
             FfiConverterOptionalString.write(value.identity, into);
             FfiConverterSequenceString.write(value.agents, into);
@@ -27652,6 +27680,9 @@ const FfiConverterTypeAppOnboardingState = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppOnboardingStep.allocationSize(value.step) +
              FfiConverterOptionalString.allocationSize(value.cliTarget) +
+             FfiConverterOptionalTypeAppCliInstallPlan.allocationSize(value.cliPlan) +
+             FfiConverterBool.allocationSize(value.cliInstalling) +
+             FfiConverterOptionalString.allocationSize(value.cliError) +
              FfiConverterBool.allocationSize(value.menuBar) +
              FfiConverterOptionalString.allocationSize(value.identity) +
              FfiConverterSequenceString.allocationSize(value.agents) +
@@ -48688,6 +48719,9 @@ const FfiConverterTypeAppStorageAction = (() => {
 export enum AppOnboardingAction_Tags {
     Start = "Start",
     CliInstalled = "CliInstalled",
+    CliPlanned = "CliPlanned",
+    CliDone = "CliDone",
+    CliInstallFailed = "CliInstallFailed",
     PresentationPicked = "PresentationPicked",
     PresentationDone = "PresentationDone",
     SignedIn = "SignedIn",
@@ -48769,6 +48803,108 @@ inner: {target?: string }): CliInstalled_ {
 
         static instanceOf(obj: any): obj is CliInstalled_ {
             return obj.tag === AppOnboardingAction_Tags.CliInstalled;
+        }
+
+    }
+
+    type CliPlanned__interface = {
+        tag: AppOnboardingAction_Tags.CliPlanned;
+        inner:
+Readonly<{plan: AppCliInstallPlan}>
+    };
+    /**
+     * The bundled `cua`'s install plan, read or installed (any page).
+     */
+    class CliPlanned_ extends UniffiEnum implements CliPlanned__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppOnboardingAction";
+        readonly tag = AppOnboardingAction_Tags.CliPlanned;
+        readonly inner:
+Readonly<{plan: AppCliInstallPlan}>;
+        constructor(
+inner: {plan: AppCliInstallPlan }) {
+            super("AppOnboardingAction", "CliPlanned");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {plan: AppCliInstallPlan }): CliPlanned_ {
+            return new CliPlanned_(inner);
+        }
+
+        static instanceOf(obj: any): obj is CliPlanned_ {
+            return obj.tag === AppOnboardingAction_Tags.CliPlanned;
+        }
+
+    }
+
+    type CliDone__interface = {
+        tag: AppOnboardingAction_Tags.CliDone;
+        inner:
+Readonly<{install: boolean}>
+    };
+    /**
+     * Continue (`install`) or Skip from Command line.
+     */
+    class CliDone_ extends UniffiEnum implements CliDone__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppOnboardingAction";
+        readonly tag = AppOnboardingAction_Tags.CliDone;
+        readonly inner:
+Readonly<{install: boolean}>;
+        constructor(
+inner: {install: boolean }) {
+            super("AppOnboardingAction", "CliDone");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {install: boolean }): CliDone_ {
+            return new CliDone_(inner);
+        }
+
+        static instanceOf(obj: any): obj is CliDone_ {
+            return obj.tag === AppOnboardingAction_Tags.CliDone;
+        }
+
+    }
+
+    type CliInstallFailed__interface = {
+        tag: AppOnboardingAction_Tags.CliInstallFailed;
+        inner:
+Readonly<{error: string}>
+    };
+    /**
+     * The Command line page's install failed.
+     */
+    class CliInstallFailed_ extends UniffiEnum implements CliInstallFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppOnboardingAction";
+        readonly tag = AppOnboardingAction_Tags.CliInstallFailed;
+        readonly inner:
+Readonly<{error: string}>;
+        constructor(
+inner: {error: string }) {
+            super("AppOnboardingAction", "CliInstallFailed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {error: string }): CliInstallFailed_ {
+            return new CliInstallFailed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is CliInstallFailed_ {
+            return obj.tag === AppOnboardingAction_Tags.CliInstallFailed;
         }
 
     }
@@ -49468,6 +49604,9 @@ inner: {experiments: AppExperiments }): ExperimentsLoaded_ {
         instanceOf,
   Start: Start_,
   CliInstalled: CliInstalled_,
+  CliPlanned: CliPlanned_,
+  CliDone: CliDone_,
+  CliInstallFailed: CliInstallFailed_,
   PresentationPicked: PresentationPicked_,
   PresentationDone: PresentationDone_,
   SignedIn: SignedIn_,
@@ -49493,7 +49632,7 @@ inner: {experiments: AppExperiments }): ExperimentsLoaded_ {
 
 })();
 export type AppOnboardingAction = InstanceType<
-    typeof AppOnboardingAction['Start' | 'CliInstalled' | 'PresentationPicked' | 'PresentationDone' | 'SignedIn' | 'SigninDone' | 'AgentsDone' | 'ModeChosen' | 'DriveChecked' | 'DriveToggled' | 'DriveContinue' | 'DriveMounted' | 'DriveFailed' | 'DriveStorageLoaded' | 'StorageChosen' | 'DriveStorage' | 'DriveStorageSaved' | 'LaunchAtLoginToggled' | 'Back' | 'TelemetryLoaded' | 'WelcomeShown' | 'UsageDataToggled' | 'ExperimentsLoaded']
+    typeof AppOnboardingAction['Start' | 'CliInstalled' | 'CliPlanned' | 'CliDone' | 'CliInstallFailed' | 'PresentationPicked' | 'PresentationDone' | 'SignedIn' | 'SigninDone' | 'AgentsDone' | 'ModeChosen' | 'DriveChecked' | 'DriveToggled' | 'DriveContinue' | 'DriveMounted' | 'DriveFailed' | 'DriveStorageLoaded' | 'StorageChosen' | 'DriveStorage' | 'DriveStorageSaved' | 'LaunchAtLoginToggled' | 'Back' | 'TelemetryLoaded' | 'WelcomeShown' | 'UsageDataToggled' | 'ExperimentsLoaded']
 >;
 
 // FfiConverter for enum AppOnboardingAction
@@ -49505,27 +49644,30 @@ const FfiConverterTypeAppOnboardingAction = (() => {
             switch (ordinalConverter.read(from)) {
                 case 1: return new AppOnboardingAction.Start();
                 case 2: return new AppOnboardingAction.CliInstalled({target: FfiConverterOptionalString.read(from) });
-                case 3: return new AppOnboardingAction.PresentationPicked({menuBar: FfiConverterBool.read(from) });
-                case 4: return new AppOnboardingAction.PresentationDone();
-                case 5: return new AppOnboardingAction.SignedIn({identity: FfiConverterString.read(from) });
-                case 6: return new AppOnboardingAction.SigninDone();
-                case 7: return new AppOnboardingAction.AgentsDone({configured: FfiConverterSequenceString.read(from) });
-                case 8: return new AppOnboardingAction.ModeChosen({mode: FfiConverterTypeAppOnboardingMode.read(from) });
-                case 9: return new AppOnboardingAction.DriveChecked({os: FfiConverterTypeAppSpaceOs.read(from), status: FfiConverterOptionalTypeAppDriveMountInput.read(from) });
-                case 10: return new AppOnboardingAction.DriveToggled({on: FfiConverterBool.read(from) });
-                case 11: return new AppOnboardingAction.DriveContinue();
-                case 12: return new AppOnboardingAction.DriveMounted({status: FfiConverterTypeAppDriveMountInput.read(from) });
-                case 13: return new AppOnboardingAction.DriveFailed({error: FfiConverterString.read(from) });
-                case 14: return new AppOnboardingAction.DriveStorageLoaded({storage: FfiConverterTypeAppDriveStorageInput.read(from), home: FfiConverterOptionalString.read(from) });
-                case 15: return new AppOnboardingAction.StorageChosen({choice: FfiConverterTypeAppStorageChoice.read(from) });
-                case 16: return new AppOnboardingAction.DriveStorage({action: FfiConverterTypeAppStorageAction.read(from) });
-                case 17: return new AppOnboardingAction.DriveStorageSaved({check: FfiConverterTypeAppDriveCheckInput.read(from) });
-                case 18: return new AppOnboardingAction.LaunchAtLoginToggled({on: FfiConverterBool.read(from) });
-                case 19: return new AppOnboardingAction.Back();
-                case 20: return new AppOnboardingAction.TelemetryLoaded({telemetry: FfiConverterTypeAppTelemetryInput.read(from) });
-                case 21: return new AppOnboardingAction.WelcomeShown();
-                case 22: return new AppOnboardingAction.UsageDataToggled({on: FfiConverterBool.read(from) });
-                case 23: return new AppOnboardingAction.ExperimentsLoaded({experiments: FfiConverterTypeAppExperiments.read(from) });
+                case 3: return new AppOnboardingAction.CliPlanned({plan: FfiConverterTypeAppCliInstallPlan.read(from) });
+                case 4: return new AppOnboardingAction.CliDone({install: FfiConverterBool.read(from) });
+                case 5: return new AppOnboardingAction.CliInstallFailed({error: FfiConverterString.read(from) });
+                case 6: return new AppOnboardingAction.PresentationPicked({menuBar: FfiConverterBool.read(from) });
+                case 7: return new AppOnboardingAction.PresentationDone();
+                case 8: return new AppOnboardingAction.SignedIn({identity: FfiConverterString.read(from) });
+                case 9: return new AppOnboardingAction.SigninDone();
+                case 10: return new AppOnboardingAction.AgentsDone({configured: FfiConverterSequenceString.read(from) });
+                case 11: return new AppOnboardingAction.ModeChosen({mode: FfiConverterTypeAppOnboardingMode.read(from) });
+                case 12: return new AppOnboardingAction.DriveChecked({os: FfiConverterTypeAppSpaceOs.read(from), status: FfiConverterOptionalTypeAppDriveMountInput.read(from) });
+                case 13: return new AppOnboardingAction.DriveToggled({on: FfiConverterBool.read(from) });
+                case 14: return new AppOnboardingAction.DriveContinue();
+                case 15: return new AppOnboardingAction.DriveMounted({status: FfiConverterTypeAppDriveMountInput.read(from) });
+                case 16: return new AppOnboardingAction.DriveFailed({error: FfiConverterString.read(from) });
+                case 17: return new AppOnboardingAction.DriveStorageLoaded({storage: FfiConverterTypeAppDriveStorageInput.read(from), home: FfiConverterOptionalString.read(from) });
+                case 18: return new AppOnboardingAction.StorageChosen({choice: FfiConverterTypeAppStorageChoice.read(from) });
+                case 19: return new AppOnboardingAction.DriveStorage({action: FfiConverterTypeAppStorageAction.read(from) });
+                case 20: return new AppOnboardingAction.DriveStorageSaved({check: FfiConverterTypeAppDriveCheckInput.read(from) });
+                case 21: return new AppOnboardingAction.LaunchAtLoginToggled({on: FfiConverterBool.read(from) });
+                case 22: return new AppOnboardingAction.Back();
+                case 23: return new AppOnboardingAction.TelemetryLoaded({telemetry: FfiConverterTypeAppTelemetryInput.read(from) });
+                case 24: return new AppOnboardingAction.WelcomeShown();
+                case 25: return new AppOnboardingAction.UsageDataToggled({on: FfiConverterBool.read(from) });
+                case 26: return new AppOnboardingAction.ExperimentsLoaded({experiments: FfiConverterTypeAppExperiments.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -49541,120 +49683,138 @@ const FfiConverterTypeAppOnboardingAction = (() => {
                     FfiConverterOptionalString.write(inner.target, into);
                     return;
                 }
-                case AppOnboardingAction_Tags.PresentationPicked: {
+                case AppOnboardingAction_Tags.CliPlanned: {
                     ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterTypeAppCliInstallPlan.write(inner.plan, into);
+                    return;
+                }
+                case AppOnboardingAction_Tags.CliDone: {
+                    ordinalConverter.write(4, into);
+                    const inner = value.inner;
+                    FfiConverterBool.write(inner.install, into);
+                    return;
+                }
+                case AppOnboardingAction_Tags.CliInstallFailed: {
+                    ordinalConverter.write(5, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.error, into);
+                    return;
+                }
+                case AppOnboardingAction_Tags.PresentationPicked: {
+                    ordinalConverter.write(6, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.menuBar, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.PresentationDone: {
-                    ordinalConverter.write(4, into);
+                    ordinalConverter.write(7, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.SignedIn: {
-                    ordinalConverter.write(5, into);
+                    ordinalConverter.write(8, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.identity, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.SigninDone: {
-                    ordinalConverter.write(6, into);
+                    ordinalConverter.write(9, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.AgentsDone: {
-                    ordinalConverter.write(7, into);
+                    ordinalConverter.write(10, into);
                     const inner = value.inner;
                     FfiConverterSequenceString.write(inner.configured, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.ModeChosen: {
-                    ordinalConverter.write(8, into);
+                    ordinalConverter.write(11, into);
                     const inner = value.inner;
                     FfiConverterTypeAppOnboardingMode.write(inner.mode, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveChecked: {
-                    ordinalConverter.write(9, into);
+                    ordinalConverter.write(12, into);
                     const inner = value.inner;
                     FfiConverterTypeAppSpaceOs.write(inner.os, into);
                     FfiConverterOptionalTypeAppDriveMountInput.write(inner.status, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveToggled: {
-                    ordinalConverter.write(10, into);
+                    ordinalConverter.write(13, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.on, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveContinue: {
-                    ordinalConverter.write(11, into);
+                    ordinalConverter.write(14, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveMounted: {
-                    ordinalConverter.write(12, into);
+                    ordinalConverter.write(15, into);
                     const inner = value.inner;
                     FfiConverterTypeAppDriveMountInput.write(inner.status, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveFailed: {
-                    ordinalConverter.write(13, into);
+                    ordinalConverter.write(16, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.error, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveStorageLoaded: {
-                    ordinalConverter.write(14, into);
+                    ordinalConverter.write(17, into);
                     const inner = value.inner;
                     FfiConverterTypeAppDriveStorageInput.write(inner.storage, into);
                     FfiConverterOptionalString.write(inner.home, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.StorageChosen: {
-                    ordinalConverter.write(15, into);
+                    ordinalConverter.write(18, into);
                     const inner = value.inner;
                     FfiConverterTypeAppStorageChoice.write(inner.choice, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveStorage: {
-                    ordinalConverter.write(16, into);
+                    ordinalConverter.write(19, into);
                     const inner = value.inner;
                     FfiConverterTypeAppStorageAction.write(inner.action, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.DriveStorageSaved: {
-                    ordinalConverter.write(17, into);
+                    ordinalConverter.write(20, into);
                     const inner = value.inner;
                     FfiConverterTypeAppDriveCheckInput.write(inner.check, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.LaunchAtLoginToggled: {
-                    ordinalConverter.write(18, into);
+                    ordinalConverter.write(21, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.on, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.Back: {
-                    ordinalConverter.write(19, into);
+                    ordinalConverter.write(22, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.TelemetryLoaded: {
-                    ordinalConverter.write(20, into);
+                    ordinalConverter.write(23, into);
                     const inner = value.inner;
                     FfiConverterTypeAppTelemetryInput.write(inner.telemetry, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.WelcomeShown: {
-                    ordinalConverter.write(21, into);
+                    ordinalConverter.write(24, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.UsageDataToggled: {
-                    ordinalConverter.write(22, into);
+                    ordinalConverter.write(25, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.on, into);
                     return;
                 }
                 case AppOnboardingAction_Tags.ExperimentsLoaded: {
-                    ordinalConverter.write(23, into);
+                    ordinalConverter.write(26, into);
                     const inner = value.inner;
                     FfiConverterTypeAppExperiments.write(inner.experiments, into);
                     return;
@@ -49675,116 +49835,134 @@ const FfiConverterTypeAppOnboardingAction = (() => {
                     size += FfiConverterOptionalString.allocationSize(inner.target);
                     return size;
                 }
-                case AppOnboardingAction_Tags.PresentationPicked: {
+                case AppOnboardingAction_Tags.CliPlanned: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterTypeAppCliInstallPlan.allocationSize(inner.plan);
+                    return size;
+                }
+                case AppOnboardingAction_Tags.CliDone: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(4);
+                    size += FfiConverterBool.allocationSize(inner.install);
+                    return size;
+                }
+                case AppOnboardingAction_Tags.CliInstallFailed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(5);
+                    size += FfiConverterString.allocationSize(inner.error);
+                    return size;
+                }
+                case AppOnboardingAction_Tags.PresentationPicked: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(6);
                     size += FfiConverterBool.allocationSize(inner.menuBar);
                     return size;
                 }
                 case AppOnboardingAction_Tags.PresentationDone: {
-                    return ordinalConverter.allocationSize(4);
+                    return ordinalConverter.allocationSize(7);
                 }
                 case AppOnboardingAction_Tags.SignedIn: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(5);
+                    let size = ordinalConverter.allocationSize(8);
                     size += FfiConverterString.allocationSize(inner.identity);
                     return size;
                 }
                 case AppOnboardingAction_Tags.SigninDone: {
-                    return ordinalConverter.allocationSize(6);
+                    return ordinalConverter.allocationSize(9);
                 }
                 case AppOnboardingAction_Tags.AgentsDone: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(7);
+                    let size = ordinalConverter.allocationSize(10);
                     size += FfiConverterSequenceString.allocationSize(inner.configured);
                     return size;
                 }
                 case AppOnboardingAction_Tags.ModeChosen: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(8);
+                    let size = ordinalConverter.allocationSize(11);
                     size += FfiConverterTypeAppOnboardingMode.allocationSize(inner.mode);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveChecked: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(9);
+                    let size = ordinalConverter.allocationSize(12);
                     size += FfiConverterTypeAppSpaceOs.allocationSize(inner.os);
                     size += FfiConverterOptionalTypeAppDriveMountInput.allocationSize(inner.status);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveToggled: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(10);
+                    let size = ordinalConverter.allocationSize(13);
                     size += FfiConverterBool.allocationSize(inner.on);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveContinue: {
-                    return ordinalConverter.allocationSize(11);
+                    return ordinalConverter.allocationSize(14);
                 }
                 case AppOnboardingAction_Tags.DriveMounted: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(12);
+                    let size = ordinalConverter.allocationSize(15);
                     size += FfiConverterTypeAppDriveMountInput.allocationSize(inner.status);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveFailed: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(13);
+                    let size = ordinalConverter.allocationSize(16);
                     size += FfiConverterString.allocationSize(inner.error);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveStorageLoaded: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(14);
+                    let size = ordinalConverter.allocationSize(17);
                     size += FfiConverterTypeAppDriveStorageInput.allocationSize(inner.storage);
                     size += FfiConverterOptionalString.allocationSize(inner.home);
                     return size;
                 }
                 case AppOnboardingAction_Tags.StorageChosen: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(15);
+                    let size = ordinalConverter.allocationSize(18);
                     size += FfiConverterTypeAppStorageChoice.allocationSize(inner.choice);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveStorage: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(16);
+                    let size = ordinalConverter.allocationSize(19);
                     size += FfiConverterTypeAppStorageAction.allocationSize(inner.action);
                     return size;
                 }
                 case AppOnboardingAction_Tags.DriveStorageSaved: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(17);
+                    let size = ordinalConverter.allocationSize(20);
                     size += FfiConverterTypeAppDriveCheckInput.allocationSize(inner.check);
                     return size;
                 }
                 case AppOnboardingAction_Tags.LaunchAtLoginToggled: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(18);
+                    let size = ordinalConverter.allocationSize(21);
                     size += FfiConverterBool.allocationSize(inner.on);
                     return size;
                 }
                 case AppOnboardingAction_Tags.Back: {
-                    return ordinalConverter.allocationSize(19);
+                    return ordinalConverter.allocationSize(22);
                 }
                 case AppOnboardingAction_Tags.TelemetryLoaded: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(20);
+                    let size = ordinalConverter.allocationSize(23);
                     size += FfiConverterTypeAppTelemetryInput.allocationSize(inner.telemetry);
                     return size;
                 }
                 case AppOnboardingAction_Tags.WelcomeShown: {
-                    return ordinalConverter.allocationSize(21);
+                    return ordinalConverter.allocationSize(24);
                 }
                 case AppOnboardingAction_Tags.UsageDataToggled: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(22);
+                    let size = ordinalConverter.allocationSize(25);
                     size += FfiConverterBool.allocationSize(inner.on);
                     return size;
                 }
                 case AppOnboardingAction_Tags.ExperimentsLoaded: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(23);
+                    let size = ordinalConverter.allocationSize(26);
                     size += FfiConverterTypeAppExperiments.allocationSize(inner.experiments);
                     return size;
                 }
@@ -54955,8 +55133,8 @@ const FfiConverterTypeTeleportScope = (() => {
 })();
 
 /**
- * Puts the app's bundled `cua` on PATH on first launch (there is no
- * onboarding page for it). The same installer the Tauri app runs;
+ * Puts the app's bundled `cua` on PATH after the first run's Command
+ * line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
  * [`plan`](Self::plan) reads what installing would do without writing.
  */
 export interface AppCliInstallerLike {
@@ -54977,8 +55155,8 @@ export type AppCliInstallerInterface = AppCliInstallerLike;
 
 
 /**
- * Puts the app's bundled `cua` on PATH on first launch (there is no
- * onboarding page for it). The same installer the Tauri app runs;
+ * Puts the app's bundled `cua` on PATH after the first run's Command
+ * line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
  * [`plan`](Self::plan) reads what installing would do without writing.
  */
 export class AppCliInstaller extends UniffiAbstractObject implements AppCliInstallerLike {
@@ -57799,6 +57977,9 @@ const FfiConverterSequenceTypeAppNotchEffect = new FfiConverterArray(FfiConverte
 
 // FfiConverter for Array<AppSystemNote>
 const FfiConverterSequenceTypeAppSystemNote = new FfiConverterArray(FfiConverterTypeAppSystemNote);
+
+// FfiConverter for AppCliInstallPlan | undefined
+const FfiConverterOptionalTypeAppCliInstallPlan = new FfiConverterOptional(FfiConverterTypeAppCliInstallPlan);
 
 // FfiConverter for AppOnboardingMode | undefined
 const FfiConverterOptionalTypeAppOnboardingMode = new FfiConverterOptional(FfiConverterTypeAppOnboardingMode);

@@ -478,7 +478,7 @@ impl Tool for ClickTool {
             .opt_f64("y")
             .or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action = args.str_or("action", "press");
-        if let Err(error) = crate::input::ax_actions::map_action(&action) {
+        if let Err(error) = validate_click_action(&action, element_guard.is_some()) {
             return ToolResult::error(format!("click: {error}"));
         }
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
@@ -1732,9 +1732,32 @@ mod selection_fallback_tests {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// Check `click`'s `action` before any dispatch. Element clicks take the
+/// AX action names `map_action` knows. A pixel click also takes `focus`: the
+/// background focus rung that pixel `type_text`, `press_key` and `scroll`
+/// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
+/// AXFocused on the element under the point instead of pressing it.
+fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
+    if !element_target && action == "focus" {
+        return Ok(());
+    }
+    crate::input::ax_actions::map_action(action).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pixel focus rung keeps working after unknown AX action names
+    /// started refusing: background pixel typing into Electron depended on it.
+    #[test]
+    fn pixel_click_accepts_the_internal_focus_action() {
+        assert!(validate_click_action("focus", false).is_ok());
+        assert!(validate_click_action("press", false).is_ok());
+        assert!(validate_click_action("show_alternate_ui", true).is_ok());
+        assert!(validate_click_action("focus", true).is_err());
+        assert!(validate_click_action("hover", false).is_err());
+    }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns
     /// -25205. Only a radio button or checkbox qualifies for the read-back.

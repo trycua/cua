@@ -6,7 +6,8 @@
 // Services, Hide and Quit; File with New Space (⌘N) and Close; Edit; View
 // with Enter Full Screen only (no reload or zoom: the Swift app has none;
 // a development build keeps Reload and the developer tools); Window; and
-// Help with "Cua Spaces Help", which opens the docs. Windows and Linux get
+// Help with Getting Started (the page's checklist) and "Cua Spaces Help",
+// which opens the docs. Windows and Linux get
 // the same items in their own places: New Space, Settings… and Exit in
 // File, the help item in Help.
 //
@@ -23,6 +24,8 @@ export interface MenuActions {
   newSpace(): void;
   /** Settings in the main window. */
   settings(): void;
+  /** The getting-started checklist in the main window, shown again. */
+  gettingStarted(): void;
 }
 
 /** The menu for `platform`; `dev` (an unpackaged build) adds Reload and the developer tools. */
@@ -64,7 +67,10 @@ export function menuTemplate(platform: NodeJS.Platform, actions: MenuActions, { 
     { role: "windowMenu" },
     {
       role: "help",
-      submenu: [{ label: `${appName} Help`, click: () => void shell.openExternal(HELP_URL) }],
+      submenu: [
+        { label: "Getting Started", click: () => actions.gettingStarted() },
+        { label: `${appName} Help`, click: () => void shell.openExternal(HELP_URL) },
+      ],
     },
   ];
 }

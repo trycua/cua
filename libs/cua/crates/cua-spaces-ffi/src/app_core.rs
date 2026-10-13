@@ -1866,6 +1866,51 @@ pub fn app_billing_status(status: cua_sdk::FleetBillingStatus) -> AppBillingStat
     }
 }
 
+/// The account's relay allowance this month (`GET /v1/usage` on the relay
+/// `devices` uses, as `cua usage` reads it) with `account_token`; none
+/// from a relay that meters nothing. Both Spaces apps read it here.
+#[uniffi::export]
+pub async fn app_relay_usage(
+    devices: Arc<cua_sdk::Devices>,
+    account_token: String,
+) -> Result<Option<AppRelayUsage>> {
+    let relay = devices.relay_url();
+    cua_sdk::support::run(async move {
+        let usage = cua_host::RelayClient::new(&relay)?
+            .usage(&account_token)
+            .await?;
+        Ok(usage.map(relay_usage))
+    })
+    .await
+}
+
+fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
+    core::relay_usage::checked(core::relay_usage::RelayUsage {
+        metered: u.metered,
+        period: u.period,
+        plan: u.plan,
+        team: u.team.map(|t| core::relay_usage::RelayUsageTeam {
+            id: t.id,
+            seats: t.seats,
+        }),
+        live_sessions: u.live_sessions,
+        live_sessions_limit: u.live_sessions_limit,
+        hours_used: u.hours_used,
+        hours_limit: u.hours_limit,
+        my_hours_used: u.my_hours_used,
+        soft_limit_reached: u.soft_limit_reached,
+        reasons: u.reasons,
+        upgrade_url: u.upgrade_url,
+    })
+}
+
+/// Settings' "Relay usage" row and the notice past the allowance; none
+/// when the relay meters nothing.
+#[uniffi::export]
+pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
+    core::relay_usage::view(&usage)
+}
+
 /// Reads the settings file (defaults when missing or damaged).
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -2402,6 +2447,36 @@ pub fn app_telemetry_enroll(
     core::telemetry::enroll(&state, &action)
 }
 
+// ---- Getting started and the command palette -----------------------------
+
+/// The getting-started checklist after `action`, and its usage events.
+#[uniffi::export]
+pub fn app_checklist_reduce(
+    state: AppChecklistState,
+    action: AppChecklistAction,
+) -> AppChecklistTransition {
+    core::checklist::reduce(&state, &action)
+}
+
+/// The getting-started checklist as drawn.
+#[uniffi::export]
+pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
+    core::checklist::view(&state)
+}
+
+/// The default keyboard shortcuts (the shared UI's `keybindings.json`).
+#[uniffi::export]
+pub fn app_keybindings() -> Vec<AppKeybinding> {
+    core::palette::keybindings()
+}
+
+/// The command palette's matches for `query`, best first, as indices into
+/// `entries`.
+#[uniffi::export]
+pub fn app_palette_rank(entries: Vec<AppPaletteEntry>, query: String) -> Vec<u32> {
+    core::palette::rank(&entries, &query)
+}
+
 // ---- Fixtures ----------------------------------------------------------------
 
 fn from_json<T: serde::de::DeserializeOwned>(what: &str, json: &str) -> Result<T> {
@@ -2634,5 +2709,45 @@ mod keyvault_home_tests {
             home(&[("HOME", ""), ("USERPROFILE", r"C:\Users\ada")]),
             PathBuf::from(r"C:\Users\ada").join(".cua")
         );
+    }
+}
+
+#[cfg(test)]
+mod relay_usage_tests {
+    use super::*;
+
+    #[test]
+    fn the_relays_answer_reaches_the_core_with_only_https_upgrade_links() {
+        let raw: cua_host::RelayUsage = serde_json::from_value(serde_json::json!({
+            "metered": true, "period": "2026-10", "plan": "free",
+            "team": { "id": "acme", "seats": 3 },
+            "live_sessions": 2, "live_sessions_limit": 2, "hours_used": 21.0, "hours_limit": 20,
+            "my_hours_used": 4.5, "soft_limit_reached": true, "reasons": ["hours"],
+            "upgrade_url": "https://cua.ai/pricing"
+        }))
+        .unwrap();
+        let u = relay_usage(raw.clone());
+        assert_eq!(
+            u.team.as_ref().map(|t| (t.id.as_str(), t.seats)),
+            Some(("acme", 3))
+        );
+        assert_eq!((u.live_sessions, u.live_sessions_limit), (2, Some(2)));
+        assert_eq!(
+            (u.hours_used, u.hours_limit, u.my_hours_used),
+            (21.0, Some(20.0), 4.5)
+        );
+        assert_eq!(u.reasons, vec!["hours".to_string()]);
+        let notice = app_relay_usage_view(u).unwrap().notice.unwrap();
+        assert_eq!(
+            notice.upgrade_url.as_deref(),
+            Some("https://cua.ai/pricing")
+        );
+        assert_eq!(notice.dismiss_key, "2026-10:hours");
+
+        let plain = relay_usage(cua_host::RelayUsage {
+            upgrade_url: Some("http://cua.ai/pricing".into()),
+            ..raw
+        });
+        assert_eq!(plain.upgrade_url, None);
     }
 }

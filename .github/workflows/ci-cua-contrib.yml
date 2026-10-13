@@ -76,7 +76,11 @@ jobs:
           cargo test --locked -p cua-contrib --features testing,all
           && cargo test --locked -p cua-sandbox-core --test contrib -- --test-threads=4
       - name: The CLI builds with and without contrib
-        run: cargo check --locked -p cua-cli && cargo check --locked -p cua-cli --features contrib
+        run: |
+          if cargo tree --locked -p cua-cli -e normal -i aws-sdk-ec2; then exit 1; fi
+          cargo check --locked -p cua-cli
+          cargo check --locked -p cua-cli --features contrib
+          cargo check --locked -p cua-cli --features byoc
 
   modal-helper:
     name: cua-modal-helper (Modal's Go SDK)

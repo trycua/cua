@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createBridge, type Bridge } from "../src/bridge";
-import { dropOnSpace, feedNotch, notchThumbnail, openSpaceFromNotch, type NotchFeedUi } from "../src/notch-feed";
+import { dropOnSpace, feedNotch, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "../src/notch-feed";
 import { spaceStreams } from "../src/bridge/space-detail";
 import { AppModel } from "../src/model/app-model";
 import { CloudModel } from "../src/model/cloud";
@@ -347,6 +347,19 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
       expect(backend.sent).toEqual([]);
       expect(notes).toEqual([]);
       expect(model.selectedSpaceId).toBe(aurora);
+    });
+
+    it("opens the Teleport review for a window dragged onto a tile, as its app dropped there", async () => {
+      const { u, shown, dropped } = ui();
+      await teleportFromNotch(model, u, aurora, { id: "notes", name: "Notes", hostPath: "/System/Applications/Notes.app" });
+      expect(shown).toEqual([aurora]);
+      expect(dropped).toEqual([["Notes.app"]]);
+      expect(await call("spaces.droppedFiles", { names: ["Notes.app"] })).toEqual(["/System/Applications/Notes.app"]);
+      expect(backend.sent).toEqual([]);
+      // An app with no bundle: the Space only.
+      await teleportFromNotch(model, u, aurora, { id: "x", name: "Some Tool" });
+      expect(shown).toEqual([aurora, aurora]);
+      expect(dropped.at(-1)).toBeUndefined();
     });
   });
 });

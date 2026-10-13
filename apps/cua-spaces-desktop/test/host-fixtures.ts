@@ -5,7 +5,7 @@
 // SwiftUI app's FixtureHost, ScriptedHost, FakeAccountTokens,
 // FixtureDevices, FixturePresence and FixtureLoginItem). In memory: no
 // service, launchd, network, notification, login item or keychain.
-import type { DeviceEnrollment, DevicesLike, DevicesSnapshot, HostLike, HostSettingsChange, HostSetupOptions, HostStatus, RelayDevice } from "../src/native/generated/index";
+import type { DeviceEnrollment, DevicesLike, DevicesSnapshot, HostLike, HostSettingsChange, HostSetupOptions, HostStatus, PairingCode, RelayDevice } from "../src/native/generated/index";
 import type { SystemNote, SystemServices } from "../src/bridge/system";
 import type { HostModel } from "../src/model/host";
 import { FixtureLoginItem } from "../src/model/login-item";
@@ -233,6 +233,41 @@ export class FixtureDevices {
     this.current = { ...this.current, machines: this.current.machines.map((m) => (m.id === id ? { ...m, confirmed: true } : m)) };
     return this.current.machines.find((m) => m.id === id)!;
   }
+
+  /** The account's pairing codes as the relay keeps them (with the codes). */
+  pairing: PairingCode[] = [];
+
+  async createPairingCode(team: string | undefined): Promise<PairingCode> {
+    this.calls.push(`create-pairing-code:${team ?? ""}`);
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const n = this.pairing.length + 1;
+    const code = `K7QM-4XPB-${String(n).padStart(4, "0")}`;
+    const made: PairingCode = {
+      id: `pc_fixture${n}`,
+      code,
+      url: `https://spaces.cua.ai/add/${code}`,
+      installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
+      installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
+      state: "active",
+      team,
+      createdAt: now,
+      expiresAt: now + 1800n,
+      usedAt: undefined,
+      machine: undefined,
+    };
+    this.pairing = [made, ...this.pairing];
+    return made;
+  }
+
+  async pairingCodes(): Promise<PairingCode[]> {
+    this.calls.push("pairing-codes");
+    return this.pairing.map((p) => ({ ...p, code: undefined, url: undefined, installSh: undefined, installPowershell: undefined }));
+  }
+
+  async revokePairingCode(id: string): Promise<void> {
+    this.calls.push(`revoke-pairing-code:${id}`);
+    this.pairing = this.pairing.map((p) => (p.id === id ? { ...p, state: "revoked" } : p));
+  }
 }
 
 /** The system in memory: what was opened, shown, posted and asked. */
@@ -244,7 +279,11 @@ export class FixtureSystem implements SystemServices {
   allow = true;
   loginItem = new FixtureLoginItem();
   updater = new FixtureUpdater(Date.UTC(2026, 9, 7, 12, 0));
+  shortcut: { label: string; registered: boolean } | null = { label: "\u2318\u21e7Space", registered: false };
   constructor(readonly home: string) {}
+  globalShortcut() {
+    return this.shortcut;
+  }
   async openExternal(url: string) {
     this.opened.push(url);
   }
@@ -266,6 +305,7 @@ export const HOST_METHODS = [
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
   "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.choose",
   "onboarding.get", "onboarding.complete",
@@ -277,6 +317,7 @@ export const HOST_OPS = [
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
   "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
 ];

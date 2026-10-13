@@ -934,7 +934,9 @@ fn harness_appkit_invoke_menu_live_path() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")),
+                    .is_some_and(
+                        |message| message.contains("path segment 2 \"Missing\" was not found")
+                    ),
                 "{}",
                 refused.raw
             );
@@ -1031,7 +1033,8 @@ fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")
+                    .is_some_and(|message| message
+                        .contains("path segment 2 \"Missing\" was not found")
                         && message.contains("No menu window this call opened is still on screen")),
                 "{}",
                 refused.raw
@@ -2092,4 +2095,150 @@ fn harness_appkit_slider_drag_px_background() {
             Evidence::default(),
         )
     });
+}
+
+/// popup_select: a background AXPress opens the NSPopUpButton's menu. The menu
+/// steals key focus from the front app, so the background oracles (the
+/// foreground sentinel must not blur) check that the driver hands it back.
+/// The menu stays open and its item is chosen through accessibility.
+#[test]
+#[ignore]
+fn harness_appkit_popup_click_keeps_front_key_focus_background() {
+    run_background_case(
+        "popup_click",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            assert!(
+                pre.tree_text().contains("popup_value=Choose a team"),
+                "popup fixture missing:\n{}",
+                pre.tree_text()
+            );
+            let opened = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&pre, "pop-team"),
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(!opened.is_error(), "popup click failed: {}", opened.text());
+
+            let open = snapshot_elements(driver, pid, wid);
+            let item = element_index_containing(open.tree_text(), "AXMenuItem \"Research\"")
+                .unwrap_or_else(|| {
+                    panic!("open popup lists no Research item:\n{}", open.tree_text())
+                });
+            let chosen = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": open.element_token(item),
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !chosen.is_error(),
+                "menu item click failed: {}",
+                chosen.text()
+            );
+
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("popup_value=Research")
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "popup selection did not land");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        },
+    );
+}
+
+/// popup_select through set_value: the driver opens the menu, presses the
+/// matching item and closes it, while the front window keeps key status.
+#[test]
+#[ignore]
+fn harness_appkit_popup_set_value_keeps_front_key_focus_background() {
+    run_background_case(
+        "popup_set_value",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let set = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&pre, "pop-team"),
+                    "value": "Finance"
+                }),
+            );
+            assert!(!set.is_error(), "popup set_value failed: {}", set.text());
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("popup_value=Finance"),
+                "popup set_value did not land"
+            );
+        },
+    );
+}
+
+/// context_menu through right_click (AXShowMenu) in the background: the menu
+/// steals key focus like a popup does; the front window must keep it.
+#[test]
+#[ignore]
+fn harness_appkit_context_menu_keeps_front_key_focus_background() {
+    run_background_case(
+        "context_menu",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let pre = snapshot_elements(driver, pid, wid);
+            let shown = driver.call(
+                "right_click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&pre, "btn-context")
+                }),
+            );
+            assert!(!shown.is_error(), "context menu failed: {}", shown.text());
+            let open = snapshot_elements(driver, pid, wid);
+            let item = element_index_containing(open.tree_text(), "AXMenuItem \"Copy\"")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "open context menu lists no Copy item:\n{}",
+                        open.tree_text()
+                    )
+                });
+            let chosen = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": open.element_token(item),
+                    "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !chosen.is_error(),
+                "context item click failed: {}",
+                chosen.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                snapshot_elements(driver, pid, wid)
+                    .tree_text()
+                    .contains("menu_action=Copy"),
+                "context menu item did not fire"
+            );
+        },
+    );
 }

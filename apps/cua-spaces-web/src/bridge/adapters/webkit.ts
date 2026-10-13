@@ -48,16 +48,20 @@ import { syncDragRegions } from "../drag-regions";
 import { requestNewSpace } from "../new-space";
 import { STOPPED_SHARING_ERROR, stoppedSharingLine, withNotSharing } from "../sharing";
 import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
+import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
+import type { RelayUsage } from "../ops/relay-usage";
+import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
   WEBKIT_EVENT,
+  WEBKIT_OPEN_CHECKLIST_EVENT,
   WEBKIT_OPEN_SETTINGS_EVENT,
   type HostMethod,
   type WebkitEventDetail,
@@ -199,6 +203,9 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   // them out again on the page (null: the host has none).
   const source = (id: string) => (rows.has(id) ? (active(rows.get(id)) ?? "auto") : null);
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
+  const protection = [...rows.values()]
+    .filter((r) => r.id.startsWith("keyvault-protection:"))
+    .map((r) => ({ label: r.label, value: r.value ?? "" }));
   return {
     values: {
       theme: page.theme,
@@ -228,7 +235,11 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       linuxSource: source("linux-runtime"),
       autoConnect: on("auto-connect"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
+      keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
+      keyvaultSiteIcons: on("keyvault-site-icons"),
+      keyvaultProtection: protection.length ? protection : null,
     },
+    globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
   };
 }
 
@@ -506,7 +517,7 @@ export function createWebkitAdapter(
     },
     "keyvault.overview": async () => toKeyvaultOverview(await request<WkKeyvault>("keyvault.get")),
     "keyvault.unlock": async ({ passphrase }) => {
-      if (passphrase) throw new HostError("Enter the passphrase in the Cua Spaces window", "native_only");
+      if (passphrase) throw new HostError("Cua Spaces asks for the passphrase in its own prompt", "native_only");
       await request("keyvault.unlockVault");
       return null;
     },
@@ -565,14 +576,24 @@ export function createWebkitAdapter(
     ...webkitSettingsOps(request),
     ...webkitPageOps(request, toHostStatus, spaceToRow),
     ...webkitStartupOps(request),
+    ...webkitAgentDetailOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
-    ...webkitKeyvaultSetupOps(request, () => new HostError("Enter the passphrase in the Cua Spaces window", "native_only")),
+    ...webkitKeyvaultSetupOps(request, () => new HostError("Cua Spaces asks for the passphrase in its own prompt", "native_only")),
     // Electron draws a Space's video in the page, on a ticket from the
     // host; the Mac app draws it natively.
     ...(electron
       ? { "spaces.openStream": (target: OpArgs<"spaces.openStream">) => request<StreamTicket>("spaces.openStream", { ...target }) }
       : unsupportedStreamOps("webkit")),
+    "relay.usage": () => request<RelayUsage | null>("relay.usage"),
+    // Presence over the page's own video: the Mac app draws it natively.
+    ...(electron
+      ? {
+          "presence.join": (args: OpArgs<"presence.join">) => request<PresenceJoinInfo>("presence.join", { ...args }),
+          "presence.publish": (args: OpArgs<"presence.publish">) => request<null>("presence.publish", { ...args }),
+          "presence.leave": (args: OpArgs<"presence.leave">) => request<null>("presence.leave", { ...args }),
+        }
+      : unsupportedPresenceOps("webkit")),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {
@@ -586,10 +607,10 @@ export function createWebkitAdapter(
       requestNewSpace(typeof on === "string" && on ? on : null);
       return;
     }
-    // The Electron menu's Settings… (⌘,): the same window event the SwiftUI
+    // The Electron menu's Settings… (⌘,) and Help > Getting Started: the same window event the SwiftUI
     // host sends, which the page's key bindings answer (the SwiftUI host's
     // already arrives as one).
-    if (detail?.event === WEBKIT_OPEN_SETTINGS_EVENT) {
+    if (detail?.event === WEBKIT_OPEN_SETTINGS_EVENT || detail?.event === WEBKIT_OPEN_CHECKLIST_EVENT) {
       if (electron) (win as unknown as Partial<Window>).dispatchEvent?.(new CustomEvent(WEBKIT_EVENT, { detail }));
       return;
     }

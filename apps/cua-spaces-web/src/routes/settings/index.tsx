@@ -9,12 +9,14 @@ import {
   useExperiments,
   useLoginItem,
   useMachines,
+  useRelayUsageView,
   useSession,
   useSettings,
   useStorageSettings,
   type SettingsPage as CorePage,
   type SettingsRow as CoreRow,
   type SettingsSection as CoreSection,
+  type GlobalShortcut,
 } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
@@ -27,7 +29,8 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { lazy, Suspense } from "react";
 import { toastError } from "@/components/ui/toast";
-import { showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
+import { globalShortcutLine, showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
+import { keyvaultRows } from "@/lib/keyvault";
 import { DEFAULT_KEYBINDINGS, type KeybindingCommand } from "@/lib/keybindings";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 
@@ -64,9 +67,6 @@ function SettingsPage() {
   return settings?.page ? <CoreGeneralPage page={settings.page} /> : <FallbackSettingsPage />;
 }
 
-/** The rows the Keyvault section shows here (the rest needs the broker's state). */
-const KEYVAULT_ROWS = new Set(["keyvault-auto-wipe", "keyvault-auto-wipe-note"]);
-
 function CoreGeneralPage({ page }: { page: CorePage }) {
   const { data: settings, updateSetting, chooseSetting } = useSettings();
   const { signIn, signOut, cancelSignIn, openExternal } = useSession();
@@ -80,11 +80,11 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
   const privacy = section("privacy");
   const keyvault = section("keyvault");
   const agents = section("agents");
-  const autoWipe = keyvault && { ...keyvault, rows: keyvault.rows.filter((r) => KEYVAULT_ROWS.has(r.id)) };
+  const keyvaultShown = keyvault && { ...keyvault, rows: keyvaultRows(keyvault.rows, settings?.hostSettings) };
   const mac = showsMacShellSettings();
 
   // What a row's choice changes: the settings every host has by key, the
-  // host's own (runtimes, auto-connect, auto-wipe) by row.
+  // host's own (runtimes, auto-connect, the Keyvault's switches) by row.
   const choose = (row: CoreRow, option: string) => {
     const done = fail(`Couldn't change ${row.label}`);
     switch (row.id) {
@@ -123,21 +123,26 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
 
   return (
     <>
-      {account ? <SettingsGroup title={account.title}>{rows(account)}</SettingsGroup> : null}
+      {account ? (
+        <SettingsGroup title={account.title}>
+          {rows(account)}
+          <RelayUsageRow />
+        </SettingsGroup>
+      ) : null}
 
       <SettingsGroup title={general?.title ?? "General"}>
         <LaunchAtLoginRows />
         {/* The notch is the macOS app's. */}
         {general ? rows(general, (r) => r.id === "notch" && !mac) : null}
         <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
-        {mac ? <SettingsRow label="Global shortcut" control={<span className="text-[13px] text-muted-foreground">{settings?.values.hotkey ?? ""}</span>} /> : null}
+        <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
 
       <StorageSection />
 
       {runtimes?.rows.length ? <CoreSettingsSection section={runtimes} foldNotes onChoose={choose} /> : null}
       {privacy ? <CoreSettingsSection section={privacy} onChoose={choose} onPress={press} /> : null}
-      {autoWipe?.rows.length ? <CoreSettingsSection section={autoWipe} foldNotes onChoose={choose} /> : null}
+      {keyvaultShown?.rows.length ? <CoreSettingsSection section={keyvaultShown} foldNotes onChoose={choose} /> : null}
 
       {agents ? <AgentsSettingsSection section={agents} /> : null}
 
@@ -154,6 +159,31 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         ))}
       </SettingsGroup>
     </>
+  );
+}
+
+/** The host's global shortcut (the macOS hosts register one), and whether the system gave it. */
+function GlobalShortcutRow({ shortcut }: { shortcut: GlobalShortcut | null | undefined }) {
+  if (!shortcut) return null;
+  return (
+    <div data-global-shortcut={shortcut.registered ? "registered" : "taken"}>
+      <SettingsRow
+        label="Global shortcut"
+        description={globalShortcutLine(shortcut)}
+        control={<span className="text-[13px] text-muted-foreground">{shortcut.label}</span>}
+      />
+    </div>
+  );
+}
+
+/** The relay allowance this month (the core's words), where the host reads it. */
+function RelayUsageRow() {
+  const view = useRelayUsageView();
+  if (!view) return null;
+  return (
+    <div data-relay-usage="">
+      <SettingsRow label={view.label} description={view.line} control={<span className="text-[13px] text-muted-foreground">{view.plan}</span>} />
+    </div>
   );
 }
 
@@ -180,23 +210,21 @@ function FallbackSettingsPage() {
         <LaunchAtLoginRows />
         <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
         {showsMacShellSettings() ? (
-          <>
-            <SettingsRow
-              label="Show in menu bar"
-              description="Open Cua Spaces from the menu bar instead of the notch."
-              htmlFor="menuBar"
-              control={
-                <Switch
-                  id="menuBar"
-                  checked={values?.menuBar ?? false}
-                  disabled={!values}
-                  onCheckedChange={(on) => void updateSetting("menuBar", on).catch(fail("Couldn't change the menu bar setting"))}
-                />
-              }
-            />
-            <SettingsRow label="Global shortcut" control={<span className="text-[13px] text-muted-foreground">{values?.hotkey ?? ""}</span>} />
-          </>
+          <SettingsRow
+            label="Show in menu bar"
+            description="Open Cua Spaces from the menu bar instead of the notch."
+            htmlFor="menuBar"
+            control={
+              <Switch
+                id="menuBar"
+                checked={values?.menuBar ?? false}
+                disabled={!values}
+                onCheckedChange={(on) => void updateSetting("menuBar", on).catch(fail("Couldn't change the menu bar setting"))}
+              />
+            }
+          />
         ) : null}
+        <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
 
       <StorageSection />
@@ -238,6 +266,7 @@ function FallbackSettingsPage() {
             )
           }
         />
+        <RelayUsageRow />
       </SettingsGroup>
 
       <SettingsGroup title="Privacy">

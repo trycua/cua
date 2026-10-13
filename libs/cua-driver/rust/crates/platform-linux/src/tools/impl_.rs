@@ -9172,12 +9172,12 @@ impl Tool for SetValueTool {
             name: "set_value".into(),
             description: "Set value of an AT-SPI element via SetValue action.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","value"],"properties":{
+                "type":"object","required":["value"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
-                    "pid":{"type":"integer","description":"Target process ID."},
+                    "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                     "window_id":{"type":"integer","description":"Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "value":{"type":["string","number"],"description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
+                    "value":{"type":"string","description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -10186,10 +10186,10 @@ impl Tool for DoubleClickTool {
                 (target_occluded), one covered by this app's own dialog is retargeted to it \
                 (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it)."},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
@@ -10472,10 +10472,10 @@ impl Tool for RightClickTool {
                 title}`): call get_window_state(pid, window_id=<that id>) to index its menu items \
                 and click them by element_token. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: json!({"type":"object","required":[],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
-                "pid":{"type":"integer","description":"Target process ID."},
+                "pid":{"type":"integer","description":"Target process ID. Optional with element_token (the token carries the pid)."},
                 "window_id":{"type":"integer","description":"Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it)."},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
@@ -13291,20 +13291,16 @@ impl Tool for SetConfigTool {
             name: "set_config".into(),
             description: "Update cua-driver-rs configuration. capture_mode / \
                 max_image_dimension take effect immediately.\n\n\
-                Two input shapes (both accepted, matching Windows/Swift):\n\
-                - **{key, value}** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 800}` \
-                  — single leaf write.\n\
-                - **Legacy per-field**: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n\
+                Pass each setting as its own field: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n\
                 The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next \
                 daemon restart (the PiP backend is initialised once at startup; \
                 Linux ships only the trait stub today — see issue #1729).\n\n\
                 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` \
-                save the default cursor motion for sessions started afterwards.".into(),
+                (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. \
+                `cursor.motion: \"default\"` clears every saved cursor motion default.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
-                "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
-                "value":{"description":"New value for `key`. JSON type depends on the key."},
-                "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
-                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
+                "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
+                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
                 "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
             },"additionalProperties":false})),
@@ -13313,9 +13309,7 @@ impl Tool for SetConfigTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
+        if args.get("capture_scope").is_some() {
             return ToolResult::error(
                 "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
@@ -13334,64 +13328,6 @@ impl Tool for SetConfigTool {
             .iter()
             .map(|key| format!("{key} (applies to sessions started from now on)"))
             .collect();
-        // {key, value} shape (what the Swift/macOS and Windows callers send).
-        // Linux previously read only the legacy per-field keys below, so a
-        // `{"key":"max_image_dimension","value":800}` write was silently
-        // dropped (issue #1923). Dispatch on `key` to the same fields.
-        if let (Some(key), Some(val)) =
-            (args.get("key").and_then(|v| v.as_str()), args.get("value"))
-        {
-            match key {
-                "capture_mode" => match val.as_str() {
-                    Some(s) => {
-                        cfg.capture_mode = s.to_owned();
-                        if let Err(e) = pip_preview::write_config_key("capture_mode", Value::String(s.to_owned())) {
-                            tracing::warn!("set_config: failed to persist capture_mode: {e}");
-                        }
-                        parts.push(format!("capture_mode={s}"));
-                    }
-                    None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "max_image_dimension" => match val.as_u64() {
-                    Some(n) => {
-                        cfg.max_image_dimension = n as u32;
-                        if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(n)) {
-                            tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
-                        }
-                        parts.push(format!("max_image_dimension={n}"));
-                    }
-                    None => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
-                },
-                "experimental_pip" => match val.as_bool() {
-                    Some(b) => {
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
-                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
-                        }
-                        parts.push(format!("experimental_pip={b} (next restart)"));
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
-                },
-                "experimental_pip_geometry" => match val.as_str() {
-                    Some(s) => {
-                        if pip_preview::PipGeometry::parse(s).is_none() {
-                            return ToolResult::error(format!(
-                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
-                            ));
-                        }
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
-                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
-                        }
-                        parts.push(format!("experimental_pip_geometry={s} (next restart)"));
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
-                },
-                other if motion_keys.iter().any(|written| written == other) => {}
-                other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry, cursor.motion.style, cursor.motion.timing, cursor.motion.effects.<name>."
-                )),
-            }
-        }
-        // Legacy per-field shape.
         if let Some(mode) = args.opt_str("capture_mode") {
             if let Err(e) =
                 pip_preview::write_config_key("capture_mode", Value::String(mode.clone()))

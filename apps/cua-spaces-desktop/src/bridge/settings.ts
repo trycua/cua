@@ -77,12 +77,14 @@ export function experimentsPage(model: AppModel) {
   return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
 }
 
-/** `settings.get`'s answer: General, Experiments and the update channel (null: no updater). */
+/** `settings.get`'s answer: General, Experiments, the update channel (null:
+ * no updater) and the global shortcut (null: none here). */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
+    globalShortcut: parts.system?.globalShortcut?.() ?? null,
   };
 }
 

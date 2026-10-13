@@ -1,0 +1,16 @@
+SABLE VERTEX LOGISTICS
+FREIGHT INVOICE
+
+Invoice number: SVL-119
+Invoice date: October 7, 2026
+Bill to: Kestrel Wharf Workshop
+Payment terms: Net 21
+Due date: October 28, 2026
+
+Inbound freight run, October 5                    $186.20
+Outbound freight run, October 5                   $186.20
+Fuel adjustment                                    $20.00
+                                                   -------
+TOTAL DUE                                         $392.40
+
+Dispatch reference: SV-1005-KW

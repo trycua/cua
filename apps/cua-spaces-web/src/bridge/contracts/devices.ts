@@ -55,6 +55,35 @@ export interface DevicesInput {
   deviceName?: string | null;
 }
 
+/** A one-time code that adds another computer to the account ("Add a
+ * machine" by link or QR code; the cua SDK's `PairingCode`, camelCase).
+ * `code`, `url` and the install commands are only there when just made. */
+export interface PairingCode {
+  /** `pc_…` (to revoke it). */
+  id: string;
+  /** `XXXX-XXXX-XXXX`. */
+  code: string | null;
+  /** `https://spaces.cua.ai/add/<code>`: the link and the QR code. */
+  url: string | null;
+  /** The macOS and Linux one-liner. */
+  installSh: string | null;
+  /** The Windows (PowerShell) one-liner. */
+  installPowershell: string | null;
+  state: PairingCodeState;
+  /** Team the machine is added for; null for the personal account. */
+  team: string | null;
+  /** Unix seconds. */
+  createdAt: number;
+  /** Unix seconds. */
+  expiresAt: number;
+  /** Unix seconds, once a machine used it. */
+  usedAt: number | null;
+  /** The relay machine id it added. */
+  machine: string | null;
+}
+
+export type PairingCodeState = "active" | "used" | "revoked" | "expired";
+
 export type BannerTone = "info" | "warning" | "critical";
 export type DeviceAction = "enroll" | "approve" | "rename" | "revoke";
 export type EnrollmentKind = "enrolled" | "grace" | "needs-enrollment" | "waiting" | "due" | "revoked";

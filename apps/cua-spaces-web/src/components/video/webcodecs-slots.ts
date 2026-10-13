@@ -37,6 +37,10 @@
  * instead of the desktop (`windowId`, picture in picture): its input goes
  * in the background, and the session opens again with activation when the
  * Space says that window needs it (`would_require_activation`).
+ *
+ * The viewer slots (`full`: the Space page's desktop, a PiP window) draw
+ * presence over the picture (`presence.ts`): the other participants'
+ * cursors and yours, shown only while the slot is live.
  */
 
 import { MediaSession, type MediaSessionOptions, type MediaTicket } from "../../../../../libs/cua/crates/cua-spacesd-html5/web/src/core/mediaSession";
@@ -47,6 +51,7 @@ import type { StreamTarget, StreamTicket } from "@/bridge/ops/stream";
 import type { SlotOptions, SlotStatus } from "@/lib/video-slots";
 
 import { KeyCapture } from "./key-capture";
+import { attachPresence, type PresenceAttachment } from "./presence";
 import { VideoStats } from "./video-stats";
 import { NO_VIDEO_HERE, webCodecsHost } from "./webcodecs-host";
 
@@ -91,6 +96,14 @@ export function needsActivation(ack: Record<string, unknown>): boolean {
 }
 export type SessionFactory = (options: MediaSessionOptions) => SessionLike;
 
+/** Draws presence over a viewer slot's canvas (`attachPresence`; tests replace it). */
+export type PresenceFactory = (
+  desktop: CuaDesktopBridge,
+  canvas: HTMLCanvasElement,
+  host: HTMLElement,
+  options: { spaceId: string; windowId?: string; interactive: boolean },
+) => PresenceAttachment;
+
 interface Slot {
   id: string;
   el: HTMLElement;
@@ -103,6 +116,8 @@ interface Slot {
   generation: number;
   /** A window's session that opens with activation (the Space asked for it). */
   activate: boolean;
+  /** Presence over a viewer slot (none on tiles). */
+  presence: PresenceAttachment | null;
   detach: (() => void)[];
 }
 
@@ -130,6 +145,7 @@ export class WebCodecsSlots {
     private readonly doc: Document = document,
     private readonly createSession: SessionFactory = (o) => new MediaSession(o),
     stats?: VideoStats | null,
+    private readonly createPresence: PresenceFactory = attachPresence,
   ) {
     this.stats = stats !== undefined ? stats : desktop.videoStats ? new VideoStats() : null;
   }
@@ -150,7 +166,14 @@ export class WebCodecsSlots {
       outline: "none",
     });
     el.append(canvas);
-    const slot: Slot = { id, el, options, listener, canvas, session: null, status: { phase: "connecting", focused: false }, generation: 0, activate: false, detach: [] };
+    const slot: Slot = { id, el, options, listener, canvas, session: null, status: { phase: "connecting", focused: false }, generation: 0, activate: false, presence: null, detach: [] };
+    if (options.tier === "full") {
+      slot.presence = this.createPresence(this.desktop, canvas, el, {
+        spaceId: options.spaceId,
+        ...(options.windowId ? { windowId: options.windowId } : {}),
+        interactive: options.interactive,
+      });
+    }
     this.stats?.open(id, options.spaceId, options.tier);
     this.slots.set(id, slot);
     if (this.slots.size === 1) this.doc.addEventListener("visibilitychange", this.onVisibility);
@@ -160,6 +183,7 @@ export class WebCodecsSlots {
       if (!this.slots.delete(id)) return;
       this.close(slot);
       for (const off of slot.detach.splice(0)) off();
+      slot.presence?.detach();
       canvas.remove();
       this.stats?.close(id);
       if (this.slots.size === 0) this.doc.removeEventListener("visibilitychange", this.onVisibility);
@@ -187,6 +211,7 @@ export class WebCodecsSlots {
     }
     if (next.phase === slot.status.phase && next.focused === slot.status.focused && next.reason === slot.status.reason && next.opening === slot.status.opening) return;
     slot.status = next;
+    slot.presence?.setLive(next.phase === "live");
     slot.listener(next);
   }
 

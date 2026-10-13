@@ -58,9 +58,9 @@ UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
 `xcodebuild test -scheme CuaSpacesMacUITests`.
 
 Environment (debug builds only; release builds ignore every `CUA_SPACES_*` hook):
-`CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`);
+`CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`; a relay allowance `CUA_SPACES_RELAY_USAGE` sets: `reached`, `team`, `none`, default the free plan within it);
 `CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings-devices`, `settings-about`, `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
-`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images) or a notch state (`notch-open`, which springs
+`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images), `run-timeline` (an agent run's conversation from the Space's Agents section; fixtures give `local:aurora` two runs) or a notch state (`notch-open`, which springs
 open 1.5 s after launch, `notch-hover`, `notch-permission`,
 `notch-drag-target`, `notch-drop`); `CUA_SPACES_SELECT`
 selects a Space; `CUA_SPACES_CREATE=<image>[,<name>]` creates one on this
@@ -75,11 +75,16 @@ run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Supp
 
 ## New UI (preview)
 
-Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) adds
-File, "Open New UI (preview)" (⇧⌘U) and a "New UI" toolbar button. They open
-`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`): a `WKWebView`
-with the shared React UI (`apps/cua-spaces-web`) in a window without a title
-bar. The notch, the menu bar extra, Touch ID, the updater and video stay
+Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) makes
+`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`) the main window: a
+`WKWebView` with the shared React UI (`apps/cua-spaces-web`) in a window
+without a title bar. Turning it on puts that window where the native one was
+(same frame) and closes the native one; turning it off does the reverse
+(`MainWindowSwitch`). While it is on, everything that opens the main window
+opens it instead, at the matching page (`MainUIRouter`): the Dock icon, the
+menu bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
+Started and the app's notifications; the native window, opened any other way
+(the Window menu), gives way to it. The notch, the menu bar extra, Touch ID, the updater and video stay
 native; a Space's desktop opens in its native window.
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,

@@ -9,6 +9,7 @@ import { CuaLogo } from "@/components/cua-logo";
 import { useAgentsStep, type AgentsStep } from "@/components/volume/use-agents-step";
 import { OsIcon } from "@/components/os-icon";
 import { ModeCard } from "@/components/onboarding-mode";
+import { PresentationCards } from "@/components/onboarding-presentation";
 import { pressPrimaryOnReturn } from "@/components/onboarding-keys";
 import { SetUpLater } from "@/components/onboarding-skip";
 import { SignInLink } from "@/components/sign-in-link";
@@ -161,6 +162,7 @@ function Columns({ flow, view, agents }: { flow: OnboardingHook; view: Onboardin
               </Suspense>
             </Card>
           ) : null}
+          {view.step === "presentation" ? <PresentationCards flow={flow} view={view} /> : null}
           {view.step === "drive" && view.drive ? (
             <Card>
               <Suspense fallback={null}>
@@ -467,6 +469,12 @@ function Trailing({ flow, view, agents, onFinish }: { flow: OnboardingHook; view
           )}
         </>
       );
+    case "presentation":
+      return (
+        <Button size="lg" data-onboarding-primary="" onClick={() => flow.send({ type: "presentation-done" })}>
+          {view.primaryLabel}
+        </Button>
+      );
     case "drive":
       return (
         <Button
@@ -489,7 +497,7 @@ function Trailing({ flow, view, agents, onFinish }: { flow: OnboardingHook; view
         </Button>
       );
     default:
-      // Welcome has its own button; the native-only pages never show here.
+      // Welcome has its own button.
       return null;
   }
 }

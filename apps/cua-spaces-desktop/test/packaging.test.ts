@@ -53,7 +53,10 @@ describe("the .deb's removal script (CUA-1521)", () => {
   const script = path.join(import.meta.dirname, "../packaging/linux/prerm.sh");
 
   it("runs before the package is removed", () => {
-    expect(config.deb.fpm).toContain(`--before-remove=${script}`);
+    // An option goes before the first `source=target` path: after it, fpm reads everything as a path.
+    const args: string[] = config.deb.fpm;
+    expect(args.slice(0, 2)).toEqual(["--before-remove", script]);
+    expect(args.findIndex((a) => a.includes("="))).toBeGreaterThan(1);
   });
 
   it("is valid shell and turns off the host service, the daemon and the relay entry", () => {

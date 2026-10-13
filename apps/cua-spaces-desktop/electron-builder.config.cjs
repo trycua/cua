@@ -296,11 +296,13 @@ module.exports = {
   deb: {
     artifactName: "cua-spaces_${version}_${arch}.deb",
     fpm: [
-      `${path.join(__dirname, "packaging/ai.cua.spaces.policy")}=/usr/share/polkit-1/actions/ai.cua.spaces.policy`,
       // Removing the package turns off what the app set up outside /opt
       // (unattended access on the relay, the daemon, launch at login): see
-      // the script.
-      `--before-remove=${path.join(__dirname, "packaging/linux/prerm.sh")}`,
+      // the script. An option first: after the first `source=target` fpm reads
+      // everything as a path.
+      "--before-remove",
+      path.join(__dirname, "packaging/linux/prerm.sh"),
+      `${path.join(__dirname, "packaging/ai.cua.spaces.policy")}=/usr/share/polkit-1/actions/ai.cua.spaces.policy`,
     ],
   },
 

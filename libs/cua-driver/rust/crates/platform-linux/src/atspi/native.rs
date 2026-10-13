@@ -12,7 +12,8 @@
 //! `perform_action`, `set_value`, and `get_element_bounds` index into that same
 //! ordered set.
 
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -1332,6 +1333,9 @@ async fn collect_visited_bounded_opts<'a>(
             return Ok(None);
         }
     };
+    if first_application_walk(pid) {
+        let _ = call(app.get_attributes()).await;
+    }
     let zconn = conn.connection();
     // Mapped popups of this pid, read once and only when a menubar menu's
     // open state cannot be told from AT-SPI states alone (gail, focus elsewhere).
@@ -2338,6 +2342,14 @@ fn is_indexable_capabilities(
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
+
+fn first_application_walk(pid: u32) -> bool {
+    static PIDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+    PIDS.get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap()
+        .insert(pid)
+}
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
     walk_tree_bounded(pid, 0, None, None)
@@ -7406,6 +7418,14 @@ mod coord_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[test]
+    fn application_attributes_wake_once_per_pid() {
+        assert!(first_application_walk(u32::MAX));
+        assert!(!first_application_walk(u32::MAX));
+        assert!(first_application_walk(u32::MAX - 1));
+        assert!(!first_application_walk(u32::MAX - 1));
+    }
 
     #[test]
     fn focus_log_tracks_latest_focused_object_per_bus_and_clears_on_blur() {

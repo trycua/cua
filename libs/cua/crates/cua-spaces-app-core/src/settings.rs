@@ -55,8 +55,16 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]).
+    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// "on" there, the value older builds read.
     pub experiments: Experiments,
+    /// The New UI as the user chose it (Settings, Experiments, "Use classic
+    /// UI"); `None`: never chosen, so
+    /// [`crate::experiments::new_ui_default`] decides. An older build's
+    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
+    /// saved default, so it reads as never chosen ([`load`]).
+    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
@@ -87,6 +95,7 @@ impl Default for AppSettings {
             update_channel: UpdateChannel::Stable,
             launch_at_login: None,
             experiments: Experiments::default(),
+            new_ui: None,
             dismissed_access: vec![],
             keyvault_site_icons: true,
             teleport_choices: vec![],
@@ -96,16 +105,67 @@ impl Default for AppSettings {
 }
 
 /// Reads settings; a missing or damaged file gives the defaults.
+///
+/// The New UI: a file with no choice yet ([`AppSettings::new_ui`]) takes an
+/// older build's `experiments.webUi: true` as the choice and its `false`
+/// as no choice (every older install saved `false` without anyone choosing
+/// it). Until [`resolve_new_ui`] runs with the app's version, the New UI
+/// is on only by choice.
 pub fn load(path: &Path) -> AppSettings {
-    std::fs::read_to_string(path)
+    let mut s: AppSettings = std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if s.new_ui.is_none() && s.experiments.web_ui {
+        s.new_ui = Some(true);
+    }
+    s.experiments.web_ui = s.new_ui == Some(true);
+    s
 }
 
-/// Writes settings atomically (temp file, then rename).
+/// `settings` with the New UI as this launch shows it: the user's choice,
+/// else [`crate::experiments::new_ui_default`] for the update channel and
+/// the running app's `version`. Again after the channel changes.
+pub fn resolve_new_ui(settings: &AppSettings, version: &str) -> AppSettings {
+    let mut s = settings.clone();
+    s.experiments.web_ui = s
+        .new_ui
+        .unwrap_or_else(|| crate::experiments::new_ui_default(s.update_channel, version));
+    s
+}
+
+/// The update channel of an install's first launch, from the one in the
+/// settings file (`channel`): Beta for a prerelease (someone who installed
+/// a beta keeps getting betas, and the New UI default that comes with
+/// them), else unchanged.
+pub fn first_launch_channel(channel: UpdateChannel, version: &str) -> UpdateChannel {
+    if version.split('+').next().unwrap_or("").contains('-') {
+        UpdateChannel::Beta
+    } else {
+        channel
+    }
+}
+
+/// The settings after a Settings, Experiments row's choice: the switches
+/// ([`crate::experiments::choose`]) and, for the New UI's row ("Use classic
+/// UI"), the user's choice ([`AppSettings::new_ui`]), which later launches
+/// keep whatever the default becomes.
+pub fn choose_experiment(settings: &AppSettings, row: &str, option: &str) -> AppSettings {
+    let mut s = settings.clone();
+    s.experiments = crate::experiments::choose(&s.experiments, row, option);
+    if let Some(on) = crate::experiments::new_ui_choice(row, option) {
+        s.new_ui = Some(on);
+    }
+    s
+}
+
+/// Writes settings atomically (temp file, then rename). The New UI is
+/// saved as chosen ([`AppSettings::new_ui`]), never as its default: the
+/// default follows the version and channel of each launch.
 pub fn save(path: &Path, settings: &AppSettings) -> Result<(), CoreError> {
-    let json = serde_json::to_string_pretty(settings).map_err(|e| CoreError::Io(e.to_string()))?;
+    let mut stored = settings.clone();
+    stored.experiments.web_ui = stored.new_ui == Some(true);
+    let json = serde_json::to_string_pretty(&stored).map_err(|e| CoreError::Io(e.to_string()))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| CoreError::Io(e.to_string()))?;
     }
@@ -1162,5 +1222,148 @@ mod tests {
         // A settings file from before experiments: all off.
         let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
         assert_eq!(old.experiments, Experiments::default());
+    }
+
+    /// A settings file in a fresh temp dir.
+    fn temp_settings(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("cua-app-core-new-ui-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn an_older_builds_saved_new_ui_migrates_once() {
+        let (dir, path) = temp_settings("migrate");
+        let beta6 = "0.8.0-beta.6";
+        // Every older install saved `webUi: false` without anyone choosing it:
+        // never chosen, so Beta gets the New UI.
+        std::fs::write(
+            &path,
+            r#"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert_eq!(s.new_ui, None);
+        assert!(s.experiments.cua_volume);
+        assert!(!s.experiments.web_ui, "on only by choice until resolved");
+        assert!(resolve_new_ui(&s, beta6).experiments.web_ui);
+        assert!(!resolve_new_ui(&s, "0.8.0-beta.5").experiments.web_ui);
+        // Saving the resolved settings keeps it unchosen: the default is
+        // never written as a choice.
+        save(&path, &resolve_new_ui(&s, beta6)).unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["webUi"], false, "what older builds read");
+        assert!(raw["newUi"].is_null());
+        assert_eq!(load(&path).new_ui, None);
+
+        // A saved `webUi: true` was chosen: kept, on any channel.
+        std::fs::write(&path, r#"{"experiments":{"webUi":true}}"#).unwrap();
+        let s = load(&path);
+        assert_eq!(s.new_ui, Some(true));
+        assert!(s.experiments.web_ui);
+        assert!(resolve_new_ui(&s, "0.7.2").experiments.web_ui);
+        save(&path, &s).unwrap();
+        assert_eq!(load(&path).new_ui, Some(true));
+
+        // No experiments at all (or no file): never chosen.
+        std::fs::write(&path, r#"{"menuBar":true}"#).unwrap();
+        assert_eq!(load(&path).new_ui, None);
+        std::fs::remove_file(&path).unwrap();
+        let fresh = load(&path);
+        assert_eq!(fresh.new_ui, None);
+        assert!(!resolve_new_ui(&fresh, beta6).experiments.web_ui, "Stable");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn use_classic_ui_survives_later_launches() {
+        let (dir, path) = temp_settings("classic");
+        let beta6 = "0.8.0-beta.6";
+        let mut s = resolve_new_ui(
+            &AppSettings {
+                update_channel: UpdateChannel::Beta,
+                ..Default::default()
+            },
+            beta6,
+        );
+        assert!(s.experiments.web_ui);
+        // "Use classic UI" on: saved as the user's choice.
+        let row = crate::experiments::CLASSIC_UI_ROW;
+        let s = choose_experiment(&s, row, "on");
+        assert_eq!(s.new_ui, Some(false));
+        assert!(!s.experiments.web_ui);
+        // Another row leaves the choice alone.
+        assert_eq!(
+            choose_experiment(&s, "experiment:sharing", "on").new_ui,
+            Some(false)
+        );
+        save(&path, &s).unwrap();
+        // Later launches, later versions, either channel: still classic.
+        for version in [beta6, "0.8.0-beta.7", "0.8.0", "0.9.0"] {
+            let again = resolve_new_ui(&load(&path), version);
+            assert_eq!(again.new_ui, Some(false));
+            assert!(!again.experiments.web_ui, "{version}");
+            save(&path, &again).unwrap();
+        }
+        // Off again: the New UI, kept as chosen even on Stable before 0.8.0.
+        let mut s = choose_experiment(&load(&path), row, "off");
+        assert_eq!(s.new_ui, Some(true));
+        s.update_channel = UpdateChannel::Stable;
+        save(&path, &s).unwrap();
+        assert!(resolve_new_ui(&load(&path), "0.7.3").experiments.web_ui);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn switching_channel_moves_the_default_not_a_choice() {
+        let beta = AppSettings {
+            update_channel: UpdateChannel::Beta,
+            ..Default::default()
+        };
+        let stable = AppSettings {
+            update_channel: UpdateChannel::Stable,
+            ..beta.clone()
+        };
+        let v = "0.8.0-beta.6";
+        assert!(resolve_new_ui(&beta, v).experiments.web_ui);
+        assert!(!resolve_new_ui(&stable, v).experiments.web_ui);
+        // Back to Beta: on again.
+        let back = AppSettings {
+            update_channel: UpdateChannel::Beta,
+            ..resolve_new_ui(&stable, v)
+        };
+        assert!(resolve_new_ui(&back, v).experiments.web_ui);
+        // A choice holds on either channel.
+        for (choice, channel) in [(false, UpdateChannel::Beta), (true, UpdateChannel::Stable)] {
+            let s = AppSettings {
+                update_channel: channel,
+                new_ui: Some(choice),
+                ..Default::default()
+            };
+            assert_eq!(resolve_new_ui(&s, v).experiments.web_ui, choice);
+        }
+        // From 0.8.0, Stable too.
+        assert!(resolve_new_ui(&stable, "0.8.0").experiments.web_ui);
+    }
+
+    #[test]
+    fn a_prerelease_installs_first_launch_is_on_beta() {
+        use UpdateChannel::{Beta, Stable};
+        assert_eq!(first_launch_channel(Stable, "0.8.0-beta.6"), Beta);
+        assert_eq!(first_launch_channel(Stable, "0.8.0-beta.6+abc"), Beta);
+        assert_eq!(first_launch_channel(Stable, "0.7.2"), Stable);
+        assert_eq!(first_launch_channel(Stable, "0.8.0+build-7"), Stable);
+        // A release keeps a channel already in the file.
+        assert_eq!(first_launch_channel(Beta, "0.7.2"), Beta);
+        // With it, a fresh beta opens the New UI.
+        let fresh = AppSettings {
+            update_channel: first_launch_channel(Stable, "0.8.0-beta.6"),
+            ..Default::default()
+        };
+        assert!(resolve_new_ui(&fresh, "0.8.0-beta.6").experiments.web_ui);
     }
 }

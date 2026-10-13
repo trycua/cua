@@ -290,10 +290,50 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
         current = AppBillingStatus(
             billingEnabled: enabled, card: nil,
             credit: AppBillingCredit(balanceUsdCents: balanceCents),
-            billingUrl: "https://run.cua.ai/billing")
+            billingUrl: "https://app.cua.ai/billing")
     }
 
     public func status() async throws -> AppBillingStatus { current }
+}
+
+// MARK: - Teams
+
+/// The account's Teams from the Spaces API (api.cua.ai, api.staging.cua.ai
+/// under `CUA_ENV=staging`) through the app core: its organizations with
+/// their members and pending invites. The app administers nothing; invites,
+/// roles and billing are the account app's (app.cua.ai).
+public protocol TeamsReading: AnyObject, Sendable {
+    func teams() async throws -> AppTeamsInput
+}
+
+/// Reads Teams with the account's access token (`force`: refresh it).
+public final class LiveTeams: TeamsReading, @unchecked Sendable {
+    let token: @Sendable (Bool) async throws -> String?
+    public init(token: @escaping @Sendable (Bool) async throws -> String?) { self.token = token }
+
+    public func teams() async throws -> AppTeamsInput {
+        guard let token = try await token(false) else {
+            throw CuaError.Unauthenticated(message: "Sign in to see your teams")
+        }
+        return try await appTeams(accountToken: token)
+    }
+}
+
+/// A fixture account's team (captures, tests).
+public final class FixtureTeams: TeamsReading, @unchecked Sendable {
+    public var current: AppTeamsInput
+
+    public init(_ teams: [AppTeamInput]? = nil) {
+        current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
+            AppTeamInput(
+                id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,
+                members: [AppTeamPersonInput(email: "ada@example.com", role: "owner"),
+                          AppTeamPersonInput(email: "grace@example.com", role: "member")],
+                invites: ["linus@example.com"]),
+        ]))
+    }
+
+    public func teams() async throws -> AppTeamsInput { current }
 }
 
 /// Opens the website billing page (Settings' Manage billing, a refused

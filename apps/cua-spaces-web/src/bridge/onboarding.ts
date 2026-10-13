@@ -298,9 +298,9 @@ const FALLBACK_COPY: OnboardingCopy = {
   signInWaiting: "Waiting for the browser…",
   permissionsTitle: "Grant in System Settings",
   openSettings: "Open Settings",
-  teams: "Teams · coming soon",
-  teamsLink: "Join the waitlist",
-  teamsUrl: "https://cua.ai/teams",
+  teams: "Teams · manage them at app.cua.ai",
+  teamsLink: "Open the account app",
+  teamsUrl: "https://app.cua.ai/welcome",
 };
 
 const FALLBACK_IMAGES: SandboxImage[] = [

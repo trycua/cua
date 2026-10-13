@@ -35,6 +35,7 @@ import type { LocalRuntimes, SpacesBackend } from "./backend";
 import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
+import { TeamsModel } from "./teams";
 import { NotchActivity } from "./activity";
 import { daemonAnswered, isCancelled, words } from "./errors";
 import type { HostModel } from "./host";
@@ -87,6 +88,8 @@ export class AppModel {
   readonly startup: StartupModel;
   readonly host: HostModel;
   readonly devices: DevicesModel;
+  /** Settings, Teams: the account's organizations from the Spaces API. */
+  readonly teams: TeamsModel;
   readonly cloud: CloudModel;
   readonly account: AccountRunning | null;
   readonly telemetry: TelemetryRunning | null;
@@ -167,6 +170,12 @@ export class AppModel {
     this.startup = d.startup;
     this.host = d.host;
     this.devices = d.devices;
+    this.teams = new TeamsModel({
+      native: d.native as unknown as ConstructorParameters<typeof TeamsModel>[0]["native"],
+      account: () => this.account,
+      identity: () => this.identity,
+    });
+    this.teams.onChange = () => this.changed("settings");
     this.cloud = d.cloud;
     this.account = d.account;
     this.telemetry = d.telemetry;
@@ -718,6 +727,7 @@ export class AppModel {
       this.identity = who ?? this.account.identity();
       this.host.identity = this.identity;
       this.devices.signedIn = this.identity !== null;
+      this.teams.reset();
       this.signInUrl = null;
       this.setSignIn(new this.native.AppSignInPhase.Idle());
       // Relay sharing paused while signed out comes back for its owner.
@@ -766,6 +776,7 @@ export class AppModel {
     this.identity = null;
     this.host.identity = null;
     this.devices.signedIn = false;
+    this.teams.reset();
     // Signed out: relay sharing stops (the setup stays to resume).
     await this.host.reconcileAccount();
     await this.devices.refresh();

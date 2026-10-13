@@ -20,6 +20,7 @@ cua-spaces-ext.workspace = true
 cua-spaces = { path = "../cua-spaces" }
 cua-teleport.workspace = true
 cua-keyvault.workspace = true
+cua-home.workspace = true
 cua-host.workspace = true
 cua-spacesd-client.workspace = true
 cua-telemetry.workspace = true

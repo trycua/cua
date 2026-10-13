@@ -46,7 +46,8 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
         valid = (
             cleanup.get("schema_version") == "cua-bench-cleanup/v1"
             and cleanup.get("task_id") == execution_id
-            and isinstance(resources, dict) and len(resources) > 0
+            and isinstance(resources, dict)
+            and {"agent_container", "env_container", "network", "overlay"} <= resources.keys()
             and all(isinstance(v, dict) and v.get("absent") is True for v in resources.values())
             and cleanup.get("verified") is True
         )

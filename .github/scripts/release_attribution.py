@@ -593,7 +593,8 @@ def unsigned_cla_contributors(
 
     pull_number = int(pull.get("number") or 0)
     for number in sorted(add_pull(pull_number, pull, commits) - {pull_number}):
-        add_pull(number, github.pull(repository, number), github.pull_commits(repository, number))
+        source = github.pull(repository, number)
+        add_pull(number, source, github.all_pull_commits(repository, {**source, "number": number}))
     return [
         f"{person} has not signed the CLA; sign it on "
         + " or ".join(f"#{n}" for n in sorted(numbers))
@@ -609,10 +610,13 @@ def validate_pr_cla(
     config: Mapping[str, Any],
     github: GitHubClient,
 ) -> None:
-    paths = github.pull_files(repository, int(pull.get("number") or 0))
-    strict = len(paths) != int(pull.get("changed_files", -1)) or any(
-        path.startswith(CLA_STRICT_PATHS) for path in paths
-    )
+    number = int(pull.get("number") or 0)
+    paths = github.pull_files(repository, number)
+    if len(paths) != int(pull.get("changed_files", -1)) or not all(paths):
+        raise ReleaseError(
+            f"changed files of pull request #{number} are incomplete; refusing CLA validation"
+        )
+    strict = any(path.startswith(CLA_STRICT_PATHS) for path in paths)
     signatures = github.file_json(repository, CLA_SIGNATURES_PATH, CLA_SIGNATURES_BRANCH)
     entries = signatures.get("signedContributors")
     allowlist = CLA_ALLOWLIST_RE.search(CLA_WORKFLOW.read_text())

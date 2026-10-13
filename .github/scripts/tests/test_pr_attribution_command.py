@@ -96,13 +96,15 @@ def validate_command(tmp_path, github_api):
         changed_files=None,
         signed=SIGNED,
         allowlist="maintainer,dependabot[bot]",
+        pull_author="landing-author",
     ):
         config = tmp_path / CONFIG
         config.parent.mkdir()
         config.write_text(json.dumps({"identityOverrides": KNOWN}))
         workflow = tmp_path / ".github/workflows/cla.yml"
         workflow.parent.mkdir()
-        workflow.write_text(f'        with:\n          allowlist: "{allowlist}"\n')
+        if allowlist is not None:
+            workflow.write_text(f'        with:\n          allowlist: "{allowlist}"\n')
         git("init", "-q", "--template=")
         git("add", CONFIG)
         git(
@@ -118,10 +120,10 @@ def validate_command(tmp_path, github_api):
         responses.update({
             "/repos/trycua/cua/pulls/50": {
                 "number": 50,
-                "user": {"login": "landing-author"},
+                "user": {"login": pull_author},
                 "body": body,
                 "commits": 1,
-                "changed_files": len(files) if changed_files is None else changed_files,
+                "changed_files": len(files or ()) if changed_files is None else changed_files,
                 "base": {"sha": ANCESTOR},
                 "head": {"sha": HEAD, "repo": {"full_name": "contributor/cua"}},
             },
@@ -136,9 +138,9 @@ def validate_command(tmp_path, github_api):
                     "message": message,
                 },
             }],
-            "/repos/trycua/cua/pulls/50/files?per_page=100&page=1": [
-                {"filename": path} for path in files
-            ],
+            "/repos/trycua/cua/pulls/50/files?per_page=100&page=1": (
+                None if files is None else [{"filename": path} for path in files]
+            ),
             "/repos/trycua/cua/contents/signatures/version1/cla.json?ref=cla-signatures": (
                 signatures(signed)
             ),
@@ -270,27 +272,37 @@ def test_allowlisted_contributor_passes_without_signature(validate_command):
     "signed,message,expected",
     [
         (
-            ("known-author",),
+            ("landing-author", "known-author"),
+            MESSAGE,
+            "@pull-author has not signed the CLA; sign it on #50",
+        ),
+        (
+            ("known-author", "pull-author"),
             MESSAGE,
             "@landing-author has not signed the CLA; sign it on #50",
         ),
         (
-            ("landing-author",),
+            ("landing-author", "pull-author"),
             MESSAGE,
             "@known-author has not signed the CLA; sign it on #50",
         ),
         (
-            SIGNED,
+            (*SIGNED, "pull-author"),
             "fix: thing\n\nCo-authored-by: Stranger <stranger@example.com>",
             "Stranger <stranger@example.com> (no GitHub login) has not signed the CLA; "
             "sign it on #50",
         ),
     ],
-    ids=["commit-author", "coauthor", "unmatched-coauthor"],
+    ids=["pull-author", "commit-author", "coauthor", "unmatched-coauthor"],
 )
 def test_unsigned_contributor_fails_on_spaces_paths(validate_command, signed, message, expected):
     result = validate_command(
-        ancestor=KNOWN, head=KNOWN, files=SPACES, signed=signed, message=message
+        ancestor=KNOWN,
+        head=KNOWN,
+        files=SPACES,
+        signed=signed,
+        message=message,
+        pull_author="pull-author",
     )
 
     assert result.returncode == 1
@@ -299,21 +311,67 @@ def test_unsigned_contributor_fails_on_spaces_paths(validate_command, signed, me
     assert "merge-ready" not in result.stdout
 
 
-def test_unsigned_salvaged_pull_author_fails_naming_its_pull(validate_command, github_api):
+def source_commit(index, login):
+    return {
+        "sha": f"{index:040x}",
+        "author": {"login": login},
+        "commit": {"author": {"name": login, "email": f"{login}@example.com"}},
+    }
+
+
+@pytest.mark.parametrize(
+    "signed,unsigned",
+    [
+        ((*SIGNED, "source-committer"), "source-author"),
+        ((*SIGNED, "source-author"), "source-committer"),
+    ],
+)
+def test_unsigned_salvaged_pull_contributor_fails_naming_its_pull(
+    validate_command, github_api, signed, unsigned
+):
     _, responses = github_api
     responses["/repos/trycua/cua/pulls/12"] = {
-        "number": 12, "user": {"login": "source-author"},
+        "number": 12, "user": {"login": "source-author"}, "commits": 1,
     }
     responses["/repos/trycua/cua/pulls/12/commits?per_page=100&page=1"] = [
-        {
-            "author": {"login": "source-author"},
-            "commit": {"author": {"name": "Source", "email": "source@example.com"}},
-        },
+        source_commit(1, "source-committer"),
     ]
-    result = validate_command(ancestor=KNOWN, head=KNOWN, files=SPACES, body="Salvaged from #12")
+    result = validate_command(
+        ancestor=KNOWN, head=KNOWN, files=SPACES, body="Salvaged from #12", signed=signed
+    )
 
     assert result.returncode == 1
-    assert "@source-author has not signed the CLA; sign it on #12" in result.stderr
+    assert f"@{unsigned} has not signed the CLA; sign it on #12" in result.stderr
+
+
+def test_unsigned_salvaged_commit_author_past_250_commits_fails(validate_command, github_api):
+    _, responses = github_api
+    source_head = "c" * 40
+    responses["/repos/trycua/cua/pulls/12"] = {
+        "number": 12,
+        "user": {"login": "source-author"},
+        "commits": 260,
+        "base": {"ref": "main"},
+        "head": {"sha": source_head},
+    }
+    commits = [source_commit(i, "source-committer") for i in range(259)]
+    commits.append(source_commit(259, "late-committer"))
+    for page in range(1, 4):
+        responses[f"/repos/trycua/cua/compare/main...{source_head}?per_page=100&page={page}"] = {
+            "total_commits": 260,
+            "commits": commits[(page - 1) * 100 : page * 100],
+        }
+    result = validate_command(
+        ancestor=KNOWN,
+        head=KNOWN,
+        files=SPACES,
+        body="Salvaged from #12",
+        signed=(*SIGNED, "source-author", "source-committer"),
+    )
+
+    assert result.returncode == 1
+    assert "@late-committer has not signed the CLA; sign it on #12" in result.stderr
+    assert "source-committer" not in result.stderr
 
 
 def test_unsigned_contributor_on_other_paths_passes_with_warning(validate_command):
@@ -324,11 +382,33 @@ def test_unsigned_contributor_on_other_paths_passes_with_warning(validate_comman
     assert "merge-ready for pull request #50" in result.stdout
 
 
-def test_incomplete_file_list_is_treated_as_strict(validate_command):
-    result = validate_command(ancestor=KNOWN, head=KNOWN, signed=("known-author",), changed_files=2)
+@pytest.mark.parametrize(
+    "files,changed_files,expected",
+    [
+        (("libs/cua-driver/src/lib.rs",), 2, "incomplete"),
+        ((None,), None, "incomplete"),
+        (None, 1, "pulls/50/files"),
+    ],
+    ids=["count-mismatch", "missing-filename", "unavailable"],
+)
+def test_incomplete_or_unavailable_file_list_fails(
+    validate_command, files, changed_files, expected
+):
+    result = validate_command(
+        ancestor=KNOWN, head=KNOWN, files=files, changed_files=changed_files
+    )
 
     assert result.returncode == 1
-    assert "@landing-author has not signed the CLA" in result.stderr
+    assert expected in result.stderr
+    assert "merge-ready" not in result.stdout
+
+
+def test_unreadable_cla_allowlist_fails(validate_command):
+    result = validate_command(ancestor=KNOWN, head=KNOWN, allowlist=None)
+
+    assert result.returncode == 1
+    assert "cla.yml" in result.stderr
+    assert "merge-ready" not in result.stdout
 
 
 def test_unreadable_cla_signatures_fail(validate_command):

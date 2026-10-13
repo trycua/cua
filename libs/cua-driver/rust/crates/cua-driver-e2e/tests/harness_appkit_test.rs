@@ -934,7 +934,9 @@ fn harness_appkit_invoke_menu_live_path() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")),
+                    .is_some_and(
+                        |message| message.contains("path segment 2 \"Missing\" was not found")
+                    ),
                 "{}",
                 refused.raw
             );
@@ -1031,7 +1033,8 @@ fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")
+                    .is_some_and(|message| message
+                        .contains("path segment 2 \"Missing\" was not found")
                         && message.contains("No menu window this call opened is still on screen")),
                 "{}",
                 refused.raw

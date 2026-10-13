@@ -213,24 +213,8 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
         (Some(u), _) | (None, Some(u)) => format!(" as {u}"),
         _ => String::new(),
     };
-    line(
-        out,
-        format!(
-            "Logged in to {}{who}.",
-            signed_in_to(cua_home::env::CuaEnv::current())
-        ),
-    );
+    line(out, format!("Logged in to Cua{who}."));
     Ok(0)
-}
-
-/// Where a sign-in went, as the CLI says it: `run.cua.ai` in production,
-/// `Cua staging` for `CUA_ENV=staging` (whose session is not run.cua.ai's).
-fn signed_in_to(env: cua_home::env::CuaEnv) -> String {
-    if env.is_prod() {
-        "run.cua.ai".into()
-    } else {
-        format!("Cua {}", env.name())
-    }
 }
 
 /// `cua auth logout`.
@@ -290,19 +274,12 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     if c.expires().map_err(auth_err)? <= chrono::Utc::now() {
         line(
             out,
-            format!(
-                "Logged in; access token expired and will refresh on the next {} request.",
-                signed_in_to(endpoints.env)
-            ),
+            "Logged in; access token expired and will refresh on the next request.",
         );
     } else {
         line(
             out,
-            format!(
-                "Logged in to {}. Access token expires {}.",
-                signed_in_to(endpoints.env),
-                c.expires_at
-            ),
+            format!("Logged in to Cua. Access token expires {}.", c.expires_at),
         );
     }
     Ok(0)
@@ -508,15 +485,6 @@ pub async fn github_wif_token(audience: &str) -> Result<String, CuaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sign_in_names_the_environment() {
-        use cua_home::env::CuaEnv;
-        // Production says what it always said; staging no longer claims
-        // run.cua.ai.
-        assert_eq!(signed_in_to(CuaEnv::Prod), "run.cua.ai");
-        assert_eq!(signed_in_to(CuaEnv::Staging), "Cua staging");
-    }
 
     #[test]
     fn audience_replaces_existing_query_value() {

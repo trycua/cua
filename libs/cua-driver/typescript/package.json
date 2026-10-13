@@ -38,7 +38,9 @@
     "dist/fleet.js",
     "dist/fleet.d.ts",
     "dist/native",
-    "README.md"
+    "README.md",
+    "dist/daemon.js",
+    "dist/daemon.d.ts"
   ],
   "publishConfig": {
     "access": "public"

@@ -568,8 +568,8 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             let mut r = row("billing", Text, "Billing");
             r.value = Some(crate::billing::billing_line(b));
             r.button = Some(crate::billing::MANAGE_BILLING.into());
-            r.link_url = b.billing_url.clone();
-            r.enabled = b.billing_url.is_some();
+            r.link_url = Some(crate::billing::BILLING_URL.into());
+            r.enabled = true;
             account.push(r);
         }
     } else if let SignInPhase::Waiting { user_code } = &input.sign_in {

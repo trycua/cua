@@ -21,7 +21,8 @@ def make_receipts(root, execution_id="run-1"):
         "schema_version": "cua-bench-cleanup/v1",
         "task_id": execution_id,
         "verified": True,
-        "resources": {"agent_container": {"name": "a", "absent": True}},
+        "resources": {key: {"name": key, "absent": True} for key in
+                      ("agent_container", "env_container", "network", "overlay")},
     })
     logs = root / "task_0_agent_logs" / "executed-actions.jsonl"
     write_json(logs, {
@@ -144,3 +145,14 @@ def test_finite_reward_above_one_is_consistent_with_solver_contract(tmp_path):
     assert result["checks"]["oracle"] is True
     assert result["task_success"] is True
     assert result["run_accepted"] is True
+
+
+def test_missing_cleanup_resource_fails_closed(tmp_path):
+    make_receipts(tmp_path)
+    path = tmp_path / "cleanup-result.json"
+    receipt = json.loads(path.read_text())
+    del receipt["resources"]["overlay"]
+    write_json(path, receipt)
+    report = verify_execution(tmp_path, 0, "run-1")
+    assert report["checks"]["cleanup"] is False
+    assert report["run_accepted"] is False

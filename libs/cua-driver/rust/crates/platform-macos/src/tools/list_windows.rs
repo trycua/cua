@@ -52,16 +52,13 @@ impl Tool for ListWindowsTool {
         let on_screen_only = args.bool_or("on_screen_only", false);
 
         let enumeration = if on_screen_only {
-            crate::windows::visible_windows_with_space_snapshot()
+            crate::windows::visible_windows_with_space_snapshot(pid_filter)
         } else {
-            crate::windows::all_windows_with_space_snapshot()
+            crate::windows::all_windows_with_space_snapshot(pid_filter)
         };
         let current_space_id = enumeration.current_space_id;
         let mut windows = enumeration.windows;
 
-        if let Some(pid) = pid_filter {
-            windows.retain(|w| w.pid == pid);
-        }
         // The driver's own windows (the agent cursor overlay) are not targets.
         let own_pid = std::process::id() as i32;
         windows.retain(|w| w.pid != own_pid);

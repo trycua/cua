@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.35.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.1...cua-driver-rs-v0.35.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** name the missing AT-SPI bus in the X11 background keyboard refusal ([#5070](https://github.com/trycua/cua/issues/5070)) ([d7c98c1](https://github.com/trycua/cua/commit/d7c98c1e0f661b1e0b1ca821a79b6a5ef45fbd2c))
+* **cua-driver:** scroll an inner Electron scroller in the background on macOS ([#5079](https://github.com/trycua/cua/issues/5079)) ([f72e033](https://github.com/trycua/cua/commit/f72e033269cd42c6e630cccd6496325b8b698248))
+* **cua-driver:** tolerate a transient UIA read and a twice-reported consent prompt on Windows ([#5082](https://github.com/trycua/cua/issues/5082)) ([f0c468f](https://github.com/trycua/cua/commit/f0c468f7b2b5875726a909b6d395204110777873))
+
 ## [0.35.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.0...cua-driver-rs-v0.35.1) (2026-10-13)
 
 

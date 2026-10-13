@@ -188,12 +188,13 @@ fn endpoint_access_class(
         BrowserProcessRole::EmbeddedApplication => Ok(EndpointAccessClass::EmbeddedApplication),
         BrowserProcessRole::StandaloneConsumer => Err(refuse(
             BrowserRefusalCode::BrowserConsentRequired,
-            "this standalone browser profile requires explicit existing-profile approval before Cua can inspect its DevTools endpoint",
+            "this is the person's own browser profile, which needs existing-profile approval before Cua can inspect its DevTools endpoint: call browser_prepare with strategy existing_profile (the runtime must have been started with --grant existing-profile, a matching bounded manifest, or an approving host), or browser_prepare with allow_launch and profile isolated_new for a separate signed-out browser that needs no approval",
         )
         .with_detail(json!({
             "reason": "consumer_profile_endpoint_requires_grant",
             "supported_strategies": ["existing_profile"],
             "next_action": "browser_prepare",
+            "recovery": super::refusal::existing_profile_recovery(),
         }))),
         BrowserProcessRole::Helper => Err(refuse(
             BrowserRefusalCode::BrowserWrongTargetRefused,

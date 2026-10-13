@@ -69,4 +69,25 @@ describe.skipIf(!wasmBuilt)("a Space's Agents and Teleport sections (real routes
     act(() => dropOn(well, ["Google Chrome.app"]));
     await waitFor(() => expect(document.querySelector("[data-teleport]")).not.toBeNull());
   });
+
+  it("titles the picker for the Space again after Back from an app's options", async () => {
+    const { router } = await mountApp(`/spaces/${SPACE}`, host());
+    await router.load();
+    const open = await screen.findByRole("button", { name: "Teleport an app…" });
+    fireEvent.click(open);
+    const title = () => document.querySelector("[data-teleport-title]")?.textContent;
+    const tile = await waitFor(() => {
+      const t = document.querySelector<HTMLElement>("[data-teleport][data-step=pick] [data-tile]:not([data-disabled])");
+      expect(t).not.toBeNull();
+      return t!;
+    });
+    const gridTitle = title();
+    expect(gridTitle).toMatch(/^Teleport an app to /);
+    fireEvent.doubleClick(tile);
+    await waitFor(() => expect(document.querySelector("[data-teleport][data-step=options]")).not.toBeNull());
+    expect(title()).not.toBe(gridTitle);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(document.querySelector("[data-teleport][data-step=pick]")).not.toBeNull());
+    expect(title()).toBe(gridTitle);
+  });
 });

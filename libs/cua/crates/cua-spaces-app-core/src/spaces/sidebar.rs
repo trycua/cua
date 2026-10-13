@@ -834,8 +834,16 @@ fn detail_facts(
         .filter(|p| p.off && p.turning_on.is_none() && space.status == SpaceStatus::Suspended)
         .filter(|_| !space.progress.as_ref().is_some_and(|p| p.error.is_some()))
         .map(|p| super::off_hint(p.control).to_string());
+    // Unreachable: why, in the shell's words, as the Status row's help.
+    let why = space
+        .sdk
+        .as_ref()
+        .filter(|sdk| !sdk.reachable && status == UNREACHABLE)
+        .and_then(|sdk| sdk.error.as_deref())
+        .filter(|e| !e.trim().is_empty())
+        .map(crate::errors::plain_error);
     let mut facts = vec![Fact {
-        help: hint,
+        help: hint.or(why),
         ..fact("Status", status)
     }];
     if let Some(place) = space
@@ -889,6 +897,9 @@ pub fn detail(space: &Space) -> SpaceDetail {
     detail_live(space, None, None)
 }
 
+/// The Status of a Space the app cannot reach (why is the row's help).
+const UNREACHABLE: &str = "Unreachable";
+
 /// The detail of `space` with its current memory and storage use.
 /// `host_arch` is this machine's CPU architecture (`arm64`, `x86_64`, ...):
 /// a local Space of another one shows a warning on its Architecture.
@@ -916,11 +927,8 @@ pub fn detail_live(
             None if p.transfer.is_some() => p.label.clone(),
             None => format!("{} {}", p.label, percent(p.permille)),
         },
-        (Some(sdk), None) if !sdk.reachable => sdk
-            .error
-            .clone()
-            .filter(|e| !e.is_empty())
-            .unwrap_or_else(|| "Unreachable".into()),
+        // The probe's error is its help (the row's tooltip), not the value.
+        (Some(sdk), None) if !sdk.reachable => UNREACHABLE.into(),
         _ => status_text(space),
     };
     let preview_text = match (creating, &failed) {
@@ -1225,6 +1233,34 @@ mod tests {
 
     fn fact_of<'a>(d: &'a SpaceDetail, label: &str) -> Option<&'a Fact> {
         d.facts.iter().find(|f| f.label == label)
+    }
+
+    /// A Space the app cannot reach says "Unreachable"; the probe's error
+    /// is the row's help (in plain words), never the Status itself.
+    #[test]
+    fn an_unreachable_space_says_unreachable_with_why_as_help() {
+        let x = crate::experiments::Experiments::default();
+        for (raw, why) in [
+            (
+                "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
+                "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
+            ),
+            (
+                "transport: Connection refused (os error 61)",
+                crate::errors::DAEMON_NOT_RUNNING,
+            ),
+        ] {
+            let mut space = machine(&[], false);
+            space.sdk.as_mut().unwrap().error = Some(raw.into());
+            let d = detail_with(&space, None, None, &x);
+            let status = fact_of(&d, "Status").unwrap();
+            assert_eq!(status.value, "Unreachable");
+            assert_eq!(status.help.as_deref(), Some(why));
+        }
+        // No error: no help.
+        let d = detail_with(&machine(&[], false), None, None, &x);
+        assert_eq!(fact_of(&d, "Status").unwrap().value, "Unreachable");
+        assert_eq!(fact_of(&d, "Status").unwrap().help, None);
     }
 
     /// One of your machines on the relay, as the app's probe saw it.

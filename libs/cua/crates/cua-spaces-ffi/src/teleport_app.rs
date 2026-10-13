@@ -21,7 +21,8 @@ pub(crate) fn ux_err(e: UxError) -> CuaError {
         match e {
             UxError::Unsupported(_) => CuaError::Unsupported(m),
             UxError::Invalid(_) => CuaError::InvalidArgument(m),
-            UxError::NotApproved(_) => CuaError::TeleportRefused(m),
+            // Its own words: the error says "teleport refused:" itself.
+            UxError::NotApproved(why) => CuaError::TeleportRefused(why),
             UxError::PermissionDenied(_) | UxError::HostEffectsRefused(_) => {
                 CuaError::PermissionDenied(m)
             }

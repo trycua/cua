@@ -95,8 +95,8 @@ extension Server {
         )
     }
 
-    /// `POST /lume/pull/cancel` with `{"name": "<vm>"}`: cancels the async pull
-    /// started by `/lume/pull/start` for that name and waits (up to
+    /// `POST /lume/pull/cancel` with `{"name": "<vm>", "token": "<operation-token>"}`:
+    /// cancels the keyed async pull started by `/lume/pull/start` and waits (up to
     /// `pullCancelTimeout` seconds) until it stopped and cleaned up. 200 once it
     /// ended, 404 when no async pull runs for the name, 500 if it did not stop
     /// in time.

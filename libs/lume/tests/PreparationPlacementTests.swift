@@ -174,6 +174,35 @@ struct PreparationPlacementTests {
         #expect(!FileManager.default.fileExists(atPath: cache.path))
     }
 
+    @Test func ephemeralOverlapValidationDoesNotCreateMissingTemporaryDirectory() throws {
+        let base = try placementTemp("ephemeral")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let workRootURL = base.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: workRootURL, withIntermediateDirectories: true)
+        let preparation = try OwnedPreparation(
+            workRoot: workRootURL.path, scopeID: "scope", operationID: "operation")
+        let tmpDirectory = workRootURL.appendingPathComponent("tmp")
+        let destination = ImageContainerRegistry.ephemeralDestinationURL(
+            vmName: "vm", tmpDirectory: tmpDirectory.path)
+        #expect(throws: PreparationPlacementError.invalidWorkRoot) {
+            try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
+        }
+        #expect(!FileManager.default.fileExists(atPath: tmpDirectory.path))
+    }
+
+    @Test func directRegistryForceAdmissionPreservesIncompleteDestinationWithoutForce() throws {
+        #expect(throws: VMError.self) {
+            try ImageContainerRegistry.validateForceAdmission(
+                destinationExists: true, completeCacheHit: false, force: false, name: "vm")
+        }
+        do {
+            try ImageContainerRegistry.validateForceAdmission(
+                destinationExists: true, completeCacheHit: false, force: true, name: "vm")
+        } catch {
+            Issue.record("force admission unexpectedly rejected: \(error)")
+        }
+    }
+
     @Test func finalPublicationRefusesCrossVolumeAndKeepsPriorDestination() throws {
         let base = try placementTemp("publication")
         defer { try? FileManager.default.removeItem(at: base) }

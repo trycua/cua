@@ -789,6 +789,23 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
     }
 
+    static func ephemeralDestinationURL(vmName: String, tmpDirectory: String? = nil) -> URL {
+        let directory = tmpDirectory ?? ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
+        return URL(fileURLWithPath: directory, isDirectory: true)
+            .appendingPathComponent(vmName, isDirectory: true)
+    }
+
+    static func validateForceAdmission(
+        destinationExists: Bool,
+        completeCacheHit: Bool,
+        force: Bool,
+        name: String
+    ) throws {
+        if destinationExists, !completeCacheHit, !force {
+            throw VMError.alreadyExists(name)
+        }
+    }
+
     // Constants for zero-skipping write logic
     private static let holeGranularityBytes = 4 * 1024 * 1024  // 4MB block size for checking zeros
     private static let zeroChunk = Data(count: holeGranularityBytes)
@@ -1182,22 +1199,31 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             vmDir = try home.getVMDirectoryFromPath(vmName, storagePath: locationName)
         } else {
             // Named storage or default location
+            if locationName == "ephemeral" {
+                try Self.validateDestination(
+                    Self.ephemeralDestinationURL(vmName: vmName),
+                    preparation: effectivePreparation)
+            }
             vmDir = try home.getVMDirectory(vmName, storage: locationName)
             try Self.validateDestination(URL(fileURLWithPath: vmDir.dir.path), preparation: effectivePreparation)
         }
 
         // Check if image is already cached with all required files
         let manifestDigestPath = vmDir.dir.url.appendingPathComponent(".manifest-digest")
-        if !force
-            && vmDir.exists()
+        let completeCacheHit = vmDir.exists()
             && vmDir.diskPath.exists()
             && vmDir.nvramPath.exists()
             && vmDir.configPath.exists()
             && FileManager.default.fileExists(atPath: manifestDigestPath.path)
-        {
+        if !force && completeCacheHit {
             Logger.info("Image already cached, skipping download")
             return vmDir
         }
+        try Self.validateForceAdmission(
+            destinationExists: vmDir.exists(),
+            completeCacheHit: completeCacheHit,
+            force: force,
+            name: vmName)
 
         let configuredWorkRoot = effectivePreparation?.workRoot
         let workLayout: StagingLayout?

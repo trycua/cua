@@ -26,7 +26,6 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-
 CONVENTIONAL_RE = re.compile(
     r"^(?P<type>[a-z][a-z0-9-]*)(?:\((?P<scope>[^)]+)\))?(?P<breaking>!)?:\s+(?P<summary>\S.*)$"
 )
@@ -124,6 +123,7 @@ class ConventionalEntry:
 PULL_COMMITS_ENDPOINT_CAP = 250
 MAX_COMPARE_PAGES = 100
 
+
 class GitHubClient:
     """Small GitHub REST client with explicit, testable endpoints."""
 
@@ -171,7 +171,9 @@ class GitHubClient:
                 return commits
         raise ReleaseError(f"pull request #{number} has too many commits to validate safely")
 
-    def compare_commits(self, repository: str, base: str, head: str) -> tuple[list[dict[str, Any]], int]:
+    def compare_commits(
+        self, repository: str, base: str, head: str
+    ) -> tuple[list[dict[str, Any]], int]:
         """Every commit in ``base...head`` and GitHub's total, paging the compare API.
 
         The pull request commits endpoint stops at 250 commits; the compare
@@ -621,10 +623,18 @@ def validate_pr_attribution(
                         github.get(f"repos/{repository}/compare/{parent}...{sha}")["files"]
                         for parent in parents
                     ]
-                    clean_main_sync = all(len(files) < 300 for files in comparisons) and {
-                        file["filename"] for file in comparisons[0]
-                    }.isdisjoint(file["filename"] for file in comparisons[1])
-            except (ReleaseError, OSError, ValueError, KeyError, TypeError):
+                    if all(len(files) < 300 for files in comparisons):
+                        changed_paths = [
+                            {
+                                path
+                                for file in files
+                                for path in (file["filename"], file.get("previous_filename"))
+                                if path
+                            }
+                            for files in comparisons
+                        ]
+                        clean_main_sync = changed_paths[0].isdisjoint(changed_paths[1])
+            except (ReleaseError, OSError, ValueError):
                 pass
         unlinked_author = not clean_main_sync and not author_login and author_email not in ignored
         distinct_external_author = (
@@ -1465,9 +1475,7 @@ def validate_pr_command(args: argparse.Namespace) -> None:
     base_config = json.loads(args.config.read_text())
     head_config = client.file_json(head_repository, args.config.as_posix(), head_sha)
     trusted_sha = run_git(Path.cwd(), "rev-parse", "HEAD").strip()
-    comparison = client.get(
-        f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1"
-    )
+    comparison = client.get(f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1")
     ancestor_sha = str((comparison.get("merge_base_commit") or {}).get("sha") or "")
     if not ancestor_sha:
         raise ReleaseError("GitHub returned no merge base for attribution validation")

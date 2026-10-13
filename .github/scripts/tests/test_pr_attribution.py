@@ -99,7 +99,7 @@ def validate(
         base_config=base,
         identity_changes=changes or {},
         github=SourceGitHub(authors or {}, source_emails or {}, comparisons),
-        **({"main_sha": main_sha} if main_sha else {}),
+        main_sha=main_sha,
     )
 
 
@@ -474,6 +474,7 @@ def test_compare_pages_that_stop_short_are_refused():
         ("ahead", ["main-change"], ["branch-change"], False, True),
         ("identical", ["main-change"], ["branch-change"], False, True),
         ("ahead", ["conflict"], ["conflict"], False, False),
+        ("ahead", [{"filename": "q", "previous_filename": "p"}], ["p"], False, False),
         ("diverged", ["main-change"], ["branch-change"], False, False),
         ("ahead", [str(i) for i in range(300)], ["branch-change"], False, False),
         ("ahead", ["main-change"], [str(i) for i in range(300)], False, False),
@@ -484,7 +485,9 @@ def test_main_sync_merge_authorship(status, branch_files, main_files, failure, c
     comparisons = {
         "repos/trycua/cua/compare/main-tip...trusted-main": {"status": status},
         "repos/trycua/cua/compare/feature-tip...sync-merge": {
-            "files": [{"filename": name} for name in branch_files]
+            "files": [
+                name if isinstance(name, dict) else {"filename": name} for name in branch_files
+            ]
         },
         "repos/trycua/cua/compare/main-tip...sync-merge": (
             ReleaseError("API failed")

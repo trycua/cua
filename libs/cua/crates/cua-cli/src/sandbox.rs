@@ -2111,8 +2111,7 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
 }
 
 /// The remembered spacesd token of a direct sandbox (saved under its name
-/// and its `direct:<host:port>` ref), the spacesd token of the Space added
-/// at that address, or `CUA_ENV_TOKEN`.
+/// and its `direct:<host:port>` ref), or `CUA_ENV_TOKEN`.
 fn direct_token(info: &SandboxInfo) -> Option<String> {
     let tokens = load_tokens();
     [&info.id, &info.name]

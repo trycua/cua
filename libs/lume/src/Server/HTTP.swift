@@ -67,7 +67,6 @@ struct HTTPResponse {
             switch self {
             case .ok: return "OK"
             case .accepted: return "Accepted"
-            case .conflict: return "Conflict"
             case .badRequest: return "Bad Request"
             case .conflict: return "Conflict"
             case .notFound: return "Not Found"

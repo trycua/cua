@@ -34,6 +34,7 @@ pub use mpx_keyboard::{
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
@@ -3389,7 +3390,7 @@ fn type_text_with_preflight<G>(
     text: &str,
     keymap: &GetKeyboardMappingReply,
     mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
-    mut send: impl FnMut(u8, bool) -> Result<()>,
+    mut send: impl FnMut(u8, bool, bool) -> Result<()>,
 ) -> Result<Vec<G>> {
     let mut mapping = keymap.clone();
     let mut guards = Vec::new();
@@ -3400,7 +3401,7 @@ fn type_text_with_preflight<G>(
             Some(key) => key,
             None => {
                 let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
-                    Some(key) => key,
+                    Some((keycode, needs_shift)) => (keycode, needs_shift, false),
                     None => {
                         let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
                             let needed = text
@@ -3414,8 +3415,9 @@ fn type_text_with_preflight<G>(
                                 text.chars().count()
                             )
                         })?;
+                        let borrowed = guard.is_some();
                         guards.extend(guard);
-                        (keycode, false)
+                        (keycode, false, borrowed)
                     }
                 };
                 resolved.insert(ch, key);
@@ -3424,8 +3426,8 @@ fn type_text_with_preflight<G>(
         };
         keys.push(key);
     }
-    for (keycode, needs_shift) in keys {
-        send(keycode, needs_shift)?;
+    for (keycode, needs_shift, borrowed) in keys {
+        send(keycode, needs_shift, borrowed)?;
     }
     Ok(guards)
 }
@@ -3436,12 +3438,12 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let mut client = TextClient::new(Some(window));
+    let client = RefCell::new(TextClient::new(Some(window)));
     let guards = type_text_with_preflight(
         text,
         &mapping,
-        |ch, mapping| text_keycode(&conn, mapping, &mut client, ch),
-        |keycode, needs_shift| {
+        |ch, mapping| text_keycode(&conn, mapping, &mut client.borrow_mut(), ch),
+        |keycode, needs_shift, borrowed| {
             let state = if needs_shift {
                 KeyButMask::SHIFT
             } else {
@@ -3485,6 +3487,9 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             sleep(Duration::from_millis(KEY_DELAY_MS));
             conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
             conn.flush()?;
+            if borrowed {
+                client.borrow_mut().sent(&conn);
+            }
             if inter_char_ms > 0 {
                 sleep(Duration::from_millis(inter_char_ms));
             }
@@ -3493,7 +3498,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
-    client.release(&conn, guards);
+    client.into_inner().release(&conn, guards);
     Ok(())
 }
 
@@ -3516,12 +3521,12 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    let mut client = TextClient::new(targeted::active_window(&conn, conn.setup().roots[0].root));
+    let client = RefCell::new(TextClient::new(None));
     let guards = type_text_with_preflight(
         text,
         &mapping,
-        |ch, mapping| text_keycode(&conn, mapping, &mut client, ch),
-        |keycode, needs_shift| {
+        |ch, mapping| text_keycode(&conn, mapping, &mut client.borrow_mut(), ch),
+        |keycode, needs_shift, borrowed| {
             if needs_shift {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
@@ -3531,6 +3536,9 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
                 conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
             conn.flush()?;
+            if borrowed {
+                client.borrow_mut().sent(&conn);
+            }
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
@@ -3539,7 +3547,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
     let _ = conn.get_input_focus()?.reply();
-    client.release(&conn, guards);
+    client.into_inner().release(&conn, guards);
     Ok(())
 }
 
@@ -4148,7 +4156,7 @@ mod key_name_alias_tests {
                 text,
                 &mapping,
                 |_, _| anyhow::bail!("no spare keycode"),
-                |keycode, shift| {
+                |keycode, shift, _| {
                     events.extend([keycode, keycode]);
                     target.push(if shift { 'A' } else { 'a' });
                     Ok(())
@@ -4183,7 +4191,7 @@ mod key_name_alias_tests {
                 )
                 .map(|(keycode, guard)| (keycode, Some(guard)))
             },
-            |keycode, _| {
+            |keycode, _, _| {
                 events.push(keycode);
                 target.push('a');
                 Ok(())
@@ -4234,7 +4242,7 @@ mod key_name_alias_tests {
                     )
                     .map(|(keycode, guard)| (keycode, Some(guard)))
                 },
-                |_, _| {
+                |_, _, _| {
                     events += 1;
                     if fail_send {
                         anyhow::bail!("send failed");
@@ -4270,8 +4278,8 @@ mod key_name_alias_tests {
                 )
                 .map(|(keycode, guard)| (keycode, Some(guard)))
             },
-            |keycode, shift| {
-                events.push((keycode, shift));
+            |keycode, shift, borrowed| {
+                events.push((keycode, shift, borrowed));
                 Ok(())
             },
         )
@@ -4279,7 +4287,13 @@ mod key_name_alias_tests {
         assert_eq!(remaps, 2);
         assert_eq!(
             events,
-            [(8, false), (8, true), (10, false), (9, false), (10, false)]
+            [
+                (8, false, false),
+                (8, true, false),
+                (10, false, true),
+                (9, false, true),
+                (10, false, true)
+            ]
         );
     }
 
@@ -4299,7 +4313,7 @@ mod key_name_alias_tests {
                 assert!(mapping.keysyms.contains(&(ch as u32)));
                 Ok((8, None))
             },
-            |keycode, shift| {
+            |keycode, shift, _| {
                 events.push((keycode, shift));
                 Ok(())
             },
@@ -4460,9 +4474,9 @@ fn keycode_for_keysym<'a>(
     Ok((keycode, Some(guard)))
 }
 
-/// Keycode for `ch` while typing a text that `client` reads. A new binding is
-/// used once `client` has seen it: Chrome drops keys on a keycode bound after
-/// the last mapping change it handled.
+/// Keycode for `ch` while typing one text. A new binding is used once the
+/// client that gets its keys has seen it: Chrome drops keys on a keycode bound
+/// after the last mapping change it handled.
 fn text_keycode<'a>(
     conn: &'a RustConnection,
     mapping: &mut GetKeyboardMappingReply,
@@ -4472,7 +4486,7 @@ fn text_keycode<'a>(
     let keysym = mpx_keyboard::keysym_for_char(ch);
     let (keycode, guard) = keycode_for_keysym(conn, mapping, keysym, &ch.to_string())?;
     if guard.is_some() {
-        client.sync(conn);
+        client.notice(conn);
     }
     Ok((keycode, guard))
 }
@@ -4488,36 +4502,75 @@ enum ClientSync {
     Unanswered,
 }
 
-/// The client that reads one text's keys.
+/// The clients that read one text's keys.
 struct TextClient {
-    window: Option<Window>,
-    /// Cleared once the client leaves a ping unanswered: it is not pinged again
-    /// for this text, so a stalled client costs at most one [`PING_TIMEOUT`].
-    answering: bool,
+    /// The window [`send_type_text`] sends the keys to; `None` for XTest, whose
+    /// keys go to the input focus.
+    target: Option<Window>,
+    /// Each window a key of a borrowed keycode went to.
+    sent: Vec<Window>,
+    /// Windows that left a ping unanswered. They are not pinged again for this
+    /// text, so a stalled client costs at most one [`PING_TIMEOUT`].
+    unanswered: Vec<Window>,
 }
 
 impl TextClient {
-    fn new(window: Option<Window>) -> Self {
+    fn new(target: Option<Window>) -> Self {
         Self {
-            window,
-            answering: true,
+            target,
+            sent: Vec::new(),
+            unanswered: Vec::new(),
         }
     }
 
-    fn sync(&mut self, conn: &RustConnection) -> ClientSync {
-        if !self.answering {
+    /// The window that gets the keys sent now. For XTest it is the input focus
+    /// once the server has handled the keys sent so far.
+    fn recipient(&self, conn: &RustConnection) -> Option<Window> {
+        self.target.or_else(|| {
+            let cookie = conn.get_input_focus().ok()?;
+            cookie.reply().ok().map(|reply| reply.focus)
+        })
+    }
+
+    /// Records that a key of a borrowed keycode went to the recipient.
+    fn sent(&mut self, conn: &RustConnection) {
+        if let Some(window) = self.recipient(conn) {
+            if !self.sent.contains(&window) {
+                self.sent.push(window);
+            }
+        }
+    }
+
+    fn ping(&mut self, conn: &RustConnection, window: Window) -> ClientSync {
+        if self.unanswered.contains(&window) {
             return ClientSync::Unanswered;
         }
-        let sync = sync_client(conn, self.window);
-        self.answering = sync != ClientSync::Unanswered;
+        let sync = sync_client(conn, Some(window));
+        if sync == ClientSync::Unanswered {
+            self.unanswered.push(window);
+        }
         sync
     }
 
-    /// Restores the text's borrowed keycodes once the client has read its keys.
-    /// A client without the protocol gets the restore at once; one that does not
-    /// answer keeps the keycodes bound, since its keys may still be unread.
+    /// Lets the recipient handle a new binding before its key arrives.
+    fn notice(&mut self, conn: &RustConnection) {
+        if let Some(window) = self.recipient(conn) {
+            self.ping(conn, window);
+        }
+    }
+
+    /// Restores the text's borrowed keycodes once the clients have read their
+    /// keys. A client without the protocol gets the restore at once; one that
+    /// does not answer keeps the keycodes bound, since its keys may be unread.
     fn release(&mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
-        if guards.is_empty() || self.sync(conn) != ClientSync::Unanswered {
+        if guards.is_empty() {
+            return;
+        }
+        let sent = std::mem::take(&mut self.sent);
+        let unanswered = sent
+            .into_iter()
+            .any(|window| self.ping(conn, window) == ClientSync::Unanswered);
+        if !unanswered {
             return;
         }
         tracing::warn!(
@@ -4529,10 +4582,11 @@ impl TextClient {
 }
 
 /// Waits until `window`'s client has handled the events sent before this call,
-/// so a borrowed keycode can be restored or rebound without changing keys the
-/// client has not translated yet. Clients answer an EWMH `_NET_WM_PING` in
-/// event order, echoing its timestamp field, which carries a fresh serial so
-/// only the reply to this ping counts. No client is waited for longer than
+/// so a borrowed keycode can be restored without changing keys the client has
+/// not translated yet. The ping goes to `window` or its closest ancestor of the
+/// same client that takes it. Clients answer an EWMH `_NET_WM_PING` in event
+/// order, echoing its timestamp field, which carries a fresh serial so only the
+/// reply to this ping counts. No client is waited for longer than
 /// [`PING_TIMEOUT`].
 fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
     let atom = |name: &str| {
@@ -4547,15 +4601,9 @@ fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
     else {
         return ClientSync::Unsupported;
     };
-    let supported = conn
-        .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
-        .ok()
-        .and_then(|cookie| cookie.reply().ok())
-        .and_then(|reply| reply.value32().map(|mut atoms| atoms.any(|a| a == ping)))
-        .unwrap_or(false);
-    if !supported {
+    let Some(window) = ping_window(conn, window, protocols, ping) else {
         return ClientSync::Unsupported;
-    }
+    };
     let root = conn.setup().roots[0].root;
     let listen = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
     let serial = PING_SERIAL.fetch_add(1, Ordering::Relaxed).max(1);
@@ -4583,6 +4631,37 @@ fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
         }
     }
     ClientSync::Unanswered
+}
+
+/// `focus`, or its closest ancestor of the same client, that takes
+/// `_NET_WM_PING`. A client's windows share the resource id bits outside
+/// `resource_id_mask`.
+fn ping_window(
+    conn: &RustConnection,
+    focus: Window,
+    protocols: Atom,
+    ping: Atom,
+) -> Option<Window> {
+    if focus == x11rb::NONE || focus == u32::from(InputFocus::POINTER_ROOT) {
+        return None;
+    }
+    let client = !conn.setup().resource_id_mask;
+    let mut window = focus;
+    while window != x11rb::NONE && window & client == focus & client {
+        let protocols = conn
+            .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
+            .ok()?
+            .reply()
+            .ok()?;
+        if protocols
+            .value32()
+            .is_some_and(|mut atoms| atoms.any(|atom| atom == ping))
+        {
+            return Some(window);
+        }
+        window = conn.query_tree(window).ok()?.reply().ok()?.parent;
+    }
+    None
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {

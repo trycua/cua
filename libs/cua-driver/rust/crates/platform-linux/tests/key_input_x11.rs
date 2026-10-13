@@ -637,3 +637,76 @@ fn xtest_text_keeps_the_keycode_bound_for_a_client_that_never_answers() -> Resul
     );
     Ok(())
 }
+
+/// Makes `window` take `_NET_WM_PING`.
+fn take_ping(conn: &RustConnection, window: Window, protocols: Atom, ping: Atom) -> Result<()> {
+    conn.change_property32(
+        PropMode::REPLACE,
+        window,
+        protocols,
+        AtomEnum::ATOM,
+        &[ping],
+    )?;
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+/// Keys go to the window that has the input focus when they are sent, so a
+/// focus change after the first binding moves the next binding's ping and the
+/// restore's ping to the window that gets the keys.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_syncs_with_the_window_that_got_the_keys_after_a_focus_change() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let first = conn.get_input_focus()?.reply()?.focus;
+    let second = input_window(&conn, root, 0, 120)?;
+    take_ping(&conn, second, protocols, ping)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(&conn, "\u{4f60}\u{597d}", protocols, ping, |data, _| {
+        if data[2] == first {
+            conn.set_input_focus(InputFocus::PARENT, second, x11rb::CURRENT_TIME)?;
+            conn.get_input_focus()?.reply()?;
+        }
+        pong(&conn, root, protocols, data)
+    })?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    let pinged: Vec<Window> = typed.pings.iter().map(|data| data[2]).collect();
+    assert_eq!(
+        pinged,
+        [first, second, second],
+        "a ping per binding to the focused window, then the restore waits for the window that got the keys"
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+/// With the input focus on a child window and no `_NET_ACTIVE_WINDOW`, the
+/// ping goes to the closest ancestor of the same client that takes
+/// `_NET_WM_PING`.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_pings_the_ancestor_of_a_focused_child_window() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let parent = conn.get_input_focus()?.reply()?.focus;
+    let child = input_window(&conn, parent, 10, 10)?;
+    conn.set_input_focus(InputFocus::PARENT, child, x11rb::CURRENT_TIME)?;
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, child);
+    clear_active_window(&conn, root)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |data, _| {
+        pong(&conn, root, protocols, data)
+    })?;
+    typed.result?;
+    assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
+    assert!(!typed.pings.is_empty());
+    assert!(
+        typed.pings.iter().all(|data| data[2] == parent),
+        "{:?}",
+        typed.pings
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}

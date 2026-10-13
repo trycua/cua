@@ -465,15 +465,16 @@ async fn a_revoked_device_fails_fast_with_the_reason() {
     // A new node for the same device (the reconnect after the cut) is
     // refused at once with the reason, not after the ready timeout.
     let t = std::time::Instant::now();
-    let err = cua_mesh::dialer::Dialer::start(
+    let Err(err) = cua_mesh::dialer::Dialer::start(
         &coord.url,
         static_auth(vec![("x-test-device".into(), "dev-c".into())]),
         None,
         Duration::from_secs(10),
     )
     .await
-    .err()
-    .expect("a revoked device's new node is refused");
+    else {
+        panic!("a revoked device's new node is refused");
+    };
     assert!(
         t.elapsed() < Duration::from_secs(3),
         "took {:?}",

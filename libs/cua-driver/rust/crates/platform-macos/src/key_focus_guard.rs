@@ -78,6 +78,28 @@ fn target_above_front_in(windows: &[crate::windows::WindowInfo], target: i32, fr
 /// lifts its parent window). Re-activating the already-active front app with
 /// all its windows restores the order without moving key status; the
 /// target's menu stays open.
+/// Put `front`'s windows back above `target` if the target's window was
+/// lifted over them (see [`restore_front_if_raised`]).
+pub fn restore_order_now(target: i32, front: i32) -> bool {
+    // NSWorkspace's frontmost reading can lag inside the daemon; the caller
+    // has already checked WindowServer's front process.
+    if !target_above_front(target, front) {
+        return false;
+    }
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    unsafe {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(front).is_some_and(|app| {
+            app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
+        })
+    }
+}
+
+/// Whether a normal-level window of `target` sits above `front`'s frontmost
+/// normal-level window.
+pub fn target_window_above_front(target: i32, front: i32) -> bool {
+    target_above_front(target, front)
+}
+
 fn restore_front_if_raised(target: i32, front: i32) -> bool {
     if crate::apps::frontmost_pid() != Some(front) || !target_above_front(target, front) {
         return false;
@@ -110,6 +132,12 @@ fn target_self_activated(front_process: Option<i32>, target: i32, front: i32) ->
 /// and hand key focus back to its window. Reads WindowServer's front process
 /// directly; `NSWorkspace` only learns of the activation once the daemon's run
 /// loop processes the notice, which took about a second in Bench v2 CDB-G04.
+/// Revert `target`'s self-activation right now, giving `front` its key
+/// window back (see [`revert_self_activation`]).
+pub fn revert_now(target: i32, front: i32) -> bool {
+    revert_self_activation(target, front)
+}
+
 fn revert_self_activation(target: i32, front: i32) -> bool {
     if !target_self_activated(skylight::front_process_pid(), target, front) {
         return false;

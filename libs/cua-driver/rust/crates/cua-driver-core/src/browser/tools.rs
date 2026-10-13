@@ -628,8 +628,10 @@ impl BrowserPrepareTool {
                 ambiguity is refused. Where attaching would bring the browser in front of \
                 the user's app (macOS Chrome shows its own remote-debugging prompt in front \
                 for every new connection), existing-profile attachment refuses with \
-                background_unavailable unless delivery_mode is \"foreground\"; the app that \
-                was in front is then brought back afterwards."
+                background_unavailable unless delivery_mode is \"foreground\" (the app that \
+                was in front is brought back afterwards) or the browser window is on another \
+                Space than the user's, where it attaches in the background while the driver \
+                reverts the browser's own brief activations."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -663,7 +665,7 @@ impl BrowserPrepareTool {
                         "type": "string",
                         "enum": ["background", "foreground"],
                         "default": "background",
-                        "description": "Existing-profile attachment only. background (default) refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
+                        "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
                     },
                     "session": schema_session(),
                 },

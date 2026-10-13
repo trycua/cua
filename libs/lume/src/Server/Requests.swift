@@ -89,9 +89,12 @@ struct PullRequest: Codable {
     var registry: String
     var organization: String
     let storage: String?
+    let preparationWorkRoot: String?
+    let preparationScopeID: String?
+    let preparationOperationID: String?
 
     enum CodingKeys: String, CodingKey {
-        case image, name, registry, organization, storage
+        case image, name, registry, organization, storage, preparationWorkRoot, preparationScopeID, preparationOperationID
     }
 
     init(from decoder: Decoder) throws {
@@ -101,6 +104,9 @@ struct PullRequest: Codable {
         registry = try container.decodeIfPresent(String.self, forKey: .registry) ?? "ghcr.io"
         organization = try container.decodeIfPresent(String.self, forKey: .organization) ?? "trycua"
         storage = try container.decodeIfPresent(String.self, forKey: .storage)
+        preparationWorkRoot = try container.decodeIfPresent(String.self, forKey: .preparationWorkRoot)
+        preparationScopeID = try container.decodeIfPresent(String.self, forKey: .preparationScopeID)
+        preparationOperationID = try container.decodeIfPresent(String.self, forKey: .preparationOperationID)
     }
 }
 

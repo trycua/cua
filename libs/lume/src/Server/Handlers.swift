@@ -170,7 +170,10 @@ extension Server {
                     storage: request.storage,
                     progressHandler: { progress in
                         Task { await tracker.setProgress(progress, for: vmName, token: token) }
-                    }
+                    },
+                    preparationWorkRoot: request.preparationWorkRoot,
+                    preparationScopeID: request.preparationScopeID,
+                    preparationOperationID: request.preparationOperationID
                 )
                 outcome = .completed
                 Logger.info("Async pull completed", metadata: ["name": vmName])
@@ -670,7 +673,10 @@ extension Server {
                         await PullProgressTracker.shared.setProgress(
                             progress, for: vmName, token: token)
                     }
-                }
+                },
+                preparationWorkRoot: request.preparationWorkRoot,
+                preparationScopeID: request.preparationScopeID,
+                preparationOperationID: request.preparationOperationID
             )
             await PullProgressTracker.shared.finish(name: vmName, token: token, outcome: .completed)
 

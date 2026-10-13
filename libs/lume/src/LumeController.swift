@@ -1451,7 +1451,10 @@ final class LumeController {
         username: String? = nil,
         password: String? = nil,
         force: Bool = false,
-        progressHandler: PullProgressHandler? = nil
+        progressHandler: PullProgressHandler? = nil,
+        preparationWorkRoot: String? = nil,
+        preparationScopeID: String? = nil,
+        preparationOperationID: String? = nil
     ) async throws {
         do {
             // Split the image to get name and tag
@@ -1489,13 +1492,18 @@ final class LumeController {
             try await Self.removingNewVMDirectoryOnCancel(targetDir) {
                 let imageRegistry = try RegistryFactory.createRegistry(
                     registry: registry, organization: organization,
-                    username: username, password: password)
+                    username: username, password: password,
+                    preparationWorkRoot: preparationWorkRoot,
+                    preparationScopeID: preparationScopeID,
+                    preparationOperationID: preparationOperationID)
                 let _ = try await imageRegistry.pull(
                     image: image,
                     name: vmName,
                     locationName: storage,
                     force: force,
-                    progressHandler: progressHandler)
+                    progressHandler: progressHandler,
+                    preparationWorkRoot: preparationWorkRoot.map { URL(fileURLWithPath: $0) },
+                    preparationOperationID: preparationOperationID)
 
                 Logger.debug(
                     "Setting new VM mac address",

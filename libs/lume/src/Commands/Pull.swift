@@ -28,6 +28,15 @@ struct Pull: AsyncParsableCommand {
     @Option(name: .long, help: "Registry password for authentication")
     var password: String?
 
+    @Option(name: .customLong("preparation-work-root"), help: "Private absolute GHCR preparation work root")
+    var preparationWorkRoot: String?
+
+    @Option(name: .customLong("preparation-scope-id"), help: "Accepted preparation scope identifier")
+    var preparationScopeID: String?
+
+    @Option(name: .customLong("preparation-operation-id"), help: "Path-safe preparation operation identifier")
+    var preparationOperationID: String?
+
     @Flag(name: .long, help: "Force re-download even if image exists")
     var force: Bool = false
 
@@ -55,7 +64,10 @@ struct Pull: AsyncParsableCommand {
             storage: storage,
             username: username,
             password: password,
-            force: force
+            force: force,
+            preparationWorkRoot: preparationWorkRoot,
+            preparationScopeID: preparationScopeID,
+            preparationOperationID: preparationOperationID
         )
         print()
     }

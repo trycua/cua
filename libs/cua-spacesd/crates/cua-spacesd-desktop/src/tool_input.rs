@@ -556,7 +556,10 @@ mod tests {
         let pointer = Value::Object(desktop_pointer_arguments());
         assert_eq!(pointer, desktop_pointer(json!({"scope": "desktop"})));
         // Keys keep the plain desktop scope.
-        assert_eq!(Value::Object(desktop_arguments()), json!({"scope": "desktop"}));
+        assert_eq!(
+            Value::Object(desktop_arguments()),
+            json!({"scope": "desktop"})
+        );
     }
 
     fn hover_lease(tools: Arc<Recorded>) -> ToolInputLease {
@@ -626,7 +629,9 @@ mod tests {
             vec![
                 (
                     "click".into(),
-                    desktop_pointer(json!({"scope": "desktop", "x": 640.0, "y": 400.0, "button": "left"}))
+                    desktop_pointer(
+                        json!({"scope": "desktop", "x": 640.0, "y": 400.0, "button": "left"})
+                    )
                 ),
                 // Keys and text go to the focused window, in the foreground.
                 (
@@ -645,7 +650,9 @@ mod tests {
                 ),
                 (
                     "scroll".into(),
-                    desktop_pointer(json!({"scope": "desktop", "x": 320.0, "y": 200.0, "direction": "down", "amount": 2}))
+                    desktop_pointer(
+                        json!({"scope": "desktop", "x": 320.0, "y": 200.0, "direction": "down", "amount": 2})
+                    )
                 ),
             ]
         );
@@ -692,7 +699,9 @@ mod tests {
                 ),
                 (
                     "click".into(),
-                    desktop_pointer(json!({"scope":"desktop", "x":-960.0, "y":100.0, "button":"left"}))
+                    desktop_pointer(
+                        json!({"scope":"desktop", "x":-960.0, "y":100.0, "button":"left"})
+                    )
                 ),
                 (
                     "move_cursor".into(),
@@ -767,7 +776,9 @@ mod tests {
             vec![
                 (
                     "scroll".into(),
-                    desktop_pointer(json!({"scope":"desktop", "x":640.0, "y":400.0, "direction":"down", "amount":3}))
+                    desktop_pointer(
+                        json!({"scope":"desktop", "x":640.0, "y":400.0, "direction":"down", "amount":3})
+                    )
                 ),
                 (
                     "move_cursor".into(),
@@ -775,7 +786,9 @@ mod tests {
                 ),
                 (
                     "scroll".into(),
-                    desktop_pointer(json!({"scope":"desktop", "x":959.0, "y":599.0, "direction":"down", "amount":1}))
+                    desktop_pointer(
+                        json!({"scope":"desktop", "x":959.0, "y":599.0, "direction":"down", "amount":1})
+                    )
                 ),
             ]
         );

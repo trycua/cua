@@ -1283,7 +1283,7 @@ mod tests {
     fn use_classic_ui_survives_later_launches() {
         let (dir, path) = temp_settings("classic");
         let beta6 = "0.8.0-beta.6";
-        let mut s = resolve_new_ui(
+        let s = resolve_new_ui(
             &AppSettings {
                 update_channel: UpdateChannel::Beta,
                 ..Default::default()

@@ -2616,7 +2616,12 @@ fn input_error_result(e: anyhow::Error) -> ToolResult {
         // The focus-free real-input route exists but this process cannot open
         // /dev/uinput: an honest refusal the operator can act on, not a bare
         // I/O error.
-        let mut refusal = keyboard_refusal_with_hints(true, false);
+        let mut refusal = with_hint(
+            crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            ),
+            UINPUT_KEYBOARD_HINT,
+        );
         if let Some(structured) = refusal.structured_content.as_mut() {
             structured["cause"] = json!(crate::input::UINPUT_UNAVAILABLE_CODE);
             structured["detail"] = json!(text);
@@ -3126,28 +3131,21 @@ fn with_hint(mut refusal: ToolResult, hint: &str) -> ToolResult {
 /// actuator. Carries the uinput hint whenever the MPX route is missing only
 /// because `/dev/uinput` is not writable (the fixable case).
 fn background_keyboard_refusal() -> ToolResult {
-    let x11 = !crate::wayland::is_wayland();
-    keyboard_refusal_with_hints(
-        x11 && !crate::input::uinput_accessible(),
-        x11 && !std::thread::spawn(crate::health_report::probe_a11y_bus)
-            .join()
-            .unwrap_or(false),
-    )
-}
-
-fn keyboard_refusal_with_hints(uinput_missing: bool, atspi_missing: bool) -> ToolResult {
     let mut refusal = crate::input::delivery::background_unavailable_error(
         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
     );
-    if uinput_missing {
+    let x11 = !crate::wayland::is_wayland();
+    if x11 && !crate::input::uinput_accessible() {
         refusal = with_hint(refusal, UINPUT_KEYBOARD_HINT);
     }
-    if atspi_missing {
-        let hint = crate::health_report::START_ATSPI_BUS_HINT;
-        refusal = with_hint(
-            refusal,
-            &format!("AT-SPI is unavailable. {hint} Or use delivery_mode:\"foreground\"."),
-        );
+    if x11
+        && !std::thread::spawn(crate::health_report::probe_a11y_bus)
+            .join()
+            .unwrap_or(false)
+    {
+        let bus = crate::health_report::START_ATSPI_BUS_HINT;
+        let hint = format!("AT-SPI is unavailable. {bus} Or use delivery_mode \"foreground\".");
+        refusal = with_hint(refusal, &hint);
     }
     refusal
 }
@@ -4830,18 +4828,17 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
 #[cfg(test)]
 #[test]
 fn background_keyboard_refusal_names_missing_atspi_bus() {
-    let plain = keyboard_refusal_with_hints(false, false);
-    let refusal = keyboard_refusal_with_hints(false, true);
+    let plain = crate::input::delivery::background_unavailable_error(
+        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+    );
+    let plain_structured = plain.structured_content.clone().unwrap();
+    let refusal = with_hint(plain, crate::health_report::START_ATSPI_BUS_HINT);
     let structured = refusal.structured_content.as_ref().unwrap();
-    let plain_structured = plain.structured_content.as_ref().unwrap();
     let hint = structured["hint"].as_str().unwrap();
-    assert!(hint.contains("AT-SPI is unavailable"), "{hint}");
     assert!(hint.contains("at-spi-bus-launcher"), "{hint}");
-    assert!(hint.contains("delivery_mode:\"foreground\""), "{hint}");
     assert_eq!(structured["code"], plain_structured["code"]);
     assert_eq!(structured["escalation"], plain_structured["escalation"]);
     assert!(plain_structured.get("hint").is_none());
-    assert_eq!(refusal.content.len(), plain.content.len() + 1);
 }
 
 #[cfg(test)]

@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 _DEFAULT_BASE_URL = "https://api.cua.ai"
-_DEFAULT_FLEET_BASE_URL = "https://run.cua.ai"
+_FLEET_RETIRED_MESSAGE = (
+    "The Cua Fleets API (run.cua.ai) has been retired and cua-sandbox no longer has a default "
+    "Fleet endpoint. Set CUA_FLEET_BASE_URL or cua.configure(fleet_base_url=...) to an API you "
+    "run, or use the `cua` CLI (https://cua.ai)."
+)
 _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 
 
@@ -15,7 +19,7 @@ _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-conn
 class _Config:
     api_key: Optional[str] = None
     base_url: str = _DEFAULT_BASE_URL
-    fleet_base_url: str = _DEFAULT_FLEET_BASE_URL
+    fleet_base_url: Optional[str] = None
     token_url: str = _DEFAULT_TOKEN_URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
@@ -74,7 +78,10 @@ def get_base_url() -> str:
 
 def get_fleet_base_url() -> str:
     """Return the Fleet API endpoint without changing legacy VM API routing."""
-    return os.environ.get("CUA_FLEET_BASE_URL") or _global_config.fleet_base_url
+    base_url = os.environ.get("CUA_FLEET_BASE_URL") or _global_config.fleet_base_url
+    if not base_url:
+        raise RuntimeError(_FLEET_RETIRED_MESSAGE)
+    return base_url
 
 
 def get_fleet_token() -> Optional[str]:

@@ -17,22 +17,28 @@ class TrainClient:
 
     Both the control plane (VM claim lifecycle via ``/api/k8s``) and the
     data plane (exec/upload/screenshot via ``/api/svc``) are reached through
-    the same base URL (default: ``https://run.cua.ai``).
+    the same base URL. There is no default: the legacy Fleets API (``run.cua.ai``) is retired,
+    so ``base_url`` must be passed explicitly.
     """
 
     _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
-    _DEFAULT_BASE_URL = "https://run.cua.ai"
+    _RETIRED_MESSAGE = (
+        "cua-train no longer has a default API endpoint: the legacy Cua Fleets API "
+        "(run.cua.ai) has been retired. Pass base_url=... to an API you run."
+    )
 
     def __init__(
         self,
         token: str,
-        base_url: str = _DEFAULT_BASE_URL,
+        base_url: str = "",
         *,
         token_url: str = _DEFAULT_TOKEN_URL,
         client_id: str = "",
         client_secret: str = "",
         token_deadline: float = 0.0,
     ) -> None:
+        if not base_url:
+            raise ValueError(self._RETIRED_MESSAGE)
         self._token = token
         self._base_url = base_url.rstrip("/")
         self._token_url = token_url
@@ -49,7 +55,7 @@ class TrainClient:
         token_url: str = _DEFAULT_TOKEN_URL,
         client_id: str,
         client_secret: str,
-        base_url: str = _DEFAULT_BASE_URL,
+        base_url: str = "",
     ) -> "TrainClient":
         """Exchange client credentials for a bearer token.
 
@@ -57,8 +63,10 @@ class TrainClient:
             token_url: Keycloak token endpoint.
             client_id: Per-user key client ID (``ukey-…``).
             client_secret: Client secret.
-            base_url: Cua Cloud API base URL (default: ``https://run.cua.ai``).
+            base_url: Cua Cloud API base URL (required; the old run.cua.ai default is retired).
         """
+        if not base_url:
+            raise ValueError(cls._RETIRED_MESSAGE)
         token, ttl = cls._exchange(token_url, client_id, client_secret)
         return cls(
             token=token,

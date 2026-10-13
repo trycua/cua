@@ -47,10 +47,19 @@ class TestConfig:
         assert get_client_id() == "client-id"
         assert get_client_secret() == "client-secret"
         assert get_base_url() == "https://api.cua.ai"
-        assert get_fleet_base_url() == "https://run.cua.ai"
         assert (
             get_token_url() == "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
         )
+
+    def test_fleet_base_url_has_no_default(self, monkeypatch):
+        monkeypatch.delenv("CUA_FLEET_BASE_URL", raising=False)
+        with pytest.raises(RuntimeError, match="retired"):
+            get_fleet_base_url()
+
+    def test_fleet_base_url_configurable(self, monkeypatch):
+        monkeypatch.delenv("CUA_FLEET_BASE_URL", raising=False)
+        configure(fleet_base_url="https://fleet.example.test")
+        assert get_fleet_base_url() == "https://fleet.example.test"
 
     def test_configure_api_key(self):
         configure(api_key="sk-test-123")

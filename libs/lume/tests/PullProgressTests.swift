@@ -645,6 +645,30 @@ struct PullRouteTests {
         }
         await tracker.finish(key: first, token: token, outcome: .cancelled)
     }
+
+    @Test("a new same-name operation clears a prior operation error")
+    func staleErrorDoesNotPoisonNewOperation() async {
+        let name = "pull-stale-error-\(UUID().uuidString)"
+        let tracker = PullProgressTracker()
+        let first = PullOperationKey(
+            name: name, destination: "/vm-a", image: "one:latest", registry: "ghcr.io",
+            organization: "org", preparation: nil)
+        let second = PullOperationKey(
+            name: name, destination: "/vm-b", image: "two:latest", registry: "ghcr.io",
+            organization: "org",
+            preparation: PullPreparationIdentity(scopeID: "scope-b", operationID: "op-b", workRoot: "/work-b"))
+        guard case .started(let firstToken) = await tracker.begin(key: first, cancellable: true)
+        else {
+            Issue.record("operations did not reach the expected lifecycle")
+            return
+        }
+        await tracker.finish(key: first, token: firstToken, outcome: .failed("old failure"))
+        guard case .started = await tracker.begin(key: second, cancellable: true) else {
+            Issue.record("replacement operation did not start")
+            return
+        }
+        #expect(await tracker.getError(for: name) == nil)
+    }
 }
 
 // MARK: - Shared blobs are decompressed once

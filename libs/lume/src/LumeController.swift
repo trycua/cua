@@ -119,7 +119,7 @@ actor PullProgressTracker {
         }
         let token = UUID()
         active[key] = ActivePull(key: key, token: token, cancellable: cancellable, progress: .zero)
-        errors.removeValue(forKey: key)
+        errors.keys.filter { $0.name == key.name }.forEach { errors.removeValue(forKey: $0) }
         return .started(token)
     }
 
@@ -1554,6 +1554,11 @@ final class LumeController {
                 force: force
             )
 
+            if let preparation {
+                let destination = try pullDestinationURL(name: vmName, storage: storage)
+                try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
+            }
+
             let targetDir = try? pullTargetDirectory(name: vmName, storage: storage)
             try await Self.removingNewVMDirectoryOnCancel(targetDir) {
                 let imageRegistry = try RegistryFactory.createRegistry(
@@ -2026,6 +2031,19 @@ final class LumeController {
             return try home.getVMDirectoryFromPath(name, storagePath: storage)
         }
         return try home.getVMDirectory(name, storage: storage)
+    }
+
+    private func pullDestinationURL(name: String, storage: String?) throws -> URL {
+        if let storage, storage.contains("/") || storage.contains("\\") {
+            return URL(fileURLWithPath: storage, isDirectory: true)
+                .appendingPathComponent(name, isDirectory: true)
+        }
+        if storage == "ephemeral" {
+            let tmpDir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
+            return URL(fileURLWithPath: tmpDir, isDirectory: true)
+                .appendingPathComponent(name, isDirectory: true)
+        }
+        return try home.getVMDirectory(name, storage: storage).dir.url
     }
 
     /// Runs a pull and, if the task is cancelled, removes the VM directory the

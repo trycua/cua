@@ -783,6 +783,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return left == right || left.hasPrefix(right + "/") || right.hasPrefix(left + "/")
     }
 
+    static func validateDestination(_ destination: URL, preparation: OwnedPreparation?) throws {
+        if let preparation, pathsOverlap(preparation.workRoot.root, destination) {
+            throw PreparationPlacementError.invalidWorkRoot
+        }
+    }
+
     // Constants for zero-skipping write logic
     private static let holeGranularityBytes = 4 * 1024 * 1024  // 4MB block size for checking zeros
     private static let zeroChunk = Data(count: holeGranularityBytes)
@@ -814,12 +820,6 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Get caching enabled setting
         self.cachingEnabled = SettingsManager.shared.isCachingEnabled()
 
-        try? FileManager.default.createDirectory(
-            at: cacheDirectory, withIntermediateDirectories: true)
-
-        // Create organization directory
-        let orgDir = cacheDirectory.appendingPathComponent(organization)
-        try? FileManager.default.createDirectory(at: orgDir, withIntermediateDirectories: true)
     }
 
     /// Creates a registry client with an explicit cache (tests).
@@ -864,9 +864,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     }
 
     private func sharedCoordinationDirectory() throws -> URL {
-        let directory = cacheDirectory
-            .appendingPathComponent(organization, isDirectory: true)
-            .appendingPathComponent(".locks", isDirectory: true)
+        let directory = Self.sharedCoordinationDirectory(
+            cacheDirectory: cacheDirectory, organization: organization)
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
@@ -876,6 +875,20 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
     static func coordinationLockName(for digest: String) throws -> String {
         try ContentAddress(digest).fileName + ".lock"
+    }
+
+    static let cacheLifecycleLockName = "cache-lifecycle.lock"
+
+    static func sharedCoordinationDirectory(cacheDirectory: URL, organization: String) -> URL {
+        cacheDirectory
+            .appendingPathComponent(organization, isDirectory: true)
+            .appendingPathComponent(".locks", isDirectory: true)
+    }
+
+    private func cacheLifecycleLock() throws -> DigestFileLock {
+        let lockURL = try sharedCoordinationDirectory()
+            .appendingPathComponent(Self.cacheLifecycleLockName)
+        return try DigestFileLock(path: lockURL)
     }
 
     private func validateManifestDigests(_ manifest: Manifest, manifestDigest: String) throws {
@@ -1152,29 +1165,25 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Use provided name or derive from image
         let vmName = name ?? image.split(separator: ":").first.map(String.init) ?? ""
 
+        if let configured = self.preparation, let supplied = preparation, configured != supplied {
+            throw PreparationPlacementError.invalidWorkRoot
+        }
+        let effectivePreparation = preparation ?? self.preparation
+
         // Determine if locationName is a direct path or a named storage location
         let vmDir: VMDirectory
         if let locationName = locationName,
             locationName.contains("/") || locationName.contains("\\")
         {
+            let destination = URL(fileURLWithPath: locationName, isDirectory: true)
+                .appendingPathComponent(vmName, isDirectory: true)
+            try Self.validateDestination(destination, preparation: effectivePreparation)
             // Direct path
             vmDir = try home.getVMDirectoryFromPath(vmName, storagePath: locationName)
         } else {
             // Named storage or default location
             vmDir = try home.getVMDirectory(vmName, storage: locationName)
-        }
-
-        if let configured = self.preparation, let supplied = preparation, configured != supplied {
-            throw PreparationPlacementError.invalidWorkRoot
-        }
-        let effectivePreparation = preparation ?? self.preparation
-        if let effectivePreparation {
-            guard !Self.pathsOverlap(
-                effectivePreparation.workRoot.root,
-                URL(fileURLWithPath: vmDir.dir.path)
-            ) else {
-                throw PreparationPlacementError.invalidWorkRoot
-            }
+            try Self.validateDestination(URL(fileURLWithPath: vmDir.dir.path), preparation: effectivePreparation)
         }
 
         // Check if image is already cached with all required files
@@ -1209,6 +1218,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         defer {
             if let operationRootForCleanup { try? FileManager.default.removeItem(at: operationRootForCleanup) }
         }
+
+        let lifecycleLock: DigestFileLock?
+        let lock = try cacheLifecycleLock()
+        try await lock.acquire()
+        lifecycleLock = lock
+        defer { lifecycleLock?.release() }
 
         // Optimize network early in the process
         optimizeNetworkSettings()

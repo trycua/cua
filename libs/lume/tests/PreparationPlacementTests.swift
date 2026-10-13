@@ -121,10 +121,57 @@ struct PreparationPlacementTests {
         }
         _ = try OwnedPreparation(workRoot: rootA.path, scopeID: "scope-a", operationID: "op-a")
         _ = try OwnedPreparation(workRoot: rootB.path, scopeID: "scope-b", operationID: "op-b")
-        #expect(try ImageContainerRegistry.coordinationLockName(for: digest) == "sha256-" + String(repeating: "a", count: 64) + ".lock")
+        #expect(
+            ImageContainerRegistry.sharedCoordinationDirectory(
+                cacheDirectory: rootA, organization: "org").path
+                == rootA.appendingPathComponent("org/.locks").path)
+        #expect(try ImageContainerRegistry.coordinationLockName(for: digest) == "sha256_" + String(repeating: "a", count: 64) + ".lock")
+        #expect(ImageContainerRegistry.cacheLifecycleLockName == "cache-lifecycle.lock")
         #expect(throws: PreparationPlacementError.invalidDigest) {
             try ImageContainerRegistry.coordinationLockName(for: "../../outside")
         }
+        #expect(throws: PreparationPlacementError.invalidDigest) {
+            try ImageContainerRegistry.coordinationLockName(for: "sha512:" + String(repeating: "a", count: 128))
+        }
+        #expect(throws: PreparationPlacementError.invalidDigest) {
+            try ImageContainerRegistry.coordinationLockName(for: "sha256:" + String(repeating: "a", count: 63))
+        }
+        #expect(throws: PreparationPlacementError.invalidDigest) {
+            try ImageContainerRegistry.coordinationLockName(for: "sha256:" + String(repeating: "a", count: 65))
+        }
+        let cache = try placementTemp("legacy-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let registry = try ImageContainerRegistry(
+            registry: "registry.invalid", organization: "org", cacheDirectory: cache,
+            cachingEnabled: true)
+        let legacyManifest = "sha256_" + String(repeating: "b", count: 64)
+        let legacyLayer = cache.appendingPathComponent("org", isDirectory: true)
+            .appendingPathComponent(legacyManifest, isDirectory: true)
+            .appendingPathComponent("sha256_" + String(repeating: "a", count: 64))
+        try FileManager.default.createDirectory(
+            at: legacyLayer.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("cached".utf8).write(to: legacyLayer)
+        #expect(registry.getCachedLayerPath(manifestId: legacyManifest, digest: digest) == legacyLayer)
+    }
+
+    @Test func overlapValidationHasNoDestinationOrCacheSideEffects() throws {
+        let base = try placementTemp("side-effects")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let workRootURL = base.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: workRootURL, withIntermediateDirectories: true)
+        let preparation = try OwnedPreparation(
+            workRoot: workRootURL.path, scopeID: "scope", operationID: "operation")
+        let destination = workRootURL.appendingPathComponent("vm")
+        #expect(throws: PreparationPlacementError.invalidWorkRoot) {
+            try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+
+        let cache = base.appendingPathComponent("cache")
+        _ = try ImageContainerRegistry(
+            registry: "registry.invalid", organization: "org", cacheDirectory: cache,
+            cachingEnabled: true, preparation: preparation)
+        #expect(!FileManager.default.fileExists(atPath: cache.path))
     }
 
     @Test func finalPublicationRefusesCrossVolumeAndKeepsPriorDestination() throws {

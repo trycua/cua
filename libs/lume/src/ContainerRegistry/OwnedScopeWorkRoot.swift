@@ -93,8 +93,7 @@ struct ContentAddress: Sendable, Equatable, Hashable {
         guard parts.count == 2 else { throw PreparationPlacementError.invalidDigest }
         let algorithm = String(parts[0]).lowercased()
         let hex = String(parts[1]).lowercased()
-        guard !algorithm.isEmpty, !hex.isEmpty,
-              algorithm.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 122) || $0 == 45 }),
+        guard algorithm == "sha256", hex.count == 64,
               hex.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102) })
         else { throw PreparationPlacementError.invalidDigest }
         self.algorithm = algorithm
@@ -102,7 +101,7 @@ struct ContentAddress: Sendable, Equatable, Hashable {
     }
 
     var canonical: String { "\(algorithm):\(hex)" }
-    var fileName: String { "\(algorithm)-\(hex)" }
+    var fileName: String { "\(algorithm)_\(hex)" }
 }
 
 struct OwnedScopeWorkRoot: Sendable, Equatable, Hashable {

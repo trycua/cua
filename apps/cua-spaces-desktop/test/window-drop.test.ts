@@ -6,12 +6,23 @@ import { dropTargetsOf, windowNumberOf, WindowDropTargets, type DropWindow, type
 
 function fakeWindow(o: { bounds: Rect; number?: number | null; zoom?: number }) {
   const sent: [string, unknown][] = [];
+  const state = { gone: false, shown: true };
   const w = {
     sent,
-    gone: false,
-    shown: true,
-    destroyed: () => w.gone,
-    visible: () => w.shown,
+    get gone() {
+      return state.gone;
+    },
+    set gone(v: boolean) {
+      state.gone = v;
+    },
+    get shown() {
+      return state.shown;
+    },
+    set shown(v: boolean) {
+      state.shown = v;
+    },
+    destroyed: () => state.gone,
+    visible: () => state.shown,
     contentBounds: () => o.bounds,
     zoom: () => o.zoom ?? 1,
     number: () => (o.number === undefined ? 900 : o.number),

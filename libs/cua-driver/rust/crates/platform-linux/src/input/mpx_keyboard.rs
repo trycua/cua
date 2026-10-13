@@ -805,6 +805,29 @@ mod tests {
     }
 
     #[test]
+    fn text_plan_wraps_only_the_shifted_taps_of_a_mixed_case_string() {
+        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "aA1!", |_| None);
+        assert!(missing.is_empty());
+        assert_eq!(
+            steps,
+            vec![
+                step(30, true),
+                step(30, false),
+                step(42, true),
+                step(30, true),
+                step(30, false),
+                step(42, false),
+                step(2, true),
+                step(2, false),
+                step(42, true),
+                step(2, true),
+                step(2, false),
+                step(42, false),
+            ]
+        );
+    }
+
+    #[test]
     fn text_plan_without_a_shift_keycode_types_the_unshifted_level() {
         // No Shift in the modifier map: the keycode is still tapped (the
         // server types the base glyph) rather than the character being lost.

@@ -4101,7 +4101,42 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 
 #[cfg(test)]
 mod key_name_alias_tests {
-    use super::key_name_to_keysym;
+    use super::{char_to_keycode_shift, key_name_to_keysym, GetKeyboardMappingReply};
+
+    #[test]
+    fn shifted_column_glyphs_need_shift_and_base_glyphs_do_not() {
+        let per = 2usize;
+        let mut keysyms = vec![0u32; (248 - 8 + 1) * per];
+        let mut set = |keycode: usize, syms: [u32; 2]| {
+            let idx = (keycode - 8) * per;
+            keysyms[idx..idx + per].copy_from_slice(&syms);
+        };
+        set(43, [0x68, 0x48]);
+        set(11, [0x32, 0x40]);
+        set(61, [0x2f, 0x3f]);
+        set(59, [0x2c, 0x3c]);
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: per as u8,
+            sequence: 0,
+            keysyms,
+        };
+        for (ch, keycode, needs_shift) in [
+            ('H', 43, true),
+            ('@', 11, true),
+            ('?', 61, true),
+            ('<', 59, true),
+            ('h', 43, false),
+            (',', 59, false),
+            ('2', 11, false),
+            ('/', 61, false),
+        ] {
+            assert_eq!(
+                char_to_keycode_shift(&mapping, ch as u32),
+                Some((keycode, needs_shift)),
+                "{ch:?}"
+            );
+        }
+    }
 
     #[test]
     fn common_key_name_aliases_resolve_to_the_expected_keysym() {

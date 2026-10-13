@@ -21,8 +21,14 @@
 //!   `LAPolicyDeviceOwnerAuthentication` — Touch ID with a device-passcode
 //!   fallback, the robust choice for an unsigned CLI.
 //! - **Windows**: Windows Hello (`UserConsentVerifier`): the face, fingerprint
-//!   or PIN the user set up, shown over the foreground window. No Hello set up
-//!   (or a policy that turns it off) is [`AuthError::Unavailable`].
+//!   or PIN the user set up, shown over the foreground window. Where Hello is
+//!   not set up (VMs, Server, many managed PCs) or a policy turns it off, the
+//!   fallback is Windows' own credential prompt
+//!   (`CredUIPromptForWindowsCredentials`, as UAC asks): the user types their
+//!   account password, which `LogonUserW` verifies, and the logon must be for
+//!   the very account this process runs as (compared by SID). An account with
+//!   no password, or a prompt that cannot be shown, is
+//!   [`AuthError::Unavailable`].
 //! - **Linux**: polkit. `pkcheck` asks the desktop's authentication agent to
 //!   confirm the user ([`POLKIT_ACTION`], `auth_self`: their own password or
 //!   fingerprint, every time). No polkit, no agent or no installed action is
@@ -56,8 +62,7 @@ pub const ALLOW_UNVERIFIED_ENV: &str = "CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPOR
 #[cfg(target_os = "macos")]
 const UNAVAILABLE_HELP: &str = "this Mac needs Touch ID or a login password";
 #[cfg(target_os = "windows")]
-const UNAVAILABLE_HELP: &str =
-    "Windows Hello needs a PIN, fingerprint or face set up in Settings, Accounts, Sign-in options";
+const UNAVAILABLE_HELP: &str = "Cua asks for Windows Hello, or your Windows account password when Hello is not set up; this account has neither (set a password in Settings, Accounts, Sign-in options)";
 #[cfg(target_os = "linux")]
 const UNAVAILABLE_HELP: &str = "polkit needs an authentication agent in the session and the ai.cua.spaces.keyvault action installed (the Cua .deb installs it)";
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
@@ -84,10 +89,7 @@ impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Denied => write!(f, "biometric authorization was denied"),
-            Self::Unavailable => write!(
-                f,
-                "user confirmation is unavailable: {UNAVAILABLE_HELP} (set {ALLOW_UNVERIFIED_ENV}=1 to proceed without it)"
-            ),
+            Self::Unavailable => write!(f, "user confirmation is unavailable: {UNAVAILABLE_HELP}"),
             Self::Cancelled => write!(f, "biometric authorization was cancelled"),
             Self::Failed(detail) => write!(f, "the confirmation prompt failed: {detail}"),
         }
@@ -168,7 +170,7 @@ fn authorize_platform(reason: &str) -> Result<(), AuthError> {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn authorize_platform(reason: &str) -> Result<(), AuthError> {
     #[cfg(target_os = "windows")]
-    let asked = hello::authorize(reason);
+    let asked = windows_authorize(reason);
     #[cfg(target_os = "linux")]
     let asked = polkit::authorize(POLKIT_ACTION, reason);
     match asked {
@@ -318,7 +320,7 @@ pub fn confirm_user(polkit_action: &str, reason: &str) -> Result<(), AuthError> 
     #[cfg(target_os = "windows")]
     {
         let _ = polkit_action;
-        hello::authorize(reason)
+        windows_authorize(reason)
     }
     #[cfg(target_os = "linux")]
     {
@@ -329,6 +331,64 @@ pub fn confirm_user(polkit_action: &str, reason: &str) -> Result<(), AuthError> 
         let _ = (polkit_action, reason);
         Err(AuthError::Unavailable)
     }
+}
+
+/// Windows: Hello when it is set up, else the account password prompt. A
+/// Hello prompt the user answered, either way, is final: a refusal or a
+/// cancel never falls through to the password prompt.
+#[cfg(target_os = "windows")]
+fn windows_authorize(reason: &str) -> Result<(), AuthError> {
+    match hello::authorize(reason) {
+        Err(AuthError::Unavailable) => password::authorize(reason),
+        other => other,
+    }
+}
+
+/// How many wrong passwords one confirmation allows before it is refused.
+/// Each wrong one also counts toward the account's lockout policy, as at the
+/// sign-in screen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const PASSWORD_ATTEMPTS: u32 = 3;
+
+/// The pieces of the name a credential prompt returned: `DOMAIN\user`,
+/// `user@domain` (a UPN, passed whole with no domain) or a bare `user`.
+/// Returns (user, domain); an absent domain is `.`, this computer's own
+/// accounts.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn split_account(name: &str) -> (String, Option<String>) {
+    if let Some((domain, user)) = name.split_once('\\') {
+        let domain = if domain.is_empty() { "." } else { domain };
+        return (user.to_string(), Some(domain.to_string()));
+    }
+    if name.contains('@') {
+        return (name.to_string(), None);
+    }
+    (name.to_string(), Some(".".to_string()))
+}
+
+/// The password prompt's outcome for one typed credential, decided from what
+/// the system said about it. Pure so every branch is testable off Windows:
+/// `password_empty` (a blank password proves nothing), `logon_ok`
+/// (`LogonUserW` accepted it), `same_account` (the logon token's SID is this
+/// process's own).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn password_verdict(password_empty: bool, logon_ok: bool, same_account: bool) -> PasswordVerdict {
+    if password_empty || !logon_ok {
+        PasswordVerdict::Retry
+    } else if !same_account {
+        // Right password, another account: never confirms this user.
+        PasswordVerdict::Refuse
+    } else {
+        PasswordVerdict::Confirmed
+    }
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasswordVerdict {
+    Confirmed,
+    Retry,
+    Refuse,
 }
 
 /// `UserConsentVerificationResult`'s values, as the system numbers them.
@@ -428,6 +488,309 @@ mod hello {
                 .map_err(|_| AuthError::Unavailable)?;
         let result = op.get().map_err(|_| AuthError::Denied)?;
         hello_result(result.0)
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod password {
+    //! The fallback where Windows Hello is not set up: Windows' own
+    //! credential prompt, the one UAC uses (`CredUIPromptForWindowsCredentials`),
+    //! then `LogonUserW` to check what was typed. The prompt shows this
+    //! user's name already filled in. The logon must produce a token for the
+    //! SID this process runs as, so another account's password (an
+    //! administrator's, say) never confirms this user. The password lives in
+    //! buffers that are overwritten before they are freed, and is never
+    //! logged or returned.
+
+    use std::ffi::c_void;
+
+    use windows::Win32::Foundation::{
+        CloseHandle, ERROR_CANCELLED, ERROR_LOGON_FAILURE, ERROR_SUCCESS, HANDLE,
+    };
+    use windows::Win32::Security::Authentication::Identity::{GetUserNameExW, NameSamCompatible};
+    use windows::Win32::Security::Credentials::{
+        CREDUI_INFOW, CREDUIWIN_GENERIC, CredPackAuthenticationBufferW,
+        CredUIPromptForWindowsCredentialsW, CredUnPackAuthenticationBufferW,
+    };
+    use windows::Win32::Security::{
+        EqualSid, GetTokenInformation, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
+        LogonUserW, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    use windows::core::{HSTRING, PCWSTR, PWSTR};
+
+    use super::{AuthError, PASSWORD_ATTEMPTS, PasswordVerdict, password_verdict, split_account};
+
+    /// Overwrites `len` bytes in a way the optimizer may not drop.
+    fn wipe(ptr: *mut u8, len: usize) {
+        for i in 0..len {
+            // SAFETY: the caller passes a live allocation of `len` bytes.
+            unsafe { std::ptr::write_volatile(ptr.add(i), 0) };
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// A UTF-16 buffer overwritten with zeros when dropped.
+    struct Secret(Vec<u16>);
+
+    impl Drop for Secret {
+        fn drop(&mut self) {
+            wipe(self.0.as_mut_ptr().cast(), self.0.len() * 2);
+        }
+    }
+
+    /// A prompt result the system allocated, wiped and freed on drop.
+    struct AuthBuffer(*mut c_void, u32);
+
+    impl Drop for AuthBuffer {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                wipe(self.0.cast(), self.1 as usize);
+                // SAFETY: the prompt allocated it with CoTaskMemAlloc.
+                unsafe { CoTaskMemFree(Some(self.0)) };
+            }
+        }
+    }
+
+    /// A kernel handle closed on drop.
+    struct Handle(HANDLE);
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from a call that opened it.
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    /// A token's TOKEN_USER, with the SID it points to, in one allocation.
+    struct TokenUserBuf(Vec<u64>);
+
+    impl TokenUserBuf {
+        fn of(token: HANDLE) -> Option<Self> {
+            let mut need = 0u32;
+            // SAFETY: a null buffer asks for the size.
+            unsafe {
+                let _ = GetTokenInformation(token, TokenUser, None, 0, &mut need);
+            }
+            if need == 0 {
+                return None;
+            }
+            // u64 elements keep the buffer aligned for TOKEN_USER.
+            let mut buf = vec![0u64; (need as usize).div_ceil(8)];
+            // SAFETY: `buf` is at least `need` bytes.
+            unsafe {
+                GetTokenInformation(
+                    token,
+                    TokenUser,
+                    Some(buf.as_mut_ptr().cast()),
+                    need,
+                    &mut need,
+                )
+            }
+            .ok()?;
+            Some(Self(buf))
+        }
+
+        fn sid(&self) -> PSID {
+            // SAFETY: the buffer holds a TOKEN_USER written by the system.
+            unsafe { (*(self.0.as_ptr() as *const TOKEN_USER)).User.Sid }
+        }
+    }
+
+    fn wide_nul(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// `DOMAIN\user` of the account this process runs as.
+    fn current_account() -> Option<String> {
+        let mut len = 0u32;
+        // SAFETY: a null buffer asks for the size (the call reports failure).
+        unsafe {
+            let _ = GetUserNameExW(NameSamCompatible, PWSTR::null(), &mut len);
+        }
+        if len == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; len as usize + 1];
+        let mut cap = buf.len() as u32;
+        // SAFETY: `buf` holds `cap` UTF-16 units.
+        let ok = unsafe { GetUserNameExW(NameSamCompatible, PWSTR(buf.as_mut_ptr()), &mut cap) };
+        (ok.as_bool() || cap > 0).then(|| String::from_utf16_lossy(&buf[..cap as usize]))
+    }
+
+    fn own_token_user() -> Option<TokenUserBuf> {
+        let mut token = HANDLE::default();
+        // SAFETY: the pseudo-handle of this process and an out handle.
+        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.ok()?;
+        let token = Handle(token);
+        TokenUserBuf::of(token.0)
+    }
+
+    /// The packed credential with this user's name filled in, an empty
+    /// password, to start the prompt on the right account.
+    fn prefilled(account: &str) -> Option<Vec<u8>> {
+        let user = wide_nul(account);
+        let empty = [0u16];
+        let mut size = 0u32;
+        // SAFETY: a null buffer asks for the size.
+        unsafe {
+            let _ = CredPackAuthenticationBufferW(
+                Default::default(),
+                PCWSTR(user.as_ptr()),
+                PCWSTR(empty.as_ptr()),
+                None,
+                &mut size,
+            );
+        }
+        if size == 0 {
+            return None;
+        }
+        let mut out = vec![0u8; size as usize];
+        // SAFETY: `out` is `size` bytes.
+        unsafe {
+            CredPackAuthenticationBufferW(
+                Default::default(),
+                PCWSTR(user.as_ptr()),
+                PCWSTR(empty.as_ptr()),
+                Some(out.as_mut_ptr()),
+                &mut size,
+            )
+        }
+        .ok()?;
+        Some(out)
+    }
+
+    enum Typed {
+        Credential(Secret, String),
+        Cancelled,
+    }
+
+    /// Shows the prompt once. `auth_error` names why the last try failed.
+    fn prompt(reason: &str, input: &[u8], auth_error: u32) -> Result<Typed, AuthError> {
+        let caption = HSTRING::from("Cua Spaces");
+        let message = HSTRING::from(reason);
+        let info = CREDUI_INFOW {
+            cbSize: std::mem::size_of::<CREDUI_INFOW>() as u32,
+            // SAFETY: no arguments; a null window is allowed.
+            hwndParent: unsafe { GetForegroundWindow() },
+            pszMessageText: PCWSTR(message.as_ptr()),
+            pszCaptionText: PCWSTR(caption.as_ptr()),
+            hbmBanner: Default::default(),
+        };
+        let mut package = 0u32;
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let mut out_len = 0u32;
+        // SAFETY: every pointer is to a live local; `input` is a packed buffer.
+        let rc = unsafe {
+            CredUIPromptForWindowsCredentialsW(
+                Some(&info),
+                auth_error,
+                &mut package,
+                Some(input.as_ptr().cast()),
+                input.len() as u32,
+                &mut out,
+                &mut out_len,
+                None,
+                CREDUIWIN_GENERIC,
+            )
+        };
+        let buffer = AuthBuffer(out, out_len);
+        if rc == ERROR_CANCELLED.0 {
+            return Ok(Typed::Cancelled);
+        }
+        if rc != ERROR_SUCCESS.0 {
+            return Err(AuthError::Failed(format!(
+                "the Windows credential prompt failed ({rc})"
+            )));
+        }
+        let (mut user, mut domain) = (vec![0u16; 513], vec![0u16; 257]);
+        let mut pass = Secret(vec![0u16; 513]);
+        let (mut ul, mut dl, mut pl) =
+            (user.len() as u32, domain.len() as u32, pass.0.len() as u32);
+        // SAFETY: each buffer is as long as the length given beside it.
+        let unpacked = unsafe {
+            CredUnPackAuthenticationBufferW(
+                Default::default(),
+                buffer.0,
+                buffer.1,
+                PWSTR(user.as_mut_ptr()),
+                &mut ul,
+                PWSTR(domain.as_mut_ptr()),
+                Some(&mut dl),
+                PWSTR(pass.0.as_mut_ptr()),
+                &mut pl,
+            )
+        };
+        unpacked.map_err(|_| AuthError::Failed("the typed credential could not be read".into()))?;
+        let name =
+            String::from_utf16_lossy(&user[..(ul as usize).saturating_sub(1).min(user.len())]);
+        pass.0.truncate((pl as usize).saturating_sub(1));
+        Ok(Typed::Credential(pass, name))
+    }
+
+    /// Whether `LogonUserW` takes this password, and for which SID.
+    fn logon(name: &str, password: &Secret, mine: &TokenUserBuf) -> (bool, bool) {
+        let (user, domain) = split_account(name);
+        let user = wide_nul(&user);
+        let domain = domain.map(|d| wide_nul(&d));
+        let mut pw = password.0.clone();
+        pw.push(0);
+        let pw = Secret(pw);
+        let mut token = HANDLE::default();
+        // SAFETY: NUL-terminated strings that outlive the call, and an out handle.
+        let ok = unsafe {
+            LogonUserW(
+                PCWSTR(user.as_ptr()),
+                domain
+                    .as_ref()
+                    .map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+                PCWSTR(pw.0.as_ptr()),
+                LOGON32_LOGON_INTERACTIVE,
+                LOGON32_PROVIDER_DEFAULT,
+                &mut token,
+            )
+        };
+        if ok.is_err() {
+            return (false, false);
+        }
+        let token = Handle(token);
+        let same = TokenUserBuf::of(token.0)
+            // SAFETY: both SIDs live in their buffers.
+            .is_some_and(|theirs| unsafe { EqualSid(mine.sid(), theirs.sid()) }.is_ok());
+        (true, same)
+    }
+
+    pub(super) fn authorize(reason: &str) -> Result<(), AuthError> {
+        let (Some(account), Some(mine)) = (current_account(), own_token_user()) else {
+            return Err(AuthError::Unavailable);
+        };
+        let Some(input) = prefilled(&account) else {
+            return Err(AuthError::Unavailable);
+        };
+        let mut auth_error = 0u32;
+        for _ in 0..PASSWORD_ATTEMPTS {
+            let (password, name) = match prompt(reason, &input, auth_error)? {
+                Typed::Cancelled => return Err(AuthError::Cancelled),
+                Typed::Credential(p, n) => (p, n),
+            };
+            let empty = password.0.is_empty();
+            let (logon_ok, same) = if empty {
+                (false, false)
+            } else {
+                logon(&name, &password, &mine)
+            };
+            drop(password);
+            match password_verdict(empty, logon_ok, same) {
+                PasswordVerdict::Confirmed => return Ok(()),
+                PasswordVerdict::Refuse => return Err(AuthError::Denied),
+                PasswordVerdict::Retry => auth_error = ERROR_LOGON_FAILURE.0,
+            }
+        }
+        Err(AuthError::Denied)
     }
 }
 
@@ -571,6 +934,48 @@ mod tests {
     #[test]
     fn non_macos_override_allows_export() {
         assert_eq!(non_macos_decision(true, "reason"), Ok(()));
+    }
+
+    #[test]
+    fn typed_names_split_into_user_and_domain() {
+        assert_eq!(
+            split_account("WIN\\alice"),
+            ("alice".into(), Some("WIN".into()))
+        );
+        assert_eq!(
+            split_account(".\\alice"),
+            ("alice".into(), Some(".".into()))
+        );
+        assert_eq!(split_account("\\alice"), ("alice".into(), Some(".".into())));
+        // A UPN goes whole, with no domain.
+        assert_eq!(
+            split_account("alice@corp.example"),
+            ("alice@corp.example".into(), None)
+        );
+        assert_eq!(split_account("alice"), ("alice".into(), Some(".".into())));
+    }
+
+    #[test]
+    fn only_the_right_password_for_this_account_confirms() {
+        use PasswordVerdict::*;
+        // Blank proves nothing, even if the system would accept it.
+        assert_eq!(password_verdict(true, true, true), Retry);
+        // Wrong password.
+        assert_eq!(password_verdict(false, false, false), Retry);
+        assert_eq!(password_verdict(false, false, true), Retry);
+        // Right password for another account (an administrator's): refused.
+        assert_eq!(password_verdict(false, true, false), Refuse);
+        assert_eq!(password_verdict(false, true, true), Confirmed);
+        assert!(PASSWORD_ATTEMPTS <= 3);
+    }
+
+    #[test]
+    fn the_unavailable_message_does_not_advertise_the_override() {
+        let m = AuthError::Unavailable.to_string();
+        assert!(
+            !m.contains(ALLOW_UNVERIFIED_ENV) && !m.contains("CUA_ENV"),
+            "{m}"
+        );
     }
 
     #[test]

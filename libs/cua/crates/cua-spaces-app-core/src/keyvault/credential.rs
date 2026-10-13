@@ -75,7 +75,7 @@ pub fn passphrase_only(s: &super::wire::KvStatus) -> bool {
 /// Mac, Windows Hello, the desktop's password prompt (polkit) on Linux.
 pub fn presence_word(os: SpaceOs) -> &'static str {
     match os {
-        SpaceOs::Windows => "Windows Hello",
+        SpaceOs::Windows => "Windows Hello or your password",
         SpaceOs::Linux => "your password",
         SpaceOs::Macos | SpaceOs::Unknown => "Touch ID",
     }
@@ -85,7 +85,7 @@ pub fn presence_word(os: SpaceOs) -> &'static str {
 fn setup_help(os: SpaceOs) -> &'static str {
     match os {
         SpaceOs::Windows => {
-            "Windows Hello confirms. The vault key stays in Windows Credential Manager."
+            "Windows Hello or your password confirms. The vault key stays in Windows Credential Manager."
         }
         SpaceOs::Linux => {
             "Your password confirms (polkit). The vault key stays in the system keyring."
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(
             help(SpaceOs::Windows),
             (
-                "Windows Hello confirms. The vault key stays in Windows Credential Manager.".into(),
+                "Windows Hello or your password confirms. The vault key stays in Windows Credential Manager.".into(),
                 "Unlocks with Windows Credential Manager.".into()
             )
         );

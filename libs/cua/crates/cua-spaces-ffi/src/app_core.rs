@@ -2247,8 +2247,8 @@ pub fn app_host_looks_like_listen(value: String) -> bool {
     core::host::looks_like_listen(&value)
 }
 
-/// Puts the app's bundled `cua` on PATH on first launch (there is no
-/// onboarding page for it). The same installer the Tauri app runs;
+/// Puts the app's bundled `cua` on PATH after the first run's Command
+/// line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
 /// [`plan`](Self::plan) reads what installing would do without writing.
 #[derive(uniffi::Object)]
 pub struct AppCliInstaller {

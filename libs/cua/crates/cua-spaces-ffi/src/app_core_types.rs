@@ -5317,6 +5317,8 @@ pub type AppOnboardingStep = core::onboarding::OnboardingStep;
 pub enum AppOnboardingStep {
     /// Welcome.
     Welcome,
+    /// Install the bundled `cua`, while its plan needs it.
+    Cli,
     /// Sign in to Cua.
     Signin,
     /// Coding agents: cua skills and the cua MCP server.
@@ -5371,8 +5373,14 @@ pub type AppOnboardingState = core::onboarding::OnboardingState;
 pub struct AppOnboardingState {
     /// Page.
     pub step: AppOnboardingStep,
-    /// Where `cua` was installed on first launch, when it was.
+    /// Where `cua` was installed, when it was.
     pub cli_target: Option<String>,
+    /// The bundled `cua`'s install plan, as the shell read it.
+    pub cli_plan: Option<AppCliInstallPlan>,
+    /// Continue on Command line: the shell is installing.
+    pub cli_installing: bool,
+    /// Why the install failed.
+    pub cli_error: Option<String>,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
     /// in the notch".
     pub menu_bar: bool,
@@ -5434,6 +5442,21 @@ pub enum AppOnboardingAction {
     CliInstalled {
         /// Where.
         target: Option<String>,
+    },
+    /// The bundled `cua`'s install plan, read or installed (any page).
+    CliPlanned {
+        /// The plan.
+        plan: AppCliInstallPlan,
+    },
+    /// Continue (`install`) or Skip from Command line.
+    CliDone {
+        /// Install.
+        install: bool,
+    },
+    /// The Command line page's install failed.
+    CliInstallFailed {
+        /// Why.
+        error: String,
     },
     /// A presentation card was picked (it stays on the page).
     PresentationPicked {

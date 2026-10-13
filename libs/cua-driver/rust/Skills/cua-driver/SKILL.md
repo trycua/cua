@@ -57,7 +57,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | Use pixels when semantics cannot reach it | Fresh target screenshot, then `x,y` on the same target                                                | [Workflow](WORKFLOW.md)                               |
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
 | Operate the authorized desktop            | `get_desktop_state` → input with `target:{kind:"desktop",display_id:"primary"}` → `get_desktop_state` | [Workflow](WORKFLOW.md), [Linux](LINUX.md) on Wayland |
-| Drive supported browser page content      | `get_browser_state` → typed browser action → fresh state                                              | [Browser](BROWSER.md)                                 |
+| Drive supported browser page content      | `get_browser_state` → `browser_prepare` from `detail.next_call` if refused → typed browser action      | [Browser](BROWSER.md)                                 |
 | Record an explicitly requested run        | `start_recording` → actions → `stop_recording`; verify artifacts                                      | [Recording](RECORDING.md)                             |
 | Finish                                    | Stop after proof; `end_session` for this run, not `cua-driver stop` on a shared service               | [Runtime](RUNTIME.md)                                 |
 

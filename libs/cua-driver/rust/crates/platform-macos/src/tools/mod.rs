@@ -27,6 +27,7 @@ mod type_text;
 // through GetWindowStateTool.
 mod check_permissions;
 mod cursor_tools;
+mod desktop_pointer_guard;
 mod get_accessibility_tree;
 mod get_config;
 mod get_cursor_position;

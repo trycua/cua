@@ -123,7 +123,7 @@ is safe even for apps that normally foreground on media-load
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
 | Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
-| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover |
+| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). A web page in Chrome, Edge or Brave: `browser_pointer` hover after `get_browser_state`. If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop", delivery_mode:"foreground"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover; a desktop `move_cursor` over a background browser page |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
@@ -351,13 +351,25 @@ and how:
   the app's main process, so page hover effects update. Native tooltips do
   not show.
 
-For a web page in Chrome use `browser_pointer` hover. Otherwise
-`move_cursor` moves only the agent cursor and says so. Look for the same
-command elsewhere first: a menu item, a context menu, a keyboard
-shortcut, or the control's help text in `get_window_state` (toolbar
-tooltips are usually there as `help=`). Otherwise the step needs the
-user's pointer (`move_cursor` with `scope:"desktop"`) or the app in front
+For a web page in Chrome, Edge or Brave use `browser_pointer` hover: a
+window-target `move_cursor` there says the page saw no hover and names
+`get_browser_state` as the next call. Otherwise `move_cursor` moves only the
+agent cursor and says so. Look for the same command elsewhere first: a menu
+item, a context menu, a keyboard shortcut, or the control's help text in
+`get_window_state` (toolbar tooltips are usually there as `help=`).
+Otherwise the step needs the user's pointer (`move_cursor` with
+`scope:"desktop"` and `delivery_mode:"foreground"`) or the app in front
 (`bring_to_front`); use either only if the user allows it, and say which.
+
+### Desktop-target pointer input over a background app
+
+`move_cursor`, `click`, `drag` and `scroll` with a desktop target move the
+user's real pointer. When the point lands on a window of an app that is not
+in front, they refuse with `background_unavailable` before sending anything,
+unless the call passes `delivery_mode:"foreground"`. Over a web browser the
+refusal names the browser tools (`get_browser_state`, then
+`browser_pointer`, `browser_click` or `browser_type`) instead of foreground.
+Points over the app in front, or over no window, behave as before.
 
 ### `delivery_mode` on the pointer family (macOS)
 

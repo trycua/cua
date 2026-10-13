@@ -402,6 +402,11 @@ impl Tool for ClickTool {
                 return ToolResult::error("click.count must be at least 1.")
                     .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
             }
+            if let Some(refusal) =
+                super::desktop_pointer_guard::check("click", &args, vec![(sx, sy)]).await
+            {
+                return refusal;
+            }
             // Glide the session's agent cursor to the screen point for visibility.
             let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
             crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), sx, sy).await;

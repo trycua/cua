@@ -173,6 +173,47 @@ pub(super) fn unsupported_engine_refusal(
     }))
 }
 
+/// What an agent reads when a user's own browser is not attached yet. Agents
+/// read the old "requires explicit existing-profile approval" wording as a
+/// request for the user's approval and gave up, or fell back to desktop pointer
+/// tools that move the user's pointer (Bench v2 PR-02: 23 of 28 trials stopped
+/// here without calling browser_prepare). Name the call that attaches instead.
+const CONSUMER_PROFILE_NOT_ATTACHED: &str = "Cua is not attached to this browser window yet. \
+     Call browser_prepare with this pid and window_id and strategy {\"kind\":\"existing_profile\"} \
+     (detail.next_call has the exact arguments). It attaches the browser tools, or refuses \
+     with nothing changed and says why; any approval the host requires is handled there. \
+     Do not switch to desktop pointer tools for this page: they move the user's pointer.";
+
+/// Add the exact `browser_prepare` call to a not-yet-attached refusal.
+fn with_existing_profile_next_call(
+    mut refusal: BrowserRefusal,
+    session: &str,
+    pid: i64,
+    window_id: u64,
+) -> BrowserRefusal {
+    if refusal.code != BrowserRefusalCode::BrowserConsentRequired {
+        return refusal;
+    }
+    let mut detail = match refusal.detail.take() {
+        Some(Value::Object(detail)) => detail,
+        _ => serde_json::Map::new(),
+    };
+    detail.insert(
+        "next_call".to_owned(),
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": pid,
+                "window_id": window_id,
+                "session": session,
+                "strategy": { "kind": "existing_profile" },
+            },
+        }),
+    );
+    refusal.detail = Some(Value::Object(detail));
+    refusal
+}
+
 fn endpoint_access_class(
     has_existing_profile_grant: bool,
     driver_owned: bool,
@@ -188,7 +229,7 @@ fn endpoint_access_class(
         BrowserProcessRole::EmbeddedApplication => Ok(EndpointAccessClass::EmbeddedApplication),
         BrowserProcessRole::StandaloneConsumer => Err(refuse(
             BrowserRefusalCode::BrowserConsentRequired,
-            "this standalone browser profile requires explicit existing-profile approval before Cua can inspect its DevTools endpoint",
+            CONSUMER_PROFILE_NOT_ATTACHED,
         )
         .with_detail(json!({
             "reason": "consumer_profile_endpoint_requires_grant",
@@ -1258,8 +1299,8 @@ impl BrowserEngine {
         let driver_owned = self.is_driver_owned_pid_for_session(session, pid)
             || transport_session
                 .is_some_and(|owner| self.is_driver_owned_pid_for_session(owner, pid));
-        let access_class =
-            endpoint_access_class(grant.is_some(), driver_owned, class.process_role)?;
+        let access_class = endpoint_access_class(grant.is_some(), driver_owned, class.process_role)
+            .map_err(|refusal| with_existing_profile_next_call(refusal, session, pid, window_id))?;
 
         let native = self.native_window_checked(pid, window_id).await?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;

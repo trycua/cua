@@ -243,6 +243,10 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "browser_prepare",
         // The batch's default for its steps' own delivery_mode.
         "run_steps",
+        // macOS desktop move_cursor refuses over a background app unless
+        // foreground is requested.
+        #[cfg(target_os = "macos")]
+        "move_cursor",
         // macOS set_value has no delivery ladder.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         "set_value",

@@ -1201,6 +1201,24 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         refusal["refusal"]["detail"]["next_action"],
         "browser_prepare"
     );
+    // The refusal names the exact call that attaches, so an agent does not
+    // read it as a request for the user's approval (Bench v2 PR-02).
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_call"],
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": 1,
+                "window_id": 7,
+                "session": SESSION,
+                "strategy": { "kind": "existing_profile" },
+            },
+        })
+    );
+    let message = refusal["refusal"]["message"].as_str().unwrap();
+    assert!(message.contains("not attached to this browser window yet"));
+    assert!(message.contains("Call browser_prepare"));
+    assert!(!message.contains("approval before"));
     assert!(
         !managed_discovery_invoked.load(Ordering::SeqCst),
         "read-only bind must not inspect a consent-gated endpoint"

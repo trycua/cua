@@ -123,6 +123,7 @@ struct WindowDropTests {
                               styleMask: [.borderless], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         tiles.window = window
+        tiles.visible = { _ in true }
         tiles.isDropTarget = { _ in true }
         // The system's answer: the page's window below the dragged one (7),
         // the dragged window itself when asked for the frontmost.

@@ -28,13 +28,13 @@ struct Pull: AsyncParsableCommand {
     @Option(name: .long, help: "Registry password for authentication")
     var password: String?
 
-    @Option(name: .customLong("preparation-work-root"), help: "Private absolute GHCR preparation work root")
+    @Option(name: .customLong("preparation-work-root"), help: "Absolute GHCR preparation work root")
     var preparationWorkRoot: String?
 
-    @Option(name: .customLong("preparation-scope-id"), help: "Accepted preparation scope identifier")
+    @Option(name: .customLong("preparation-scope-id"), help: "Preparation scope identifier")
     var preparationScopeID: String?
 
-    @Option(name: .customLong("preparation-operation-id"), help: "Path-safe preparation operation identifier")
+    @Option(name: .customLong("preparation-operation-id"), help: "Preparation operation identifier")
     var preparationOperationID: String?
 
     @Flag(name: .long, help: "Force re-download even if image exists")

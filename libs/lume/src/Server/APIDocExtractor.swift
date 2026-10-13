@@ -438,7 +438,8 @@ enum APIDocExtractor {
             ),
             statusCodes: [
                 APIStatusCodeDoc(code: 200, description: "Image pulled successfully"),
-                APIStatusCodeDoc(code: 400, description: "Pull operation failed")
+                APIStatusCodeDoc(code: 400, description: "Pull operation failed"),
+                APIStatusCodeDoc(code: 409, description: "A pull for the VM name is already active")
             ]
         )
     }

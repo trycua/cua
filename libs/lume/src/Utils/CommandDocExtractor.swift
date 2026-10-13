@@ -215,6 +215,9 @@ enum CommandDocExtractor {
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location name, or a direct path to the VM location", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "username", shortName: nil, help: "Registry username for authentication", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "password", shortName: nil, help: "Registry password for authentication", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "preparation-work-root", shortName: nil, help: "Absolute GHCR preparation work root", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "preparation-scope-id", shortName: nil, help: "Preparation scope identifier", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "preparation-operation-id", shortName: nil, help: "Preparation operation identifier", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [
                 FlagDoc(name: "force", shortName: nil, help: "Download again even if the image is cached", defaultValue: false),

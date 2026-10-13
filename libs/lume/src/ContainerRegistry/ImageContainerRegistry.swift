@@ -867,7 +867,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
     private func getManifestIdentifier(_ manifest: Manifest, manifestDigest: String) -> String {
         // Use the manifest's own digest as the identifier
-        return (try? ContentAddress(manifestDigest).fileName) ?? "invalid-manifest"
+        return Self.cacheFileIdentifier(for: manifestDigest)
     }
 
     private func getShortImageId(_ digest: String) -> String {
@@ -890,7 +890,16 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
     func getCachedLayerPath(manifestId: String, digest: String) -> URL {
         return getImageCacheDirectory(manifestId: manifestId).appendingPathComponent(
-            (try? ContentAddress(digest).fileName) ?? "invalid-digest")
+            Self.cacheFileIdentifier(for: digest))
+    }
+
+    static func cacheFileIdentifier(for value: String) -> String {
+        if let address = try? ContentAddress(value) {
+            return address.fileName
+        }
+
+        let encoded = value.utf8.map { String(format: "%02x", $0) }.joined()
+        return "legacy_" + (encoded.isEmpty ? "empty" : encoded)
     }
 
     private func sharedCoordinationDirectory() throws -> URL {
@@ -954,7 +963,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private func pruneUnusableCacheFiles(in cacheDir: URL, manifest: Manifest) {
         let fm = FileManager.default
         let sizes = Dictionary(
-            manifest.layers.map { ($0.digest.replacingOccurrences(of: ":", with: "_"), $0.size) },
+            manifest.layers.map { (Self.cacheFileIdentifier(for: $0.digest), $0.size) },
             uniquingKeysWith: { first, _ in first })
         guard let names = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return }
         for name in names {
@@ -1602,13 +1611,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             assembledVMDir = tempVMDir
         }
 
-        // Complete the marker inside the assembled tree before publication so a
-        // failed final handoff cannot leave a new destination without its marker.
         let assembledManifestPath = assembledVMDir.appendingPathComponent(".manifest-digest")
         try manifestDigest.write(to: assembledManifestPath, atomically: true, encoding: .utf8)
 
-        // The final handoff is deliberately same-volume and atomic. The prior
-        // verified VM remains in place until replaceItemAt succeeds.
         try Self.publishDirectory(
             source: assembledVMDir,
             destination: URL(fileURLWithPath: vmDir.dir.path),

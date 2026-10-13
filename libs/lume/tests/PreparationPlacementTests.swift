@@ -174,6 +174,20 @@ struct PreparationPlacementTests {
         #expect(!FileManager.default.fileExists(atPath: cache.path))
     }
 
+    @Test func syntheticCacheNamesRemainDistinctAndPathSafe() throws {
+        let cache = try placementTemp("cache-names")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let registry = try ImageContainerRegistry(
+            registry: "registry.invalid", organization: "org", cacheDirectory: cache,
+            cachingEnabled: true)
+        let digests = ["sha256:part-0", "sha256:part-1", "../../outside", ""]
+        let names = digests.map {
+            registry.getCachedLayerPath(manifestId: "fixture", digest: $0).lastPathComponent
+        }
+        #expect(Swift.Set(names).count == digests.count)
+        #expect(names.allSatisfy { $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" } })
+    }
+
     @Test func ephemeralOverlapValidationDoesNotCreateMissingTemporaryDirectory() throws {
         let base = try placementTemp("ephemeral")
         defer { try? FileManager.default.removeItem(at: base) }

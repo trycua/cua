@@ -64,8 +64,6 @@ struct PullOperationKey: Sendable, Hashable {
     }
 }
 
-/// Tracks async pulls by a stable operation key rather than VM name alone.
-///
 /// Every pull gets a token from `begin`; progress and the final outcome are
 /// only applied while that token is the name's current pull, so a late
 /// progress update can never bring back a finished or cancelled entry.

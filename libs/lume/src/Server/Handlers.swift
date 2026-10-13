@@ -73,9 +73,6 @@ extension Server {
         }
     }
 
-    /// The synthetic `GET /lume/vms/:name` body while an async pull runs:
-    /// `downloadProgress` is the percent (0 to 100) older clients read;
-    /// `downloadedBytes`, `totalBytes` and `bytesPerSecond` give byte detail.
     nonisolated static func pullingResponse(name: String, progress: PullProgress, token: UUID? = nil) throws
         -> HTTPResponse
     {

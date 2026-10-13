@@ -71,21 +71,11 @@ does not. That is why assets are minted here rather than in the destination page
 | `map-cursor.mp4` | [Video](https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b) | `how-to-guides/recipes/build-and-inspect-a-map` |
 | `pdf-cursor.mp4` | [Video](https://github.com/user-attachments/assets/5ef3bec8-70a5-45f5-8eb3-930a345b9019) | `how-to-guides/recipes/redact-and-annotate-a-pdf` |
 | `archive-cursor.mp4` | [Video](https://github.com/user-attachments/assets/89d570f7-e895-4b66-8c20-ded5da2926a4) | `how-to-guides/recipes/prepare-an-exhibition-panel` |
-
-<img width="2352" height="963" alt="gemini-cua-driver-loop" src="https://github.com/user-attachments/assets/bdfff431-0f7f-440c-867a-2905fbda4a98" />
-<img width="1758" height="1752" alt="gemini-cua-driver-architecture" src="https://github.com/user-attachments/assets/7222ab31-cda1-4a74-b298-d72ebc1e488a" />
-
-
-https://github.com/user-attachments/assets/70e9cc74-0020-43cd-b974-3fb930288ec9
-
-<img width="1920" height="1080" alt="gemini-argon-whiteboard-to-keynote" src="https://github.com/user-attachments/assets/619dc845-2af0-464e-8a03-b7ce945edec4" />
-
-
-https://github.com/user-attachments/assets/358b5547-2d38-4868-ba28-91e90b3c41b7
-
-<img width="1920" height="1080" alt="gemini-argon-ledger-entries" src="https://github.com/user-attachments/assets/38cb5c14-121f-42c5-a642-b4e92d8a59f9" />
-
-
-https://github.com/user-attachments/assets/28b57899-5681-4a64-8fca-f70762e5c95c
-
-<img width="1920" height="1080" alt="gemini-argon-dashboard-to-notes" src="https://github.com/user-attachments/assets/84058332-45e0-49dd-a736-428ef4fd93d8" />
+| `gemini-argon-whiteboard-to-keynote.mp4` | [Video](https://github.com/user-attachments/assets/70e9cc74-0020-43cd-b974-3fb930288ec9) | `cua-driver/guides/gemini` |
+| `gemini-argon-whiteboard-to-keynote.jpg` | [`619dc845…`](https://github.com/user-attachments/assets/619dc845-2af0-464e-8a03-b7ce945edec4) | `cua-driver/guides/gemini` |
+| `gemini-argon-dashboard-to-notes.mp4` | [Video](https://github.com/user-attachments/assets/28b57899-5681-4a64-8fca-f70762e5c95c) | `cua-driver/guides/gemini` |
+| `gemini-argon-dashboard-to-notes.jpg` | [`84058332…`](https://github.com/user-attachments/assets/84058332-45e0-49dd-a736-428ef4fd93d8) | `cua-driver/guides/gemini` |
+| `gemini-argon-ledger-entries.mp4` | [Video](https://github.com/user-attachments/assets/358b5547-2d38-4868-ba28-91e90b3c41b7) | `cua-driver/guides/gemini` |
+| `gemini-argon-ledger-entries.jpg` | [`38cb5c14…`](https://github.com/user-attachments/assets/38cb5c14-121f-42c5-a642-b4e92d8a59f9) | `cua-driver/guides/gemini` |
+| `gemini-cua-driver-architecture.png` | [`7222ab31…`](https://github.com/user-attachments/assets/7222ab31-cda1-4a74-b298-d72ebc1e488a) | `cua-driver/guides/gemini` |
+| `gemini-cua-driver-loop.png` | [`bdfff431…`](https://github.com/user-attachments/assets/bdfff431-0f7f-440c-867a-2905fbda4a98) | `cua-driver/guides/gemini` |

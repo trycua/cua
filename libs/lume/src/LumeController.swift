@@ -1545,6 +1545,11 @@ final class LumeController {
                     "location": storage ?? "home",
                 ])
 
+            if let preparation {
+                let destination = try pullDestinationURL(name: vmName, storage: storage)
+                try Self.validateOwnedPullDestination(destination, preparation: preparation)
+            }
+
             try self.validatePullParameters(
                 image: image,
                 name: vmName,
@@ -1553,11 +1558,6 @@ final class LumeController {
                 storage: storage,
                 force: force
             )
-
-            if let preparation {
-                let destination = try pullDestinationURL(name: vmName, storage: storage)
-                try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
-            }
 
             let targetDir = try? pullTargetDirectory(name: vmName, storage: storage)
             try await Self.removingNewVMDirectoryOnCancel(targetDir) {
@@ -2044,6 +2044,13 @@ final class LumeController {
                 .appendingPathComponent(name, isDirectory: true)
         }
         return try home.getVMDirectory(name, storage: storage).dir.url
+    }
+
+    static func validateOwnedPullDestination(
+        _ destination: URL,
+        preparation: OwnedPreparation
+    ) throws {
+        try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
     }
 
     /// Runs a pull and, if the task is cancelled, removes the VM directory the

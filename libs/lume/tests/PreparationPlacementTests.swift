@@ -163,7 +163,7 @@ struct PreparationPlacementTests {
             workRoot: workRootURL.path, scopeID: "scope", operationID: "operation")
         let destination = workRootURL.appendingPathComponent("vm")
         #expect(throws: PreparationPlacementError.invalidWorkRoot) {
-            try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
+            try LumeController.validateOwnedPullDestination(destination, preparation: preparation)
         }
         #expect(!FileManager.default.fileExists(atPath: destination.path))
 

@@ -42,7 +42,7 @@ struct SuspendedThread(Owned<HANDLE>);
 impl SuspendedThread {
     fn suspend(hwnd: HWND) -> windows::core::Result<Self> {
         let thread_id = Some(unsafe { crate::input::GetWindowThreadProcessId(hwnd, None) })
-            .filter(|&id| id != unsafe { Threading::GetCurrentThreadId() })
+            .filter(|&id| id != 0 && id != unsafe { Threading::GetCurrentThreadId() })
             .ok_or(ERROR_INVALID_THREAD_ID)?;
         let access = Threading::THREAD_SUSPEND_RESUME | Threading::THREAD_GET_CONTEXT;
         let handle = unsafe { Owned::new(Threading::OpenThread(access, false, thread_id)?) };
@@ -1126,7 +1126,7 @@ mod wheel_tests {
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread::JoinHandle;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use windows::core::{w, HSTRING, PCWSTR};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -1243,6 +1243,8 @@ mod wheel_tests {
                 while !pump_stop.load(Ordering::Acquire) {
                     if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                         DispatchMessageW(&msg);
+                    } else {
+                        std::thread::yield_now();
                     }
                 }
                 let _ = DestroyWindow(hwnd);
@@ -1262,7 +1264,15 @@ mod wheel_tests {
             }
         }
 
-        fn finish(mut self) -> Vec<u32> {
+        fn finish(mut self, expected: usize) -> Vec<u32> {
+            let deadline = Instant::now() + PUMP_TIMEOUT;
+            while self.trace.len.load(Ordering::Acquire) < expected {
+                assert!(
+                    Instant::now() < deadline,
+                    "pump recorded {expected} messages in time"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
             self.stop.store(true, Ordering::Release);
             self.stopped
                 .recv_timeout(PUMP_TIMEOUT)
@@ -1290,7 +1300,7 @@ mod wheel_tests {
         for _ in 0..200 {
             post_click_on(window.hwnd, 5, 5, 1, "left").expect("post click");
         }
-        let trace = window.finish();
+        let trace = window.finish(200 * 4);
 
         for (click, messages) in trace.chunks(4).enumerate() {
             assert_eq!(
@@ -1307,24 +1317,22 @@ mod wheel_tests {
         let window = PumpedWindow::spawn("CuaPostedClickLeaveOnMoveDouble");
         post_click_on(window.hwnd, 5, 5, 2, "left").expect("post double click");
         let clicks: Vec<u32> = window
-            .finish()
+            .finish(2 * 4)
             .into_iter()
             .filter(|&msg| msg != WM_MOUSELEAVE)
             .collect();
-        let [move1, down1, up1, move2, down2, up2] =
-            <[u32; 6]>::try_from(clicks).expect("two MOVE, press, UP bursts");
 
         assert_eq!(
-            [move1, down1, up1, move2, up2],
+            clicks,
             [
                 WM_MOUSEMOVE,
                 WM_LBUTTONDOWN,
                 WM_LBUTTONUP,
                 WM_MOUSEMOVE,
+                WM_LBUTTONDBLCLK,
                 WM_LBUTTONUP
             ]
         );
-        assert!(matches!(down2, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK));
     }
 
     #[test]

@@ -4,11 +4,17 @@
 //! (via ChildWindowFromPointEx), so the message never reaches the top-level
 //! chrome that would call SetForegroundWindow in response to WM_LBUTTONDOWN.
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use std::thread::sleep;
 use std::time::Duration;
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
+use windows::core::{Error, Owned};
+use windows::Win32::Foundation::{ERROR_INVALID_THREAD_ID, HANDLE, HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
+use windows::Win32::System::Diagnostics::Debug::{GetThreadContext, CONTEXT, CONTEXT_FLAGS};
+use windows::Win32::System::Threading::{
+    GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_GET_CONTEXT,
+    THREAD_SUSPEND_RESUME,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
@@ -30,6 +36,45 @@ const MK_MBUTTON: u32 = 0x0010;
 const MK_RBUTTON: u32 = 0x0002;
 
 const CLICK_DELAY_MS: u64 = 35;
+
+#[cfg(target_arch = "x86_64")]
+const CONTEXT_CONTROL: CONTEXT_FLAGS =
+    windows::Win32::System::Diagnostics::Debug::CONTEXT_CONTROL_AMD64;
+#[cfg(target_arch = "aarch64")]
+const CONTEXT_CONTROL: CONTEXT_FLAGS =
+    windows::Win32::System::Diagnostics::Debug::CONTEXT_CONTROL_ARM64;
+
+#[repr(C, align(16))]
+struct AlignedContext(CONTEXT);
+
+struct SuspendedThread(Owned<HANDLE>);
+
+impl SuspendedThread {
+    fn suspend(hwnd: HWND) -> windows::core::Result<Self> {
+        let thread_id = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, None)
+        };
+        if thread_id == unsafe { GetCurrentThreadId() } {
+            return Err(ERROR_INVALID_THREAD_ID.into());
+        }
+        let access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT;
+        let handle = unsafe { Owned::new(OpenThread(access, false, thread_id)?) };
+        if unsafe { SuspendThread(*handle) } == u32::MAX {
+            return Err(Error::from_win32());
+        }
+        let suspended = Self(handle);
+        let mut context = AlignedContext(CONTEXT::default());
+        context.0.ContextFlags = CONTEXT_CONTROL;
+        unsafe { GetThreadContext(*suspended.0, &mut context.0)? };
+        Ok(suspended)
+    }
+}
+
+impl Drop for SuspendedThread {
+    fn drop(&mut self) {
+        unsafe { ResumeThread(*self.0) };
+    }
+}
 
 fn posted_press_message(down: u32, double: u32, click_index: usize, wants_double: bool) -> u32 {
     if wants_double && click_index % 2 == 1 {
@@ -139,14 +184,18 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
     let _noact = crate::input::NoActivateGuard::arm(hwnd);
     for i in 0..count {
         let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
-        unsafe {
+        let suspended = SuspendedThread::suspend(hwnd)
+            .map_err(|error| anyhow!("background_unavailable: target thread: {error}"))?;
+        let posted = unsafe {
             // WM_MOUSEMOVE first so hover state is correct before the click.
-            PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)?;
-            // Win32 controls do not infer a double-click from two posted DOWN
-            // messages. The second press must use WM_*BUTTONDBLCLK.
-            PostMessageW(hwnd, press_msg, wdown, lparam)?;
-            PostMessageW(hwnd, up_msg, wup, lparam)?;
-        }
+            PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)
+                // Win32 controls do not infer a double-click from two posted DOWN
+                // messages. The second press must use WM_*BUTTONDBLCLK.
+                .and_then(|()| PostMessageW(hwnd, press_msg, wdown, lparam))
+                .and_then(|()| PostMessageW(hwnd, up_msg, wup, lparam))
+        };
+        drop(suspended);
+        posted?;
         if i + 1 < count {
             sleep(Duration::from_millis(80));
         }
@@ -1077,21 +1126,66 @@ mod nc_hit_tests {
 #[cfg(test)]
 mod wheel_tests {
     use super::{post_click_on, posted_press_message, wheel_mouse_data};
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::thread::JoinHandle;
     use windows::core::w;
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Controls::WM_MOUSELEAVE;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, PeekMessageW, MSG, PM_REMOVE, WINDOW_EX_STYLE,
-        WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WS_POPUP,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW,
+        PostMessageW, RegisterClassW, CS_DBLCLKS, MSG, PM_REMOVE, WINDOW_EX_STYLE,
+        WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_POPUP,
     };
 
-    struct HiddenWindow(HWND);
+    thread_local! {
+        static MOUSE_TRACE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+    }
 
-    impl HiddenWindow {
-        fn create() -> Self {
-            let hwnd = unsafe {
-                CreateWindowExW(
+    unsafe extern "system" fn leave_on_move_window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if matches!(
+            msg,
+            WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_LBUTTONUP | WM_MOUSELEAVE
+        ) {
+            MOUSE_TRACE.with_borrow_mut(|trace| trace.push(msg));
+        }
+        if msg == WM_MOUSEMOVE {
+            let _ = PostMessageW(hwnd, WM_MOUSELEAVE, WPARAM(0), LPARAM(0));
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    struct PumpedWindow {
+        hwnd: HWND,
+        stop: Arc<AtomicBool>,
+        pump: Option<JoinHandle<Vec<u32>>>,
+    }
+
+    impl PumpedWindow {
+        fn spawn() -> Self {
+            let stop = Arc::new(AtomicBool::new(false));
+            let pump_stop = Arc::clone(&stop);
+            let (hwnd_tx, hwnd_rx) = mpsc::channel();
+            let pump = std::thread::spawn(move || unsafe {
+                let instance = GetModuleHandleW(None).expect("module handle");
+                let class = WNDCLASSW {
+                    style: CS_DBLCLKS,
+                    lpfnWndProc: Some(leave_on_move_window_proc),
+                    hInstance: instance.into(),
+                    lpszClassName: w!("CuaPostedClickLeaveOnMove"),
+                    ..Default::default()
+                };
+                RegisterClassW(&class);
+                let hwnd = CreateWindowExW(
                     WINDOW_EX_STYLE(0),
-                    w!("STATIC"),
+                    class.lpszClassName,
                     w!(""),
                     WS_POPUP,
                     0,
@@ -1100,46 +1194,76 @@ mod wheel_tests {
                     100,
                     None,
                     None,
-                    None,
+                    instance,
                     None,
                 )
+                .expect("create leave-on-move window");
+                hwnd_tx.send(hwnd.0 as isize).expect("send window handle");
+                let mut msg = MSG::default();
+                while !pump_stop.load(Ordering::Acquire) {
+                    if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                        DispatchMessageW(&msg);
+                    }
+                }
+                let _ = DestroyWindow(hwnd);
+                MOUSE_TRACE.take()
+            });
+            let hwnd = HWND(hwnd_rx.recv().expect("leave-on-move window") as *mut _);
+            Self {
+                hwnd,
+                stop,
+                pump: Some(pump),
             }
-            .expect("create hidden STATIC window");
-            Self(hwnd)
         }
 
-        fn drain_mouse_messages(&self) -> Vec<(u32, u32)> {
-            let mut messages = Vec::new();
-            let mut msg = MSG::default();
-            while unsafe {
-                PeekMessageW(&mut msg, self.0, WM_MOUSEMOVE, WM_LBUTTONDBLCLK, PM_REMOVE)
-            }
-            .as_bool()
-            {
-                messages.push((msg.message, msg.time));
-            }
-            messages
+        fn finish(mut self) -> Vec<u32> {
+            self.stop.store(true, Ordering::Release);
+            let pump = self.pump.take().expect("pump thread");
+            pump.join().expect("pump thread panicked")
         }
     }
 
-    impl Drop for HiddenWindow {
+    impl Drop for PumpedWindow {
         fn drop(&mut self) {
-            unsafe {
-                let _ = DestroyWindow(self.0);
+            self.stop.store(true, Ordering::Release);
+            if let Some(pump) = self.pump.take() {
+                let _ = pump.join();
             }
         }
     }
 
     #[test]
-    fn posted_click_queues_press_and_release_without_a_gap() {
-        let window = HiddenWindow::create();
-        post_click_on(window.0, 5, 5, 2, "left").expect("post click");
+    fn posted_click_release_is_queued_before_the_leave_its_move_triggers() {
+        let window = PumpedWindow::spawn();
+        for _ in 0..200 {
+            post_click_on(window.hwnd, 5, 5, 1, "left").expect("post click");
+        }
+        let trace = window.finish();
+
+        for (click, messages) in trace.chunks(4).enumerate() {
+            assert_eq!(
+                messages,
+                [WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSELEAVE],
+                "click {click}"
+            );
+        }
+        assert_eq!(trace.len(), 200 * 4);
+    }
+
+    #[test]
+    fn posted_double_click_queues_move_press_release_per_click() {
+        let window = PumpedWindow::spawn();
+        post_click_on(window.hwnd, 5, 5, 2, "left").expect("post double click");
+        let clicks: Vec<u32> = window
+            .finish()
+            .into_iter()
+            .filter(|&msg| msg != WM_MOUSELEAVE)
+            .collect();
         let [move1, down1, up1, move2, down2, up2] =
-            <[(u32, u32); 6]>::try_from(window.drain_mouse_messages())
-                .expect("two MOVE, press, UP bursts");
+            <[u32; 6]>::try_from(clicks).expect("two MOVE, press, UP bursts");
 
         assert_eq!(
-            [move1.0, down1.0, up1.0, move2.0, up2.0],
+            [move1, down1, up1, move2, up2],
             [
                 WM_MOUSEMOVE,
                 WM_LBUTTONDOWN,
@@ -1148,21 +1272,7 @@ mod wheel_tests {
                 WM_LBUTTONUP
             ]
         );
-        assert!(matches!(down2.0, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK));
-        for (mv, up) in [(move1, up1), (move2, up2)] {
-            assert!(
-                up.1.wrapping_sub(mv.1) < 31,
-                "MOVE at {} ms, UP at {} ms",
-                mv.1,
-                up.1
-            );
-        }
-        assert!(
-            move2.1.wrapping_sub(up1.1) >= 62,
-            "first UP at {} ms, second MOVE at {} ms",
-            up1.1,
-            move2.1
-        );
+        assert!(matches!(down2, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK));
     }
 
     #[test]

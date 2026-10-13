@@ -1256,11 +1256,23 @@ function Invoke-CosignVerifyBlob($cosign, [string]$bundlePath, [string]$identity
     # $ErrorActionPreference = "Stop" the first one aborts the install even
     # though verification succeeded. Relax the preference for this call only
     # (the assignment is local to this function) and decide on the exit code.
+    #
+    # The relaxed preference must not fail open: if cosign cannot start,
+    # $LASTEXITCODE would still hold whatever an earlier native command left
+    # (often 0), so seed it with a failure first and treat an exception as one.
+    # Use $global: on both sides; a plain assignment would create a local that
+    # hides the value cosign sets.
     $ErrorActionPreference = "Continue"
-    & $cosign verify-blob --bundle $bundlePath `
-        --certificate-identity $identity `
-        --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
-    return $LASTEXITCODE
+    $global:LASTEXITCODE = 1
+    try {
+        & $cosign verify-blob --bundle $bundlePath `
+            --certificate-identity $identity `
+            --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
+    }
+    catch {
+        return 1
+    }
+    return $global:LASTEXITCODE
 }
 
 function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {

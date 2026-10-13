@@ -103,6 +103,14 @@ try {
 
     $exitCode = Invoke-CosignVerifyBlob $badCosign $bundle $identity $zip
     Assert-True ($exitCode -ne 0) "failed verification returned exit code 0"
+
+    # A cosign that cannot start must fail closed, even when an earlier native
+    # command left $LASTEXITCODE at 0 (for example `git` run in the same shell
+    # before `irm ... | iex`).
+    $missingCosign = Join-Path $root "missing\cosign.exe"
+    $global:LASTEXITCODE = 0
+    $exitCode = Invoke-CosignVerifyBlob $missingCosign $bundle $identity $zip
+    Assert-True ($exitCode -ne 0) "a cosign that could not start returned the stale exit code 0"
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

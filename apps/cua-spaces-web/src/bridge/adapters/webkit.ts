@@ -137,6 +137,10 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
   if (machines?.accessNotice) self.accessNotice = machines.accessNotice;
   const rows: MachineRow[] = [self];
   const byId = new Map(rows.map((r) => [r.id, r] as const));
+  // This computer is also on the relay under its own machine id once it is set
+  // up for access: that is the same row, not a second machine.
+  const hostMachineId = machines?.host?.machineId || undefined;
+  if (hostMachineId) byId.set(hostMachineId, self);
   const add = (row: MachineRow) => {
     byId.set(row.id, row);
     rows.push(row);
@@ -144,6 +148,8 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
   for (const { space } of spaces.spaces) {
     // A machine's own desktop: `relay:<machine>` with no host above it.
     const own = space.provider === "relay" && !space.host && space.id.startsWith("relay:") ? space.id.slice(6) : undefined;
+    // A Space registered on the relay (`space-…`) is a Space, not a machine.
+    if (own?.startsWith("space-")) continue;
     if (own && !own.includes("/")) {
       // The list's connect probe was refused by a machine that stopped
       // sharing: it is connected (that is how it refused), not offline.
@@ -151,6 +157,8 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
       const online = space.status === "running" || space.status === "local" || stopped;
       const limits = stopped ? withNotSharing([], stoppedSharingLine(space.name)) : [];
       const known = byId.get(own);
+      // This computer keeps its own name and system ("This computer", Linux).
+      if (known === self) continue;
       if (known) Object.assign(known, { name: space.name, os: space.os, online, limits });
       else add({ id: own, name: space.name, via: "relay", online, os: space.os, detail: space.detail || undefined, limits });
       continue;

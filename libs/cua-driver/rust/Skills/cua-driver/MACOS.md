@@ -87,6 +87,15 @@ for a known application-menu path. With the app in the background it resolves
 the whole path without opening a menu and never activates the app; if macOS
 keeps the item unavailable to a background app it refuses with
 `background_unavailable` (then, if the user allows it, `bring_to_front` first).
+One exception: a disabled Save (the ⌘S item) of a document window is saved
+through the app's scripting interface instead, still in the background, and the
+result says so; TextEdit disables Save whenever it is behind the user's window.
+A Save is verified on disk. A background `hotkey` whose combo is a menu item's
+key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
+background key events never reach an app's menus; no keys are sent. macOS asks
+the user once to allow Cua Driver to control the app (Automation) the first
+time a scripting route runs; when that is off, the call refuses and nothing is
+saved.
 With the app already in front it resolves every AX level live. Prefer an in-window
 element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
@@ -596,8 +605,8 @@ starting point for new browser workflows.
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
-| `set_value refused (file_name_needs_rename)`                  | A file's name as Finder lists it: an AXValue write changes only the list, never the file                          | `click` the item, then with Finder frontmost send `press_key` return, `hotkey` cmd+a, `type_text` the full new name, `press_key` return, each with `scope:"desktop"`; re-read to confirm                                            |
-| `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | foreground `click` at the field's centre in screenshot pixels (with its `capture_id`), then `hotkey` cmd+a, `type_text` the full new name with its extension, `press_key` return, each with `delivery_mode:"foreground"`; a changed extension asks for confirmation first; check the folder listing |
+| `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | `set_value` the full new name on the file's name cell in a Finder window that lists it (renamed through Finder in the background and read back from disk) |
+| `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input; keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
 
 ## Example end-to-end task (macOS)
 

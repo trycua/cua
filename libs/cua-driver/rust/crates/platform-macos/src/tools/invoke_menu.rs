@@ -552,6 +552,31 @@ fn background_unavailable(reason: String) -> ToolResult {
     }))
 }
 
+/// Why a background menu item could not be pressed.
+#[derive(Debug)]
+enum BackgroundPressError {
+    /// macOS keeps the item disabled while the app is in the background.
+    Disabled {
+        message: String,
+        is_save: bool,
+    },
+    Other(String),
+}
+
+/// What the background route knows about the pressed item.
+#[derive(Debug, Clone, Copy)]
+struct PressedItem {
+    is_save: bool,
+}
+
+/// Whether a menu item's key equivalent is plain Command-S, the Save
+/// shortcut in every language.
+unsafe fn item_is_save(item: AXUIElementRef) -> bool {
+    copy_string_attr(item, "AXMenuItemCmdChar").is_some_and(|ch| ch.eq_ignore_ascii_case("s"))
+        && crate::ax::bindings::copy_number_attr(item, "AXMenuItemCmdModifiers").unwrap_or(0.0)
+            == 0.0
+}
+
 /// Resolve the whole path from the app's live menu bar without opening any
 /// level, then perform the final item's action. Used for a background app:
 /// opening a menu-bar menu would take key focus and draw over the user's
@@ -560,20 +585,25 @@ unsafe fn invoke_path_in_background(
     pid: i32,
     window_id: u32,
     path: &[String],
-) -> Result<(), String> {
+) -> Result<PressedItem, BackgroundPressError> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
-        return Err("invoke_menu: target application is unavailable".into());
+        return Err(BackgroundPressError::Other(
+            "invoke_menu: target application is unavailable".into(),
+        ));
     }
     set_messaging_timeout(app);
     let menu_bar = copy_element_attr(app, "AXMenuBar");
     CFRelease(app as CFTypeRef);
-    let menu_bar = menu_bar.ok_or_else(|| "invoke_menu: target exposes no AXMenuBar".to_owned())?;
+    let menu_bar = menu_bar.ok_or_else(|| {
+        BackgroundPressError::Other("invoke_menu: target exposes no AXMenuBar".to_owned())
+    })?;
     set_messaging_timeout(menu_bar);
     let target = resolve_exact_prefix(menu_bar, path);
     CFRelease(menu_bar as CFTypeRef);
-    let target = target?;
+    let target = target.map_err(BackgroundPressError::Other)?;
     set_messaging_timeout(target);
+    let is_save = item_is_save(target);
     let result = (|| {
         // AppKit validates menu items against the key window. Make the target
         // window AppKit-key without raising it or touching the user's window
@@ -584,25 +614,222 @@ unsafe fn invoke_path_in_background(
             std::thread::sleep(Duration::from_millis(120));
         }
         if copy_bool_attr(target, "AXEnabled") == Some(false) {
-            return Err(format!(
-                "invoke_menu: path segment {} is disabled while the app is in the background",
-                path.len().saturating_sub(1)
-            ));
+            return Err(BackgroundPressError::Disabled {
+                message: format!(
+                    "invoke_menu: path segment {} is disabled while the app is in the background",
+                    path.len().saturating_sub(1)
+                ),
+                is_save,
+            });
         }
         let actions = copy_action_names(target);
         let action = choose_action(&actions, true).ok_or_else(|| {
-            "invoke_menu: the final menu item has no usable native menu action".to_owned()
+            BackgroundPressError::Other(
+                "invoke_menu: the final menu item has no usable native menu action".to_owned(),
+            )
         })?;
         let error = perform_action(target, action);
         if error != kAXErrorSuccess {
-            return Err(format!(
+            return Err(BackgroundPressError::Other(format!(
                 "invoke_menu: native action for the final menu item failed with AX error {error}"
-            ));
+            )));
         }
-        Ok(())
+        Ok(PressedItem { is_save })
     })();
     CFRelease(target as CFTypeRef);
     result
+}
+
+/// The file behind a document window (its `AXDocument` URL), if any.
+fn document_path_of_window(pid: i32, window_id: u32) -> Option<std::path::PathBuf> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        set_messaging_timeout(app);
+        let mut url = None;
+        for window in copy_ax_windows(app) {
+            if url.is_none() && ax_get_window_id(window) == Some(window_id) {
+                url = copy_string_attr(window, "AXDocument");
+            }
+            CFRelease(window as CFTypeRef);
+        }
+        CFRelease(app as CFTypeRef);
+        url.as_deref()
+            .and_then(crate::apple_events::file_url_to_path)
+    }
+}
+
+/// How a background menu command was asked for, so the result can say it.
+#[derive(Debug, Clone)]
+pub(super) enum MenuRequest {
+    /// `invoke_menu` with a path.
+    Path,
+    /// `hotkey` with this combo, which is the item's key equivalent.
+    KeyEquivalent(String),
+}
+
+impl MenuRequest {
+    fn preface(&self, path: &[String]) -> String {
+        match self {
+            MenuRequest::Path => String::new(),
+            MenuRequest::KeyEquivalent(combo) => format!(
+                "{combo} is the key equivalent of {}. Key events do not reach a background \
+                 app's menus, so no keys were sent. ",
+                path.join(" > ")
+            ),
+        }
+    }
+}
+
+/// Run a menu command in a background app without activating it. Presses
+/// the item through accessibility when macOS keeps it enabled; a disabled
+/// Save of a document window goes through the app's scripting interface
+/// instead (TextEdit disables Save while it is behind the user's window).
+/// A Save is verified on disk. Anything else that is disabled is refused
+/// with `background_unavailable`.
+pub(super) async fn run_in_background(
+    pid: i32,
+    window_id: u32,
+    path: Vec<String>,
+    request: MenuRequest,
+) -> ToolResult {
+    let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
+        .await
+        .ok()
+        .flatten();
+    let before = document
+        .as_deref()
+        .and_then(crate::apple_events::modified_time);
+    let press_path = path.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let _key_focus = crate::key_focus_guard::protect(pid);
+        unsafe { invoke_path_in_background(pid, window_id, &press_path) }
+    })
+    .await;
+    let preface = request.preface(&path);
+    match outcome {
+        Ok(Ok(PressedItem { is_save: true })) if document.is_some() => {
+            let file = document.clone().expect("checked");
+            let written = tokio::task::spawn_blocking(move || {
+                crate::apple_events::wait_for_new_mtime(&file, before, Duration::from_secs(2))
+            })
+            .await
+            .unwrap_or(false);
+            let file = document.expect("checked");
+            if written {
+                background_success(
+                    format!(
+                        "{preface}Pressed {} through accessibility with the app in the \
+                         background (not activated). Verified: {} was written to disk.",
+                        path.join(" > "),
+                        file.display()
+                    ),
+                    ActionEffect::Confirmed,
+                    ActionTransport::MacosAxAction,
+                    "The document's file modification time moved after the press",
+                )
+            } else {
+                background_success(
+                    format!(
+                        "{preface}Pressed {} through accessibility with the app in the \
+                         background (not activated), but {} did not change on disk within 2 s. \
+                         The document may have had no unsaved changes, or the save did not run; \
+                         verify from fresh state.",
+                        path.join(" > "),
+                        file.display()
+                    ),
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosAxAction,
+                    "AX accepted the press; the file modification time did not move",
+                )
+            }
+        }
+        Ok(Ok(_)) => background_success(
+            format!(
+                "{preface}Invoked {} through accessibility with the app in the background (not \
+                 activated); verify the command's semantic effect from fresh state.",
+                path.join(" > ")
+            ),
+            ActionEffect::Unverifiable,
+            ActionTransport::MacosAxAction,
+            "Every menu hop resolved uniquely without opening it and AX accepted the final action",
+        ),
+        Ok(Err(BackgroundPressError::Disabled {
+            is_save: true,
+            message,
+        })) if document.is_some() => {
+            let file = document.expect("checked");
+            let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
+            let app_name =
+                crate::apps::get_app_name_for_pid(pid).unwrap_or_else(|| "the app".into());
+            let save_file = file.clone();
+            let save_app = app_name.clone();
+            let saved = tokio::task::spawn_blocking(move || {
+                crate::apple_events::save_document(&bundle_id, &save_app, &save_file)
+            })
+            .await;
+            match saved {
+                Ok(Ok(saved)) => background_success(
+                    format!(
+                        "{preface}{} is disabled while {app_name} is in the background, so the \
+                         document was saved through {app_name}'s scripting interface instead \
+                         (not activated). Verified: {app_name} reports no unsaved changes{}.",
+                        path.join(" > "),
+                        if saved.file_written {
+                            format!(" and {} was written to disk", file.display())
+                        } else {
+                            format!(
+                                "; {} did not change on disk because it already held the \
+                                 document's content",
+                                file.display()
+                            )
+                        }
+                    ),
+                    ActionEffect::Confirmed,
+                    ActionTransport::MacosAppleEvent,
+                    "The app's scripting interface reported the document saved",
+                ),
+                Ok(Err(refusal)) => background_unavailable(format!(
+                    "{preface}{message}, and saving through {app_name}'s scripting interface did not \
+                     complete ({}: {}). Nothing was saved",
+                    refusal.code, refusal.reason
+                )),
+                Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
+            }
+        }
+        Ok(Err(BackgroundPressError::Disabled { message, .. })) => {
+            background_unavailable(format!("{preface}{message}"))
+        }
+        Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
+        Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
+    }
+}
+
+fn background_success(
+    text: String,
+    effect: ActionEffect,
+    transport: ActionTransport,
+    detail: &str,
+) -> ToolResult {
+    // A confirmed result rests on a readback of the effect (the file on disk
+    // or the app's own saved state), not on the AX return code.
+    let kind = if matches!(effect, ActionEffect::Confirmed) {
+        EvidenceKind::ValueReadback
+    } else {
+        EvidenceKind::NativeApiResult
+    };
+    ToolResult::text(text).with_action_record(
+        ActionExecutionRecord::builder(effect, transport, RequestedDelivery::Background)
+            .actual_delivery(ActualDelivery::Background)
+            .evidence(ActionEvidence {
+                kind,
+                detail: detail.into(),
+            })
+            .build()
+            .expect("invoke_menu record is valid"),
+    )
 }
 
 fn refusal(message: String) -> ToolResult {
@@ -656,38 +883,7 @@ impl Tool for InvokeMenuTool {
         .await
         .unwrap_or(false);
         if !target_in_front {
-            let background_path = path.clone();
-            let outcome = tokio::task::spawn_blocking(move || {
-                let _key_focus = crate::key_focus_guard::protect(pid);
-                unsafe { invoke_path_in_background(pid, window_id, &background_path) }
-            })
-            .await;
-            return match outcome {
-                Ok(Ok(())) => ToolResult::text(
-                    "Invoked the native menu item through accessibility with the app in the background (not activated); verify the command's semantic effect from fresh state.",
-                )
-                .with_action_record(
-                    ActionExecutionRecord::builder(
-                        ActionEffect::Unverifiable,
-                        ActionTransport::MacosAxAction,
-                        RequestedDelivery::Background,
-                    )
-                    .actual_delivery(ActualDelivery::Background)
-                    .evidence(ActionEvidence {
-                        kind: EvidenceKind::NativeApiResult,
-                        detail: "Every menu hop resolved uniquely without opening it and AX accepted the final action".into(),
-                    })
-                    .build()
-                    .expect("invoke_menu record is valid"),
-                ),
-                // Only a disabled item is a background limit; a missing or
-                // ambiguous path is the same refusal as in the foreground.
-                Ok(Err(error)) if error.contains("while the app is in the background") => {
-                    background_unavailable(error)
-                }
-                Ok(Err(error)) => refusal(error),
-                Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
-            };
+            return run_in_background(pid, window_id, path, MenuRequest::Path).await;
         }
 
         let outcome = tokio::task::spawn_blocking(move || {

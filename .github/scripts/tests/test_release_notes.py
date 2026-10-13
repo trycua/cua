@@ -196,3 +196,26 @@ def test_version_check_catches_a_package_file_that_drifted(tmp_path):
     assert values == {"pyproject.toml": "0.3.3", "/uv.lock": "0.3.2"}
     with pytest.raises(validate_release_versions.VersionError, match="mismatched"):
         validate_release_versions.require_equal("core", "0.3.3", values)
+
+
+def test_legacy_baselines_are_exactly_the_enrolled_packages_last_legacy_tags():
+    expected = {f"{component}-v{MANIFEST[path]}" for path, component in ENROLLED.items()}
+    assert release_notes.LEGACY_BASELINE_TAGS == expected
+
+
+def test_only_a_legacy_baseline_relaxes_the_changelog_citation_check(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_build(plan, repo_root, repository, tag, previous, sha, attribution, client, ref):
+        seen[previous] = release_notes.release_attribution.changelog_references_change("", 1, [])
+        return {"changes": [], "contributors": [], "displayName": "x", "version": plan["version"],
+                "repository": repository, "tag": tag, "previousTag": previous, "compareUrl": "u"}
+
+    original = release_notes.release_attribution.changelog_references_change
+    monkeypatch.setattr(release_notes, "_build", fake_build)
+    for previous in ("sandbox-apps-v0.1.2", "sandbox-apps-v0.1.3"):
+        monkeypatch.setattr(release_notes.release_attribution, "find_previous_tag", lambda *_a, p=previous: p)
+        release_notes.render(repo_root=ROOT, repository="trycua/cua", tag="sandbox-apps-v0.1.4",
+                             sha="a" * 40, out_dir=tmp_path, ref=None, github=object())
+        assert release_notes.release_attribution.changelog_references_change is original
+    assert seen == {"sandbox-apps-v0.1.2": True, "sandbox-apps-v0.1.3": False}

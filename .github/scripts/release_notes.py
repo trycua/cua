@@ -75,6 +75,26 @@ INSTALL = {
 }
 
 
+# The last bump2version tag of each package that moved to Release Please. The
+# first Release Please changelog after one of them can miss changes: Release
+# Please only searches the newest 500 merges and loses the file list of a
+# commit over GitHub's 3,000-file limit (the launch merge #4397). For that one
+# release the notes come from git alone, so they still list every change; the
+# check that the changelog cites each pull request starts with the next one.
+LEGACY_BASELINE_TAGS = frozenset({
+    "agent-v0.9.0",
+    "core-v0.3.2",
+    "bench-v0.3.0",
+    "bench-ui-v0.7.1",
+    "som-v0.1.4",
+    "sandbox-apps-v0.1.2",
+    "train-v0.1.2",
+    "npm-core-v0.1.6",
+    "npm-playground-v0.3.0",
+    "cuabot-v1.0.16",
+})
+
+
 def load_config(repo_root: Path) -> Mapping[str, Any]:
     return json.loads((repo_root / "release-please-config.json").read_text())
 
@@ -145,7 +165,28 @@ def render(
     client = github or release_attribution.GitHubClient(
         os.environ.get("GH_TOKEN", ""), os.environ.get("GITHUB_API_URL", "https://api.github.com")
     )
-    manifest = release_attribution.build_manifest(
+    cites_every_change = release_attribution.changelog_references_change
+    if previous in LEGACY_BASELINE_TAGS:
+        print(f"{previous} is a legacy baseline: not requiring the changelog to cite every change")
+        release_attribution.changelog_references_change = lambda *_args: True
+    try:
+        manifest = _build(plan, repo_root, repository, tag, previous, sha, attribution, client, ref)
+    finally:
+        release_attribution.changelog_references_change = cites_every_change
+    body = release_attribution.render_body(manifest, install_footer(plan["component"], plan["version"]))
+    if len(body.encode()) > 125_000:
+        raise ReleaseError("rendered GitHub release body exceeds 125,000 bytes")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    release_attribution.write_json(out_dir / "release-manifest.json", manifest)
+    body_path = out_dir / "release-body.md"
+    body_path.write_text(body)
+    print(f"rendered {tag}: {len(manifest['changes'])} changes, "
+          f"{sum(1 for c in manifest['contributors'] if c.get('external'))} external contributors")
+    return body_path
+
+
+def _build(plan, repo_root, repository, tag, previous, sha, attribution, client, ref):
+    return release_attribution.build_manifest(
         repo_root=repo_root,
         repository=repository,
         product=plan["component"],
@@ -161,16 +202,6 @@ def render(
         release_ref=ref,
         exclude_paths=plan["exclude_paths"],
     )
-    body = release_attribution.render_body(manifest, install_footer(plan["component"], plan["version"]))
-    if len(body.encode()) > 125_000:
-        raise ReleaseError("rendered GitHub release body exceeds 125,000 bytes")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    release_attribution.write_json(out_dir / "release-manifest.json", manifest)
-    body_path = out_dir / "release-body.md"
-    body_path.write_text(body)
-    print(f"rendered {tag}: {len(manifest['changes'])} changes, "
-          f"{sum(1 for c in manifest['contributors'] if c.get('external'))} external contributors")
-    return body_path
 
 
 def wait_for_release(api: Any, repository: str, tag: str, attempts: int, delay: float) -> dict[str, Any]:

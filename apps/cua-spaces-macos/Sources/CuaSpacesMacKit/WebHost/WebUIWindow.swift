@@ -178,7 +178,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         dropTargets.window = window
         dropTargets.setFrames([:])
         dropTargets.onTargeted = { [weak self] id in
-            self?.emit("window.dropTarget", payload: ["spaceId": id ?? NSNull()])
+            self?.emit("window.dropTarget", payload: ["spaceId": id.map { $0 as Any } ?? NSNull()])
         }
         setBackground(Self.storedBackground(for: window.effectiveAppearance), keep: false)
     }

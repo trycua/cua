@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.35.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.2...cua-driver-rs-v0.35.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* **cua-driver:** minimal agent cursor badge by default; cursor.badges verbose restores the old badge ([#5053](https://github.com/trycua/cua/issues/5053)) ([176d324](https://github.com/trycua/cua/commit/176d3243c796a285318485f625d2e5d76b0b7d05))
+* **cua-driver:** route browser pages to browser_prepare and refuse desktop pointer over background apps ([#5066](https://github.com/trycua/cua/issues/5066)) ([18da1bc](https://github.com/trycua/cua/commit/18da1bcbfe98e0837c130fa46b24d5473c7725e4))
+* **cua-driver:** SDK create() prefers the daemon on macOS so the agent cursor works ([#5090](https://github.com/trycua/cua/issues/5090)) ([1974dc3](https://github.com/trycua/cua/commit/1974dc39cb419c29b0e0689d6aefc7ef9dbc1c2a))
+* **cua-driver:** stop background actions from dropping a user keystroke on macOS ([#5091](https://github.com/trycua/cua/issues/5091)) ([c025ee7](https://github.com/trycua/cua/commit/c025ee7bf5c641cb02f8b13de6c8bf76c32a811f))
+* **cua-driver:** stop silent background failures in TextEdit and Finder on macOS ([#5057](https://github.com/trycua/cua/issues/5057)) ([3093808](https://github.com/trycua/cua/commit/3093808890193dd6430e5fe1a721c92e3e6c29ad))
+
 ## [0.35.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.1...cua-driver-rs-v0.35.2) (2026-10-13)
 
 

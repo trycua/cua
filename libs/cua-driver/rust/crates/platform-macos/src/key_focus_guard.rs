@@ -25,14 +25,17 @@
 //! visible for at most a frame or two.
 //!
 //! Theft ids come from one session-wide counter that only the thief learns.
-//! [`protect`] therefore calibrates before each guarded action: it steals and
-//! releases key focus on the driver's own connection (the tap drops that
-//! notice too) and expects the target's theft to take the next id. If another
-//! app steals in between, the tap tries the next few ids.
+//! The guard learns the target's id only after the tap has seen the theft:
+//! it steals and releases key focus on the driver's own connection, which
+//! takes the next id, and then releases the newest live theft below it. By
+//! then the target's menu already holds the keyboard, so the round trip costs
+//! the user nothing. Arming the guard never moves key focus: a steal on every
+//! action used to route a user keystroke that arrived in that instant to the
+//! driver, which dropped it.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -42,7 +45,7 @@ use crate::input::skylight;
 /// AppKit opens a pressed popup's menu from a delayed perform that runs just
 /// after the accessibility call returns.
 const TAIL: Duration = Duration::from_secs(3);
-/// Ids tried after the expected one when another app stole in between.
+/// Older ids tried after the newest one when another app stole in between.
 const ID_SLACK: i32 = 3;
 /// Longest wait for the thief's menu window before releasing the theft.
 const MENU_WAIT: Duration = Duration::from_millis(150);
@@ -381,12 +384,6 @@ fn lock() -> std::sync::MutexGuard<'static, State> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// The id the next theft is expected to take (0 = unknown).
-static NEXT_THEFT_ID: AtomicI32 = AtomicI32::new(0);
-/// Calibration notices the tap has dropped.
-static OWN_NOTICES: AtomicU64 = AtomicU64::new(0);
-/// A front app whose tap missed a calibration notice (0 = none).
-static UNVERIFIED_FRONT: AtomicI32 = AtomicI32::new(0);
 static RELEASED: AtomicU64 = AtomicU64::new(0);
 static MISSED: AtomicU64 = AtomicU64::new(0);
 static RESTORED: AtomicU64 = AtomicU64::new(0);
@@ -454,11 +451,8 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     if holder != front || front == target_pid || front == own {
         return None;
     }
-    if UNVERIFIED_FRONT.load(Ordering::SeqCst) == front {
-        return None;
-    }
-    // Register first, so an idle teardown cannot remove the tap between
-    // ensure_tap and the calibration below.
+    // Register first, so an idle teardown cannot remove the tap right after
+    // ensure_tap.
     {
         let mut st = lock();
         let entry = st.guarded.entry(target_pid).or_insert((0, Instant::now()));
@@ -471,40 +465,13 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
         above_before: target_above_front(target_pid, front),
         epoch: crate::window_change_detector::intentional_epoch(),
     };
+    // Do not touch key focus here. This runs before every background action
+    // while the user may be typing, and any key event that reaches
+    // WindowServer while focus is away from their app is lost.
     if !ensure_tap(front) {
         return None;
     }
-    if !calibrate() {
-        // The tap did not see the calibration notice, so it would not see a
-        // menu's either. Stop calibrating against this app.
-        UNVERIFIED_FRONT.store(front, Ordering::SeqCst);
-        tracing::warn!(
-            front,
-            "key-focus guard: tap did not observe the calibration notice"
-        );
-        return None;
-    }
     Some(lease)
-}
-
-/// Learn the id the next theft will take: steal and release key focus on the
-/// driver's own connection. The tap drops the notice this sends to the user's
-/// app, so it never sees the round trip. Returns whether the tap saw it.
-fn calibrate() -> bool {
-    let seen_before = OWN_NOTICES.load(Ordering::SeqCst);
-    let Some(id) = skylight::steal_key_focus() else {
-        return false;
-    };
-    skylight::release_key_focus(id);
-    NEXT_THEFT_ID.store(id.wrapping_add(1), Ordering::SeqCst);
-    let deadline = Instant::now() + Duration::from_millis(150);
-    while OWN_NOTICES.load(Ordering::SeqCst) == seen_before {
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    true
 }
 
 fn is_guarded(pid: i32) -> bool {
@@ -514,27 +481,32 @@ fn is_guarded(pid: i32) -> bool {
         .is_some_and(|(leases, until)| *leases > 0 || Instant::now() < *until)
 }
 
-/// Release the theft a guarded target just made. Tries the expected id first,
-/// then a few later ones in case another app stole in between.
+/// Release the theft a guarded target just made. Only called once the tap
+/// has seen that theft, so the target's menu holds the keyboard already: a
+/// steal on the driver's own connection takes the next id, and the target's
+/// theft is the newest live one below it.
 fn release_target_theft() -> bool {
-    let expected = NEXT_THEFT_ID.load(Ordering::SeqCst);
-    if expected == 0 {
+    let Some(own) = skylight::steal_key_focus() else {
         return false;
-    }
-    for id in expected..=expected.wrapping_add(ID_SLACK) {
-        if skylight::release_key_focus(id) == 0 {
-            NEXT_THEFT_ID.store(id.wrapping_add(1), Ordering::SeqCst);
-            return true;
-        }
-    }
-    false
+    };
+    skylight::release_key_focus(own);
+    release_newest_theft_below(own, skylight::release_key_focus).is_some()
+}
+
+/// Release the newest live theft older than `own`, trying [`ID_SLACK`] older
+/// ids too in case another app stole in between. `release` returns 0 when the
+/// id was live. Pure apart from `release`, for tests.
+fn release_newest_theft_below(own: i32, mut release: impl FnMut(i32) -> i32) -> Option<i32> {
+    (1..=ID_SLACK + 1)
+        .map(|back| own.wrapping_sub(back))
+        .find(|&id| id != 0 && release(id) == 0)
 }
 
 /// What the tap does with one focus notice. Pure, for tests.
 #[derive(Debug, PartialEq, Eq)]
 enum NoticeAction {
     Pass,
-    /// The driver's own calibration theft: swallow it.
+    /// The driver's own theft while it looks up a target's id: swallow it.
     DropOwn,
     /// A guarded target stole key focus: release it, then swallow the notice.
     ReleaseAndDrop,
@@ -591,10 +563,7 @@ extern "C" fn tap_callback(
         is_guarded,
     ) {
         NoticeAction::Pass => event,
-        NoticeAction::DropOwn => {
-            OWN_NOTICES.fetch_add(1, Ordering::SeqCst);
-            std::ptr::null_mut()
-        }
+        NoticeAction::DropOwn => std::ptr::null_mut(),
         NoticeAction::ReleaseAndDrop => {
             // Swallow the notice now, so the user's window never resigns key,
             // but release the theft only once the menu window is on screen.
@@ -778,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn the_drivers_own_calibration_theft_is_swallowed() {
+    fn the_drivers_own_theft_is_swallowed() {
         assert_eq!(
             classify_notice(21, 0x4000, OWN as i64, OWN, |_| false),
             NoticeAction::DropOwn
@@ -807,5 +776,65 @@ mod tests {
             classify_notice(21, 0x4000, i64::MAX, OWN, |_| true),
             NoticeAction::Pass
         );
+    }
+
+    #[test]
+    fn the_targets_theft_is_the_newest_live_one_below_the_drivers() {
+        // The target stole id 41 and the driver's lookup took 42.
+        let mut tried = Vec::new();
+        let released = release_newest_theft_below(42, |id| {
+            tried.push(id);
+            if id == 41 {
+                0
+            } else {
+                1010
+            }
+        });
+        assert_eq!(released, Some(41));
+        assert_eq!(tried, vec![41]);
+
+        // Another app stole in between and already let go: skip its id.
+        assert_eq!(
+            release_newest_theft_below(42, |id| if id == 40 { 0 } else { 1010 }),
+            Some(40)
+        );
+
+        // Nothing live within reach: nothing is released, and the search
+        // never goes further back than the slack allows.
+        let mut tried = Vec::new();
+        let released = release_newest_theft_below(42, |id| {
+            tried.push(id);
+            1010
+        });
+        assert_eq!(released, None);
+        assert_eq!(tried, vec![41, 40, 39, 38]);
+
+        // Id 0 means "no theft" and is never released.
+        let mut tried = Vec::new();
+        release_newest_theft_below(2, |id| {
+            tried.push(id);
+            1010
+        });
+        assert!(!tried.contains(&0));
+    }
+
+    /// Arming the guard runs before every background action, while the user
+    /// may be typing. It must not steal key focus: a key event that reached
+    /// WindowServer in that instant went to the driver and was lost (0.35.2,
+    /// one keystroke in about 600 to 2500 during an agent run).
+    #[test]
+    fn arming_the_guard_never_steals_key_focus() {
+        let source = include_str!("key_focus_guard.rs");
+        let body = |name: &str| {
+            let start = source
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} not found"));
+            let end = source[start..].find("\n}\n").expect("end of fn") + start;
+            &source[start..end]
+        };
+        let protect = body("protect");
+        for call in ["steal_key_focus", "calibrate", "release_target_theft"] {
+            assert!(!protect.contains(call), "protect() must not call {call}");
+        }
     }
 }

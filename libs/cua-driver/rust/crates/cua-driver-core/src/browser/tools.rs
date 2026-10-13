@@ -952,10 +952,10 @@ impl BrowserClickTool {
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture unless \
                 delivery_mode=\"foreground\" accepts that the browser window may \
-                activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; \
+                activate (including Linux Chromium configurations whose trusted route cannot stay in the background; \
                 for example a browser inside a sandbox). \
-                input_route=\"dom_event\" (synthetic \
-                el.click(), ref required) is used only when explicitly requested; \
+                input_route=\"dom_event\" (synthetic pointer and mouse \
+                down/up/click sequence at the element's center, ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
                 controls may ignore synthetic events. \
                 Refused for heuristic bindings."
@@ -1215,7 +1215,7 @@ impl Tool for BrowserClickTool {
                     "Runtime.callFunctionOn",
                     json!({
                         "objectId": object_id,
-                        "functionDeclaration": "function() { this.click(); }",
+                        "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
                     }),
                 )
                 .await
@@ -1393,6 +1393,47 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let ys = [nums[1], nums[3], nums[5], nums[7]];
     Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
+
+/// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
+///
+/// `HTMLElement.click()` fires only a bare `click` with no coordinates, so
+/// apps that open rows or menus from `pointerdown`/`mousedown`/`pointerup`
+/// (common in React tables and grids) ignore it. This dispatches the sequence
+/// a real primary-button mouse click produces, at the element's center and on
+/// the hit-tested descendant there: hover, move, down, focus, up, click. Like
+/// a real click, `preventDefault()` on `pointerdown` suppresses the
+/// compatibility mouse events, and on `mousedown` suppresses the focus move.
+/// The events stay untrusted (`isTrusted === false`).
+const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
+    const el = this; \
+    const doc = el.ownerDocument; \
+    const view = doc.defaultView; \
+    const r = el.getBoundingClientRect(); \
+    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
+    const root = el.getRootNode(); \
+    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+    const target = (hit && el.contains(hit)) ? hit : el; \
+    const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
+    const base = { bubbles: true, cancelable: true, composed: true, view, \
+        clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
+    const P = (type, buttons, extra) => target.dispatchEvent(new view.PointerEvent(type, \
+        { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
+          width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
+    const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
+        { ...base, buttons, detail: 0, ...extra })); \
+    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
+    P('pointermove', 0); M('mousemove', 0); \
+    const compat = P('pointerdown', 1); \
+    if (compat && M('mousedown', 1, { detail: 1 })) { \
+        const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
+        if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
+    } \
+    P('pointerup', 0); \
+    if (compat) M('mouseup', 0, { detail: 1 }); \
+    M('click', 0, { detail: 1 }); \
+    return true; \
+}";
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 

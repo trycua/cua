@@ -364,11 +364,12 @@ browser_click
 Before dispatch, the driver refreshes the element box and hit-tests the point.
 It refuses stale, covered, or ambiguous targets.
 
-Standalone Chromium on macOS and Linux can activate its native window when
-trusted CDP pointer input is used. CUA Driver detects that limitation and
-returns `browser_input_trust_unavailable` before dispatch instead of claiming
-background delivery. Windows Chrome and Edge have validated trusted
-background delivery.
+Standalone Chromium on Linux can activate its native window when trusted CDP
+pointer input is used. CUA Driver detects that limitation and returns
+`browser_input_trust_unavailable` before dispatch instead of claiming
+background delivery. Chrome and Edge on Windows, and Chrome on macOS, deliver
+trusted input in the background, including to an inactive (hidden) tab,
+without activating or raising the browser window.
 
 When the application semantics allow a synthetic JavaScript click, request it
 explicitly with a current ref:
@@ -379,8 +380,11 @@ browser_click
     "input_route":"dom_event","session":"browser-run-1"}'
 ```
 
-`dom_event` calls the page element's click behavior without pretending that a
-trusted pointer event occurred. It requires a ref and is the full-background
+`dom_event` replays a primary-button click as synthetic DOM events at the
+element's center: pointer and mouse over, move, down, up, then `click`. Apps
+that open rows or menus from pointer or mouse down/up, as many React tables
+do, respond to it; it does not pretend that a trusted pointer event occurred.
+Controls that check `event.isTrusted` still need the trusted route. It requires a ref and is the full-background
 alternative where supported. Dispatch is not proof that the control activated:
 trust-gated controls can ignore synthetic events, so refresh page state and
 verify the expected postcondition. Never silently change trust class or

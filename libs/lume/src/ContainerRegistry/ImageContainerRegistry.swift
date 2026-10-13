@@ -814,6 +814,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         ownedPreparation != nil
     }
 
+    static func preparePublicationParent(for destination: URL) throws {
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    }
+
     // Constants for zero-skipping write logic
     private static let holeGranularityBytes = 4 * 1024 * 1024  // 4MB block size for checking zeros
     private static let zeroChunk = Data(count: holeGranularityBytes)
@@ -1661,6 +1666,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             return
         }
         let fm = FileManager.default
+        try Self.preparePublicationParent(for: destination)
         if fm.fileExists(atPath: destination.path) {
             try fm.removeItem(at: destination)
         }

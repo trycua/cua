@@ -212,6 +212,15 @@ struct PreparationPlacementTests {
         #expect(ImageContainerRegistry.requiresSameVolumeForPublication(ownedPreparation: preparation))
     }
 
+    @Test func ordinaryPublicationPreparesMissingDestinationParent() throws {
+        let root = try placementTemp("ordinary-parent")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("nested/vm", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: destination.deletingLastPathComponent().path))
+        try ImageContainerRegistry.preparePublicationParent(for: destination)
+        #expect(FileManager.default.fileExists(atPath: destination.deletingLastPathComponent().path))
+    }
+
     @Test func partialOwnedOperationRootsAreRemovableBeforeLayoutCompletes() throws {
         let root = try placementTemp("partial-layout")
         defer { try? FileManager.default.removeItem(at: root) }

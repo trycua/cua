@@ -4,6 +4,7 @@ on:
     paths:
       - "libs/lume/**"
       - ".github/workflows/ci-swift-lume.yml"
+      - ".github/scripts/tests/test_lume_kcpassword_encoding.py"
 
 concurrency:
   group: lume-${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: uname -a
       - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
+      - name: Verify setup script password encoding
+        run: python3 -B .github/scripts/tests/test_lume_kcpassword_encoding.py
       - run: swift test
         working-directory: ./libs/lume
   build:

@@ -303,7 +303,7 @@ final class MacOSOfflineSetupPatcher {
 
         let kcpassword = mountPoint.appendingPath("private/etc/kcpassword")
         try createDirectory(kcpassword.deletingLastPathComponent(), mode: 0o755)
-        try writeData(kcpasswordData(for: user.password), to: kcpassword, mode: 0o600, preserveExisting: fileManager.fileExists(atPath: kcpassword.path))
+        try writeData(Self.kcpasswordData(for: user.password), to: kcpassword, mode: 0o600, preserveExisting: fileManager.fileExists(atPath: kcpassword.path))
     }
 
     private func enableSSH(mountPoint: URL) throws {
@@ -419,7 +419,7 @@ final class MacOSOfflineSetupPatcher {
         return derivedKey.prefix(keyLength)
     }
 
-    private func kcpasswordData(for password: String) -> Data {
+    nonisolated static func kcpasswordData(for password: String) -> Data {
         let key: [UInt8] = [0x7d, 0x89, 0x52, 0x23, 0xd2, 0xbc, 0xdd, 0xea, 0xa3, 0xb9, 0x1f]
 
         // Pad the PLAINTEXT to a multiple of 12 with NULs and XOR the whole

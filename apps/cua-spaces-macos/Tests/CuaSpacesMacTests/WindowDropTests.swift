@@ -105,4 +105,40 @@ struct WindowDropTests {
         controller.handle(event("end"))
         #expect(opened == nil)
     }
+
+    /// The New UI window's tiles take a drop as the rows do. Only `start`
+    /// and `end` name the dragged window; the cover check on every `move`
+    /// still asks below it (the system hit test finds the dragged window
+    /// itself otherwise, so a tile would never highlight mid-drag).
+    @Test func aPageTileIsTargetedMidDragAndAReleaseOpensItsTeleport() {
+        let model = NotchModel()
+        let controller = NotchController(model: model)
+        let rows = SidebarDropTargets()
+        let tiles = SidebarDropTargets()
+        controller.sidebar = rows
+        controller.pageTiles = tiles
+        var opened: String?
+        controller.onTeleport = { id, _ in opened = id }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.borderless], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        tiles.window = window
+        tiles.isDropTarget = { _ in true }
+        // The system's answer: the page's window below the dragged one (7),
+        // the dragged window itself when asked for the frontmost.
+        tiles.windowUnder = { _, below in below == 7 ? window.windowNumber : 7 }
+        var named: [String?] = []
+        tiles.onTargeted = { named.append($0) }
+        tiles.setFrames(["local:aurora": CGRect(x: 10, y: 60, width: 200, height: 120)])
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        let y = Double(primaryTop - (300 - 70))
+        let dragged = TeleportWindow(windowId: 7, pid: 1, appName: "Notes", title: "", bundlePath: nil)
+        controller.handle(TeleportWindowDragEvent(phase: "start", x: 500, y: y, window: dragged, app: nil))
+        controller.handle(TeleportWindowDragEvent(phase: "move", x: 50, y: y, window: nil, app: nil))
+        #expect(tiles.targetedId == "local:aurora")
+        #expect(rows.targetedId == nil)
+        controller.handle(TeleportWindowDragEvent(phase: "end", x: 50, y: y, window: dragged, app: nil))
+        #expect(opened == "local:aurora")
+        #expect(named == ["local:aurora", nil])
+    }
 }

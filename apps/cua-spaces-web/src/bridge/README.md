@@ -137,6 +137,16 @@ participants' cursors over the video it draws, `ops/presence.ts`; events
 natively). Electron reads
 drag regions from the CSS, so the adapter sends none there.
 
+Both hosts take the page's Space tiles (`window.setDropTargets`, sent by
+the adapter whenever the layout changes; `window-drop.ts`) as targets for a
+real window dragged onto one, as the classic Mac sidebar's rows are. The
+host follows the drag with the notch's window-drag monitor (macOS with the
+Accessibility permission, the notch shown), hit-tests the tiles, names the
+tile under the window with `window.dropTarget` (`{ spaceId }`, null for
+none) for the page to highlight, and opens that Space's Teleport review on
+release. Windows and Linux can't follow other apps' window drags, so they
+never send `window.dropTarget`.
+
 ### SwiftUI WKWebView: `webkit-protocol.ts`
 
 The macOS app's `WebUIBridge.swift` defines this contract, and the adapter

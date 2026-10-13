@@ -45,6 +45,9 @@ public struct WebUIActions {
 /// its New Space wizard (the app's New Space menu items, the notch).
 /// `settings.openRequested` asks the page to open its Settings (the app
 /// menu's Settings command, ⌘,, while the New UI window is in front).
+/// `window.dropTarget` (`{spaceId}`, null for none) names the Space tile a
+/// real window is being dragged over (`window.setDropTargets` said where the
+/// tiles are; the notch's drag monitor follows the drag).
 ///
 /// Every method routes to the view models the SwiftUI windows use, so a
 /// decision is the app core's either way. `spaces.cancelCreate`,
@@ -99,6 +102,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
         "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
         "window.setBackgroundColor", "window.setDragRegions",
+        // Where the page's Space tiles are, for a real window dragged onto one.
+        "window.setDropTargets",
         // The launch (WebUIBridge+Startup.swift).
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
@@ -357,6 +362,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "window.setDragRegions":
             guard let rects = args["rects"] as? [[String: Any]] else { throw Failure.badArgs("rects: [{x,y,width,height}]") }
             host?.setDragRegions(rects.compactMap(Self.rect))
+            return NSNull()
+        case "window.setDropTargets":
+            host?.setDropTargets(try Self.dropTargets(args))
             return NSNull()
 
         default:
@@ -871,6 +879,19 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let id = try string(args, "id")
         guard let s = model.spaces.first(where: { $0.id == id }) else { throw Failure.notFound("no Space \(id)") }
         return s
+    }
+
+    /// `{targets: [{spaceId, x, y, width, height}]}` as each tile's box by
+    /// Space id (CSS pixels from the page's top left).
+    static func dropTargets(_ args: [String: Any]) throws -> [String: CGRect] {
+        let bad = Failure.badArgs("targets: [{spaceId,x,y,width,height}]")
+        guard let targets = args["targets"] as? [[String: Any]] else { throw bad }
+        var frames: [String: CGRect] = [:]
+        for t in targets {
+            guard let id = t["spaceId"] as? String, let r = rect(t) else { throw bad }
+            frames[id] = r
+        }
+        return frames
     }
 
     static func rect(_ r: [String: Any]) -> CGRect? {

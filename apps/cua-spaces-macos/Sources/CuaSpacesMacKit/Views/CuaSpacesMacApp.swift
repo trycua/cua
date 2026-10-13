@@ -294,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.closeWebUI = { WebUIWindowController.closeShared() }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
+        controller.pageTiles = model.pageDropTargets
         controller.showMain = { WebUIWindowController.actions?.openMain() }
         // Each of these shows its result in the main window (the New UI
         // window while its experiment is on): open it when it was closed

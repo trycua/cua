@@ -50,6 +50,25 @@ export interface NotchActions {
   drop(spaceId: string, paths: string[]): void;
 }
 
+/** A Space tile in one of the app's own windows under the cursor. */
+export interface WindowTargetHit {
+  spaceId: string;
+  /** That window's number (`kCGWindowNumber`), to tell whether another window covers it there. */
+  window: number;
+}
+
+/**
+ * The Space tiles in the app's own windows, the other target for a window
+ * drag (the SwiftUI app's `SidebarDropTargets`): the page reports where they
+ * are (`window.setDropTargets`), and only Spaces that take a drop count.
+ */
+export interface WindowTargets {
+  /** The drop-target tile under a global top-left point, in a window on screen (not checked for cover). */
+  at(x: number, y: number): WindowTargetHit | null;
+  /** Highlights that tile in its page (null: none). */
+  highlight(spaceId: string | null): void;
+}
+
 export interface NotchHost {
   /** The cua-spaces-ffi bindings (the app core). */
   core: NotchCore;
@@ -58,6 +77,8 @@ export interface NotchHost {
   thumbnail?(spaceId: string): Promise<Uint8Array | null | undefined>;
   /** Window drags onto the notch (none: the notch takes clicks and file drops only). */
   teleport?: NotchTeleport;
+  /** The app's own Space tiles as window-drag targets (none: the notch's tiles only). */
+  windowTargets?: WindowTargets;
 }
 
 /** Timers and clocks; tests step them by hand. */
@@ -87,6 +108,11 @@ export interface NotchModelOptions {
   highlight?: string;
   /** Logs (default: console.warn). */
   log?(message: string): void;
+  /**
+   * The window at a global top-left point under the dragged window `below`
+   * (the helper's `windowUnder`); none: a tile is taken as uncovered.
+   */
+  windowUnder?(x: number, y: number, below: number | undefined): Promise<number | null>;
 }
 
 /** What the helper gets: the state, and images. */
@@ -118,6 +144,11 @@ export class NotchModel {
   private layoutRow = false;
   private dragDisplays: unknown[] = [];
   private draggedApp: unknown = null;
+  /** The dragged window's number (`start` carries it, `move` doesn't). */
+  private draggedWindow?: number;
+  /** The app's own tile a dragged window is over (highlighted), and the latest hit test's number. */
+  private windowTarget: string | null = null;
+  private windowTargetSeq = 0;
   private cancelTimer?: () => void;
   private cancelTick?: () => void;
   private monitor?: { stop(): void };
@@ -215,6 +246,8 @@ export class NotchModel {
     this.trigger = this.host.core.appDragTriggerInitial();
     this.cancelTick?.();
     this.cancelTick = undefined;
+    this.windowTargetSeq++;
+    this.setWindowTarget(null);
     this.permissionPoll?.();
     this.permissionPoll = undefined;
     this.stageChanged(false);
@@ -510,8 +543,12 @@ export class NotchModel {
   handleDrag(event: WindowDragEvent): void {
     // Hidden: window drags are not followed (a late event is dropped).
     if (!this.shown) return;
+    const wasMove = dragKind(this.trigger.kind) === "move";
     const now = this.clock.monotonic();
-    if (event.phase === "start") this.draggedApp = event.app ?? null;
+    if (event.phase === "start") {
+      this.draggedApp = event.app ?? null;
+      this.draggedWindow = event.window?.windowId;
+    }
     if (event.phase !== "start" && event.frame) this.feed({ tag: "Frame", inner: { frame: event.frame } }, event);
     switch (event.phase) {
       case "start":
@@ -540,6 +577,57 @@ export class NotchModel {
       default:
         this.feed({ tag: "Cancel" }, event);
     }
+    this.followWindowTargets(event, wasMove);
+  }
+
+  /**
+   * A moved window over a Space tile in the app's own window: that tile is
+   * highlighted, and a release there commits to it (the notch drag then
+   * ends without a drop), as the SwiftUI app's sidebar rows do. A resize
+   * never targets a tile, nor does a tile another window covers there.
+   */
+  private followWindowTargets(event: WindowDragEvent, wasMove: boolean): void {
+    const targets = this.host.windowTargets;
+    if (!targets) return;
+    const seq = ++this.windowTargetSeq;
+    const ending = event.phase !== "start" && event.phase !== "move";
+    const isMove = event.phase === "end" ? wasMove : dragKind(this.trigger.kind) === "move";
+    const below = event.window?.windowId ?? this.draggedWindow;
+    const app = event.app ?? this.draggedApp;
+    if (ending) this.draggedWindow = undefined;
+    const hit = isMove && event.phase !== "cancel" ? targets.at(event.x, event.y) : null;
+    if (ending || !hit) this.setWindowTarget(null);
+    if (!hit) return;
+    void this.uncovered(hit, event.x, event.y, below).then((uncovered) => {
+      if (event.phase === "end") {
+        if (!uncovered || !this.shown) return;
+        this.send({ tag: "Drag", inner: { event: { tag: "Cancel" } } });
+        this.draggedApp = null;
+        this.host.actions.teleport(hit.spaceId, app);
+        return;
+      }
+      // A later event decided already.
+      if (seq !== this.windowTargetSeq || !this.shown) return;
+      this.setWindowTarget(uncovered ? hit.spaceId : null);
+    });
+  }
+
+  /** Whether the hit window is the one under the dragged window there. */
+  private async uncovered(hit: WindowTargetHit, x: number, y: number, below: number | undefined): Promise<boolean> {
+    const under = this.options.windowUnder;
+    if (!under) return true;
+    try {
+      return (await under(x, y, below)) === hit.window;
+    } catch (error) {
+      this.log(`no window under the cursor: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private setWindowTarget(spaceId: string | null): void {
+    if (spaceId === this.windowTarget) return;
+    this.windowTarget = spaceId;
+    this.host.windowTargets?.highlight(spaceId);
   }
 
   /** The current drag's kind ("pending", "move", "resize"). */

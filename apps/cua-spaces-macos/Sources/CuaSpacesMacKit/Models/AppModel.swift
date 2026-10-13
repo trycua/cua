@@ -145,6 +145,8 @@ public final class AppModel {
     public private(set) var creates = AppCreatesState(pending: [], deleting: [], powering: [])
     /// Sidebar rows as targets for a dragged real window.
     public let dropTargets = SidebarDropTargets()
+    /// The New UI window's Space tiles, the same kind of target.
+    public let pageDropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
     /// Settings → About and the updater (none until `AppEnvironment`
@@ -263,6 +265,7 @@ public final class AppModel {
         dropTargets.isDropTarget = { [weak self] id in
             self?.spaces.first { $0.id == id }.map { appSpaceAcceptsDrop(space: $0) } ?? false
         }
+        pageDropTargets.isDropTarget = dropTargets.isDropTarget
     }
 
     // MARK: - Launch

@@ -5,7 +5,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
-import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, type Space } from "@/bridge";
+import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { GettingStarted } from "@/components/getting-started";
 import { OsIcon } from "@/components/os-icon";
@@ -102,9 +102,18 @@ function SpacesPage() {
 
 function SpaceTile({ space, machine, accessKey }: { space: Space; machine: string; accessKey?: string | null }) {
   const drop = useTileDrop(space);
+  // A real window dragged over this tile (the host hit-tests the tiles' boxes and says which; macOS only).
+  const windowOver = useWindowDropTarget() === space.id;
   return (
-    <div className="group/tile relative" data-tile-drop={drop.over ?? undefined} data-drop-status={drop.status?.kind} {...drop.handlers}>
-      <SpaceLink space={space} machine={machine} />
+    <div
+      className="group/tile relative"
+      data-tile-drop={drop.over ?? undefined}
+      data-drop-status={drop.status?.kind}
+      data-window-drop={space.id}
+      data-window-over={windowOver || undefined}
+      {...drop.handlers}
+    >
+      <SpaceLink space={space} machine={machine} windowOver={windowOver} />
       {drop.over ? <DropOverlay space={space} accepts={drop.over === "accept"} /> : null}
       {/* A drop on the tile still going in: the core's "Sending …" line. */}
       {drop.status?.kind === "working" && !drop.over ? (
@@ -225,14 +234,17 @@ function TilePower({ space }: { space: Space }) {
   );
 }
 
-function SpaceLink({ space, machine }: { space: Space; machine: string }) {
+function SpaceLink({ space, machine, windowOver = false }: { space: Space; machine: string; windowOver?: boolean }) {
   return (
     <Link
       to="/spaces/$spaceId"
       params={{ spaceId: space.id }}
       data-space-id={space.id}
       data-state={spaceState(space)}
-      className="group block w-full cursor-default rounded-xl border bg-card p-1.5 text-left shadow-xs outline-none transition-[box-shadow,border-color] hover:border-foreground/15 hover:shadow-sm focus-visible:border-brand focus-visible:ring-3 focus-visible:ring-brand/25"
+      className={cn(
+        "group block w-full cursor-default rounded-xl border bg-card p-1.5 text-left shadow-xs outline-none transition-[box-shadow,border-color] hover:border-foreground/15 hover:shadow-sm focus-visible:border-brand focus-visible:ring-3 focus-visible:ring-brand/25",
+        windowOver && "border-brand ring-3 ring-brand/25",
+      )}
     >
       <Thumbnail space={space} />
       <div className="flex items-start gap-2.5 px-1.5 pt-2.5 pb-1">

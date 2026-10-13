@@ -23,7 +23,9 @@
  * resolves without a call; the Electron shell's is this page's
  * (`onboarding.get`, `onboarding.complete`). Appearance and the hotkey are page-side; an appearance change sets
  * the window's background (`window.setBackgroundColor`). The page tells the
- * window where it drags (`window.setDragRegions`, `../drag-regions.ts`).
+ * window where it drags (`window.setDragRegions`, `../drag-regions.ts`), and
+ * where its Space tiles are for a real window dragged onto one
+ * (`window.setDropTargets`, `../window-drop.ts`).
  */
 
 import { Emitter, HostError, type DataAdapter } from "../adapter";
@@ -45,6 +47,7 @@ import {
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
 import type { CreateProgress } from "../contracts/host";
 import { syncDragRegions } from "../drag-regions";
+import { setWindowDropTarget, syncDropTargets, WINDOW_DROP_EVENT, windowDropTargetOf } from "../window-drop";
 import { requestNewSpace } from "../new-space";
 import { STOPPED_SHARING_ERROR, stoppedSharingLine, withNotSharing } from "../sharing";
 import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
@@ -618,6 +621,11 @@ export function createWebkitAdapter(
       events.emit({ type: "startup.changed", state: startupFromHost(detail.payload) });
       return;
     }
+    // A real window dragged over a Space tile (the host follows the drag).
+    if (detail?.event === WINDOW_DROP_EVENT) {
+      setWindowDropTarget(windowDropTargetOf(detail.payload));
+      return;
+    }
     if (detail?.event === "teleport.progress") {
       const ev = teleportProgressFromWk(detail.payload);
       if (ev) events.emit(ev);
@@ -634,6 +642,12 @@ export function createWebkitAdapter(
     !electron && dom.document && dom.requestAnimationFrame && typeof MutationObserver !== "undefined"
       ? syncDragRegions(dom as Window, (rects) => void request("window.setDragRegions", { rects }).catch(() => {}))
       : null;
+  // Where the Space tiles are, for a real window dragged onto one (both
+  // hosts: neither sees such a drag in the page; `../window-drop.ts`).
+  const stopDropTargets =
+    dom.document && dom.requestAnimationFrame && typeof MutationObserver !== "undefined"
+      ? syncDropTargets(dom as Window, (targets) => void request("window.setDropTargets", { targets }).catch(() => {}))
+      : null;
 
   return {
     mode: electron ? "electron" : "webkit",
@@ -648,6 +662,8 @@ export function createWebkitAdapter(
       events.clear();
       stopEvents();
       stopDragRegions?.();
+      stopDropTargets?.();
+      setWindowDropTarget(null);
     },
   };
 }

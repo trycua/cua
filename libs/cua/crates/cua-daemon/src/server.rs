@@ -649,6 +649,8 @@ impl Svc {
             let spaces = self.rt().spaces();
             let is_space = name.starts_with("space://")
                 || name.starts_with("relay:")
+                || (name.starts_with("direct:")
+                    && matches!(spaces.registry().get(name), Ok(Some(_))))
                 || (self.rt().record(name).await.is_err() && spaces.resolve(name).is_ok());
             if is_space {
                 let space = spaces.space(name).await?;

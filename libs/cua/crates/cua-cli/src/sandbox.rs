@@ -2119,6 +2119,14 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
         .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
+        .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
                 .filter(|t| !t.is_empty())

@@ -12,6 +12,7 @@
 
 use super::review::{self, ReviewChoice, ReviewDomain, ReviewToggle, SendSource, VaultSource};
 use crate::keyvault::wire::KvInventory;
+use crate::model::SpaceOs;
 use crate::util::{contains_word, to_fixed};
 use serde::{Deserialize, Serialize};
 
@@ -1306,6 +1307,11 @@ pub const RELAY_PLAINTEXT_WARNING: &str =
     "this Space predates end-to-end sealing; the Cua relay could read these secrets. Send anyway?";
 
 pub fn review(s: &PickerState) -> Option<ReviewView> {
+    review_on(s, SpaceOs::Macos)
+}
+
+/// [`review`] in a shell on `os` ("leaves this PC").
+pub fn review_on(s: &PickerState, os: SpaceOs) -> Option<ReviewView> {
     let plan = s.plan.as_ref()?;
     let mut warnings = plan.warnings.clone();
     if plan.relay_unsealed {
@@ -1330,7 +1336,7 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
             if n == 1 { "" } else { "s" }
         ))
     } else {
-        (bytes > 0).then(|| format!("{} leaves this Mac", format_bytes(bytes)))
+        (bytes > 0).then(|| format!("{} leaves {}", format_bytes(bytes), os.this_machine_lower()))
     };
     let app = &plan.app.name;
     Some(ReviewView {
@@ -1841,6 +1847,21 @@ mod tests {
         assert!(c.approved && c.from_vault.is_none());
         let rv = review(&s).unwrap();
         assert_eq!(rv.leaves_text.as_deref(), Some("800 B leaves this Mac"));
+        // A shell on another system names its own computer (CUA-1530).
+        assert_eq!(
+            review_on(&s, SpaceOs::Linux)
+                .unwrap()
+                .leaves_text
+                .as_deref(),
+            Some("800 B leaves this computer")
+        );
+        assert_eq!(
+            review_on(&s, SpaceOs::Windows)
+                .unwrap()
+                .leaves_text
+                .as_deref(),
+            Some("800 B leaves this PC")
+        );
         let s2 = reduce(&s, &PickerEvent::DomainQuery { text: "not".into() });
         assert_eq!(review(&s2).unwrap().domains.len(), 1);
         let s3 = reduce(&s2, &PickerEvent::SelectShownDomains { value: false });

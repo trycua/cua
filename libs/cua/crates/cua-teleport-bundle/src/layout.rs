@@ -294,6 +294,24 @@ user_pref("network.proxy.socks_remote_dns", true);
         }
     }
 
+    /// Where Firefox may keep its profiles on the machine the app is taken
+    /// from, relative to the home, most likely first. Linux has several: the
+    /// classic `~/.mozilla/firefox`, the XDG location current Firefox uses
+    /// (`~/.config/mozilla/firefox`), Ubuntu's snap and the Flatpak. (A
+    /// destination always uses [`root_for`].)
+    pub fn source_roots_for(platform: Platform) -> &'static [&'static str] {
+        match platform {
+            Platform::MacOS => &["Library/Application Support/Firefox"],
+            Platform::Linux => &[
+                ".mozilla/firefox",
+                ".config/mozilla/firefox",
+                "snap/firefox/common/.mozilla/firefox",
+                ".var/app/org.mozilla.firefox/.mozilla/firefox",
+            ],
+            Platform::Windows => &["AppData/Roaming/Mozilla/Firefox"],
+        }
+    }
+
     /// The Firefox program on `platform`.
     pub fn launch_program_for(platform: Platform) -> String {
         match platform {
@@ -863,6 +881,15 @@ mod tests {
     #[test]
     fn firefox_layout_per_platform() {
         assert_eq!(firefox::root_for(Platform::Linux), ".mozilla/firefox");
+        assert_eq!(
+            firefox::source_roots_for(Platform::Linux)[0],
+            ".mozilla/firefox"
+        );
+        assert!(firefox::source_roots_for(Platform::Linux).contains(&".config/mozilla/firefox"));
+        assert!(
+            firefox::source_roots_for(Platform::Linux)
+                .contains(&"snap/firefox/common/.mozilla/firefox")
+        );
         assert_eq!(
             firefox::root_for(Platform::MacOS),
             "Library/Application Support/Firefox"

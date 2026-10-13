@@ -253,9 +253,7 @@ impl DaemonBackend {
         let Some(home) = self.host.home_dir() else {
             return;
         };
-        let root = home.join(cua_teleport_bundle::layout::firefox::root_for(
-            self.platform,
-        ));
+        let root = ff::app_data_dir(&home, self.platform);
         let Some(profile) = ff::default_profile(&root) else {
             notes.push("no Firefox profile was found".into());
             return;

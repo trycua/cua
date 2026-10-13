@@ -591,7 +591,16 @@ pub fn build(
             }
         };
         if selected.is_empty() {
-            return Err(UxError::Invalid("select at least one state item".into()));
+            // Nothing to pick from: the app has no profile where Cua looks (a
+            // sandboxed or relocated install), which is not the user's choice.
+            return Err(UxError::Invalid(if m.items.is_empty() {
+                format!(
+                    "no {} sign-in data was found on this computer; move just the app instead",
+                    m.app_display_name
+                )
+            } else {
+                "select at least one state item".into()
+            }));
         }
         for i in &selected {
             let count = match (i.count, &i.count_noun) {

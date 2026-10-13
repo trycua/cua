@@ -63,7 +63,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
     lumeSource: model.lumeSource ?? undefined,
-    linuxSource: model.linuxSource ?? undefined,
+    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
+    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);

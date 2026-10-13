@@ -370,6 +370,64 @@ async fn remove_reports_a_refused_unregister_after_the_local_cleanup() {
     assert!(relay.machine(&id).is_some());
 }
 
+/// Uninstalling the app (CUA-1521): a machine that provides Spaces is taken
+/// off the relay together with each Space's own relay machine, and nothing
+/// is left to run; a plain remove still refuses while it provides Spaces.
+#[tokio::test]
+async fn remove_for_uninstall_unregisters_the_machine_and_its_spaces_from_the_relay() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let status = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let id = status.machine_id.clone().unwrap();
+    // A Space it provides, attached to the relay as its own machine.
+    let reg = RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "acct-token",
+            &crate::relay::RegisterRequest {
+                id: "space-0001".into(),
+                name: "lin-local".into(),
+                host: Some(id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    crate::provided::save_provided(
+        &host.paths().dir,
+        &[crate::provided::ProvidedSpace {
+            relay_machine: "space-0001".into(),
+            local_space: "local:lin-local".into(),
+            name: "lin-local".into(),
+            machine_token: reg.machine_token,
+            relay_url: relay.url.clone(),
+            ..Default::default()
+        }],
+    )
+    .unwrap();
+    assert!(relay.machine("space-0001").is_some());
+
+    assert!(matches!(
+        host.remove().await.unwrap_err(),
+        Error::InvalidArgument(_)
+    ));
+    assert!(
+        relay.machine(&id).is_some(),
+        "a refused remove changes nothing"
+    );
+
+    host.remove_for_uninstall().await.unwrap();
+    assert!(relay.machine(&id).is_none(), "the host is off the relay");
+    assert!(relay.machine("space-0001").is_none(), "so is its Space");
+    assert!(!host.paths().dir.exists());
+    assert!(!f.manager.state().installed, "the service is gone");
+}
+
 #[tokio::test]
 async fn status_shows_recent_access_and_who_is_connected_in_direct_mode() {
     let f = fixture();

@@ -1679,6 +1679,21 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     match cli.command {
         Command::Host(cmd) => {
             let home = util::cua_home();
+            // An uninstall turns off the Spaces this machine provides first
+            // (each is on the relay as its own machine), best effort.
+            if matches!(
+                cmd,
+                host::HostCmd::Remove {
+                    uninstalling: true,
+                    ..
+                }
+            ) {
+                let rest = Cli {
+                    command: Command::Spaces(host::SpacesCmd::Ls { relay: None }),
+                    ..cli
+                };
+                host::turn_off_provided_spaces(&home, || open(&rest, false)).await;
+            }
             let flow = if matches!(&cmd, host::HostCmd::Setup { remote: true, .. }) {
                 cua_auth::Flow::Device
             } else {

@@ -14,6 +14,20 @@ locally, and register it as your first Space.
   later.
 - Docker, for the local Space.
 
+### Cua Spaces on Linux
+
+The supported Linux package is the **.deb** on Ubuntu 24.04 (x64 and arm64),
+installed with `sudo apt install ./cua-spaces_<version>_<arch>.deb`. It is
+sandboxed, installs the confirmation prompt the Keyvault needs, and
+`sudo apt remove cua-spaces` turns off what the app set up (see
+[Unattended access](/spaces/guides/unattended-access#check-pause-remove)).
+Other distributions and desktops are untested.
+
+The **AppImage** is a portable build, not a supported one. It cannot use the
+browser sandbox (it starts with `--no-sandbox`), and without the system's
+confirmation prompt the Keyvault is unavailable. Use it to try Cua Spaces
+without installing; install the .deb to keep it.
+
 For CLI-managed local Linux Spaces, use Docker (gVisor `runsc`, when installed, adds
 isolation) or QEMU. QEMU needs read/write access to `/dev/kvm` for hardware
 acceleration of same-architecture guests. The managed runtime is macOS-only.

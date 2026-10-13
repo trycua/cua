@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { LINUX_WINDOW_ICON, windowIconPath } from "../src/icon";
 
@@ -34,6 +35,41 @@ describe("packaging", () => {
     const filter = config.linux.extraResources.flatMap((r: { to: string; filter: string[] }) => (r.to === "tray" ? r.filter : []));
     expect(filter).toContain(LINUX_WINDOW_ICON);
     expect(filter).toContain("32x32.png");
+  });
+
+  it("ships a light and a dark one-colour tray glyph for Linux panels", () => {
+    const res = config.linux.extraResources.find((r: { to: string; from: string }) => r.to === "tray" && r.from === "packaging/linux-tray");
+    expect(res.filter.sort()).toEqual(["tray-dark.png", "tray-light.png"]);
+    for (const f of res.filter) expect(existsSync(path.join(import.meta.dirname, "..", res.from, f))).toBe(true);
+  });
+
+  it("keeps Chromium's en-US strings: without them menu accelerators lose their modifier on Linux", () => {
+    // en-US.pak holds "Ctrl" and "Alt"; "en" alone matches no pak (CUA-1530).
+    expect(config.electronLanguages).toContain("en-US");
+  });
+});
+
+describe("the .deb's removal script (CUA-1521)", () => {
+  const script = path.join(import.meta.dirname, "../packaging/linux/prerm.sh");
+
+  it("runs before the package is removed", () => {
+    expect(config.deb.fpm).toContain(`--before-remove=${script}`);
+  });
+
+  it("is valid shell and turns off the host service, the daemon and the relay entry", () => {
+    execFileSync("sh", ["-n", script]);
+    const text = readFileSync(script, "utf8");
+    expect(text).toContain("host remove --force --uninstalling");
+    expect(text).toContain("daemon stop");
+    expect(text).toContain("autostart/cua-spaces.desktop");
+    expect(statSync(script).mode & 0o111).not.toBe(0);
+  });
+
+  it("leaves an upgrade alone", () => {
+    // Only remove and purge turn anything off; an upgrade replaces the files and keeps the host running.
+    for (const action of ["upgrade", "failed-upgrade", "deconfigure"]) {
+      expect(execFileSync("sh", [script, action]).toString()).toBe("");
+    }
   });
 });
 

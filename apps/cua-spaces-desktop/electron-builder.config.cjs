@@ -178,7 +178,10 @@ module.exports = {
       for (const f of files) await context.packager.signIf(path.join(resources, "native", f));
     }
   },
-  electronLanguages: ["en"],
+  // Chromium's English strings are `en-US.pak`, which "en" alone strips from
+  // Linux and Windows builds: the menus then draw their accelerators with no
+  // modifier ("+N" for Ctrl+N).
+  electronLanguages: ["en", "en-US"],
   electronFuses: env.CUA_SPACES_NO_FUSES === "1" ? null : electronFuses({ resetAdHocSignature: !macSigning }),
 
   mac: {
@@ -253,8 +256,14 @@ module.exports = {
     executableName: linuxId,
     // 32 to 512 px, symlinks to the Cua Spaces icons so each hicolor size is installed.
     icon: "packaging/linux-icons",
-    // 32x32 for the tray; 128x128@2x (256 px) as the window icon (src/icon.ts).
-    extraResources: [{ from: icons, to: "tray", filter: ["32x32.png", "128x128@2x.png"] }, nativeResources("linux")],
+    // The tray glyphs (light for GNOME's dark top bar, dark for a light
+    // panel; src/tray.ts), 32x32 as the tray's fallback; 128x128@2x
+    // (256 px) as the window icon (src/icon.ts).
+    extraResources: [
+      { from: icons, to: "tray", filter: ["32x32.png", "128x128@2x.png"] },
+      { from: "packaging/linux-tray", to: "tray", filter: ["tray-light.png", "tray-dark.png"] },
+      nativeResources("linux"),
+    ],
     category: "Development",
     // The desktop entry's Comment and the package description (electron-builder
     // writes the description over an entry's own Comment).
@@ -286,7 +295,13 @@ module.exports = {
   // there the confirmation is unavailable and the Keyvault stays off).
   deb: {
     artifactName: "cua-spaces_${version}_${arch}.deb",
-    fpm: [`${path.join(__dirname, "packaging/ai.cua.spaces.policy")}=/usr/share/polkit-1/actions/ai.cua.spaces.policy`],
+    fpm: [
+      `${path.join(__dirname, "packaging/ai.cua.spaces.policy")}=/usr/share/polkit-1/actions/ai.cua.spaces.policy`,
+      // Removing the package turns off what the app set up outside /opt
+      // (unattended access on the relay, the daemon, launch at login): see
+      // the script.
+      `--before-remove=${path.join(__dirname, "packaging/linux/prerm.sh")}`,
+    ],
   },
 
   // Feed for electron-updater (written to app-update.yml); see the header.

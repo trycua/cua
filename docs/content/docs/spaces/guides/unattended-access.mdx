@@ -51,6 +51,11 @@ cua host start      # share again
 cua host remove     # unregister, uninstall the service, delete ~/.cua/host
 ```
 
+Uninstalling the app turns this off too. On Linux, `sudo apt remove cua-spaces`
+(and `purge`) removes the machine, and the Spaces it provides, from the relay,
+deletes the `cua-spacesd-host.service` user unit and stops the daemon. Your
+Spaces and data under `~/.cua` stay on the machine (the Spaces are turned off).
+
 `cua host stop` turns sharing off locally first, so it holds even when the
 relay is unreachable. In direct mode `cua host status` prints the URL and the
 env token's path; add the machine elsewhere with

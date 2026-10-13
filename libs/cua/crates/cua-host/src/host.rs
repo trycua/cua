@@ -1614,12 +1614,30 @@ impl Host {
     /// and deletes `<home>/host`. The machine id is kept so a later setup
     /// reuses it.
     pub async fn remove(&self) -> Result<()> {
+        self.remove_inner(false).await
+    }
+
+    /// [`Self::remove`] for an uninstall of the app: the Spaces this machine
+    /// provides do not stop it. Their relay machines (each Space joined the
+    /// relay as its own) are unregistered too, so nothing stays reachable
+    /// through the relay; the Spaces themselves are left as they are for
+    /// the caller to turn off ([`Self::provided_spaces`]).
+    pub async fn remove_for_uninstall(&self) -> Result<()> {
+        self.remove_inner(true).await
+    }
+
+    /// The Spaces this host provides to the owner's other devices.
+    pub fn provided_spaces(&self) -> Result<Vec<crate::provided::ProvidedSpace>> {
+        crate::provided::load_provided(&self.paths.dir)
+    }
+
+    async fn remove_inner(&self, uninstalling: bool) -> Result<()> {
         let Some(config) = self.config()? else {
             return Ok(());
         };
         // Spaces it provides would keep running with nobody to delete them.
         let provided = crate::provided::load_provided(&self.paths.dir)?;
-        if !provided.is_empty() {
+        if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
                 "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
@@ -1633,17 +1651,32 @@ impl Host {
             )));
         }
         let mut relay_error = None;
+        let mut note = |e: Error| match e {
+            // Already gone: nothing to tell the relay.
+            Error::NotFound(_) => {}
+            // A refused machine token leaves the entry listed under My
+            // machines; report it (after the local cleanup) rather than
+            // pretending the unregister worked.
+            e => relay_error = Some(e),
+        };
+        if uninstalling {
+            for space in &provided {
+                if space.machine_token.is_empty() || space.relay_url.is_empty() {
+                    continue;
+                }
+                if let Err(e) = RelayClient::new(&space.relay_url)?
+                    .delete(&space.machine_token, &space.relay_machine)
+                    .await
+                {
+                    note(e);
+                }
+            }
+        }
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
             && let Ok(token) = read_secret(&self.paths.machine_token())
+            && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
         {
-            match RelayClient::new(url)?.delete(&token, id).await {
-                // Already gone: nothing to tell the relay.
-                Ok(()) | Err(Error::NotFound(_)) => {}
-                // A refused machine token leaves the entry listed under My
-                // machines; report it (after the local cleanup) rather than
-                // pretending the unregister worked.
-                Err(e) => relay_error = Some(e),
-            }
+            note(e);
         }
         self.manager_for_config(&config).uninstall()?;
         std::fs::remove_dir_all(&self.paths.dir)?;

@@ -19,6 +19,7 @@ import type { DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import { checklistDone } from "./checklist";
 import type { CoreClient } from "./core";
+import { hostOs } from "./host-os";
 import type { KeyvaultOverview, VaultAction, VaultSource, VaultState, VaultView } from "./contracts/keyvault";
 import type {
   CatalogEntry,
@@ -49,7 +50,11 @@ export const pickerInitial = (core: CoreClient, spaceName: string) => core.call<
 export const pickerReduce = (core: CoreClient, state: PickerState, event: PickerEvent) =>
   core.call<PickerState>("flow.reduce", { state, event });
 export const pickerSections = (core: CoreClient, state: PickerState) => core.call<EntrySection[]>("flow.sections", { state });
-export const pickerReview = (core: CoreClient, state: PickerState) => core.call<ReviewView | null>("flow.review", { state });
+/** The review's words name this computer ("leaves this PC"): `hostOs` is sent only off a Mac, whose words are the default. */
+export const pickerReview = (core: CoreClient, state: PickerState) => {
+  const os = hostOs();
+  return core.call<ReviewView | null>("flow.review", os === "macos" ? { state } : { state, hostOs: os });
+};
 export const pickerCanPlan = (core: CoreClient, state: PickerState) => core.call<boolean>("flow.canPlan", { state });
 export const pickerProgress = (core: CoreClient, state: PickerState) => core.call<number>("flow.progress", { state });
 export const pickerStatus = (core: CoreClient, state: PickerState) => core.call<string | null>("flow.status", { state });

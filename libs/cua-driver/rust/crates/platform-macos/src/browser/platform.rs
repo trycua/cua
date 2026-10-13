@@ -1465,6 +1465,24 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         super::consent_ui::handle(request).await
     }
 
+    async fn withdraw_pending_existing_profile_consent(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        let (Ok(pid), Ok(window_id)) = (i32::try_from(pid), u32::try_from(window_id)) else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || super::consent_ui::dismiss(pid, window_id))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not withdraw the stale browser consent prompt: {error}"),
+                )
+            })?
+    }
+
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
         let (started, executable) = process_details(pid).await?;
         Ok(ProcessFingerprint {

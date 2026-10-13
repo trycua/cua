@@ -18,6 +18,17 @@ use crate::ax::tree::{walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_DEP
 // semantic Allow action before it will press anything.
 const CONSENT_MAX_ELEMENTS: usize = 5_000;
 
+/// Chrome builds its accessibility tree lazily, so the first read after the
+/// prompt appears can be truncated or time out. Retry those reads a bounded
+/// number of times with exponential backoff before reporting a clear error.
+const AX_READ_ATTEMPTS: u32 = 5;
+const AX_READ_BACKOFF_START: Duration = Duration::from_millis(100);
+const AX_READ_BACKOFF_CAP: Duration = Duration::from_millis(800);
+/// Overall bound for one handling attempt; must stay below the caller's
+/// attempt timeout in `claim_with_optional_consent`.
+const CONSENT_HANDLE_DEADLINE: Duration = Duration::from_secs(8);
+const TRUNCATED_READ: &str = "browser consent observation was truncated";
+
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
@@ -101,11 +112,22 @@ fn chinese_sheet(sheet: &[AXNode]) -> bool {
             .any(|node| has_text(node, CHINESE_WARNING))
 }
 
+/// Chrome presents the prompt as a sheet; newer builds can expose it as a
+/// dialog, or as a window titled exactly with the prompt text. Anything else
+/// (a toolbar, a tab strip, page content) is never a consent container.
+fn is_consent_container(node: &AXNode) -> bool {
+    match node.role.as_str() {
+        "AXSheet" | "AXDialog" => true,
+        "AXWindow" => has_text(node, "Allow remote debugging?") || has_text(node, CHINESE_PROMPT),
+        _ => false,
+    }
+}
+
 fn consent_sheets(nodes: &[AXNode]) -> impl Iterator<Item = &[AXNode]> {
     nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| node.role == "AXSheet")
+        .filter(|(_, node)| is_consent_container(node))
         .map(|(index, _)| sheet_subtree(nodes, index))
         .filter(|sheet| !sheet.iter().any(|node| node.in_web_content))
         .filter(|sheet| {
@@ -196,7 +218,7 @@ impl ConsentTrees {
         if incomplete {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
-                "browser consent observation was truncated",
+                TRUNCATED_READ,
             ));
         }
         Ok(())
@@ -225,14 +247,36 @@ fn read_consent_trees(pid: i32, window_id: u32) -> Result<ConsentTrees, BrowserR
     Ok(trees)
 }
 
+fn read_consent_trees_blocking_retry(
+    pid: i32,
+    window_id: u32,
+    deadline: Instant,
+) -> Result<ConsentTrees, BrowserRefusal> {
+    let mut backoff = AX_READ_BACKOFF_START;
+    let mut attempt = 1;
+    loop {
+        match read_consent_trees(pid, window_id) {
+            Err(error) if is_transient_read(&error) => {
+                if attempt >= AX_READ_ATTEMPTS || Instant::now() + backoff >= deadline {
+                    return Err(read_failure(attempt, &error));
+                }
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(AX_READ_BACKOFF_CAP);
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Dismiss any exact Chrome-owned remote-debugging sheet before teardown.
 /// Turning off the setting does not reliably close a sheet that an existing
 /// WebSocket connection already presented.
 pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(4);
     let mut dismissed = false;
     loop {
-        let trees = read_consent_trees(pid, approved_window_id)?;
+        let trees = read_consent_trees_blocking_retry(pid, approved_window_id, deadline)?;
         let prompt_present = trees
             .0
             .iter()
@@ -282,6 +326,55 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
     }
 }
 
+fn is_transient_read(error: &BrowserRefusal) -> bool {
+    error.message == TRUNCATED_READ
+}
+
+fn read_failure(attempts: u32, cause: &BrowserRefusal) -> BrowserRefusal {
+    refusal(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        format!(
+            "could not read Chrome's remote-debugging prompt through Accessibility after \
+             {attempts} attempts ({}); check that the driver has Accessibility permission, \
+             then retry",
+            cause.message
+        ),
+    )
+}
+
+/// Read the consent trees, retrying transient AX failures with backoff until
+/// `deadline`. Non-transient refusals are returned unchanged.
+async fn read_consent_trees_retrying(
+    pid: i32,
+    window_id: u32,
+    deadline: Instant,
+) -> Result<ConsentTrees, BrowserRefusal> {
+    let mut backoff = AX_READ_BACKOFF_START;
+    let mut attempt = 1;
+    loop {
+        let read = tokio::task::spawn_blocking(move || read_consent_trees(pid, window_id))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect the browser consent UI: {error}"),
+                )
+            })?;
+        match read {
+            Ok(trees) => return Ok(trees),
+            Err(error) if is_transient_read(&error) => {
+                if attempt >= AX_READ_ATTEMPTS || Instant::now() + backoff >= deadline {
+                    return Err(read_failure(attempt, &error));
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(AX_READ_BACKOFF_CAP);
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
@@ -297,18 +390,11 @@ pub async fn handle(
             "the approved browser window is outside the macOS window-id range",
         )
     })?;
-    let deadline = Instant::now() + Duration::from_secs(4);
+    let deadline = Instant::now() + CONSENT_HANDLE_DEADLINE;
     let mut saw_prompt = false;
     let mut accepted_prompt = false;
     loop {
-        let trees = tokio::task::spawn_blocking(move || read_consent_trees(pid, window_id))
-            .await
-            .map_err(|error| {
-                refusal(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    format!("could not inspect the browser consent UI: {error}"),
-                )
-            })??;
+        let trees = read_consent_trees_retrying(pid, window_id, deadline).await?;
         if Instant::now() >= deadline {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -625,5 +711,42 @@ mod tests {
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
         assert_eq!(unsafe { CFGetRetainCount(ptr) }, baseline);
+    }
+
+    #[test]
+    fn dialog_and_exact_prompt_window_are_consent_containers() {
+        for role in ["AXSheet", "AXDialog"] {
+            let mut nodes = vec![node(role, 1, Some("Allow remote debugging?"), &[])];
+            nodes.push(node("AXButton", 2, Some("Allow"), &["AXPress"]));
+            assert!(remote_debugging_sheet_present(&nodes), "{role}");
+            assert_eq!(exact_allow_button(&nodes).unwrap(), Some(7));
+        }
+        let mut nodes = vec![node("AXWindow", 0, Some("Allow remote debugging?"), &[])];
+        nodes.push(node("AXButton", 1, Some("Allow"), &["AXPress"]));
+        assert!(remote_debugging_sheet_present(&nodes));
+        // A main window or group that merely mentions the phrase is not one.
+        for role in ["AXGroup", "AXToolbar"] {
+            let mut nodes = vec![node(role, 1, Some("Allow remote debugging?"), &[])];
+            nodes.push(node("AXButton", 2, Some("Allow"), &["AXPress"]));
+            assert!(!remote_debugging_sheet_present(&nodes), "{role}");
+        }
+        let mut nodes = vec![node("AXWindow", 0, Some("Docs - Chrome"), &[])];
+        nodes.push(node("AXButton", 1, Some("Allow"), &["AXPress"]));
+        assert!(!remote_debugging_sheet_present(&nodes));
+    }
+
+    #[test]
+    fn only_truncated_reads_are_retried_and_failure_is_clear() {
+        let truncated = refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            TRUNCATED_READ,
+        );
+        assert!(is_transient_read(&truncated));
+        let other = refusal(BrowserRefusalCode::BrowserWrongTargetRefused, "ambiguous");
+        assert!(!is_transient_read(&other));
+        let failure = read_failure(5, &truncated);
+        assert_eq!(failure.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(failure.message.contains("5 attempts"));
+        assert!(failure.message.contains("Accessibility"));
     }
 }

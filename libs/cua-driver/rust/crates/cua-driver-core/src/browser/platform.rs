@@ -552,6 +552,21 @@ pub trait BrowserPlatform: Send + Sync {
         ))
     }
 
+    /// Withdraw a browser-owned connection prompt that is still on screen
+    /// after a connection attempt gave up (timeout, cancel, refusal). Chrome
+    /// does not reliably withdraw its prompt when the pending WebSocket goes
+    /// away, and queues the next prompt behind the stale one. Implementations
+    /// must only act on the exact prompt for `pid`/`window_id`, and must press
+    /// the deny/cancel action, never allow. Returns whether a prompt was
+    /// dismissed. The default does nothing.
+    async fn withdraw_pending_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
+    }
+
     /// Current identity fingerprint for `pid`. Used to detect pid reuse
     /// between binding and mutation.
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal>;

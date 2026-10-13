@@ -82,6 +82,10 @@ pub struct BrowserEngine {
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
+    /// Single-flight per browser process: at most one connection attempt
+    /// (which can raise Chrome's consent prompt) is pending at a time, and
+    /// it stays pending until a failed attempt has withdrawn its prompt.
+    pub(crate) consent_flights: super::keyed_gates::KeyedGates<i64>,
     pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
@@ -685,6 +689,7 @@ impl BrowserEngine {
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
+            consent_flights: super::keyed_gates::KeyedGates::new(),
             pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
             session_end_hook: Mutex::new(None),
         });
@@ -988,6 +993,7 @@ impl BrowserEngine {
             let attempt = super::grant::MAX_RECONNECT_ATTEMPTS
                 .saturating_sub(grant.reconnect_attempts_remaining)
                 .saturating_add(1);
+            let _flight = self.consent_flights.lock(pid).await;
             let mut reconnect = Box::pin(self.pool.reconnect_existing(
                 &endpoint.ws_url,
                 old_generation,
@@ -1010,6 +1016,7 @@ impl BrowserEngine {
                             // consent. Cancel it before grant revocation so no
                             // socket-pool resource can outlive this refusal.
                             drop(reconnect);
+                            self.withdraw_stale_consent(pid, grant.window_id).await;
                             if error.code == BrowserRefusalCode::BrowserConsentRevoked {
                                 self.revoke_existing_profile_grant(session, transport_session, pid)
                                     .await;
@@ -1028,6 +1035,9 @@ impl BrowserEngine {
                     return Ok((conn, grant));
                 }
                 Err(error) => {
+                    // A timed-out dial can leave Chrome's prompt on screen;
+                    // withdraw it before the next attempt may open another.
+                    self.withdraw_stale_consent(pid, grant.window_id).await;
                     last_error = Some(error.to_string());
                     grant = self
                         .existing_profile_grant(session, transport_session, pid)
@@ -1047,6 +1057,25 @@ impl BrowserEngine {
             "last_error": last_error.map(|_| "connection_failed"),
             "retryable": false,
         })))
+    }
+
+    /// Withdraw a consent prompt left behind by a connection attempt that
+    /// gave up. Best effort: a failure here must not mask the original error.
+    pub(crate) async fn withdraw_stale_consent(&self, pid: i64, window_id: u64) {
+        match self
+            .platform
+            .withdraw_pending_existing_profile_consent(pid, window_id)
+            .await
+        {
+            Ok(true) => tracing::info!(pid, "withdrew a stale browser consent prompt"),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(
+                pid,
+                code = ?error.code,
+                "could not withdraw a stale browser consent prompt: {}",
+                error.message
+            ),
+        }
     }
 
     async fn connection_for_record(

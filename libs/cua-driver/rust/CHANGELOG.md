@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.35.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.0...cua-driver-rs-v0.35.1) (2026-10-13)
+
+
+### Features
+
+* **cua-driver:** attach to an existing Chrome profile in the background when Chrome is on another Space (macOS) ([#5052](https://github.com/trycua/cua/issues/5052)) ([10c5d3f](https://github.com/trycua/cua/commit/10c5d3f3d40f96009ac542fd3725b832b2ff7a36))
+
+
+### Bug Fixes
+
+* **cua-driver:** pixel type_text, press_key and scroll in the background focus their target again on macOS ([#5062](https://github.com/trycua/cua/issues/5062)) ([d0a5093](https://github.com/trycua/cua/commit/d0a50933f0492993ebd6111ebb058712d7958080))
+* **cua-driver:** skip AT-SPI frame rebase when the frame has no extents ([#4984](https://github.com/trycua/cua/issues/4984)) ([7d8378f](https://github.com/trycua/cua/commit/7d8378f168264ac2b622870334f37f6589e07c24))
+* **cua-driver:** stop advertising pid as required for element_token tools ([#5047](https://github.com/trycua/cua/issues/5047)) ([a85f1be](https://github.com/trycua/cua/commit/a85f1be9cb787249118b3cfaac4a0935c6b21a6f))
+
 ## [0.35.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.34.0...cua-driver-rs-v0.35.0) (2026-10-12)
 
 

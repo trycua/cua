@@ -11,10 +11,7 @@ use windows::core::{Error, Owned};
 use windows::Win32::Foundation::{ERROR_INVALID_THREAD_ID, HANDLE, HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows::Win32::System::Diagnostics::Debug::{self, GetThreadContext, CONTEXT};
-use windows::Win32::System::Threading::{
-    GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_GET_CONTEXT,
-    THREAD_SUSPEND_RESUME,
-};
+use windows::Win32::System::Threading;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
@@ -45,34 +42,34 @@ struct SuspendedThread(Owned<HANDLE>);
 impl SuspendedThread {
     fn suspend(hwnd: HWND) -> windows::core::Result<Self> {
         let thread_id = Some(unsafe { crate::input::GetWindowThreadProcessId(hwnd, None) })
-            .filter(|&id| id != unsafe { GetCurrentThreadId() })
+            .filter(|&id| id != unsafe { Threading::GetCurrentThreadId() })
             .ok_or(ERROR_INVALID_THREAD_ID)?;
-        let access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT;
-        let handle = unsafe { Owned::new(OpenThread(access, false, thread_id)?) };
-        if unsafe { SuspendThread(*handle) } == u32::MAX {
+        let access = Threading::THREAD_SUSPEND_RESUME | Threading::THREAD_GET_CONTEXT;
+        let handle = unsafe { Owned::new(Threading::OpenThread(access, false, thread_id)?) };
+        if unsafe { Threading::SuspendThread(*handle) } == u32::MAX {
             return Err(Error::from_win32());
         }
         let suspended = Self(handle);
         let mut context = AlignedContext(CONTEXT::default());
         #[cfg(target_arch = "x86_64")]
-        let control = Debug::CONTEXT_CONTROL_AMD64;
+        context.0.ContextFlags = Debug::CONTEXT_CONTROL_AMD64;
         #[cfg(target_arch = "aarch64")]
-        let control = Debug::CONTEXT_CONTROL_ARM64;
-        context.0.ContextFlags = control;
+        context.0.ContextFlags = Debug::CONTEXT_CONTROL_ARM64;
         unsafe { GetThreadContext(*suspended.0, &mut context.0) }.map(|()| suspended)
     }
 
     fn resume(self) -> windows::core::Result<()> {
-        let handle = unsafe { std::ptr::read(&std::mem::ManuallyDrop::new(self).0) };
-        (unsafe { ResumeThread(*handle) } != u32::MAX)
-            .then_some(())
-            .ok_or_else(Error::from_win32)
+        if unsafe { Threading::ResumeThread(*self.0) } == u32::MAX {
+            return Err(Error::from_win32());
+        }
+        drop(unsafe { std::ptr::read(&std::mem::ManuallyDrop::new(self).0) });
+        Ok(())
     }
 }
 
 impl Drop for SuspendedThread {
     fn drop(&mut self) {
-        unsafe { ResumeThread(*self.0) };
+        unsafe { Threading::ResumeThread(*self.0) };
     }
 }
 
@@ -1150,11 +1147,11 @@ mod wheel_tests {
     }
 
     impl MouseTrace {
-        fn leak() -> &'static Self {
-            Box::leak(Box::new(Self {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
                 len: AtomicUsize::new(0),
                 messages: std::array::from_fn(|_| AtomicU32::new(0)),
-            }))
+            })
         }
 
         fn record(&self, msg: u32) {
@@ -1200,7 +1197,7 @@ mod wheel_tests {
 
     struct PumpedWindow {
         hwnd: HWND,
-        trace: &'static MouseTrace,
+        trace: Arc<MouseTrace>,
         stop: Arc<AtomicBool>,
         stopped: mpsc::Receiver<()>,
         pump: Option<JoinHandle<()>>,
@@ -1208,7 +1205,8 @@ mod wheel_tests {
 
     impl PumpedWindow {
         fn spawn(class_name: &'static str) -> Self {
-            let trace = MouseTrace::leak();
+            let trace = MouseTrace::new();
+            let pump_trace = Arc::clone(&trace);
             let stop = Arc::new(AtomicBool::new(false));
             let pump_stop = Arc::clone(&stop);
             let (hwnd_tx, hwnd_rx) = mpsc::channel();
@@ -1239,7 +1237,7 @@ mod wheel_tests {
                     None,
                 )
                 .expect("create leave-on-move window");
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, trace as *const MouseTrace as isize);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::as_ptr(&pump_trace) as isize);
                 hwnd_tx.send(hwnd.0 as isize).expect("send window handle");
                 let mut msg = MSG::default();
                 while !pump_stop.load(Ordering::Acquire) {
@@ -1249,6 +1247,7 @@ mod wheel_tests {
                 }
                 let _ = DestroyWindow(hwnd);
                 let _ = UnregisterClassW(class.lpszClassName, instance);
+                drop(pump_trace);
                 let _ = stopped_tx.send(());
             });
             let hwnd = hwnd_rx

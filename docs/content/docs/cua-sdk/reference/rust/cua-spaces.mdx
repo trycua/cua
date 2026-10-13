@@ -1679,6 +1679,8 @@ impl Spaces {
   fn share_audit(&self, space: Option<&str>, limit: usize) -> Result<Vec<ShareAudit>>;
   async fn share_space(&self, space: &str, who: &str, role: ShareRole) -> Result<SpaceShares>;
   async fn unshare_space(&self, space: &str, who: Option<&str>) -> Result<SpaceShares>;
+  async fn share_with_team(&self, space: &str, team: &str) -> Result<SpaceShares>;
+  async fn unshare_from_team(&self, space: &str, team: &str) -> Result<SpaceShares>;
   async fn relay_register(&self, space: &str) -> Result<RelayRegistration>;
   async fn relay_unregister(&self, space: &str) -> Result<bool>;
   async fn space_shares(&self, space: &str) -> Result<SpaceShares>;
@@ -2144,8 +2146,12 @@ pub fn cap_output(text: &str) -> String
 pub fn outcome_json(out: ToolOutcome) -> Result<Value>
 
 // mod files
+/// Proves this process can read `path` ...
+pub async fn check_host_readable(path: &Path) -> Result<()>
 /// Normalizes a `send_file` target to a ...
 pub fn downloads_subdir(target: Option<&str>, home: Option<&str>) -> Result<String>
+/// The macOS privacy-protected location ...
+pub fn protected_folder(path: &Path, home: Option<&Path>) -> Option<&'static str>
 
 // mod fleet_runtime
 /// `resolve` with the image evidence ...
@@ -2252,6 +2258,8 @@ pub fn tool_result(resp: CallToolResponse) -> ToolResult
 pub fn apply_share(allow: &mut Vec<String>, viewers: &mut Vec<String>, who: &str, role: Option<ShareRole>)
 /// Normalizes an invitee: an email ...
 pub fn normalize_who(who: &str) -> Result<String>
+/// The team a `team:<id>` invitee names ...
+pub fn team_of(who: &str) -> Option<Result<String>>
 
 // mod site_login
 /// The `request_site_login` tool: files a ...
@@ -2309,6 +2317,8 @@ pub const MAX_OUTPUT_CHARS: usize = 16_000;
 // mod files
 /// Chunk used when the driver does not say.
 pub const DEFAULT_SEND_CHUNK: usize = _;
+/// How long opening a host file or folder ...
+pub const HOST_OPEN_TIMEOUT: Duration = _;
 /// Largest chunk sent to ...
 pub const MAX_SEND_CHUNK: usize = _;
 
@@ -2322,6 +2332,8 @@ pub const MIN_BOTS: usize = 2;
 pub const CALLER_METADATA: &str = "x-cua-host-caller";
 /// The spacesd feature a host reports ...
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+/// `HostLimit::resource` of a host the ...
+pub const STOPPED_SHARING: &str = "sharing";
 
 // mod presence
 /// Roster heartbeat interval the SDK asks ...
@@ -2376,6 +2388,10 @@ pub const DRIVER_ALIASES: [&str; 5] = _;
 pub const DRIVER_SERVICE: &str = "driver";
 
 // mod share
+/// Why a macOS Space cannot be a team ...
+pub const MACOS_TEAM_REFUSED: &str = /* ... */;
+/// Relay machine meta: the OS of the Space ...
+pub const META_SPACE_OS: &str = "cua.space.os";
 /// The spacesd feature a Space needs to be ...
 pub const RELAY_ATTACH_FEATURE: &str = "relay_attach";
 

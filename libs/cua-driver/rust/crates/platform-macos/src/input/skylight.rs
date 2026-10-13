@@ -488,6 +488,177 @@ impl SpaceQuery {
     }
 }
 
+// ── Off-Space window capture ──────────────────────────────────────────────────
+
+/// `CFArrayRef SLSHWCaptureWindowList(CGSConnectionID cid, CGWindowID *windows,
+/// int count, uint32_t options)`. Returns a +1 array of `CGImageRef`, one per
+/// captured window. Unlike ScreenCaptureKit and `screencapture -l`, it returns
+/// the content of a window that sits on another Space (CUA-1351); window
+/// switchers such as AltTab use it for the same reason. Read-only: it does not
+/// switch Spaces, order windows, or activate anything.
+type HwCaptureWindowListFn = unsafe extern "C" fn(c_int, *mut u32, c_int, u32) -> *const c_void;
+
+/// Capture through the window's clip shape (rounded corners, Space clipping).
+const HW_CAPTURE_IGNORE_GLOBAL_CLIP_SHAPE: u32 = 1 << 11;
+/// Backing-store resolution (Retina pixels), matching the ScreenCaptureKit path.
+const HW_CAPTURE_BEST_RESOLUTION: u32 = 1 << 8;
+
+fn hw_capture_window_list_fn() -> Option<HwCaptureWindowListFn> {
+    static SYM: OnceLock<Option<HwCaptureWindowListFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSHWCaptureWindowList\0")
+            .or_else(|| find_sym(b"CGSHWCaptureWindowList\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+/// Capture one window's backing store with `SLSHWCaptureWindowList`.
+///
+/// `None` when the SPI is missing or WindowServer returns no image.
+pub fn hw_capture_window(window_id: u32) -> Option<core_graphics::image::CGImage> {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFGetTypeID, CFRetain, CFTypeRef, TCFType},
+    };
+    use foreign_types::ForeignType;
+
+    extern "C" {
+        fn CGImageGetTypeID() -> core_foundation::base::CFTypeID;
+    }
+
+    let capture = hw_capture_window_list_fn()?;
+    let cid = c_int::try_from(main_connection_id()?).ok()?;
+    let mut window = window_id;
+    let array_ptr = unsafe {
+        capture(
+            cid,
+            &mut window,
+            1,
+            HW_CAPTURE_IGNORE_GLOBAL_CLIP_SHAPE | HW_CAPTURE_BEST_RESOLUTION,
+        )
+    };
+    if array_ptr.is_null() {
+        return None;
+    }
+    let images: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(array_ptr as _) };
+    let first = *images.get(0)?;
+    if first.is_null() || unsafe { CFGetTypeID(first) } != unsafe { CGImageGetTypeID() } {
+        return None;
+    }
+    // The array owns its element; take our own reference before it drops.
+    unsafe {
+        CFRetain(first);
+        Some(core_graphics::image::CGImage::from_ptr(first as *mut _))
+    }
+}
+
+// ── Key-focus theft ───────────────────────────────────────────────────────────
+
+/// `CGError SLPSStealKeyFocusReturningID(uint32_t cid, uint32_t options, int32_t *theft_id)`
+type StealKeyFocusReturningIdFn = unsafe extern "C" fn(u32, u32, *mut i32) -> i32;
+
+/// `CGError SLPSReleaseKeyFocusWithID(int32_t theft_id)`
+type ReleaseKeyFocusWithIdFn = unsafe extern "C" fn(i32) -> i32;
+
+fn steal_key_focus_fn() -> Option<StealKeyFocusReturningIdFn> {
+    static SYM: OnceLock<Option<StealKeyFocusReturningIdFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSStealKeyFocusReturningID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn release_key_focus_fn() -> Option<ReleaseKeyFocusWithIdFn> {
+    static SYM: OnceLock<Option<ReleaseKeyFocusWithIdFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSReleaseKeyFocusWithID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+/// `OSStatus SLPSGetKeyFocusProcess(ProcessSerialNumber *psn, uint32_t *connection)`.
+/// Both are out-parameters; the second must be a valid pointer.
+type GetKeyFocusProcessFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32;
+
+/// `OSStatus GetProcessPID(const ProcessSerialNumber *psn, pid_t *pid)`
+type GetProcessPidFn = unsafe extern "C" fn(*const c_void, *mut pid_t) -> i32;
+
+fn get_key_focus_process_fn() -> Option<GetKeyFocusProcessFn> {
+    static SYM: OnceLock<Option<GetKeyFocusProcessFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSGetKeyFocusProcess\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_process_pid_fn() -> Option<GetProcessPidFn> {
+    static SYM: OnceLock<Option<GetProcessPidFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"GetProcessPID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+/// The pid of the process WindowServer gives key focus to: normally the
+/// frontmost app, or a non-activating panel (Spotlight-like launchers) or a
+/// menu that took it.
+pub fn key_focus_pid() -> Option<pid_t> {
+    let get = get_key_focus_process_fn()?;
+    let to_pid = get_process_pid_fn()?;
+    let mut psn = [0u8; 8];
+    // Room for whatever the second out-parameter holds (a connection id).
+    let mut second = [0u64; 2];
+    let err = unsafe {
+        get(
+            psn.as_mut_ptr() as *mut c_void,
+            second.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if err != 0 || psn == [0u8; 8] {
+        return None;
+    }
+    let mut pid: pid_t = 0;
+    if unsafe { to_pid(psn.as_ptr() as *const c_void, &mut pid) } != 0 || pid <= 0 {
+        return None;
+    }
+    Some(pid)
+}
+
+/// The pid of the process WindowServer has frontmost now. Unlike
+/// `NSWorkspace.frontmostApplication`, this does not wait for the caller's
+/// AppKit run loop to process an activation notice, so it sees a background
+/// app's self-activation at once.
+pub fn front_process_pid() -> Option<pid_t> {
+    let get_front = get_front_process_fn()?;
+    let to_pid = get_process_pid_fn()?;
+    let mut psn = [0u8; 8];
+    if unsafe { get_front(psn.as_mut_ptr() as *mut c_void) } != 0 || psn == [0u8; 8] {
+        return None;
+    }
+    let mut pid: pid_t = 0;
+    if unsafe { to_pid(psn.as_ptr() as *const c_void, &mut pid) } != 0 || pid <= 0 {
+        return None;
+    }
+    Some(pid)
+}
+
+/// Whether the key-focus theft SPIs resolve on this system.
+pub fn key_focus_theft_available() -> bool {
+    steal_key_focus_fn().is_some()
+        && release_key_focus_fn().is_some()
+        && main_connection_id().is_some()
+}
+
+/// Steal key focus for this process's own connection and return the theft id.
+///
+/// WindowServer numbers thefts from one session-wide counter, so the id tells
+/// the caller which id the next theft will get. AppKit uses the same call,
+/// with the same options, when it opens a menu in an app that is not active.
+pub fn steal_key_focus() -> Option<i32> {
+    let steal = steal_key_focus_fn()?;
+    let cid = main_connection_id()?;
+    let mut id = 0i32;
+    let err = unsafe { steal(cid, 0xC80, &mut id) };
+    (err == 0 && id != 0).then_some(id)
+}
+
+/// Release a key-focus theft by id, whichever connection made it.
+/// Returns the CGError (0 on success; 1010 when no such theft is live).
+pub fn release_key_focus(theft_id: i32) -> i32 {
+    match release_key_focus_fn() {
+        Some(release) => unsafe { release(theft_id) },
+        None => -1,
+    }
+}
+
 // ── Focus-without-raise ───────────────────────────────────────────────────────
 
 /// Activate `target_pid`'s window `target_wid` without raising any windows
@@ -508,6 +679,17 @@ impl SpaceQuery {
 ///
 /// Returns `true` when all SPIs resolved and both posts succeeded.
 pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
+    activate_without_raise_with(target_pid, target_wid, true)
+}
+
+/// [`activate_without_raise`] with the defocus record to the current front
+/// process made optional (`defocus_front`).
+pub fn activate_without_raise_with(
+    target_pid: pid_t,
+    target_wid: u32,
+    defocus_front: bool,
+) -> bool {
+    crate::window_change_detector::end_tail();
     let post_fn = match post_event_record_to_fn() {
         Some(f) => f,
         None => return false,
@@ -541,7 +723,8 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
-    let defocus_ok = unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let defocus_ok =
+        !defocus_front || unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
@@ -560,13 +743,14 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 /// succeeded.
 pub fn restore_focus_after_without_raise(
     previous_pid: pid_t,
+    previous_key_wid: Option<u32>,
     target_pid: pid_t,
     target_wid: u32,
 ) -> bool {
     let Some(post_fn) = post_event_record_to_fn() else {
         return false;
     };
-    let Some(previous_wid) = key_window_of_pid(previous_pid) else {
+    let Some(previous_wid) = previous_key_wid.or_else(|| key_window_of_pid(previous_pid)) else {
         return false;
     };
     let mut previous_psn = [0u8; 8];
@@ -600,7 +784,7 @@ fn focus_record(wid: u32) -> [u8; 0xF8] {
 
 /// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
 /// frontmost on-screen layer-0 window.
-fn key_window_of_pid(pid: pid_t) -> Option<u32> {
+pub fn key_window_of_pid(pid: pid_t) -> Option<u32> {
     use crate::ax::bindings::{ax_get_window_id, copy_element_attr, AXUIElementCreateApplication};
     let focused = unsafe {
         let app = AXUIElementCreateApplication(pid);
@@ -679,6 +863,7 @@ pub fn front_process_matches(target_pid: libc::pid_t, target_wid: u32) -> Option
 /// Returns `true` only when the target PSN resolved and WindowServer accepted
 /// `SLPSSetFrontProcessWithOptions`.
 pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    crate::window_change_detector::note_intentional_activation();
     let Some(set_front) = set_front_process_fn() else {
         return false;
     };
@@ -763,7 +948,17 @@ impl Drop for ForegroundTurn {
     }
 }
 
+/// Whether some thread holds a foreground turn right now (the driver is
+/// deliberately fronting a target).
+pub fn foreground_turn_active() -> bool {
+    FOREGROUND_LOCK.try_lock().is_err()
+}
+
 fn foreground_turn() -> ForegroundTurn {
+    // An intentional activation ends the previous action's detached window
+    // watch, whose wildcard lease would otherwise revert it.
+    crate::window_change_detector::end_tail();
+    crate::window_change_detector::note_intentional_activation();
     if HOLDS_FOREGROUND_LOCK.with(std::cell::Cell::get) {
         return ForegroundTurn { _guard: None };
     }

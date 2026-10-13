@@ -77,6 +77,15 @@ cp "$here/Support/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cp "$icons/tray-template.png" "$app/Contents/Resources/tray-template.png"
 cp "$icons/tray-template@2x.png" "$app/Contents/Resources/tray-template@2x.png"
 cp "$here/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+# New UI (preview): the shared web UI's build (apps/cua-spaces-web, `dist`),
+# served from Contents/Resources/WebUI at cua-spaces://app/. CUA_WEBUI_DIST
+# points at another build; without one the window says how to add it.
+webui="${CUA_WEBUI_DIST:-$here/../cua-spaces-web/dist}"
+if [ -f "$webui/index.html" ]; then
+  cp -R "$webui" "$app/Contents/Resources/WebUI"
+else
+  echo "note: no web UI build at $webui; New UI (preview) shows a placeholder" >&2
+fi
 
 # Sparkle, the updater: the framework SwiftPM linked (@rpath), with its
 # symlinks (ditto), its XPC services, Autoupdate and Updater.app.

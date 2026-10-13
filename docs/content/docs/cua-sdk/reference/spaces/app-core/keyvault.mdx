@@ -557,7 +557,7 @@ Returned by [`kv_passphrase_check`](#kv_passphrase_check).
 | `auto_wipe` / `autoWipe` | `Option<bool>` |  | Delivered copies wipe themselves after their TTL (off by default; none: not told, a broker before the setting or a third party). |
 | `os_protector_available` / `osProtectorAvailable` | `bool` |  | The daemon can create the OS key store protector (setup offers Touch ID); false for a development daemon, which is passphrase-only. |
 | `passphrase_available` / `passphraseAvailable` | `bool` |  | A passphrase can always be chosen. |
-| `unlock_protectors` / `unlockProtectors` | `Vec<String>` |  | Protector kinds that can unlock this vault now (`macos-keychain`, `windows-credential`, `passphrase`, `recovery`). |
+| `unlock_protectors` / `unlockProtectors` | `Vec<String>` |  | Protector kinds that can unlock this vault now (`macos-keychain`, `windows-credential`, `linux-secret-service`, `passphrase`, `recovery`). |
 | `browse_until_ms` / `browseUntilMs` | `Option<u64>` |  | The browse window is open until this time, Unix ms: item names are visible until then. |
 | `skip_unlock_prompt` / `skipUnlockPrompt` | `Option<bool>` |  | "Never ask again" on the unlock prompt is on. |
 | `reset_notice` / `resetNotice` | `Option<String>` |  | An earlier preview's vault was found and set aside. |

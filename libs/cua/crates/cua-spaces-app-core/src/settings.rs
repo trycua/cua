@@ -219,6 +219,10 @@ pub struct TelemetryInput {
     pub enabled: bool,
     /// The environment decides (`DO_NOT_TRACK`, `CUA_TELEMETRY`, CI): who.
     pub locked_by: Option<String>,
+    /// The first-run usage notice was already shown on this machine (by
+    /// `cua`, or an earlier run of the app): events may be sent before
+    /// Welcome is left.
+    pub notice_shown: bool,
 }
 
 /// What the Settings page shows.

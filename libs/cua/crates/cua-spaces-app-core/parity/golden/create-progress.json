@@ -1315,11 +1315,11 @@
         "pending": true,
         "rows": [
           "os-ubuntu New Space [Starting] 900 90%",
-          "os-omarchy Omarchy [Running] - -"
+          "os-omarchy omarchy [Running] - -"
         ],
         "tiles": [
           "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
-          "os-omarchy Omarchy, Linux, This Mac, Running - -"
+          "os-omarchy omarchy, Linux, This Mac, Running - -"
         ]
       }
     }

@@ -42,9 +42,28 @@ security-framework = { version = "3", features = ["OSX_10_15"] }
 security-framework-sys = "2"
 core-foundation = "0.10"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The desktop's Secret Service (GNOME Keyring, KWallet) holds the
+# key-encryption key: pure Rust over D-Bus, blocking.
+secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # Windows Credential Manager (DPAPI-protected) holds the key-encryption key.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+# The named pipe's access list, who is on the other end of it, and that
+# process's Authenticode signature (`winpipe`, `winpeer`).
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
+    "Win32_Security_WinTrust",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile.workspace = true

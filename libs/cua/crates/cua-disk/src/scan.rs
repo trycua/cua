@@ -781,6 +781,19 @@ impl Scanner {
             }
         }
         let listed = self.lume.is_some() && !notes.iter().any(|n| n.starts_with("lume:"));
+        // A base is in use while a sandbox or checkpoint cloned from it exists
+        // (`source` names the clone source; a record whose VM is gone does
+        // not count).
+        let mut clones: HashMap<String, Vec<String>> = HashMap::new();
+        let exists = |name: &str| !listed || vms.iter().any(|v| v.name == name);
+        for r in records
+            .iter()
+            .filter(|r| r.kind != OwnedKind::Base && exists(&r.name))
+        {
+            if let Some(src) = &r.source {
+                clones.entry(src.clone()).or_default().push(r.name.clone());
+            }
+        }
         for r in records {
             let vm = vms.iter().find(|v| v.name == r.name);
             if vm.is_none() && listed {
@@ -815,6 +828,11 @@ impl Scanner {
                 evictable: r.kind == OwnedKind::Base && listed,
                 in_progress: r.kind == OwnedKind::Base && busy,
                 ephemeral: r.name.starts_with("cua-eph-"),
+                referenced_by: if r.kind == OwnedKind::Base {
+                    clones.remove(&r.name).unwrap_or_default()
+                } else {
+                    vec![]
+                },
                 target: if r.kind == OwnedKind::Base {
                     Target::LumeVm(r.name.clone())
                 } else {

@@ -25,7 +25,7 @@ description: "Run coding agents inside a Space."
 
 Start a coding agent in the Space.
 
-Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: env_from_host names provider key variables from this server's environment; host credential files are never copied.
+Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Agents) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.
 
 | | |
 | --- | --- |
@@ -45,10 +45,12 @@ Installs the harness if needed (pinned, checksum-verified), gives it the Space's
 | `branch` | `string` | none | Branch or tag for `repo`. |
 | `cwd` | `string` | none | Working directory in the Space. Default: the run's own. |
 | `env` | `map of string` | `{}` | More environment for the agent, for example `{"HERMES_HOME": "/home/cua/bot"}`. Stored 0600 in the run and redacted from its output; name provider keys in `env_from_host` instead, so their values never pass through the conversation. |
-| `env_from_host` | `string[]` | `[]` | Provider key variables to forward from this server's environment, for example ["ANTHROPIC_API_KEY"]. Names only; values never pass through the conversation. |
+| `env_from_host` | `string[]` | `[]` | Provider key variables to forward from this server's environment (or from the keys saved in Cua Spaces, Settings → Agents), for example ["ANTHROPIC_API_KEY"]. Names only; values never pass through the conversation. Saved keys the harness reads are added without being named. |
 | `exit_when_idle` | `boolean` | `false` | Stop (resumably) once the prompt is answered. Default false. |
+| `files` | `string[]` | `[]` | Host files attached to the first prompt (absolute paths on this server's machine, at most 8 MiB each). |
 | `home` | `string` | none | Run as this persistent agent: its home in the Cua Volume (`agents/<home>/`) is restored into the Space first and saved after every turn, the harness keeps its memory there, and the agent gets the `cua` bridge (notify_user, the drive). Creates the persistent agent (this harness, this Space) when it does not exist yet. Default: a one-off run whose state lives only in the Space. |
-| `mcp_servers` | `object[]` | `[]` | Extra MCP servers. The Space's own tools are always included. |
+| `label` | `string` | none | A label for listings. |
+| `mcp_servers` | `object[]` | `[]` | Extra MCP servers. The Space's own tools are included unless `sandbox_mcp` is false. |
 | `mcp_servers[].args` | `string[]` | `[]` | Its arguments. |
 | `mcp_servers[].command` | `string` | `null` | Command run inside the Space. |
 | `mcp_servers[].name` | `string` | required | Name the agent sees. |
@@ -56,8 +58,11 @@ Installs the harness if needed (pinned, checksum-verified), gives it the Space's
 | `model` | `string` | none | Model id. |
 | `prompt` | `string` | required | The task. |
 | `repo` | `string` | none | Git URL cloned into the working directory first. |
+| `sandbox_mcp` | `boolean` | `true` | Give the agent the Space's own MCP tools. Default true. |
 | `show` | `boolean` | `false` | Open a terminal on the Space's desktop following the run. Default false. |
+| `skills` | `boolean` | `true` | Copy the cua skills into the harness. Default true. |
 | `space` | `string` | required | Space id or name. |
+| `wire` | `string` | none | The wire format of `base_url`: `anthropic`, `openai-responses`, `openai-chat` or `gemini`. Default: the harness's own. |
 
 ### Result
 
@@ -260,7 +265,7 @@ JSON: `{"space", "runs"}`, each run with `run_id`, `agent`, `status`, `phase`, `
 
 Report what the agent harnesses support.
 
-Every harness: readiness, what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.
+Every harness: readiness (including whether a credential is available, with a hint when not), what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.
 
 | | |
 | --- | --- |
@@ -277,7 +282,7 @@ No parameters.
 
 ### Result
 
-JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.
+JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Agents) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.
 
 ### Errors
 

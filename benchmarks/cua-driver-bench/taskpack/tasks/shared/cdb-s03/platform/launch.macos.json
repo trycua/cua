@@ -1,0 +1,188 @@
+{
+  "platform": "macos",
+  "descriptor_version": "1",
+  "semantics": {
+    "task_id": "cua.shared.cdb-s03.invoice-reconciliation",
+    "task_version": "1.0.0",
+    "brief": "brief.md",
+    "brief_sha256": "8571796862e8b24fba1a3641ba4b885ec148d60dbc98fa511291bf417c76671b",
+    "manifest": "task.cuabench.json",
+    "variant": "fixture.kestrel-wharf",
+    "workspace_layout": {
+      "mail": "mail",
+      "workbook": "planning/kestrel-wharf-reconciliation.ods",
+      "book": "book/kestrel-wharf.gnucash",
+      "facts": "cdb-s03.workspace.json"
+    },
+    "reset": {
+      "setup": [
+        "${python}",
+        "reset/setup.py",
+        "--workspace",
+        "${workspace}"
+      ],
+      "verify": [
+        "${python}",
+        "reset/verify.py",
+        "--workspace",
+        "${workspace}"
+      ]
+    },
+    "evaluate": [
+      "${python}",
+      "evaluator/evaluate.py",
+      "--workspace",
+      "${workspace}",
+      "--artifacts",
+      "${artifacts}",
+      "--result",
+      "${result}",
+      "--agent-exit-code",
+      "${agent_exit_code}"
+    ],
+    "required_apps": [
+      "Ledger Lantern Mail",
+      "LibreOffice Calc",
+      "GnuCash"
+    ],
+    "note": "This block is byte-equivalent across platforms; only installation and launch details may vary."
+  },
+  "notes": [
+    "Commands run with cwd set to the bundle unless an app declares cwd.",
+    "Install Electron, LibreOffice, and GnuCash before the network-denied trial.",
+    "The GnuCash runtime directories are isolated inside the task workspace."
+  ],
+  "prerequisites": [
+    {
+      "id": "python",
+      "check": [
+        "python3",
+        "--version"
+      ],
+      "min_version": "3.11"
+    },
+    {
+      "id": "node",
+      "check": [
+        "node",
+        "--version"
+      ],
+      "min_version": "22"
+    },
+    {
+      "id": "electron",
+      "check": [
+        "npm",
+        "ls",
+        "electron"
+      ],
+      "cwd": "${bundle}/apps/ledger-lantern-mail",
+      "install": [
+        "npm",
+        "ci"
+      ]
+    },
+    {
+      "id": "libreoffice",
+      "check": [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "--version"
+      ],
+      "min_version": "25"
+    },
+    {
+      "id": "gnucash",
+      "check": [
+        "/Applications/Gnucash.app/Contents/MacOS/gnucash",
+        "--version"
+      ],
+      "min_version": "5.16"
+    }
+  ],
+  "workspace_root": "${HOME}/cdb-s03",
+  "apps": [
+    {
+      "id": "mail",
+      "kind": "electron",
+      "role": "Ledger Lantern Mail",
+      "cwd": "${bundle}/apps/ledger-lantern-mail",
+      "command": [
+        "npx",
+        "electron",
+        ".",
+        "--workspace=${workspace}"
+      ],
+      "unset_env": [
+        "ELECTRON_RUN_AS_NODE"
+      ],
+      "window": {
+        "title": "Ledger Lantern Mail",
+        "bounds": {
+          "x": 20,
+          "y": 30,
+          "width": 900,
+          "height": 700
+        }
+      }
+    },
+    {
+      "id": "calc",
+      "kind": "spreadsheet",
+      "role": "LibreOffice Calc reconciliation record",
+      "command": [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "--calc",
+        "--norestore",
+        "--nodefault",
+        "--nolockcheck",
+        "-env:UserInstallation=${workspace_uri}/.runtime/libreoffice",
+        "${workspace}/planning/kestrel-wharf-reconciliation.ods"
+      ],
+      "window": {
+        "title_contains": "kestrel-wharf-reconciliation",
+        "bounds": {
+          "x": 350,
+          "y": 150,
+          "width": 1180,
+          "height": 780
+        }
+      }
+    },
+    {
+      "id": "gnucash",
+      "kind": "accounting",
+      "role": "GnuCash payment ledger",
+      "command": [
+        "/Applications/Gnucash.app/Contents/MacOS/gnucash",
+        "--logto=${workspace}/.runtime/gnucash/trace.log",
+        "${workspace}/book/kestrel-wharf.gnucash"
+      ],
+      "env": {
+        "GNC_DATA_HOME": "${workspace}/.runtime/gnucash",
+        "GNC_CONFIG_HOME": "${workspace}/.runtime/gnucash"
+      },
+      "window": {
+        "title_contains": "kestrel-wharf",
+        "bounds": {
+          "x": 650,
+          "y": 90,
+          "width": 1150,
+          "height": 800
+        }
+      }
+    }
+  ],
+  "teardown": {
+    "stop_apps": [
+      "mail",
+      "calc",
+      "gnucash"
+    ],
+    "then": [
+      "${python}",
+      "reset/setup.py",
+      "--workspace",
+      "${workspace}"
+    ]
+  }
+}

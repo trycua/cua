@@ -19,11 +19,28 @@ import SwiftUI
 public struct OnboardingView: View {
     @Bindable var onboarding: OnboardingModel
     var onSignIn: (() async -> String?)?
-    @State private var signingIn = false
+    /// Where the account's sign-in stands (the code while it waits, why it
+    /// failed).
+    var signInPhase: AppSignInPhase
+    /// Stops waiting for the browser.
+    var onCancelSignIn: (() -> Void)?
+    /// The page a waiting sign-in finishes on, to open it again.
+    var signInURL: URL?
 
-    public init(onboarding: OnboardingModel, onSignIn: (() async -> String?)? = nil) {
+    public init(onboarding: OnboardingModel, onSignIn: (() async -> String?)? = nil,
+                signInPhase: AppSignInPhase = .idle, onCancelSignIn: (() -> Void)? = nil, signInURL: URL? = nil) {
         self.onboarding = onboarding
         self.onSignIn = onSignIn
+        self.signInPhase = signInPhase
+        self.onCancelSignIn = onCancelSignIn
+        self.signInURL = signInURL
+    }
+
+    private var signingIn: Bool {
+        switch signInPhase {
+        case .starting, .waiting: return true
+        default: return false
+        }
     }
 
     public var body: some View {
@@ -147,7 +164,7 @@ public struct OnboardingView: View {
 
     private func hasCard(_ v: AppOnboardingView) -> Bool {
         switch v.step {
-        case .signin: return onboarding.state.identity != nil || signingIn
+        case .signin: return onboarding.state.identity != nil || signInPhase != .idle
         default: return true
         }
     }
@@ -158,8 +175,8 @@ public struct OnboardingView: View {
         case .signin:
             if let identity = onboarding.state.identity {
                 Text(appOnboardingSignedInText(identity: identity)).foregroundStyle(.secondary)
-            } else if signingIn {
-                Text(copy.signInWaiting).foregroundStyle(.secondary)
+            } else {
+                signInStatus
             }
         case .agents:
             agentsContent
@@ -219,7 +236,7 @@ public struct OnboardingView: View {
                 // A failed setup shows under the form, not inside its scroll.
                 VStack(alignment: .leading, spacing: 8) {
                     HostFormView(host: onboarding.host, buttons: false, showsFailure: false)
-                        .frame(height: 230)
+                        .frame(minHeight: 230, maxHeight: .infinity)
                     if let failure = onboarding.host.setupFailure {
                         HostSetupFailureView(failure: failure, retrying: onboarding.host.settingUp) {
                             Task { await onboarding.setUpHost() }
@@ -250,6 +267,8 @@ public struct OnboardingView: View {
                             .strokeBorder(choice.preselected ? Color.primary : Color(nsColor: .separatorColor),
                                           lineWidth: choice.preselected ? 2 : 1))
                         .accessibilityIdentifier(choice.mode == .host ? "onboarding-host" : "onboarding-client")
+                        // Return picks the preselected choice (the page has no other primary).
+                        .keyboardShortcut(choice.preselected ? .defaultAction : nil)
                     }
                 }
             }
@@ -293,6 +312,42 @@ public struct OnboardingView: View {
         }
     }
 
+    /// A sign-in under way: the code to confirm, the browser page again and
+    /// Cancel; or why it failed (the primary button then says Try again).
+    @ViewBuilder private var signInStatus: some View {
+        switch signInPhase {
+        case .starting:
+            Text(onboarding.copy.signInWaiting).foregroundStyle(.secondary)
+        case let .waiting(userCode):
+            VStack(alignment: .leading, spacing: 10) {
+                Text(appOnboardingSignInCodeText(userCode: userCode))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("onboarding-signin-code")
+                HStack(spacing: 14) {
+                    if let url = signInURL {
+                        Button("Open the browser again") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("onboarding-signin-reopen")
+                    }
+                    if let onCancelSignIn {
+                        Button("Cancel", action: onCancelSignIn)
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("onboarding-signin-cancel")
+                    }
+                }
+                .font(.caption)
+            }
+        case let .failed(message):
+            Text(message)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("onboarding-signin-error")
+        case .idle:
+            EmptyView()
+        }
+    }
+
     /// Detected coding agents: which to set up and what goes in.
     @ViewBuilder private var agentsContent: some View {
         let copy = onboarding.copy
@@ -316,7 +371,7 @@ public struct OnboardingView: View {
                     ScrollView { agentGrid }
                         .scrollIndicators(.automatic)
                 }
-                .frame(maxHeight: Self.agentsListHeight)
+                .frame(maxHeight: Self.agentsListHeight, alignment: .top)
                 .accessibilityIdentifier("agents-list")
                 Divider()
                 HStack(spacing: 16) {
@@ -349,7 +404,7 @@ public struct OnboardingView: View {
                         if on { onboarding.agentSelection.insert(a.id) } else { onboarding.agentSelection.remove(a.id) }
                     }))
                     .toggleStyle(.checkbox)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .help([a.mcpConfig ?? a.skillsDir ?? "", a.error ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} "))
             }
         }
@@ -411,6 +466,7 @@ public struct OnboardingView: View {
             } else {
                 if skipShows(v) {
                     Button(onboarding.copy.skip) { skip(v.step) }
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("onboarding-skip")
                 }
                 primary(v)
@@ -423,11 +479,9 @@ public struct OnboardingView: View {
         switch v.step {
         case .signin where onboarding.state.identity == nil:
             if let onSignIn {
-                Button(signingIn ? copy.signInWaiting : copy.signIn) {
-                    signingIn = true
+                Button(signingIn ? copy.signInWaiting : signInPhase == .idle ? copy.signIn : copy.tryAgain) {
                     Task {
                         if let id = await onSignIn() { onboarding.send(.signedIn(identity: id)) }
-                        signingIn = false
                     }
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
@@ -543,6 +597,7 @@ struct PresentationCardView: View {
 struct PromptTicker: View {
     let prompts: [String]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.onboardingMotionStill) private var motionStill
     @State private var origin = Date()
     @State private var pausedAt: Date?
 
@@ -552,9 +607,9 @@ struct PromptTicker: View {
     static let speed: CGFloat = rowHeight / 4
 
     var body: some View {
-        let height = Self.rowHeight * CGFloat(Self.visibleRows)
+        let height = Self.rowHeight * CGFloat(Self.visibleRows + 1)
         Group {
-            if reduceMotion {
+            if reduceMotion || motionStill {
                 rows(Array(prompts.prefix(Self.visibleRows)))
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: pausedAt != nil)) { context in
@@ -566,8 +621,8 @@ struct PromptTicker: View {
                         .frame(height: height, alignment: .top)
                         .clipped()
                         .mask(LinearGradient(stops: [
-                            .init(color: .clear, location: 0), .init(color: .black, location: 0.25),
-                            .init(color: .black, location: 0.75), .init(color: .clear, location: 1),
+                            .init(color: .clear, location: 0), .init(color: .black, location: 0.125),
+                            .init(color: .black, location: 0.875), .init(color: .clear, location: 1),
                         ], startPoint: .top, endPoint: .bottom))
                 }
                 .onHover { inside in

@@ -338,8 +338,13 @@ fn add_to_windows_user_path(_dir: &Path) -> Result<(), String> {
 }
 
 /// App locations that survive relaunches (not a mounted dmg or App
-/// Translocation), where a symlink into the bundle stays valid.
+/// Translocation, not an AppImage's mount), where a symlink into the bundle
+/// stays valid: app updates update the CLI too, and removing the app takes
+/// it away, as dragging the Swift app to the Trash does.
 pub fn stable_app_location(cli: &Path) -> bool {
+    if cfg!(target_os = "linux") {
+        return linux_package_location(cli);
+    }
     if !cfg!(target_os = "macos") {
         return false;
     }
@@ -349,6 +354,12 @@ pub fn stable_app_location(cli: &Path) -> bool {
             .map(|h| s.starts_with(&format!("{}/Applications/", PathBuf::from(h).display())))
             .unwrap_or(false);
     in_apps && !s.contains("/AppTranslocation/")
+}
+
+/// A Linux package's install tree (the `.deb`'s `/opt/Cua Spaces`, or a
+/// distribution's `/usr`): root-owned and replaced in place by upgrades.
+pub fn linux_package_location(cli: &Path) -> bool {
+    cli.is_absolute() && (cli.starts_with("/opt") || cli.starts_with("/usr"))
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -436,6 +447,23 @@ pub async fn cli_version(cli: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linux_package_links_its_cli_and_an_appimage_copies_it() {
+        assert!(linux_package_location(Path::new(
+            "/opt/Cua Spaces/resources/native/cua"
+        )));
+        assert!(linux_package_location(Path::new("/usr/lib/cua-spaces/cua")));
+        // An AppImage mounts somewhere new each launch; its CLI is copied.
+        assert!(!linux_package_location(Path::new(
+            "/tmp/.mount_CuaSpaXYZ/resources/native/cua"
+        )));
+        assert!(!linux_package_location(Path::new(
+            "/home/u/.local/share/cua-spaces/daemon/0.7.2-1/cua"
+        )));
+        assert!(!linux_package_location(Path::new("/optional/cua")));
+        assert!(!linux_package_location(Path::new("opt/cua")));
+    }
 
     #[test]
     fn profiles_and_path_lines() {

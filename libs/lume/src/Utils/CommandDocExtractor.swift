@@ -128,6 +128,7 @@ enum CommandDocExtractor {
             shutdownDoc,
             restartDoc,
             sshDoc,
+            cpDoc,
             sipDoc,
             ipswDoc,
             serveDoc,
@@ -561,6 +562,35 @@ enum CommandDocExtractor {
                 ExampleDoc("lume ssh my-vm", "Interactive shell"),
                 ExampleDoc("lume ssh my-vm \"ls -la\"", "Run one command"),
                 ExampleDoc("lume ssh my-vm --timeout 0 \"cd /app && npm test\"", "A long-running command with no timeout"),
+            ]
+        )
+    }
+
+    // MARK: - CP
+
+    private static var cpDoc: CommandDoc {
+        CommandDoc(
+            name: "cp",
+            abstract: "Copy files between the host and a VM",
+            discussion: "Copies a file or directory between the host and a running VM over SSH, using the same credentials as `lume ssh`. Exactly one of the source or destination is a VM path, written as VM:PATH. Host directories are copied recursively automatically; pass --recursive for a recursive guest-to-host copy.",
+            arguments: [
+                ArgumentDoc(name: "source", help: "Source path. Use VM:PATH for a path inside a VM", type: "String", isOptional: false),
+                ArgumentDoc(name: "destination", help: "Destination path. Use VM:PATH for a path inside a VM", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "user", shortName: "u", help: "SSH username", type: "String", defaultValue: "lume", isOptional: true),
+                OptionDoc(name: "password", shortName: "p", help: "SSH password", type: "String", defaultValue: "lume", isOptional: true),
+                OptionDoc(name: "storage", shortName: nil, help: "Storage location name or path", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "timeout", shortName: "t", help: "Transfer timeout in seconds (0 for no timeout)", type: "Int", defaultValue: "600", isOptional: true),
+            ],
+            flags: [
+                FlagDoc(name: "recursive", shortName: "r", help: "Copy directories recursively", defaultValue: false),
+            ],
+            subcommands: [],
+            examples: [
+                ExampleDoc("lume cp ./build.zip my-vm:/tmp/build.zip", "Copy a host file into the VM"),
+                ExampleDoc("lume cp my-vm:/tmp/out.log ./out.log", "Copy a file out of the VM"),
+                ExampleDoc("lume cp -r ./assets my-vm:/tmp/assets", "Copy a directory into the VM"),
             ]
         )
     }

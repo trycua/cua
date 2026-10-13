@@ -204,6 +204,7 @@ fn kind_name(k: ProtectorKind) -> &'static str {
     match k {
         ProtectorKind::MacosKeychain => "macOS keychain",
         ProtectorKind::WindowsCredential => "Windows Credential Manager",
+        ProtectorKind::LinuxSecretService => "desktop keyring",
         ProtectorKind::Passphrase => "passphrase",
         ProtectorKind::Recovery => "recovery key",
     }

@@ -1,4 +1,4 @@
-//! One test per run_actions failure class seen in bench run v036: the call
+//! One test per run_steps failure class seen in bench run v036: the call
 //! shapes models sent, and what the batch does with them now.
 
 use std::sync::{Arc, Mutex};
@@ -15,24 +15,19 @@ use crate::{
 // ── schema leniency ──────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn observe_sent_as_a_string_is_read_as_the_boolean() {
+async fn observe_sent_as_a_string_is_refused() {
     let harness = Harness::new();
-    // 21 of the 102 failed v036 calls: `"observe": "true"`.
     let result = harness
         .run(json!({"steps": [{"tool": "click", "args": {"pid": 7, "window_id": 3}}], "observe": "true"}))
         .await;
-    assert_ne!(result.is_error, Some(true), "{}", text(&result));
-    assert_eq!(harness.hits("get_window_state"), 1);
+    assert_eq!(result.is_error, Some(true));
+    assert!(text(&result).contains("observe"), "{}", text(&result));
 
-    // `"observe": "false"` with a trailing read: the read is the observation.
     let result = harness
-        .run(json!({"steps": [
-            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
-            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 100}}
-        ], "observe": "false"}))
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 7, "window_id": 3}}], "observe": "false"}))
         .await;
-    assert_ne!(result.is_error, Some(true), "{}", text(&result));
-    assert_eq!(harness.last("get_window_state")["max_elements"], 100);
+    assert_eq!(result.is_error, Some(true));
+    assert!(text(&result).contains("observe"), "{}", text(&result));
 }
 
 #[tokio::test]
@@ -55,12 +50,12 @@ async fn string_scalars_in_step_args_are_coerced_before_validation() {
 #[tokio::test]
 async fn batch_level_pid_and_window_id_are_the_default_window() {
     let harness = Harness::new();
-    // The v036 shape: pid/window_id once (as strings) on run_actions itself.
+    // The v036 shape: pid/window_id once (as strings) on run_steps itself.
     let result = harness
         .run(json!({
             "pid": "37641",
             "window_id": "2126",
-            "observe": "false",
+            "observe": false,
             "steps": [
                 {"tool": "set_value", "args": {"element_token": "s0000000a:46", "value": "12:00"}},
                 {"tool": "set_value", "args": {"element_token": "s0000000a:48", "value": "Juniper"}},
@@ -150,6 +145,69 @@ async fn a_step_refused_for_background_delivery_says_how_or_falls_back() {
         .await;
     assert_eq!(harness.hits("click"), before + 2);
     assert_eq!(harness.last("click")["delivery_mode"], "foreground");
+}
+
+#[test]
+fn a_failed_batch_keeps_the_step_report_readable() {
+    // v037c: a failed batch returned its step report plus a full read
+    // (~4 100 characters); the client cut it to "1. click ok: ... AXCh",
+    // hiding why step 2 failed.
+    let report =
+        "run_steps: step 2 of 2 failed\n1. click ok\n2. click ERROR (action): why".to_owned();
+    let mut content = vec![
+        crate::protocol::Content::text(report.clone()),
+        crate::protocol::Content::text("x".repeat(6_000)),
+    ];
+    super::super::fit_error_text(&mut content, super::super::ERROR_TEXT_BUDGET);
+    let text: String = content
+        .iter()
+        .filter_map(|part| match part {
+            crate::protocol::Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.starts_with(&report));
+    assert!(text.chars().count() <= super::super::ERROR_TEXT_BUDGET + 200);
+    assert!(text.contains("call get_window_state for the full window"));
+}
+
+#[tokio::test]
+async fn a_failed_batch_with_a_long_read_stays_within_the_budget() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "fail": true}}
+        ], "observe": true}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("2. click ERROR"),
+        "{}",
+        text(&result)
+    );
+    assert!(text(&result).chars().count() <= super::super::ERROR_TEXT_BUDGET + 200);
+}
+
+#[tokio::test]
+async fn batch_level_delivery_mode_is_the_steps_default() {
+    let harness = Harness::new();
+    // v037c: `delivery_mode` on run_steps itself was refused.
+    let result = harness
+        .run(
+            json!({"pid": 7, "window_id": 3, "delivery_mode": "foreground", "steps": [
+                {"tool": "click", "args": {"x": 1, "y": 2}},
+                {"tool": "click", "args": {"x": 1, "y": 2, "delivery_mode": "background"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let calls = harness.calls["click"].lock().unwrap().clone();
+    assert_eq!(calls[0]["delivery_mode"], "foreground");
+    assert_eq!(
+        calls[1]["delivery_mode"], "background",
+        "a step's own mode wins"
+    );
 }
 
 // ── read steps ───────────────────────────────────────────────────────────
@@ -464,7 +522,7 @@ async fn a_stale_element_token_is_found_again_by_its_role_and_label() {
     );
     let result = registry
         .invoke(
-            super::super::RUN_ACTIONS_TOOL,
+            super::super::RUN_STEPS_TOOL,
             json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7, "element_token": "s0000002c:14"}}]}),
         )
         .await;
@@ -488,7 +546,7 @@ async fn a_stale_token_is_not_retried_when_its_label_is_ambiguous_or_unknown() {
     for token in ["s0000002d:3", "s0000002d:4", "s0000002d:99", "s0000777f:3"] {
         let result = registry
             .invoke(
-                super::super::RUN_ACTIONS_TOOL,
+                super::super::RUN_STEPS_TOOL,
                 json!({"steps": [{"tool": "click", "args": {"pid": 42, "window_id": 7, "element_token": token}}]}),
             )
             .await;

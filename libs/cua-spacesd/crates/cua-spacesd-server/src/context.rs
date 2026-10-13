@@ -189,10 +189,23 @@ impl ServerContext {
         principal: Option<&Principal>,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a call the relay asserted at `issued`
+    /// (`RelayCaller::issued_at`), recorded in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal: Option<&Principal>,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let principal_id = principal.map(|p| p.id.as_str()).unwrap_or("");
         self.inner
             .auth
-            .mint_ticket(scope, resource, principal_id, ttl)
+            .mint_ticket_issued(scope, resource, principal_id, issued, ttl)
     }
 
     /// Validates a ticket string for `scope`.

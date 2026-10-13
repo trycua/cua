@@ -1458,7 +1458,7 @@
       "name": "agent_start",
       "category": "agents",
       "description": "Start a coding agent in the Space.",
-      "instructions": "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: env_from_host names provider key variables from this server's environment; host credential files are never copied.",
+      "instructions": "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Agents) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.",
       "platforms": [
         "macos",
         "windows",
@@ -1530,7 +1530,7 @@
           },
           "env_from_host": {
             "default": [],
-            "description": "Provider key variables to forward from this server's environment,\nfor example [\"ANTHROPIC_API_KEY\"]. Names only; values never pass\nthrough the conversation.",
+            "description": "Provider key variables to forward from this server's environment\n(or from the keys saved in Cua Spaces, Settings → Agents), for\nexample [\"ANTHROPIC_API_KEY\"]. Names only; values never pass through\nthe conversation. Saved keys the harness reads are added without\nbeing named.",
             "items": {
               "type": "string"
             },
@@ -1540,13 +1540,25 @@
             "description": "Stop (resumably) once the prompt is answered. Default false.",
             "type": "boolean"
           },
+          "files": {
+            "default": [],
+            "description": "Host files attached to the first prompt (absolute paths on this\nserver's machine, at most 8 MiB each).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "home": {
             "description": "Run as this persistent agent: its home in the Cua Volume\n(`agents/<home>/`) is restored into the Space first and saved after\nevery turn, the harness keeps its memory there, and the agent gets\nthe `cua` bridge (notify_user, the drive). Creates the persistent\nagent (this harness, this Space) when it does not exist yet. Default:\na one-off run whose state lives only in the Space.",
             "type": "string"
           },
+          "label": {
+            "description": "A label for listings.",
+            "type": "string"
+          },
           "mcp_servers": {
             "default": [],
-            "description": "Extra MCP servers. The Space's own tools are always included.",
+            "description": "Extra MCP servers. The Space's own tools are included unless\n`sandbox_mcp` is false.",
             "items": {
               "description": "An MCP server for the run: `url` (streamable HTTP, reachable from inside\nthe Space) or `command` (stdio, run in the Space).",
               "properties": {
@@ -1598,12 +1610,24 @@
             "description": "Git URL cloned into the working directory first.",
             "type": "string"
           },
+          "sandbox_mcp": {
+            "description": "Give the agent the Space's own MCP tools. Default true.",
+            "type": "boolean"
+          },
           "show": {
             "description": "Open a terminal on the Space's desktop following the run. Default\nfalse.",
             "type": "boolean"
           },
+          "skills": {
+            "description": "Copy the cua skills into the harness. Default true.",
+            "type": "boolean"
+          },
           "space": {
             "description": "Space id or name.",
+            "type": "string"
+          },
+          "wire": {
+            "description": "The wire format of `base_url`: `anthropic`, `openai-responses`,\n`openai-chat` or `gemini`. Default: the harness's own.",
             "type": "string"
           }
         },
@@ -1965,7 +1989,7 @@
       "name": "agent_capabilities",
       "category": "agents",
       "description": "Report what the agent harnesses support.",
-      "instructions": "Every harness: readiness, what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
+      "instructions": "Every harness: readiness (including whether a credential is available, with a hint when not), what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
       "platforms": [
         "macos",
         "windows",
@@ -1992,7 +2016,7 @@
       "sdk_symbol": "space.agents.harnessCapabilities()",
       "rust_symbol": "agents::capabilities",
       "notes": [],
-      "result": "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
+      "result": "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Agents) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
       "errors": [],
       "input_schema": {
         "properties": {},
@@ -2065,7 +2089,7 @@
           },
           "env_from_host": {
             "default": [],
-            "description": "Provider key variables forwarded from this server's environment at\nevery start, for example [\"ANTHROPIC_API_KEY\"]. Names only.",
+            "description": "Provider key variables forwarded from this server's environment (or\nthe keys saved in Cua Spaces) at every start, for example\n[\"ANTHROPIC_API_KEY\"]. Names only.",
             "items": {
               "type": "string"
             },
@@ -4253,7 +4277,7 @@
       "sdk_symbol": "spaces.volumeMountStatus()",
       "rust_symbol": "cua_volume::service::DriveService::mount_status",
       "notes": [],
-      "result": "JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`.",
+      "result": "JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`; plus the Spaces' own: `volumes` (mounted in a Space: `space`, `mount_path`, `backend`, `principal`) and `volume_errors` (each `space` and `error`: why a Space has no Cua Volume, for example no /dev/fuse in a container on runc).",
       "errors": [
         "forbidden"
       ],

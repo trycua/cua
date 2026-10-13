@@ -312,8 +312,17 @@ pub fn validate_setup(mut request: HostSetupRequest) -> Result<HostSetupRequest,
     }
 }
 
-/// The relay host setup joins unless the form names another.
+/// The production relay. Host setup joins [`default_relay_url`] unless the
+/// form names another.
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
+
+/// The relay host setup joins unless the form names another:
+/// `CUA_RELAY_URL`, else the relay of `CUA_ENV` ([`DEFAULT_RELAY_URL`] in
+/// production).
+pub fn default_relay_url() -> String {
+    cua_home::env::relay_url()
+}
+
 /// The direct mode's default listen address.
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:3211";
 
@@ -1467,7 +1476,7 @@ impl Default for HostFormState {
             advanced: false,
             direct: false,
             listen: DEFAULT_LISTEN.into(),
-            relay_url: DEFAULT_RELAY_URL.into(),
+            relay_url: default_relay_url(),
             busy: false,
             error: None,
             spare: false,
@@ -1730,7 +1739,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "relay",
                 "Relay",
-                DEFAULT_RELAY_URL,
+                &default_relay_url(),
                 &s.relay_url,
                 bad,
                 true,

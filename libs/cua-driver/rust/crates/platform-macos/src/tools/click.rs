@@ -222,6 +222,20 @@ fn background_pixel_restore_pid(
     }
 }
 
+/// Poll until `pid` is the frontmost application or `budget` runs out.
+async fn wait_until_frontmost(pid: i32, budget: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if apps::frontmost_pid() == Some(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
@@ -230,7 +244,7 @@ fn def() -> &'static ToolDef {
             - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n\
             - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\
             \n\
-            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open (holding key focus) until dismissed; to choose an option use `set_value`.".into(),
+            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` is conditionally required — needed for window/element clicks
@@ -247,7 +261,7 @@ fn def() -> &'static ToolDef {
                 "capture_id": { "type": "string", "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target)." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
-                "action":        { "type": "string",  "description": "AX action." },
+                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer." },
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
@@ -464,6 +478,9 @@ impl Tool for ClickTool {
             .opt_f64("y")
             .or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action = args.str_or("action", "press");
+        if let Err(error) = validate_click_action(&action, element_guard.is_some()) {
+            return ToolResult::error(format!("click: {error}"));
+        }
         // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
         // Pixel path: routes to left/right/middle CGEvent primitives.
         // AX path: "right" delegates to AXShowMenu (same surface as right_click);
@@ -775,6 +792,7 @@ impl Tool for ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
+            let acted_at = std::time::Instant::now();
             let changes = super::finish_window_observation(snapshot).await;
 
             match result {
@@ -790,8 +808,11 @@ impl Tool for ClickTool {
                 ))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
+                    // The window watch above already used part of it.
                     if needs_webkit_delay {
-                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        let settle = std::time::Duration::from_millis(800)
+                            .saturating_sub(acted_at.elapsed());
+                        tokio::time::sleep(settle).await;
                     }
                     msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning
@@ -1142,6 +1163,34 @@ impl Tool for ClickTool {
                 }
             };
 
+            // A raw click can open a menu (a popup drawn without AX, a canvas
+            // context menu); keep the user's key focus if it does.
+            let _key_focus = if fg {
+                None
+            } else {
+                tokio::task::spawn_blocking(move || crate::key_focus_guard::protect(pid))
+                    .await
+                    .ok()
+                    .flatten()
+            };
+
+            // The user's key window, read before the click, so the restore
+            // below hands key status back to exactly that window.
+            let prior_key_wid = match prior_front {
+                Some(prior)
+                    if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
+                        && prior != pid =>
+                {
+                    tokio::task::spawn_blocking(move || {
+                        crate::input::skylight::key_window_of_pid(prior)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                }
+                _ => None,
+            };
+
             // Restore the Swift background-click prologue that was left
             // disconnected in the original Rust port. It makes an opaque
             // target AppKit-active without raising/restacking its window, which
@@ -1281,21 +1330,31 @@ impl Tool for ClickTool {
                 && prior_front != Some(pid)
             {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Some(previous_pid) = background_pixel_restore_pid(
+                let reactivated = if let Some(previous_pid) = background_pixel_restore_pid(
                     activation_policy,
                     prior_front,
                     pid,
                     apps::frontmost_pid(),
                 ) {
                     let _ = apps::activate_pid(previous_pid);
-                } else if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
-                    // The prior app is still frontmost, but the no-raise
-                    // recipe posted it a defocus record: hand its key window
-                    // focus back so the user's typing keeps landing there.
-                    if focus_without_raise && apps::frontmost_pid() == Some(previous_pid) {
+                    wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
+                    true
+                } else {
+                    false
+                };
+                // The prologue leaves the user's window key, but the click can
+                // still make the target self-activate, and re-activating the
+                // prior app does not by itself make its window key again.
+                // Post the focus record to the user's window in both cases so
+                // their typing keeps landing there.
+                if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
+                    if (focus_without_raise || reactivated)
+                        && apps::frontmost_pid() == Some(previous_pid)
+                    {
                         let _ = tokio::task::spawn_blocking(move || {
                             crate::input::skylight::restore_focus_after_without_raise(
                                 previous_pid,
+                                prior_key_wid,
                                 pid,
                                 wid,
                             )
@@ -1307,9 +1366,10 @@ impl Tool for ClickTool {
 
             let changes = super::finish_window_observation(snapshot).await;
 
-            let button_label = match button_str.as_str() {
-                "right" => "right-click",
-                "middle" => "middle-click",
+            let button_label = match (button_str.as_str(), count) {
+                ("right", _) => "right-click",
+                ("middle", _) => "middle-click",
+                (_, 2) => "double-click",
                 _ => "click",
             };
             match result {
@@ -1371,7 +1431,7 @@ fn perform_ax_click(
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
-    let ax_action = map_action(action_str);
+    let ax_action = crate::input::ax_actions::map_action(action_str)?;
     let element = element_ptr as AXUIElementRef;
 
     // Check the live value immediately before dispatch. Foreground assist can
@@ -1587,9 +1647,9 @@ fn perform_ax_click(
             if !options.is_empty() {
                 let opt_list = options.join(", ");
                 summary.push_str(
-                    "\n\n⚠️ This is a popup/select button. The native macOS menu closes \
-                     immediately when the window is in the background. Do NOT use click \
-                     again — instead, use:\n  set_value(pid, element_token, value)\n\
+                    "\n\nThis is a popup/select button; its menu is open. Choose an item \
+                     by clicking its AXMenuItem from a fresh get_window_state, or select \
+                     in one call with:\n  set_value(pid, element_token, value)\n\
                      Available options: [",
                 );
                 summary.push_str(&opt_list);
@@ -1670,23 +1730,34 @@ mod selection_fallback_tests {
     }
 }
 
-fn map_action(action: &str) -> &'static str {
-    match action.to_lowercase().as_str() {
-        "press" | "click" => "AXPress",
-        "show_menu" | "right_click" => "AXShowMenu",
-        "pick" => "AXPick",
-        "confirm" => "AXConfirm",
-        "cancel" => "AXCancel",
-        "open" => "AXOpen",
-        _ => "AXPress",
-    }
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+/// Check `click`'s `action` before any dispatch. Element clicks take the
+/// AX action names `map_action` knows. A pixel click also takes `focus`: the
+/// background focus rung that pixel `type_text`, `press_key` and `scroll`
+/// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
+/// AXFocused on the element under the point instead of pressing it.
+fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
+    if !element_target && action == "focus" {
+        return Ok(());
+    }
+    crate::input::ax_actions::map_action(action).map(|_| ())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pixel focus rung keeps working after unknown AX action names
+    /// started refusing: background pixel typing into Electron depended on it.
+    #[test]
+    fn pixel_click_accepts_the_internal_focus_action() {
+        assert!(validate_click_action("focus", false).is_ok());
+        assert!(validate_click_action("press", false).is_ok());
+        assert!(validate_click_action("show_alternate_ui", true).is_ok());
+        assert!(validate_click_action("focus", true).is_err());
+        assert!(validate_click_action("hover", false).is_err());
+    }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns
     /// -25205. Only a radio button or checkbox qualifies for the read-back.

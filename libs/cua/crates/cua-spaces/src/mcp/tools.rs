@@ -726,7 +726,7 @@ fn extension_capability(tool: &str) -> Option<&'static str> {
 
 #[cfg(feature = "spaces-agents")]
 async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
-    use crate::agents::{self as ag, McpServer, RunOptions};
+    use crate::agents as ag;
     let space_arg = a
         .get("space")
         .and_then(Value::as_str)
@@ -775,41 +775,10 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                 };
             }
             let a: i::AgentStart = args(tool, a)?;
-            let (host_env, missing) = ag::env_from_host(&a.env_from_host)?;
-            let mut env = a.env.clone();
-            env.extend(host_env);
-            let endpoint = a.base_url.map(|base_url| ag::Endpoint {
-                base_url,
-                wire: None,
-                model: a.model.clone(),
-            });
-            let started = agents
-                .start(
-                    &a.agent,
-                    &a.prompt,
-                    RunOptions {
-                        cwd: a.cwd,
-                        repo: a.repo,
-                        branch: a.branch,
-                        env,
-                        mcp_servers: a
-                            .mcp_servers
-                            .into_iter()
-                            .map(|m| McpServer {
-                                name: m.name,
-                                url: m.url,
-                                command: m.command,
-                                args: m.args,
-                                ..Default::default()
-                            })
-                            .collect(),
-                        endpoint,
-                        model: a.model,
-                        exit_when_idle: a.exit_when_idle.unwrap_or(false),
-                        ..Default::default()
-                    },
-                )
-                .await;
+            // The caller's env, the env_from_host keys, and the keys saved
+            // in Cua Spaces that this harness reads.
+            let (opts, missing) = ag::start_options(&a)?;
+            let started = agents.start(&a.agent, &a.prompt, opts).await;
             // The MCP `agent_start`, the SDKs' `Space.agent_start` and the
             // Spaces app all arrive here.
             let started = match started {
@@ -818,13 +787,38 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                     started
                 }
                 Err(e) => {
-                    let e = Error::from(e);
+                    // A missing credential names the env_from_host keys
+                    // this server could not forward.
+                    let e = match e {
+                        cua_agents::Error::NoCredential(m) if !missing.is_empty() => {
+                            Error::Agent(format!(
+                                "{m}. Named in env_from_host but not set in this server's environment: {}",
+                                missing.join(", ")
+                            ))
+                        }
+                        e => Error::from(e),
+                    };
                     ag::telemetry::start_failed(&a.agent, &s.id().to_string(), "spaces_tool", &e);
                     return Err(e);
                 }
             };
             if a.show.unwrap_or(false) {
                 show(&s, &started.run_dir, &started.run_id).await;
+            }
+            // The daemon notifies the user once when the run or a turn of
+            // it fails (persistent agents' runs have their own supervisor).
+            if let Some(ext) = spaces.extension_for(ag::WATCH_OP) {
+                let call = crate::extension::ToolCall {
+                    spaces,
+                    tool: ag::WATCH_OP,
+                    args: json!({"space": s.id().to_string(), "run_id": started.run_id,
+                                 "agent": started.harness}),
+                    broker: None,
+                    pinned: Some(&s),
+                };
+                if let Err(e) = ext.call_tool(call).await {
+                    tracing::warn!(run = %started.run_id, error = %e, "agent run not watched");
+                }
             }
             let mut notes = started.notes.clone();
             for m in missing {

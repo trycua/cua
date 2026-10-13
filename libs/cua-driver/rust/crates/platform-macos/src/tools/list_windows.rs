@@ -12,7 +12,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_windows".into(),
-        description: "List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). Use it to find a `window_id` for get_window_state. AppKit-internal helper windows are omitted.\n\
+        description: "List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.\n\
             \n\
             Per record: window_id, pid, app_name, title, bounds, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.".into(),
         input_schema: serde_json::json!({
@@ -21,6 +21,10 @@ fn def() -> &'static ToolDef {
                 "pid": {
                     "type": "integer",
                     "description": "Only this pid's windows."
+                },
+                "app": {
+                    "type": "string",
+                    "description": cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION
                 },
                 "on_screen_only": {
                     "type": "boolean",
@@ -57,6 +61,22 @@ impl Tool for ListWindowsTool {
 
         if let Some(pid) = pid_filter {
             windows.retain(|w| w.pid == pid);
+        }
+        // The driver's own windows (the agent cursor overlay) are not targets.
+        let own_pid = std::process::id() as i32;
+        windows.retain(|w| w.pid != own_pid);
+        if let Some(filter) = args.opt_str("app") {
+            let mut bundle_ids = std::collections::HashMap::new();
+            windows.retain(|w| {
+                let bundle_id = bundle_ids
+                    .entry(w.pid)
+                    .or_insert_with(|| crate::apps::bundle_id_for_pid(w.pid));
+                cua_driver_core::tool_args::app_filter_matches(
+                    &filter,
+                    &w.app_name,
+                    bundle_id.as_deref(),
+                )
+            });
         }
         crate::windows::retain_ax_reachable(&mut windows, current_space_id);
 

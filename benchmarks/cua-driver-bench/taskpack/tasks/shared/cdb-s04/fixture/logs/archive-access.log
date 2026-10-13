@@ -1,0 +1,4 @@
+2026-07-21T13:43:02Z correlation=arc-7f31 route=overlay_route record=vesper-17 view=overlay outcome=display signature=legacy-empty-layers ref=arc-7f31:overlay_route:legacy-empty-layers
+2026-07-23T16:09:18Z correlation=arc-9b04 route=overlay_route record=vesper-21 view=overlay outcome=display signature=legacy-empty-layers ref=arc-9b04:overlay_route:legacy-empty-layers
+2026-07-24T10:27:44Z correlation=arc-2d88 route=overlay_route record=tide-08 view=overlay outcome=accepted signature=overlay-layer-ready ref=arc-2d88:overlay_route:overlay-layer-ready
+2026-07-25T08:52:31Z correlation=arc-4c16 route=summary_route record=tide-11 view=summary outcome=display signature=summary-notes-empty ref=arc-4c16:summary_route:summary-notes-empty

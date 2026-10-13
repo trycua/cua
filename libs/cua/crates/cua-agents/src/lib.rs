@@ -33,6 +33,9 @@ pub enum Error {
     Unsupported(String),
     #[error("not found: {0}")]
     NotFound(String),
+    /// The run has no credential (nothing installed or started).
+    #[error("{0}")]
+    NoCredential(String),
     #[error("install failed: {0}")]
     Install(String),
     #[error("timed out: {0}")]

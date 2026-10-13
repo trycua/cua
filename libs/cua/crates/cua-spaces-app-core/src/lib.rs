@@ -25,14 +25,18 @@
 //! | [`teleport`] | picker filters and primary action, the review gate, drag-to-notch, transfer overlay |
 //! | [`keyvault`] | grouping, consent chips, decisions, categories, the approval sheet, the broker client |
 //! | [`onboarding`] | the first-run steps |
+//! | [`checklist`] | the getting-started checklist: its steps, what ticks them off, its usage events |
+//! | [`palette`] | the command palette's ranking and the shared keyboard shortcuts |
 //! | [`driver_preview`] | the AI agents page's background computer-use card (its animated miniature) |
 //! | [`settings`] | hotkey format, defaults, the settings file, the Settings page |
 //! | [`experiments`] | Settings, Experiments: one switch per feature still being built, and what each hides while off |
 //! | [`login_item`] | launch at login: the Settings toggle, the first run's Done checkbox, when the app turns it on |
+//! | [`agent_keys`] | Settings, Agents: the provider keys agents get (rows, the add or replace sheet, names refused, the remove question) |
 //! | [`about`] | Settings, About: name, version, links, the update controls; the refresh after an update |
 //! | [`notch`] | notch geometry, notch mode and tiles |
 //! | [`window`] | the main window's chrome (account line, New Space, empty state) and the menu bar item's menu |
 //! | [`host`] | "This machine": the roster entry, its page, the host setup form and its validation |
+//! | [`machines`] | the Machines page's list: each computer once (a relay machine and its device merged), online, and which ones New Space can run on |
 //! | [`devices`] | this device's relay enrollment, the account's devices, approvals (with presence) and the access log |
 //! | [`persistent`] | the Agents page: persistent agents, pause and resume, one agent's memory, routines and computer access |
 //! | [`drive_page`] | the Drive page: browse the Cua Volume, access requests (with presence) and grants, sync per device, conflicts, Open in Finder |
@@ -50,8 +54,10 @@
 //! | [`parity`] | the scripted flows every shell replays |
 
 pub mod about;
+pub mod agent_keys;
 pub mod agents;
 pub mod billing;
+pub mod checklist;
 pub mod cloud_connect;
 pub mod devices;
 pub mod dispatch;
@@ -66,15 +72,18 @@ pub mod host;
 pub mod installer;
 pub mod keyvault;
 pub mod login_item;
+pub mod machines;
 pub mod model;
 pub mod notch;
 pub mod notifications;
 pub mod onboarding;
 pub mod onboarding_preview;
+pub mod palette;
 pub mod parity;
 pub mod paths;
 pub mod persistent;
 pub mod presence;
+pub mod relay_usage;
 pub mod settings;
 pub mod share;
 pub mod spaces;

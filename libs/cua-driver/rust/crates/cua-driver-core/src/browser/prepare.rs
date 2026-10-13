@@ -925,9 +925,106 @@ impl BrowserEngine {
         })
     }
 
+    /// Existing-profile attachment, plus the foreground bookkeeping around
+    /// it: with `delivery_mode:"foreground"`, the app that was in front
+    /// before the call is brought back once the browser's setup and consent
+    /// prompt are done, instead of leaving the browser in front.
     async fn attach_existing_profile(
         &self,
         request: PrepareRequest,
+    ) -> Result<PrepareOutcome, BrowserRefusal> {
+        let browser_pid = request.pid;
+        // Where the platform can guard it (macOS: the browser window is on
+        // another Space), attach in the background under the guard instead of
+        // refusing.
+        let background_guard = match (browser_pid, request.window_id) {
+            (Some(pid), Some(window_id))
+                if !request.foreground
+                    && self
+                        .platform
+                        .existing_profile_attach_background_limitation()
+                        .is_some()
+                    && self.platform.frontmost_app_pid() != Some(pid) =>
+            {
+                self.platform.guard_background_attach(pid, window_id)
+            }
+            _ => None,
+        };
+        let guarded = background_guard.is_some();
+        let previous_front = match browser_pid {
+            Some(pid) if request.foreground || guarded => self
+                .platform
+                .frontmost_app_pid()
+                .filter(|front| *front != pid),
+            _ => None,
+        };
+        let mut result = self.attach_existing_profile_checked(request, guarded).await;
+        drop(background_guard);
+        if let (Some(previous), Some(pid)) = (previous_front, browser_pid) {
+            let restored = self.platform.restore_frontmost_app(previous, pid);
+            match &mut result {
+                Ok(outcome) => outcome.side_effects.restored_frontmost_app = restored,
+                Err(error) => {
+                    if let Some(serde_json::Value::Object(detail)) = error.detail.as_mut() {
+                        detail.insert(
+                            "restored_frontmost_app".to_owned(),
+                            serde_json::Value::Bool(restored),
+                        );
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Refuse a background attachment the platform cannot make without
+    /// bringing the browser in front of the user's app. Runs after the
+    /// read-only target proofs and before discovery, setup or any connection,
+    /// so a refusal has no visible effect.
+    fn existing_profile_background_check(
+        &self,
+        pid: i64,
+        foreground: bool,
+    ) -> Result<(), BrowserRefusal> {
+        if foreground {
+            return Ok(());
+        }
+        let Some(limitation) = self
+            .platform
+            .existing_profile_attach_background_limitation()
+        else {
+            return Ok(());
+        };
+        let frontmost = self.platform.frontmost_app_pid();
+        if frontmost == Some(pid) {
+            return Ok(());
+        }
+        Err(refusal(
+            BrowserRefusalCode::BackgroundUnavailable,
+            format!(
+                "{limitation}, so attaching now would bring the browser in front of the app the \
+                 user is working in. Nothing was changed. A browser window on another Space than \
+                 the user's attaches in the background: keep or put it on another Space and \
+                 retry. Retry with delivery_mode:\"foreground\" only when nobody is using this \
+                 screen or the user agreed to the browser coming forward; the driver then brings \
+                 the user's app back. Otherwise work from the window's accessibility tree and \
+                 screenshot (get_window_state), which need no attachment."
+            ),
+        )
+        .with_detail(serde_json::json!({
+            "limitation": limitation,
+            "browser_pid": pid,
+            "frontmost_pid": frontmost,
+            "alternative_delivery_mode": "foreground",
+            "background_attach_requires": "browser_window_on_another_space",
+            "visible_effects": false,
+        })))
+    }
+
+    async fn attach_existing_profile_checked(
+        &self,
+        request: PrepareRequest,
+        guarded: bool,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         enum ConsentPath {
             Protected,
@@ -1014,6 +1111,7 @@ impl BrowserEngine {
             ));
         }
         self.native_window_checked(pid, window_id).await?;
+        self.existing_profile_background_check(pid, request.foreground || guarded)?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
         let mut setup = ExistingProfileSetupOutcome::default();
         let setup_request = ExistingProfileSetupRequest {

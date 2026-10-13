@@ -16,6 +16,7 @@ import type {
   AppGpuChoice,
   AppCloudPricing,
   AppLocalStorage,
+  AppMachinePageRow,
   AppMainChrome,
   AppRosterAction,
   AppRosterState,
@@ -33,6 +34,7 @@ import type {
 } from "../native/generated/index";
 import type { LocalRuntimes, SpacesBackend } from "./backend";
 import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
+import { ChecklistModel } from "./checklist";
 import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
 import { NotchActivity } from "./activity";
@@ -45,7 +47,7 @@ import { SpaceThumbnails } from "./thumbnails";
 import { TimeoutError, sleep, withTimeout } from "./time";
 
 /** What changed, for the page's events. */
-export type ModelChange = "spaces" | "session" | "settings" | "machines" | "agents" | "keyvault";
+export type ModelChange = "spaces" | "session" | "settings" | "machines" | "agents" | "keyvault" | "checklist";
 
 export interface AppModelDeps {
   native: Native;
@@ -67,6 +69,12 @@ export interface AppModelDeps {
   servicesIn: () => boolean;
   /** CPUs this machine has (the wizard's limit). */
   cpus: number;
+  /** Where the getting-started checklist is kept (null: in memory). */
+  checklistPath?: string | null;
+  /** A checklist to start from when there is none yet (the SwiftUI app's, on macOS). */
+  checklistSeedPath?: string | null;
+  /** The system this app runs on (names This machine on the Machines page). */
+  hostOs?: AppSpaceOs;
 }
 
 /** The create the daemon never took. */
@@ -93,6 +101,11 @@ export class AppModel {
   /** Agents: the persistent agents, a Space's runs, the provider keys and the coding agents. */
   readonly agents: AgentsModel;
   readonly keyvault: KeyvaultModel;
+  /** The getting-started checklist: the app's one copy. */
+  readonly checklist: ChecklistModel;
+  /** Agent runs seen in any Space (the page's Agents page): "Run an agent". */
+  agentRunsSeen = 0;
+  readonly hostOs: AppSpaceOs;
   readonly settingsPath: string;
   settings: AppSettings;
   roster: AppRosterState;
@@ -160,6 +173,8 @@ export class AppModel {
   private hostInFlight: Promise<void> | null = null;
   private createTicker: NodeJS.Timeout | null = null;
   private readonly listeners = new Set<(change: ModelChange) => void>();
+  /** The persistent agents were read for the checklist. */
+  private checklistReadAgents = false;
 
   constructor(d: AppModelDeps) {
     this.native = d.native;
@@ -182,6 +197,10 @@ export class AppModel {
       return id?.startsWith("relay:") ? id : null;
     };
     this.keyvault = d.keyvault ?? new KeyvaultModel(d.native, null);
+    this.hostOs = d.hostOs ?? d.native.AppSpaceOs.Macos;
+    this.checklist = new ChecklistModel(d.native, d.checklistPath ?? null, d.checklistSeedPath ?? null);
+    this.checklist.telemetry = d.telemetry;
+    this.checklist.onChange = () => this.changed("checklist");
     this.settingsPath = d.settingsPath;
     this.servicesInNow = d.servicesIn;
     this.maxCpus = Math.max(2, Math.min(16, d.cpus));
@@ -228,6 +247,59 @@ export class AppModel {
 
   changed(change: ModelChange): void {
     for (const l of [...this.listeners]) l(change);
+    // The checklist ticks off what the app shows, whichever page is open.
+    if (change === "spaces" || change === "machines" || change === "agents") this.observeChecklist();
+  }
+
+  // MARK: Machines and getting started
+
+  /** What each machine sharing its desktop (`relay:<machine>`) reported as its hostname, by machine id. */
+  get relayHostnames(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const space of this.spaces) {
+      if (!space.id.startsWith("relay:") || space.host) continue;
+      const name = this.backend.reportedHostname(space.id);
+      if (name) out[space.id.slice(6)] = name;
+    }
+    return out;
+  }
+
+  /** The Machines page's rows (the core's `machines::page_rows`, as the SwiftUI app lists them). */
+  get machinePageRows(): AppMachinePageRow[] {
+    const devices = this.devices.snapshot === null ? [] : this.devices.input.devices.map((d) => ({
+      id: d.id,
+      name: d.name,
+      platform: d.platform ?? "",
+      lastSeen: d.lastSeen,
+      current: d.current,
+      state: d.state,
+    }));
+    return this.native.appMachinesPageRows({
+      hostOs: this.hostOs,
+      spaces: this.spaces,
+      devices,
+      hostnames: new Map(Object.entries(this.relayHostnames)),
+      presence: new Map(Object.entries(this.devices.relayOnline)),
+      now: BigInt(Math.floor(Date.now() / 1000)),
+    });
+  }
+
+  /** A Space's agent runs were read: `count` of them. */
+  sawAgentRuns(count: number): void {
+    if (count <= this.agentRunsSeen) return;
+    this.agentRunsSeen = count;
+    this.observeChecklist();
+  }
+
+  /** Ticks the checklist off from what the app shows (the core's one reading). */
+  observeChecklist(): void {
+    const seen = this.native.appChecklistObserveFrom({
+      machines: this.machinePageRows,
+      spaces: this.spaces,
+      agents: this.agents.persistent.count,
+      runs: this.agentRunsSeen,
+    });
+    this.checklist.send(seen);
   }
 
   get servicesIn(): boolean {
@@ -414,6 +486,13 @@ export class AppModel {
         if (first) this.selectedSpaceId = first;
       }
       this.changed("spaces");
+      // The checklist's "Run an agent": read the persistent agents once
+      // (the Agents page reads them again when it opens).
+      const runAgent = this.native.AppChecklistStep.RunAgent;
+      if (!this.checklistReadAgents && this.servicesIn && !this.checklist.state.done.includes(runAgent)) {
+        this.checklistReadAgents = true;
+        void this.agents.persistent.load();
+      }
       // A preview for every running Space from the daemon's cache (it
       // survives restarts), before one is opened.
       void this.thumbnails.warm(this.streamableSpaceIds);

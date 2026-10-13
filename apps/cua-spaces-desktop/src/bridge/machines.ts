@@ -19,13 +19,7 @@ export function hostStatus(model: AppModel): unknown {
 
 /** `relay:<machine>` rows' reported hostnames, by machine id. */
 export function relayHostnames(model: AppModel): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const space of model.spaces) {
-    if (!space.id.startsWith("relay:") || space.host) continue;
-    const name = model.backend.reportedHostname(space.id);
-    if (name) out[space.id.slice(6)] = name;
-  }
-  return out;
+  return model.relayHostnames;
 }
 
 export function machinesState(model: AppModel) {
@@ -44,6 +38,9 @@ export function machinesState(model: AppModel) {
     // Who the relay sees connected now.
     presence: devices.relayOnline,
     deviceStates: devices.deviceStates,
+    // The page's rows as the core lists them (`machines::page_rows`), the
+    // same the SwiftUI Machines page shows.
+    rows: encode(model.machinePageRows),
   };
 }
 

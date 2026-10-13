@@ -209,3 +209,33 @@ describe.skipIf(!wasmBuilt)("a Space's Agents rows (wasm core)", () => {
     expect(row!.line).toMatch(/^Claude Code · /);
   });
 });
+
+describe("the Machines page's rows from the host (machines.pageRows)", () => {
+  it("lists the host's core rows as they are: devices of their own, a machine that stopped sharing", () => {
+    const rows = toMachineRows(
+      { spaces: [{ space: { id: "relay:b695", detail: "Not reachable" } }] } as never,
+      {
+        devices: { rows: [{ id: "dev_l1", name: "Laptop", platform: "macOS", current: false, detail: "macOS · Enrolled" }] },
+        signedIn: true,
+        thisMachine: { status: "local", statusText: "Sharing", detail: "Sharing · Relay" },
+        deviceStates: { dev_l1: "enrolled" },
+        rows: [
+          { id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: "dev_me", deviceOnly: false, spaceId: "this-mac", stoppedSharing: false, lastSeen: 1799999990 },
+          { id: "b695", name: "studio-2.local", online: true, os: "macos", via: "relay", current: false, device: "dev_s", deviceOnly: false, spaceId: "relay:b695", stoppedSharing: true, lastSeen: null },
+          { id: "dev_l1", name: "Laptop", online: false, os: "macos", via: "relay", current: false, device: "dev_l1", deviceOnly: true, spaceId: null, stoppedSharing: false, lastSeen: 1797000000 },
+        ],
+      },
+    );
+    expect(rows.map((r) => [r.id, r.name, r.online, Boolean(r.device), r.detail])).toEqual([
+      ["this-mac", "This Mac", true, false, "Sharing · Relay"],
+      ["b695", "studio-2.local", true, false, "Not reachable"],
+      ["dev_l1", "Laptop", false, true, "macOS · Enrolled"],
+    ]);
+    expect(rows[1]!.limits).not.toEqual([]);
+    expect(rows[2]!.deviceState).toBe("enrolled");
+    // Already each computer once: the store lists them as they are.
+    const machines = toMachines(rows, []);
+    expect(machines.map((m) => m.id)).toEqual(["this-mac", "b695", "dev_l1"]);
+    expect(machines[2]!.device).toBe(true);
+  });
+});

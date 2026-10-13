@@ -113,6 +113,7 @@ struct SpaceDetailView: View {
         .task(id: live) {
             guard detail.showSections else { return }
             let model = AgentRunsModel(backend: self.model.backend, spaceId: space.id)
+            model.onRead = { [weak app = self.model] in app?.sawAgentRuns($0) }
             agents = model
             await model.poll()
         }

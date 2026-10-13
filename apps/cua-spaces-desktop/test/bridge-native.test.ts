@@ -164,6 +164,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["clouds.status", {}],
       ["clouds.test", { target: { provider: "aws", region: "us-west-2" } }],
       ["clouds.connect", { target: { provider: "aws", region: "us-west-2" }, makeDefault: false }],
+      ["checklist.get", {}],
+      ["checklist.send", { action: { type: "done", step: "teleport" } }],
       ["session.signOut", {}],
     ];
     const problems: string[] = [];
@@ -474,6 +476,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "spaces.add": { url: "http://studio.local:7400", token: null, name: "studio" },
       "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+      "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
     const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);

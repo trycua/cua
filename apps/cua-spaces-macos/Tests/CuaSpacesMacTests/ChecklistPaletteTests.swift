@@ -68,10 +68,94 @@ struct ChecklistPaletteTests {
     @Test func machinesListThisMachineAndNoSpaces() async {
         let m = ViewModelTests().makeModel()
         await m.refresh()
-        let ids = m.machineRows.map(\.id)
+        let rows = m.machinePageRows
+        #expect(rows.first?.current == true)
+        #expect(rows.first?.id == "this-mac")
+        let ids = rows.map(\.id)
         #expect(!ids.contains("local:aurora"))
         #expect(!ids.contains("direct:10.0.0.5:3211"))
-        #expect(ids.allSatisfy { id in id.hasPrefix("relay:") || m.spaces.first { $0.id == id }.map { m.detail($0).isHost } == true })
+        #expect(Set(ids).count == ids.count, "each computer once")
+    }
+
+    /// A model signed in, with the fixture account's devices read.
+    private func signedInModel() async -> AppModel {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-machines-\(UUID().uuidString)")
+        let m = AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: nil),
+                         onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                         settingsPath: dir.appendingPathComponent("settings.json").path,
+                         telemetry: FixtureTelemetry(), devices: FixtureDevices())
+        await m.refresh()
+        m.devices.signedIn = true
+        await m.devices.refresh()
+        return m
+    }
+
+    /// CUA-1510: the classic Machines page lists the devices that are only
+    /// in the device list too (the New UI's rows: the core's page rows).
+    @Test func machinesListDevicesThatAreOnlyInTheDeviceList() async {
+        let m = await signedInModel()
+        let rows = m.machinePageRows
+        #expect(rows.first?.current == true)
+        #expect(rows.first?.device == "dev_mac", "this Mac and its device are one row")
+        let own = rows.filter(\.deviceOnly).map(\.name)
+        #expect(own.contains("Work laptop"))
+        #expect(own.contains("Old laptop"))
+        #expect(rows.filter(\.deviceOnly).allSatisfy { $0.spaceId == nil && !$0.current })
+        // The New UI gets the same rows from the bridge.
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let answer = bridge.machines()["rows"] as? [[String: Any]]
+        #expect(answer?.map { $0["id"] as? String } == rows.map(\.id))
+        // And a device of your own is another machine for the checklist.
+        if case let .observe(otherMachine, _, _) = m.checklistSeen {
+            #expect(otherMachine)
+        } else {
+            Issue.record("not an observation")
+        }
+    }
+
+    /// CUA-1509: the app ticks the checklist off itself, whichever UI is
+    /// open, and the New UI reads and changes the same copy.
+    @Test func bothUIsShareOneChecklist() async throws {
+        let m = await signedInModel()
+        // No view asked: the model followed what it shows.
+        for _ in 0..<20 where !m.checklist.state.done.contains(.addMachine) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(m.checklist.state.done.contains(.addMachine))
+        #expect(m.checklist.state.done.contains(.createSpace))
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let got = try await bridge.handle("checklist.get", [:]) as? [String: Any]
+        let words = ((got?["state"] as? [String: Any])?["done"] as? [String]) ?? []
+        #expect(words.contains("add_machine") && words.contains("create_space"))
+        #expect(m.checklist.view.progress == "\(words.count) of 5")
+        // The New UI ticks a step: the classic UI's copy has it.
+        _ = try await bridge.handle("checklist.send", ["action": ["type": "done", "step": "teleport"]])
+        #expect(m.checklist.state.done.contains(.teleport))
+        #expect(m.checklist.view.progress == "\(words.count + 1) of 5")
+        // What the page kept itself before is merged once, without events.
+        let telemetry = FixtureTelemetry()
+        m.checklist.telemetry = telemetry
+        let merged = try await bridge.handle("checklist.send", ["action": [
+            "type": "merge", "state": ["done": ["share", "nope"], "dismissed": false, "shown": true],
+        ]]) as? [String: Any]
+        let after = ((merged?["state"] as? [String: Any])?["done"] as? [String]) ?? []
+        #expect(after.contains("share") && !after.contains("nope"))
+        #expect(m.checklist.state.shown)
+        #expect(telemetry.recorded.isEmpty)
+        // The page never sends what the app shows.
+        await #expect(throws: WebUIBridge.Failure.self) {
+            _ = try await bridge.handle("checklist.send", ["action": ["type": "observe", "otherMachine": true]])
+        }
+    }
+
+    /// A Space's agent runs, read anywhere, tick "Run an agent".
+    @Test func agentRunsSeenTickRunAnAgent() async throws {
+        let m = await signedInModel()
+        m.sawAgentRuns(1)
+        for _ in 0..<20 where !m.checklist.state.done.contains(.runAgent) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(m.checklist.state.done.contains(.runAgent))
     }
 
     @Test func checklistButtonsGoWhereTheStepIsDone() async {

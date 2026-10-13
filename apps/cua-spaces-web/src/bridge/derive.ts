@@ -358,6 +358,7 @@ export function machinesInput(rows: MachineRow[], now: number): MachinesInput {
  * (`mergeMachines`). The device adds its detail and last session; a
  * device that is none of the machines stays a row of its own. */
 export function mergeMachineRows(rows: MachineRow[], core?: CoreClient, nowSecs = Math.floor(Date.now() / 1000)): MachineRow[] {
+  if (rows.some((r) => r.merged)) return rows;
   if (!rows.some((r) => r.device || r.presence != null)) return rows;
   const byId = new Map(rows.filter((r) => !r.device).map((r) => [r.id, r] as const));
   const devices = new Map(rows.filter((r) => r.device).map((r) => [r.id, r] as const));

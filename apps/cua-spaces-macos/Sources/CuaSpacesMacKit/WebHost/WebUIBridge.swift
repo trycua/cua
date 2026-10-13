@@ -103,6 +103,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // The getting-started checklist: the app's one copy (`ChecklistModel`).
+        "checklist.get", "checklist.send",
     ]
 
     let model: AppModel
@@ -273,6 +275,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure":
             return try await agents(method, args)
+
+        case "checklist.get": return ["state": model.checklist.stored]
+        case "checklist.send":
+            model.checklist.send(try checklistAction(args["action"]))
+            return ["state": model.checklist.stored]
         case "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
              "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
             return try await agentDetail(method, args)
@@ -430,17 +437,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // connect probe can time out on a host the relay reaches.
             "presence": model.devices.relayOnline,
             "deviceStates": model.devices.deviceStates,
+            // The page's rows as the core lists them (`machines::page_rows`,
+            // what the native Machines page shows).
+            "rows": BridgeValue.encode(model.machinePageRows),
         ]
     }
 
     /// `relay:<machine>` rows' reported hostnames, by machine id.
-    func relayHostnames() -> [String: String] {
-        var out: [String: String] = [:]
-        for space in model.spaces where space.id.hasPrefix("relay:") && space.host == nil {
-            if let name = model.backend.reportedHostname(id: space.id) { out[String(space.id.dropFirst(6))] = name }
-        }
-        return out
-    }
+    func relayHostnames() -> [String: String] { model.relayHostnames }
 
     func settings() -> [String: Any] {
         [
@@ -604,6 +608,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return try await persistent.listAgents()
         case "agents.runs":
             let runs = AgentRunsModel(backend: model.backend, spaceId: try string(args, "spaceId"))
+            runs.onRead = { [weak model] in model?.sawAgentRuns($0) }
             await runs.refresh()
             switch runs.load {
             case .ready(let rows): return BridgeValue.encode(rows)
@@ -879,6 +884,34 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
+    // MARK: - The checklist
+
+    /// A page's checklist action: a step done, shown, closed, opened again,
+    /// or progress the page kept itself before (merged once). What the app
+    /// shows ticks steps off here, not in the page (`AppModel.followChecklist`).
+    func checklistAction(_ raw: Any?) throws -> AppChecklistAction {
+        guard let a = raw as? [String: Any], let type = a["type"] as? String else {
+            throw Failure.badArgs("action: {type}")
+        }
+        switch type {
+        case "done":
+            guard let word = a["step"] as? String,
+                  let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
+            else { throw Failure.badArgs("step: one of the checklist's steps") }
+            return .done(step: step)
+        case "shown": return .shown
+        case "dismiss": return .dismiss
+        case "reopen": return .reopen
+        case "merge":
+            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown}") }
+            return .merge(state: ChecklistModel.state(done: s["done"] as? [String] ?? [],
+                                                      dismissed: s["dismissed"] as? Bool ?? false,
+                                                      shown: s["shown"] as? Bool ?? false))
+        default:
+            throw Failure.badArgs("action: done, shown, dismiss, reopen or merge")
+        }
+    }
+
     // MARK: - Events
 
     /// Tells the page when what it shows changed (it asks again).
@@ -897,6 +930,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let self else { return "" }
             return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
         }
+        followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }
         followChanges("agents.changed") { [model] in
             Self.signature([model.persistent.agentsInput["agents"] ?? NSNull(),
                             BridgeValue.encode(model.agentRows), model.agentsPending])

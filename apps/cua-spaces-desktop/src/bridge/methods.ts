@@ -43,6 +43,7 @@ export const METHODS = [
   "window.setBackgroundColor", "window.setDragRegions",
   "startup.get", "startup.act",
   "relay.usage",
+  "checklist.get", "checklist.send",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player, the

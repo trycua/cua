@@ -1470,6 +1470,66 @@
         "actionLabel"
       ]
     },
+    "MachinePageRow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "os": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string"
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deviceOnly": {
+          "type": "boolean"
+        },
+        "spaceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stoppedSharing": {
+          "type": "boolean"
+        },
+        "lastSeen": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "online",
+        "os",
+        "via",
+        "current",
+        "device",
+        "deviceOnly",
+        "spaceId",
+        "stoppedSharing",
+        "lastSeen"
+      ]
+    },
     "MachineRow": {
       "type": "object",
       "properties": {
@@ -1566,6 +1626,9 @@
               "type": "null"
             }
           ]
+        },
+        "merged": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3390,6 +3453,12 @@
               "type": "null"
             }
           ]
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MachinePageRow"
+          }
         }
       },
       "required": [
@@ -4082,6 +4151,66 @@
           "detail"
         ]
       }
+    },
+    "checklist.get": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dismissed": {
+              "type": "boolean"
+            },
+            "shown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "done",
+            "dismissed",
+            "shown"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "checklist.send": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dismissed": {
+              "type": "boolean"
+            },
+            "shown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "done",
+            "dismissed",
+            "shown"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ]
     },
     "clouds.connect": {
       "$ref": "#/$defs/CloudProviderWire"
@@ -5511,6 +5640,66 @@
         "version",
         "experiments",
         "methods"
+      ]
+    },
+    "checklist.get": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dismissed": {
+              "type": "boolean"
+            },
+            "shown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "done",
+            "dismissed",
+            "shown"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "checklist.send": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dismissed": {
+              "type": "boolean"
+            },
+            "shown": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "done",
+            "dismissed",
+            "shown"
+          ]
+        }
+      },
+      "required": [
+        "state"
       ]
     },
     "clouds.connect": {

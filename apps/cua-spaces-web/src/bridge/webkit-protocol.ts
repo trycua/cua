@@ -30,6 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
+import type { MachinePageRow } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
@@ -145,6 +146,8 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "checklist.get",
+  "checklist.send",
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -272,6 +275,9 @@ export interface WkMachines {
   /** Signed in, but this Mac cannot open the account's machines (never
    * enrolled, waiting, expired, revoked): `DevicesModel.accessNotice`. */
   accessNotice?: MachineAccessNotice | null;
+  /** The page's rows as the core lists them (`machines::page_rows`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  rows?: MachinePageRow[] | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */

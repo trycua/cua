@@ -2458,6 +2458,31 @@ pub fn app_checklist_reduce(
     core::checklist::reduce(&state, &action)
 }
 
+/// What the app shows as the checklist's `Observe` (every UI the same).
+#[uniffi::export]
+pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction {
+    core::checklist::observe_from(&seen)
+}
+
+/// The Machines page's rows: this machine, your machines, your devices of
+/// their own, each computer once.
+#[uniffi::export]
+pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePageRow> {
+    core::machines::page_rows(&input)
+}
+
+/// Machines page input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPageInput> {
+    from_json("machines page input", &json)
+}
+
+/// Checklist state from JSON, steps as words (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
+    from_json("checklist state", &json)
+}
+
 /// The getting-started checklist as drawn.
 #[uniffi::export]
 pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {

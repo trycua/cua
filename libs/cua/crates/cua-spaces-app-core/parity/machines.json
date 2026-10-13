@@ -1,6 +1,6 @@
 {
   "name": "machines",
-  "about": "The Machines page lists each computer once: a Mac on the relay and the enrolled device on it (named after its hostname) are one row, with the machine's id and friendlier name, online when the app reached it or the relay sees it connected. Two Macs that share a name are never merged. A device that is none of the machines is listed on its own (online after a session in the last 15 minutes), and is never a Run on choice.",
+  "about": "The Machines page lists each computer once: a Mac on the relay and the enrolled device on it (named after its hostname) are one row, with the machine's id and friendlier name, online when the app reached it or the relay sees it connected. Two Macs that share a name are never merged. A device that is none of the machines is listed on its own (online after a session in the last 15 minutes), and is never a Run on choice. The page itself (machines.pageRows) is built the same way in every UI from what the shell has: This machine first, then the machines its Spaces list shows (a machine sharing its own desktop, one that provides Spaces), then the devices of their own; a machine whose system is unknown still merges with its device.",
   "now": 1800000000,
   "cases": [
     {
@@ -45,6 +45,60 @@
         { "id": "dev_o", "name": "Old laptop", "platform": "linux", "lastSeen": 1797300000, "state": "expired" },
         { "id": "dev_x", "name": "Lost phone", "platform": "ios", "state": "revoked" }
       ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "a spare Mac with one Space, a machine that stopped sharing and devices only in the device list",
+      "input": {
+        "hostOs": "macos",
+        "now": 1800000000,
+        "spaces": [
+          { "name": "This Mac", "os": "macos", "status": "local", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "this-mac" },
+          { "name": "fbd1", "os": "linux", "status": "suspended", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "local:fbd1", "provider": "local" },
+          {
+            "name": "studio-2.local",
+            "os": "unknown",
+            "status": "suspended",
+            "detail": "",
+            "lastUsedAt": 0,
+            "scene": "linux-terminal",
+            "id": "relay:b6953d14ff94b10fcbb38bdd13c47824",
+            "provider": "relay",
+            "sdk": {
+              "features": [],
+              "spacesdVersion": "",
+              "reachable": false,
+              "error": "unauthenticated: studio-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+            }
+          }
+        ],
+        "devices": [
+          { "id": "dev_me", "name": "Mac.localdomain", "platform": "macos", "lastSeen": 1799999990, "current": true, "state": "enrolled" },
+          { "id": "dev_s", "name": "studio-2.local", "platform": "macos", "lastSeen": 1799000000, "state": "enrolled" },
+          { "id": "dev_byoc", "name": "BYOC tests", "platform": "macos", "lastSeen": 1797000000, "state": "enrolled" },
+          { "id": "dev_l1", "name": "Ana's MacBook Pro", "platform": "macos", "lastSeen": 1799999500, "state": "enrolled" },
+          { "id": "dev_l2", "name": "Ana's MacBook Pro", "platform": "macos", "lastSeen": 1796000000, "state": "expired" },
+          { "id": "dev_x", "name": "Lost phone", "platform": "ios", "state": "revoked" }
+        ],
+        "hostnames": {},
+        "presence": { "b6953d14ff94b10fcbb38bdd13c47824": false}
+      }
+    },
+    {
+      "name": "a machine that provides Spaces and one sharing its desktop, signed out",
+      "input": {
+        "hostOs": "linux",
+        "now": 1800000000,
+        "spaces": [
+          { "name": "Spare Mac mini", "os": "macos", "status": "running", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "relay:m-mini", "provider": "relay" },
+          { "name": "dev box", "os": "linux", "status": "running", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "relay:m-box/space-1", "provider": "relay", "host": "m-box", "hostName": "Build box" },
+          { "name": "ci", "os": "linux", "status": "suspended", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal", "id": "relay:m-box/space-2", "provider": "relay", "host": "m-box", "hostName": "Build box" }
+        ],
+        "devices": [],
+        "hostnames": { "m-mini": "mini.lan" },
+        "presence": { "m-box": true}
+      }
     }
   ]
 }

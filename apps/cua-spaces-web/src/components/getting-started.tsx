@@ -156,7 +156,9 @@ export function GettingStarted() {
 /**
  * Tells the checklist what the app already shows (another machine, a
  * Space, an agent; the core ticks those steps off) and answers Help >
- * Getting Started. Teleport and Share tick themselves off where they
+ * Getting Started. In the Mac app and Electron the host ticks those steps
+ * off itself (`checklist::observe_from`) and this page's observations are
+ * not sent; they count only where the page keeps its own copy (the demo). Teleport and Share tick themselves off where they
  * finish (`bridge/teleport.ts`, `bridge/share.ts`). Mounted once, under
  * the main layout.
  */

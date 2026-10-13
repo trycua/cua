@@ -12,6 +12,7 @@
     "keyvault",
     "site-login",
     "relay-security",
+    "mesh",
     "cua-volume",
     "use-from-an-agent",
     "updates"

@@ -42,6 +42,7 @@ import { KeyvaultModel } from "./keyvault";
 import type { AccountRunning, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SpaceThumbnails } from "./thumbnails";
+import { noLocalRuntimeReason } from "./local-runtime";
 import { TimeoutError, sleep, withTimeout } from "./time";
 
 /** What changed, for the page's events. */
@@ -468,7 +469,7 @@ export class AppModel {
       defaultLocation: this.settings.defaultLocation,
       cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
-      localReason: backends && backends.length === 0 ? "No local runtime found (Docker or Lume)." : undefined,
+      localReason: backends && backends.length === 0 ? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")) : undefined,
       localBackends: backends,
       localDetails: runtimes?.details,
       maxCpus: this.maxCpus,

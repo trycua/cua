@@ -83,8 +83,13 @@ for installer in sorted(glob.glob(f"/dist/Cua-Spaces-Setup-{VERSION}*.exe")):
             maps = glob.glob(os.path.join(res, "web", "**", "*.map"), recursive=True)
             check(f"[{arch}] no source maps in web/", not maps, f"{len(maps)} found")
             feed = open(os.path.join(res, "app-update.yml")).read()
-            check(f"[{arch}] update feed: GitHub placeholder, channel latest",
-                  "provider: github" in feed and "repo: cua-spaces-releases" in feed and "channel: latest" in feed)
+            # The build writes a generic feed at the repository's rolling
+            # `cua-spaces-latest` release (electron-builder.config.cjs); a prerelease
+            # version rides the `beta` channel, a stable one `latest`.
+            channel = "beta" if "-" in VERSION else "latest"
+            check(f"[{arch}] update feed: generic, cua-spaces-latest, channel {channel}",
+                  "provider: generic" in feed and "/releases/download/cua-spaces-latest" in feed and f"channel: {channel}" in feed,
+                  feed.replace("\n", " | "))
             files = asar_files(os.path.join(res, "app.asar"))
             for rel in ["package.json", "dist-electron/boot.cjs", "dist-electron/main.cjs", "dist-electron/preload.cjs"]:
                 check(f"[{arch}] app.asar has {rel}", rel in files)

@@ -130,6 +130,12 @@ fn well_known_sockets() -> Vec<PathBuf> {
 #[cfg(windows)]
 const WINDOWS_ENGINE_PIPE: &str = r"\\.\pipe\docker_engine";
 
+/// Docker Desktop's own Linux-engine pipe: present as soon as Docker Desktop
+/// has started, even when the CLI's `docker_engine` proxy pipe or the docker
+/// context file is not there yet (or was written after this process started).
+#[cfg(windows)]
+const WINDOWS_DESKTOP_LINUX_PIPE: &str = r"\\.\pipe\dockerDesktopLinuxEngine";
+
 /// How to get a container engine on this host, for "no engine found".
 pub fn install_hint() -> &'static str {
     match std::env::consts::OS {
@@ -274,6 +280,14 @@ pub fn discover() -> Option<EngineEndpoint> {
     if Path::new(WINDOWS_ENGINE_PIPE).exists() {
         return Some(EngineEndpoint {
             uri: "npipe:////./pipe/docker_engine".into(),
+            source: "socket".into(),
+            kind: EngineKind::DockerDesktop,
+        });
+    }
+    #[cfg(windows)]
+    if Path::new(WINDOWS_DESKTOP_LINUX_PIPE).exists() {
+        return Some(EngineEndpoint {
+            uri: "npipe:////./pipe/dockerDesktopLinuxEngine".into(),
             source: "socket".into(),
             kind: EngineKind::DockerDesktop,
         });

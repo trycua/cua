@@ -22,7 +22,7 @@ use crate::host::{EffectKind, HostCommand};
 use crate::host::{HostEffects, default_host};
 use crate::layout::chrome::{
     APP_IDS as CHROME_APP_IDS, PROFILE_DIRS, PROFILE_FILES, SESSION_FILES, TABS_JSON,
-    dest_rel_path, user_data_dir_for,
+    dest_rel_path, edge_user_data_dir_for, is_edge, user_data_dir_for,
 };
 use crate::providers::util::{add_dir_recursive, add_file_best_effort, dir_len, file_len};
 use crate::{
@@ -112,10 +112,15 @@ impl ChromeProvider {
     /// profile a plain `Chrome` launch uses, which is the right default because
     /// asking to teleport "my Chrome" means the one the user is signed in to.
     fn source_profile_dir(&self, platform: Platform) -> Option<PathBuf> {
+        self.source_profile_dir_for(platform, false)
+    }
+
+    /// [`Self::source_profile_dir`] for Microsoft Edge when `edge`.
+    fn source_profile_dir_for(&self, platform: Platform, edge: bool) -> Option<PathBuf> {
         if let Some(dir) = &self.profile_dir_override {
             return Some(dir.clone());
         }
-        let root = self.user_data_dir(platform)?;
+        let root = self.user_data_dir_for_browser(platform, edge)?;
         Some(match &self.profile_selector {
             Some(value) => Self::resolve_profile(&root, value),
             None => root.join("Default"),
@@ -124,7 +129,16 @@ impl ChromeProvider {
 
     /// The platform's Chrome user-data dir — the parent of every profile.
     fn user_data_dir(&self, platform: Platform) -> Option<PathBuf> {
-        Some(self.host.home_dir()?.join(user_data_dir_for(platform)))
+        self.user_data_dir_for_browser(platform, false)
+    }
+
+    fn user_data_dir_for_browser(&self, platform: Platform, edge: bool) -> Option<PathBuf> {
+        let rel = if edge {
+            edge_user_data_dir_for(platform)
+        } else {
+            user_data_dir_for(platform)
+        };
+        Some(self.host.home_dir()?.join(rel))
     }
 
     /// Interpret a profile selector: a path (absolute, or containing a
@@ -147,14 +161,18 @@ impl ChromeProvider {
     /// profile on disk would otherwise capture an empty bundle and look like a
     /// successful teleport, so name the profiles that do exist instead.
     fn resolved_profile_dir(&self, platform: Platform) -> Result<PathBuf> {
+        self.resolved_profile_dir_for(platform, false)
+    }
+
+    fn resolved_profile_dir_for(&self, platform: Platform, edge: bool) -> Result<PathBuf> {
         let dir = self
-            .source_profile_dir(platform)
+            .source_profile_dir_for(platform, edge)
             .ok_or_else(|| TeleportError::Provider("could not resolve home directory".into()))?;
         // Only an explicit selection is validated; a missing `Default` is left
         // to the existing per-item best-effort handling (Chrome may simply not
         // be installed, which is not an argument error).
         if self.profile_dir_override.is_none() && self.profile_selector.is_some() && !dir.is_dir() {
-            let available = self.available_profiles(platform);
+            let available = self.available_profiles_for(platform, edge);
             let available = if available.is_empty() {
                 "none found".to_string()
             } else {
@@ -172,7 +190,11 @@ impl ChromeProvider {
     /// callers offering a picker. A directory is a profile if it holds
     /// `Preferences`, which every real profile has and no sibling cache dir does.
     pub fn available_profiles(&self, platform: Platform) -> Vec<String> {
-        let Some(root) = self.user_data_dir(platform) else {
+        self.available_profiles_for(platform, false)
+    }
+
+    fn available_profiles_for(&self, platform: Platform, edge: bool) -> Vec<String> {
+        let Some(root) = self.user_data_dir_for_browser(platform, edge) else {
             return Vec::new();
         };
         let Ok(entries) = std::fs::read_dir(&root) else {
@@ -607,7 +629,7 @@ impl ExportProvider for ChromeProvider {
         _window: Option<&WindowRef>,
         scope: TransferScope,
     ) -> Result<TransferManifest> {
-        let profile_dir = self.resolved_profile_dir(app.platform)?;
+        let profile_dir = self.resolved_profile_dir_for(app.platform, is_edge(&app.app_id))?;
         let profile = profile_name(&profile_dir);
 
         let mut items = Vec::new();
@@ -692,7 +714,7 @@ impl ExportProvider for ChromeProvider {
         include: Option<&HashSet<String>>,
         out: &mut dyn Write,
     ) -> Result<()> {
-        let profile_dir = self.resolved_profile_dir(app.platform)?;
+        let profile_dir = self.resolved_profile_dir_for(app.platform, is_edge(&app.app_id))?;
         let profile = profile_name(&profile_dir);
 
         let mut writer = BundleWriter::with_limit(
@@ -758,6 +780,7 @@ impl ExportProvider for ChromeProvider {
                 if *name == "Cookies" {
                     let cookies = crate::browser_cookies::ChromeCookies::new(self.host.clone())
                         .with_platform(app.platform)
+                        .with_browser(if is_edge(&app.app_id) { "edge" } else { "chrome" })
                         .with_profile_dir(profile_dir.clone())
                         .read(&[])?;
                     if !cookies.is_empty() {
@@ -1618,6 +1641,41 @@ mod profile_selection_tests {
         // And it stays unvalidated, so an override to a not-yet-created dir
         // still reaches the existing best-effort item handling.
         assert!(provider.resolved_profile_dir(Platform::MacOS).is_ok());
+    }
+
+    #[test]
+    fn microsoft_edge_is_a_chromium_variant_with_its_own_user_data_dir() {
+        let provider = ChromeProvider::new();
+        for id in ["edge", "msedge", "Microsoft Edge", "com.microsoft.edgemac"] {
+            assert!(
+                provider.matches(&AppRef {
+                    app_id: id.into(),
+                    display_name: "Microsoft Edge".into(),
+                    platform: Platform::Windows,
+                }),
+                "{id}"
+            );
+            assert!(is_edge(id), "{id}");
+        }
+        assert!(!is_edge("chrome"));
+        let home = tempfile::tempdir().unwrap();
+        let provider = ChromeProvider::new().with_host(Arc::new(
+            crate::host::FakeHost::new().with_home(home.path()),
+        ));
+        let win = provider
+            .source_profile_dir_for(Platform::Windows, true)
+            .unwrap();
+        assert!(
+            win.ends_with("AppData/Local/Microsoft/Edge/User Data/Default"),
+            "{win:?}"
+        );
+        let chrome = provider
+            .source_profile_dir_for(Platform::Windows, false)
+            .unwrap();
+        assert!(
+            chrome.ends_with("AppData/Local/Google/Chrome/User Data/Default"),
+            "{chrome:?}"
+        );
     }
 
     #[test]

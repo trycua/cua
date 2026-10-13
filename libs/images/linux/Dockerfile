@@ -111,7 +111,7 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # arches do not always move together. CHROMIUM_VERSION, when set, wins.
 ARG CHROMIUM_VERSION=
 ARG CHROMIUM_VERSION_AMD64=155.0.8059.39-1xtradeb1.2404.1
-ARG CHROMIUM_VERSION_ARM64=154.0.8037.92-1xtradeb1.2404.1
+ARG CHROMIUM_VERSION_ARM64=155.0.8059.39-1xtradeb1.2404.1
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
     gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \

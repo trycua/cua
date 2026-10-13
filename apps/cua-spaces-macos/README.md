@@ -299,7 +299,12 @@ commits under this directory.
 scripts/build-release.sh --version 0.2.0 --out /tmp/spaces-release   # ad hoc signed, universal
 scripts/package-dmg.sh --app "/tmp/spaces-release/Cua Spaces.app" --out /tmp/cua-spaces.dmg
 scripts/verify-release.sh cua-spaces-0.2.0-darwin-universal.dmg      # a downloaded release
+scripts/verify-release.sh --dir assets --version 0.8.0-beta.6 \
+  --expect swift,electron,windows,appcast,feed                      # every asset of a release
 ```
+
+CD (`cd-cua-spaces.yml`, job `verify-release`) runs `verify-release.sh` on the
+signed and notarized build before anything is published.
 
 The disk image window is the spaces.cua.ai hero with the blue Cua Spaces key
 missing. The app, whose icon is that key, sits on the left. The Applications

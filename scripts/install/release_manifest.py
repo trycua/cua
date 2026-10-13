@@ -14,9 +14,17 @@ Artifact names it recognises (anything else in --dir is ignored):
     app: cua-spaces-<version>-darwin-universal.dmg / .pkg
          cua-spaces-<version>-linux-<arch>.AppImage / .deb
          cua-spaces-<version>-windows-<arch>.msi / -setup.exe
+         the Electron app (electron-builder names, kinds electron-*):
+         Cua-Spaces-<version>-<arm64|universal>.dmg / -mac.zip,
+         Cua-Spaces-<version>-<x86_64|arm64>.AppImage,
+         cua-spaces_<version>_<amd64|arm64>.deb,
+         Cua-Spaces-Setup-<version>[-<x64|arm64>].exe
 
 <platform> is darwin-arm64, darwin-x64, linux-x64, linux-arm64, windows-x64 or
-windows-arm64; a darwin-universal app is listed under both macOS platforms.
+windows-arm64; a darwin-universal app is listed under both macOS platforms,
+and a universal Electron app (kind electron-*-universal) under both macOS or
+both Windows platforms. The installers pick only the dmg, pkg, appimage, deb,
+msi and nsis kinds, so the Electron entries never change what they install.
 Optional signatures next to an artifact: `<name>.minisig` (minisign) and
 `<name>.sigstore.json` (cosign bundle).
 
@@ -37,6 +45,8 @@ from pathlib import Path
 SCHEMA = 1
 PLATFORMS = ("darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64", "windows-arm64")
 VERSION = r"(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)"
+# Lazy: electron-builder puts an optional architecture after the version.
+EVERSION = r"(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+?)?)"
 
 PATTERNS = [
     ("cli", "tar.gz", re.compile(rf"^cua-cli-{VERSION}-(?P<platform>(?:darwin|linux)-(?:x64|arm64))\.tar\.gz$")),
@@ -47,7 +57,26 @@ PATTERNS = [
     ("app", "deb", re.compile(rf"^cua-spaces-{VERSION}-(?P<platform>linux-(?:x64|arm64))\.deb$")),
     ("app", "msi", re.compile(rf"^cua-spaces-{VERSION}-(?P<platform>windows-(?:x64|arm64))\.msi$")),
     ("app", "nsis", re.compile(rf"^cua-spaces-{VERSION}-(?P<platform>windows-(?:x64|arm64))-setup\.exe$")),
+    # The Electron app (apps/cua-spaces-desktop), named by electron-builder.
+    ("app", "electron-dmg", re.compile(rf"^Cua-Spaces-{EVERSION}-(?P<arch>arm64|universal)\.dmg$")),
+    ("app", "electron-zip", re.compile(rf"^Cua-Spaces-{EVERSION}-(?P<arch>arm64|universal)-mac\.zip$")),
+    ("app", "electron-appimage", re.compile(rf"^Cua-Spaces-{EVERSION}-(?P<arch>x86_64|arm64)\.AppImage$")),
+    ("app", "electron-deb", re.compile(rf"^cua-spaces_{EVERSION}_(?P<arch>amd64|arm64)\.deb$")),
+    ("app", "electron-nsis", re.compile(rf"^Cua-Spaces-Setup-{EVERSION}(?:-(?P<arch>x64|arm64))?\.exe$")),
 ]
+
+# Electron's architecture names, per kind, as platforms.
+ELECTRON_PLATFORMS = {
+    "electron-dmg": {"arm64": "darwin-arm64", "universal": "darwin-universal"},
+    "electron-zip": {"arm64": "darwin-arm64", "universal": "darwin-universal"},
+    "electron-appimage": {"x86_64": "linux-x64", "arm64": "linux-arm64"},
+    "electron-deb": {"amd64": "linux-x64", "arm64": "linux-arm64"},
+    "electron-nsis": {"x64": "windows-x64", "arm64": "windows-arm64", None: "windows-universal"},
+}
+UNIVERSAL = {
+    "darwin-universal": ["darwin-arm64", "darwin-x64"],
+    "windows-universal": ["windows-x64", "windows-arm64"],
+}
 
 SAFE = re.compile(r'^[^"\\\x00-\x1f]*$')
 
@@ -56,7 +85,13 @@ def classify(name: str):
     for component, kind, pattern in PATTERNS:
         match = pattern.match(name)
         if match:
-            return component, kind, match.group("platform"), match.group("version")
+            if kind in ELECTRON_PLATFORMS:
+                platform = ELECTRON_PLATFORMS[kind][match.group("arch")]
+                if platform in UNIVERSAL:
+                    kind = f"{kind}-universal"
+            else:
+                platform = match.group("platform")
+            return component, kind, platform, match.group("version")
     return None
 
 
@@ -83,7 +118,7 @@ def scan(component: str, version: str, directory: Path, base_url: str | None) ->
         _, kind, platform, file_version = found
         if file_version != version:
             raise SystemExit(f"{path.name}: version {file_version} does not match --version {version}")
-        platforms = ["darwin-arm64", "darwin-x64"] if platform == "darwin-universal" else [platform]
+        platforms = UNIVERSAL.get(platform, [platform])
         common = {
             "name": path.name,
             "url": url_for(base_url, path.name),

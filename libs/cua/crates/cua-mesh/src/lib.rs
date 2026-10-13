@@ -52,7 +52,7 @@ pub use engine::Path;
 pub use key::{NodeIdentity, PublicKey, SecretKey};
 pub use node::{Forward, IncomingStream, MEDIA_UDP_PORT, Mesh, MeshConfig, PeerStatus, Status};
 pub use policy::{Channel, Policy};
-pub use proto::{Grant, MeshInfo, Mode, NodeKind, PeerInfo, VERSION};
+pub use proto::{Grant, MeshInfo, Mode, NodeKind, PeerInfo, PeerUsage, VERSION};
 pub use quic::{MeshStream, STREAM_PORT, StreamHeader};
 
 /// Mesh errors.

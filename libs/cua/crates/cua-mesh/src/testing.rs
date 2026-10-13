@@ -378,6 +378,7 @@ async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
         addr: node_key.mesh_addr(),
         mode,
         stun: Vec::new(),
+        usage: 0,
     };
     if sink
         .send(WsMessage::Text(

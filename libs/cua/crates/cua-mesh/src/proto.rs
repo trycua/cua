@@ -171,6 +171,10 @@ pub enum ServerMsg {
         /// STUN servers (`host:port`).
         #[serde(default)]
         stun: Vec<String>,
+        /// The newest [`ClientMsg::Usage`] version this coordinator meters
+        /// (0, or absent from an older one: none, so machines send none).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        usage: u32,
     },
     /// The full set of peers this node may talk to.
     Netmap {
@@ -264,6 +268,45 @@ pub enum ClientMsg {
     },
     /// Keepalive.
     Ping,
+    /// Account mode, from a machine: the streams its peers hold open now,
+    /// so the coordinator can meter them as it meters its own HTTPS path.
+    /// A full snapshot, sent when it changes (and again after a
+    /// reconnect), only to a coordinator whose welcome asked for
+    /// version `v`. A coordinator ignores versions it does not know.
+    Usage {
+        /// Report version ([`USAGE_VERSION`]).
+        v: u32,
+        /// One entry per peer with something open (or just upgraded).
+        #[serde(default)]
+        peers: Vec<PeerUsage>,
+    },
+}
+
+/// The [`ClientMsg::Usage`] version this crate sends.
+pub const USAGE_VERSION: u32 = 1;
+
+/// The most entries one [`ClientMsg::Usage`] carries.
+pub const MAX_USAGE_PEERS: usize = 256;
+
+/// One peer's streams in a [`ClientMsg::Usage`] report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerUsage {
+    /// The client peer's node key (the coordinator knows its account).
+    pub peer: PublicKey,
+    /// The user its grant named (`sub`); the coordinator checks it against
+    /// the peer's own account and ignores a mismatch.
+    pub user: String,
+    /// Streams the peer holds open now (HTTP requests in flight, upgraded
+    /// WebSockets, active media flows).
+    pub open: u32,
+    /// A WebSocket upgrade or a media flow since the last report: a session
+    /// at once, whatever its length.
+    #[serde(default)]
+    pub live: bool,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 type HmacSha256 = Hmac<Sha256>;
@@ -430,5 +473,44 @@ mod tests {
         assert_eq!(serde_json::from_str::<ServerMsg>(&json).unwrap(), m);
         let f = frame(FRAME_SEND, &k, b"abc");
         assert_eq!(parse_frame(&f), Some((FRAME_SEND, k, &b"abc"[..])));
+    }
+
+    #[test]
+    fn usage_is_additive_to_the_protocol() {
+        // A welcome from an older coordinator (no `usage`) asks for none.
+        let old =
+            r#"{"type":"welcome","version":1,"addr":"fd5c:a000::1","mode":"account","stun":[]}"#;
+        match serde_json::from_str::<ServerMsg>(old).unwrap() {
+            ServerMsg::Welcome { usage, .. } => assert_eq!(usage, 0),
+            other => panic!("{other:?}"),
+        }
+        // A newer one says which version it meters; zero is left out.
+        let w = ServerMsg::Welcome {
+            version: VERSION,
+            addr: "fd5c:a000::1".parse().unwrap(),
+            mode: Mode::Account,
+            stun: vec![],
+            usage: 0,
+        };
+        assert!(!serde_json::to_string(&w).unwrap().contains("usage"));
+        let k = SecretKey::generate().public();
+        let m = ClientMsg::Usage {
+            v: USAGE_VERSION,
+            peers: vec![PeerUsage {
+                peer: k,
+                user: "ada".into(),
+                open: 2,
+                live: true,
+            }],
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"type\":\"usage\""), "{json}");
+        assert_eq!(serde_json::from_str::<ClientMsg>(&json).unwrap(), m);
+        // A future version still parses (and is ignored by its version).
+        let future = r#"{"type":"usage","v":9,"peers":[],"extra":1}"#;
+        assert!(matches!(
+            serde_json::from_str::<ClientMsg>(future).unwrap(),
+            ClientMsg::Usage { v: 9, .. }
+        ));
     }
 }

@@ -24,6 +24,12 @@
 //!   in each request, now inside WireGuard.
 //! - **QUIC media.** Mesh UDP [`cua_mesh::MEDIA_UDP_PORT`] reaches the
 //!   local QUIC media port, so QUIC streaming works over the mesh.
+//! - **Metering (account machines).** The relay meters sessions on its
+//!   HTTPS path itself; mesh traffic never passes it in the clear, so this
+//!   node tells it which peers hold streams open (requests in flight,
+//!   WebSockets, media flows), as a small snapshot sent when it changes and
+//!   only to a relay that asks for it. The relay checks each peer against
+//!   this machine's map and meters it as that peer's own account.
 //!
 //! A relay without a mesh (an older one) is simply not used: the machine
 //! keeps serving over its relay connection and checks again later.
@@ -34,12 +40,13 @@
 //! release). Until then nothing is asked of the relay, and the machine
 //! serves over its relay connection exactly as before.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-use cua_mesh::{Grant, IncomingStream, Mesh, MeshConfig, NodeKind, Policy};
+use cua_mesh::{Grant, IncomingStream, Mesh, MeshConfig, NodeKind, PeerUsage, Policy, PublicKey};
 use http::{HeaderValue, Request, Response, StatusCode, Version};
 use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
@@ -63,6 +70,100 @@ const CLIENT_CREDENTIAL_HEADERS: &[&str] = &[
     "x-cua-device-session",
     ASSERTION_HEADER,
 ];
+
+/// How often the streams peers hold open are checked and, when they
+/// changed, reported to the relay.
+pub const USAGE_EVERY: Duration = Duration::from_secs(1);
+/// A media flow counts as open while its peer sent within this.
+pub const MEDIA_ACTIVE: Duration = Duration::from_secs(10);
+
+/// The streams each account peer holds open on this machine, for the
+/// relay's allowance meter.
+#[derive(Default)]
+pub struct PeerStreams {
+    peers: Mutex<HashMap<PublicKey, PeerOpen>>,
+}
+
+#[derive(Default)]
+struct PeerOpen {
+    user: String,
+    open: u32,
+    /// A WebSocket upgraded since the last snapshot.
+    upgraded: bool,
+}
+
+/// One open stream of a peer; closes on drop.
+pub struct StreamUse {
+    streams: Arc<PeerStreams>,
+    peer: PublicKey,
+}
+
+impl PeerStreams {
+    /// A stream of `peer` (whose grant names `user`) opens.
+    pub fn open(self: &Arc<Self>, peer: PublicKey, user: &str) -> StreamUse {
+        let mut peers = self.peers.lock().expect("peer streams");
+        let p = peers.entry(peer).or_default();
+        p.user = user.to_owned();
+        p.open += 1;
+        StreamUse {
+            streams: self.clone(),
+            peer,
+        }
+    }
+
+    /// `peer` upgraded a stream (a WebSocket): a session at once.
+    pub fn upgraded(&self, peer: &PublicKey) {
+        if let Some(p) = self.peers.lock().expect("peer streams").get_mut(peer) {
+            p.upgraded = true;
+        }
+    }
+
+    /// What to report now: every peer with a stream open or just upgraded,
+    /// plus `media` peers (with their grants), sorted by key.
+    pub fn snapshot(&self, media: &[(PublicKey, String)]) -> Vec<PeerUsage> {
+        let mut out: HashMap<PublicKey, PeerUsage> = HashMap::new();
+        {
+            let mut peers = self.peers.lock().expect("peer streams");
+            for (k, p) in peers.iter_mut() {
+                if p.open > 0 || p.upgraded {
+                    out.insert(
+                        *k,
+                        PeerUsage {
+                            peer: *k,
+                            user: p.user.clone(),
+                            open: p.open,
+                            live: std::mem::take(&mut p.upgraded),
+                        },
+                    );
+                }
+            }
+            peers.retain(|_, p| p.open > 0);
+        }
+        for (k, user) in media {
+            let e = out.entry(*k).or_insert_with(|| PeerUsage {
+                peer: *k,
+                user: user.clone(),
+                open: 0,
+                live: false,
+            });
+            // An active media flow is a held stream (a desktop view).
+            e.open += 1;
+            e.live = true;
+        }
+        let mut out: Vec<_> = out.into_values().filter(|p| p.open > 0).collect();
+        out.sort_by_key(|p| p.peer);
+        out
+    }
+}
+
+impl Drop for StreamUse {
+    fn drop(&mut self) {
+        let mut peers = self.streams.peers.lock().expect("peer streams");
+        if let Some(p) = peers.get_mut(&self.peer) {
+            p.open = p.open.saturating_sub(1);
+        }
+    }
+}
 
 /// The machine's env token, read when a pairing proof arrives.
 pub type EnvToken = Arc<dyn Fn() -> Option<String> + Send + Sync>;
@@ -199,9 +300,16 @@ pub async fn run(cfg: MeshHostConfig, shutdown: CancellationToken) {
                 ),
             }
         }
+        let streams = Arc::new(PeerStreams::default());
+        let reporter = tokio::spawn(report_usage(
+            mesh.clone(),
+            streams.clone(),
+            cfg.account.clone(),
+        ));
         let ctx = Arc::new(Ctx {
             cfg: cfg.clone(),
             key: ctx_key.clone(),
+            streams,
         });
         let mut gate = tokio::time::interval(cfg.recheck);
         gate.tick().await;
@@ -223,6 +331,7 @@ pub async fn run(cfg: MeshHostConfig, shutdown: CancellationToken) {
             let ctx = ctx.clone();
             tokio::spawn(async move { handle(ctx, incoming).await });
         };
+        reporter.abort();
         mesh.shutdown();
         if stopped {
             return;
@@ -257,6 +366,31 @@ async fn wait_until_allowed(cfg: &MeshHostConfig, shutdown: &CancellationToken) 
             _ = tokio::time::sleep(wait) => {}
             _ = shutdown.cancelled() => return false,
         }
+    }
+}
+
+/// Reports the streams account peers hold open to the relay, whenever
+/// they change ([`Mesh::report_usage`] sends nothing unchanged, and
+/// nothing to a relay that does not meter).
+async fn report_usage(mesh: Mesh, streams: Arc<PeerStreams>, account: Arc<AccountLink>) {
+    let mut tick = tokio::time::interval(USAGE_EVERY);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        if account.owner().is_none() {
+            continue;
+        }
+        let active = mesh.udp_active_peers(MEDIA_ACTIVE);
+        let media: Vec<(PublicKey, String)> = if active.is_empty() {
+            Vec::new()
+        } else {
+            mesh.peers()
+                .into_iter()
+                .filter(|p| active.contains(&p.node_key))
+                .filter_map(|p| p.grant.map(|g| (p.node_key, g.user)))
+                .collect()
+        };
+        mesh.report_usage(streams.snapshot(&media));
     }
 }
 
@@ -311,6 +445,7 @@ async fn start(cfg: &MeshHostConfig) -> cua_mesh::Result<Mesh> {
 struct Ctx {
     cfg: MeshHostConfig,
     key: Arc<RelayKey>,
+    streams: Arc<PeerStreams>,
 }
 
 async fn handle(ctx: Arc<Ctx>, incoming: IncomingStream) {
@@ -320,7 +455,8 @@ async fn handle(ctx: Arc<Ctx>, incoming: IncomingStream) {
     let account_machine = ctx.cfg.account.owner().is_some();
     match (incoming.peer.grant.clone(), account_machine) {
         (Some(grant), true) => {
-            serve_with_identity(ctx, incoming.stream, grant, incoming.header.session).await
+            let peer = incoming.peer.node_key;
+            serve_with_identity(ctx, incoming.stream, peer, grant, incoming.header.session).await
         }
         (None, false) => splice(incoming.stream, ctx.cfg.local).await,
         // A peer without an identity on an account machine (or the other
@@ -356,6 +492,7 @@ fn plain(status: StatusCode, msg: &str) -> Response<BoxBody> {
 async fn serve_with_identity(
     ctx: Arc<Ctx>,
     stream: cua_mesh::MeshStream,
+    peer: PublicKey,
     grant: Grant,
     session: Option<String>,
 ) {
@@ -367,7 +504,17 @@ async fn serve_with_identity(
         let grant = grant.clone();
         let session = session.clone();
         let h2 = h2.clone();
-        async move { Ok::<_, std::convert::Infallible>(forward(ctx, grant, session, h2, req).await) }
+        async move {
+            // Held until the response body ends (or the upgraded socket
+            // closes), as the relay's HTTPS path meters its streams.
+            let held = ctx.streams.open(peer, &grant.user);
+            let streams = ctx.streams.clone();
+            let resp = forward(ctx, grant, session, h2, req, held).await;
+            if resp.status() == StatusCode::SWITCHING_PROTOCOLS {
+                streams.upgraded(&peer);
+            }
+            Ok::<_, std::convert::Infallible>(resp)
+        }
     });
     let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
     if let Err(e) = builder
@@ -402,6 +549,7 @@ async fn forward(
     session: Option<String>,
     h2: Arc<tokio::sync::OnceCell<hyper::client::conn::http2::SendRequest<Incoming>>>,
     mut req: Request<Incoming>,
+    held: StreamUse,
 ) -> Response<BoxBody> {
     let presented = req
         .headers()
@@ -448,7 +596,7 @@ async fn forward(
             Err(e) => return plain(StatusCode::BAD_GATEWAY, &format!("local spacesd: {e}")),
         };
         return match sender.send_request(req).await {
-            Ok(resp) => resp.map(|b| b.boxed()),
+            Ok(resp) => resp.map(|b| holding(b, held)),
             Err(e) => plain(StatusCode::BAD_GATEWAY, &format!("local spacesd: {e}")),
         };
     }
@@ -476,13 +624,56 @@ async fn forward(
         if let Some(client_upgrade) = client_upgrade {
             let local_upgrade = hyper::upgrade::on(&mut resp);
             tokio::spawn(async move {
+                // The upgraded socket is the stream now.
+                let _held = held;
                 if let Ok((a, b)) = tokio::try_join!(client_upgrade, local_upgrade) {
                     let mut a = TokioIo::new(a);
                     let mut b = TokioIo::new(b);
                     let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
                 }
             });
+            return resp.map(|b| b.boxed());
         }
     }
-    resp.map(|b| b.boxed())
+    resp.map(|b| holding(b, held))
+}
+
+/// `body`, keeping `held` open until it ends or is dropped.
+fn holding(body: Incoming, held: StreamUse) -> BoxBody {
+    body.map_frame(move |frame| {
+        let _ = &held;
+        frame
+    })
+    .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshots_count_open_streams_upgrades_and_media_per_peer() {
+        let streams = Arc::new(PeerStreams::default());
+        let (a, b) = (
+            cua_mesh::SecretKey::generate().public(),
+            cua_mesh::SecretKey::generate().public(),
+        );
+        assert!(streams.snapshot(&[]).is_empty());
+        let s1 = streams.open(a, "ada");
+        let s2 = streams.open(a, "ada");
+        streams.upgraded(&a);
+        let snap = streams.snapshot(&[(b, "bob".into())]);
+        let ada = snap.iter().find(|p| p.peer == a).unwrap();
+        assert_eq!((ada.user.as_str(), ada.open, ada.live), ("ada", 2, true));
+        let bob = snap.iter().find(|p| p.peer == b).unwrap();
+        assert_eq!((bob.user.as_str(), bob.open, bob.live), ("bob", 1, true));
+        // The upgrade is reported once; closed streams leave.
+        drop(s1);
+        let snap = streams.snapshot(&[]);
+        assert_eq!(snap.len(), 1);
+        assert_eq!((snap[0].open, snap[0].live), (1, false));
+        drop(s2);
+        assert!(streams.snapshot(&[]).is_empty());
+        assert!(streams.peers.lock().unwrap().is_empty());
+    }
 }

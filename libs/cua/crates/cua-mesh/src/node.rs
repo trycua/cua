@@ -6,8 +6,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::net::{TcpListener, UdpSocket};
@@ -16,7 +17,7 @@ use tokio::sync::mpsc;
 use crate::coord::{self, AuthProvider, Control, ControlConfig, ControlState, PairVerifier};
 use crate::engine::{Engine, Path};
 use crate::key::{NodeIdentity, PublicKey};
-use crate::proto::{self, NodeKind, PeerInfo};
+use crate::proto::{self, NodeKind, PeerInfo, PeerUsage};
 use crate::quic::{self, MeshStream, StreamHeader};
 use crate::vnet::VSocket;
 use crate::{Error, Result};
@@ -240,6 +241,8 @@ struct Inner {
     shutdown: coord::tokio_util_cancel::Token,
     approved: Option<Arc<Approved>>,
     udp_services: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// The peer flows of every [`Mesh::serve_udp`] service.
+    udp_flows: Mutex<Vec<UdpFlows>>,
     endpoints: Mutex<Vec<SocketAddr>>,
     /// Connections peers opened to us, so a peer leaving the map is cut.
     inbound: Mutex<Vec<(PublicKey, quinn::Connection)>>,
@@ -294,6 +297,7 @@ impl Mesh {
             shutdown: shutdown.clone(),
             approved: approved.clone(),
             udp_services: Mutex::new(Vec::new()),
+            udp_flows: Mutex::new(Vec::new()),
             endpoints: Mutex::new(Vec::new()),
             inbound: Mutex::new(Vec::new()),
         });
@@ -626,9 +630,60 @@ impl Mesh {
             .vnet
             .bind(port)
             .map_err(|e| Error::Io(e.to_string()))?;
-        let task = tokio::spawn(udp_server_forward(sock, target));
+        let flows = UdpFlows {
+            started: Instant::now(),
+            map: Arc::default(),
+        };
+        self.inner
+            .udp_flows
+            .lock()
+            .expect("udp flows")
+            .push(flows.clone());
+        let task = tokio::spawn(udp_server_forward(sock, target, flows));
         self.inner.udp_services.lock().expect("udp").push(task);
         Ok(())
+    }
+
+    /// Peers that sent a datagram to a [`Mesh::serve_udp`] service (QUIC
+    /// media) within `within`.
+    pub fn udp_active_peers(&self, within: Duration) -> Vec<PublicKey> {
+        let within = within.as_millis() as u64;
+        let addrs: BTreeSet<std::net::Ipv6Addr> = self
+            .inner
+            .udp_flows
+            .lock()
+            .expect("udp flows")
+            .iter()
+            .flat_map(|f| {
+                let now = f.started.elapsed().as_millis() as u64;
+                f.map
+                    .lock()
+                    .expect("flows")
+                    .iter()
+                    .filter(|(_, flow)| {
+                        now.saturating_sub(flow.last_ms.load(Ordering::Relaxed)) <= within
+                    })
+                    .map(|(src, _)| *src.ip())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if addrs.is_empty() {
+            return Vec::new();
+        }
+        self.peers()
+            .into_iter()
+            .filter(|p| addrs.contains(&p.addr()))
+            .map(|p| p.node_key)
+            .collect()
+    }
+
+    /// Account mode, machines: reports the streams peers hold open now
+    /// (a full snapshot) to the coordinator, which meters them as it
+    /// meters its own HTTPS path. Sent only when it changed, and again
+    /// after a reconnect; a coordinator that does not meter is sent
+    /// nothing. Cheap to call often.
+    pub fn report_usage(&self, peers: Vec<PeerUsage>) {
+        self.inner.control.set_usage(peers);
     }
 
     /// Static mode: pairs this client with machine `machine_id` by proving
@@ -1037,16 +1092,35 @@ async fn udp_client_forward(mesh: Mesh, local: Arc<UdpSocket>, peer: PublicKey) 
     }
 }
 
-async fn udp_server_forward(sock: Arc<VSocket>, target: SocketAddr) {
-    let flows: Arc<Mutex<HashMap<SocketAddrV6, Arc<UdpSocket>>>> = Arc::default();
+/// One peer flow of a [`Mesh::serve_udp`] service.
+struct UdpFlow {
+    local: Arc<UdpSocket>,
+    /// When the peer last sent on it (ms since the service started).
+    last_ms: AtomicU64,
+}
+
+/// A [`Mesh::serve_udp`] service's flows by peer address.
+#[derive(Clone)]
+struct UdpFlows {
+    started: Instant,
+    map: Arc<Mutex<HashMap<SocketAddrV6, Arc<UdpFlow>>>>,
+}
+
+async fn udp_server_forward(sock: Arc<VSocket>, target: SocketAddr, flows: UdpFlows) {
+    let started = flows.started;
+    let flows = flows.map;
     loop {
         let Ok((data, src)) = sock.recv_from().await else {
             return;
         };
+        let now_ms = started.elapsed().as_millis() as u64;
         let local = {
             let existing = flows.lock().expect("flows").get(&src).cloned();
             match existing {
-                Some(l) => l,
+                Some(f) => {
+                    f.last_ms.store(now_ms, Ordering::Relaxed);
+                    f.local.clone()
+                }
                 None => {
                     let bind = if target.is_ipv4() {
                         "127.0.0.1:0"
@@ -1060,7 +1134,13 @@ async fn udp_server_forward(sock: Arc<VSocket>, target: SocketAddr) {
                         continue;
                     }
                     let l = Arc::new(l);
-                    flows.lock().expect("flows").insert(src, l.clone());
+                    flows.lock().expect("flows").insert(
+                        src,
+                        Arc::new(UdpFlow {
+                            local: l.clone(),
+                            last_ms: AtomicU64::new(now_ms),
+                        }),
+                    );
                     let back = sock.clone();
                     let reader = l.clone();
                     let flows = flows.clone();

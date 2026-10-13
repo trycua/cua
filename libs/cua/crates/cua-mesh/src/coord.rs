@@ -21,7 +21,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 
 use crate::engine::Engine;
 use crate::key::{NodeIdentity, PublicKey};
-use crate::proto::{self, ClientMsg, Mode, NodeKind, ServerMsg};
+use crate::proto::{self, ClientMsg, Mode, NodeKind, PeerUsage, ServerMsg};
 use crate::{Error, Result};
 
 /// Credentials for the coordinator connection, fetched before every
@@ -60,6 +60,16 @@ pub struct ControlState {
     pub unsupported: bool,
     /// Connections made since start.
     pub connects: u64,
+    /// The [`ClientMsg::Usage`] version the coordinator meters (0: none).
+    pub usage: u32,
+}
+
+/// A machine's stream usage: the snapshot to report, and the one this
+/// connection last sent.
+#[derive(Default)]
+struct UsageOut {
+    current: Vec<PeerUsage>,
+    sent: Option<Vec<PeerUsage>>,
 }
 
 type PairWaiter = oneshot::Sender<std::result::Result<(), String>>;
@@ -69,6 +79,7 @@ pub(crate) struct Control {
     out: Mutex<Option<mpsc::Sender<ClientMsg>>>,
     pair_waiters: Mutex<HashMap<String, Vec<PairWaiter>>>,
     endpoints: Mutex<Vec<std::net::SocketAddr>>,
+    usage: Mutex<UsageOut>,
 }
 
 pub(crate) struct ControlConfig {
@@ -90,7 +101,51 @@ impl Control {
             out: Mutex::new(None),
             pair_waiters: Mutex::new(HashMap::new()),
             endpoints: Mutex::new(Vec::new()),
+            usage: Mutex::new(UsageOut::default()),
         })
+    }
+
+    /// Sets the stream usage to report, and sends it when the coordinator
+    /// meters it and it differs from what this connection last sent. A
+    /// coordinator that does not meter is sent nothing.
+    pub(crate) fn set_usage(&self, mut peers: Vec<PeerUsage>) {
+        peers.truncate(proto::MAX_USAGE_PEERS);
+        let mut usage = self.usage.lock().expect("usage");
+        usage.current = peers;
+        self.flush_usage(&mut usage);
+    }
+
+    /// A new connection was welcomed: what it last sent is gone.
+    fn usage_reconnected(&self) {
+        let mut usage = self.usage.lock().expect("usage");
+        usage.sent = None;
+        self.flush_usage(&mut usage);
+    }
+
+    fn flush_usage(&self, usage: &mut UsageOut) {
+        let (connected, version) = {
+            let s = self.state.borrow();
+            (s.connected, s.usage)
+        };
+        if !connected || version < proto::USAGE_VERSION {
+            return;
+        }
+        let unchanged = match &usage.sent {
+            Some(sent) => *sent == usage.current,
+            // A fresh connection starts with nothing open.
+            None => usage.current.is_empty(),
+        };
+        if unchanged {
+            return;
+        }
+        let msg = ClientMsg::Usage {
+            v: proto::USAGE_VERSION,
+            peers: usage.current.clone(),
+        };
+        // A full queue: tried again on the next change or snapshot.
+        if self.send(msg) {
+            usage.sent = Some(usage.current.clone());
+        }
     }
 
     pub(crate) fn send(&self, msg: ClientMsg) -> bool {
@@ -341,20 +396,21 @@ async fn session(
     let welcome = tokio::time::timeout(Duration::from_secs(10), stream.next())
         .await
         .map_err(|_| Error::Unreachable("no welcome".into()))?;
-    let (mode, stun, version) = match welcome {
+    let (mode, stun, version, usage) = match welcome {
         Some(Ok(WsMessage::Text(t))) => match serde_json::from_str::<ServerMsg>(&t) {
             Ok(ServerMsg::Welcome {
                 version,
                 addr,
                 mode,
                 stun,
+                usage,
             }) => {
                 if addr != identity.addr() {
                     return Err(Error::Protocol(
                         "coordinator assigned a foreign address".into(),
                     ));
                 }
-                (mode, stun, version)
+                (mode, stun, version, usage)
             }
             Ok(ServerMsg::Error { message }) => return Err(Error::Refused(message)),
             _ => return Err(Error::Protocol("expected a welcome".into())),
@@ -375,8 +431,10 @@ async fn session(
         s.denied = None;
         s.unsupported = false;
         s.connects += 1;
+        s.usage = usage;
     });
     tracing::info!(url = %cfg.url, ?mode, "mesh coordinator connected");
+    control.usage_reconnected();
 
     let mut ping = tokio::time::interval(Duration::from_secs(15));
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -518,6 +576,59 @@ pub(crate) mod tokio_util_cancel {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn usage(peer: PublicKey, open: u32) -> Vec<PeerUsage> {
+        vec![PeerUsage {
+            peer,
+            user: "ada".into(),
+            open,
+            live: false,
+        }]
+    }
+
+    #[test]
+    fn usage_goes_only_to_a_coordinator_that_meters_it_and_only_when_it_changed() {
+        let control = Control::new();
+        let (tx, mut rx) = mpsc::channel(8);
+        *control.out.lock().unwrap() = Some(tx);
+        let peer = crate::key::SecretKey::generate().public();
+        // An older coordinator (or a static one): nothing is ever sent.
+        control.state.send_modify(|s| {
+            s.connected = true;
+            s.usage = 0;
+        });
+        control.usage_reconnected();
+        control.set_usage(usage(peer, 1));
+        assert!(rx.try_recv().is_err());
+        // One that meters: the snapshot on welcome, then only changes.
+        control
+            .state
+            .send_modify(|s| s.usage = proto::USAGE_VERSION);
+        control.usage_reconnected();
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientMsg::Usage { v: 1, peers }) if peers[0].open == 1)
+        );
+        control.set_usage(usage(peer, 1));
+        assert!(rx.try_recv().is_err());
+        control.set_usage(usage(peer, 2));
+        assert!(matches!(rx.try_recv(), Ok(ClientMsg::Usage { peers, .. }) if peers[0].open == 2));
+        control.set_usage(Vec::new());
+        assert!(matches!(rx.try_recv(), Ok(ClientMsg::Usage { peers, .. }) if peers.is_empty()));
+        // Disconnected: kept, and sent again on the next welcome.
+        control.state.send_modify(|s| s.connected = false);
+        control.set_usage(usage(peer, 3));
+        assert!(rx.try_recv().is_err());
+        control.state.send_modify(|s| s.connected = true);
+        control.usage_reconnected();
+        assert!(matches!(rx.try_recv(), Ok(ClientMsg::Usage { peers, .. }) if peers[0].open == 3));
+        // A fresh connection with nothing open sends nothing.
+        control.set_usage(Vec::new());
+        let _ = rx.try_recv();
+        control.usage_reconnected();
+        assert!(rx.try_recv().is_err());
+    }
+
     #[test]
     fn connect_urls() {
         assert_eq!(

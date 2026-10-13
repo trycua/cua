@@ -213,7 +213,7 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
         (Some(u), _) | (None, Some(u)) => format!(" as {u}"),
         _ => String::new(),
     };
-    line(out, format!("Logged in to run.cua.ai{who}."));
+    line(out, format!("Logged in to Cua{who}."));
     Ok(0)
 }
 
@@ -274,13 +274,13 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     if c.expires().map_err(auth_err)? <= chrono::Utc::now() {
         line(
             out,
-            "Logged in; access token expired and will refresh on the next run.cua.ai request.",
+            "Logged in; access token expired and will refresh on the next request.",
         );
     } else {
         line(
             out,
             format!(
-                "Logged in to run.cua.ai. Access token expires {}.",
+                "Logged in to Cua. Access token expires {}.",
                 c.expires_at
             ),
         );

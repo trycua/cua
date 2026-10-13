@@ -174,7 +174,7 @@ async fn browser_pkce_login_then_onboards_the_named_agents() {
     }
     assert!(status.success(), "{seen}");
     assert!(
-        seen.contains("Logged in to run.cua.ai as tester (tester@example.com)."),
+        seen.contains("Logged in to Cua as tester (tester@example.com)."),
         "{seen}"
     );
     assert!(
@@ -211,7 +211,7 @@ async fn login_falls_back_to_device_when_loopback_is_not_allowed_and_remote_skip
     assert!(o.stdout.contains("using a device code instead"), "{o:?}");
     assert!(o.stdout.contains("WXYZ-1234"), "{o:?}");
     assert!(
-        o.stdout.contains("Logged in to run.cua.ai as tester"),
+        o.stdout.contains("Logged in to Cua as tester"),
         "{o:?}"
     );
     // Non-interactive with no --agents: no onboarding.
@@ -634,7 +634,7 @@ async fn interactive_login_onboarding_prompts() {
     tokio::task::spawn_blocking(move || {
         // Yes to onboarding, default (yes) to skills, no to MCP.
         let mut p = Pty::spawn(&h, &["auth", "login"]);
-        let at = p.expect("Logged in to run.cua.ai as tester", 0);
+        let at = p.expect("Logged in to Cua as tester", 0);
         let at = p.expect(
             "Configure cua skills and the cua MCP server for your AI coding agent(s)? [y/n/never]",
             at,

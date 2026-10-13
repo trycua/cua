@@ -2116,7 +2116,7 @@ mod tests {
                 (
                     crate::billing::OUT_OF_CREDIT,
                     "Add credit",
-                    "https://run.cua.ai/billing"
+                    crate::billing::BILLING_URL
                 )
             );
         } else {

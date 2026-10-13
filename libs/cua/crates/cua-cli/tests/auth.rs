@@ -91,7 +91,7 @@ async fn device_login_session_drives_fleet_then_refresh_and_logout() {
     o.ok();
     assert!(o.stdout.contains("ABCD-EFGH"), "{o:?}");
     assert!(
-        o.stdout.contains("Logged in to run.cua.ai as tester."),
+        o.stdout.contains("Logged in to Cua as tester."),
         "{o:?}"
     );
     let cred_file = h.cua_home().join("credentials.json");

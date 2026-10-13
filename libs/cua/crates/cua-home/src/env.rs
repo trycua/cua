@@ -7,7 +7,7 @@
 //!
 //! | Setting       | Override              | prod                                     | staging                                     |
 //! |---------------|-----------------------|------------------------------------------|---------------------------------------------|
-//! | OIDC issuer   | `CUA_OIDC_ISSUER`     | `https://auth.cua.ai/realms/cyclops-cs`  | `https://auth.cua.ai/realms/cua-staging`    |
+//! | OIDC issuer   | `CUA_OIDC_ISSUER`     | `https://auth.cua.ai/realms/cyclops-cs`  | `https://auth.staging.cua.ai/realms/cua-staging` |
 //! | Relay         | `CUA_RELAY_URL`       | `https://relay.cua.ai`                   | `https://relay.staging.cua.ai`              |
 //! | Spaces API    | `CUA_SPACES_API_URL`  | `https://api.spaces.cua.ai`              | `https://api.staging.cua.ai`                |
 //! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://spaces.cua.ai`                  | `https://spaces.staging.cua.ai`             |
@@ -90,7 +90,9 @@ impl CuaEnv {
     pub fn oidc_issuer(self) -> &'static str {
         match self {
             Self::Prod => "https://auth.cua.ai/realms/cyclops-cs",
-            Self::Staging => "https://auth.cua.ai/realms/cua-staging",
+            // Staging has its own Keycloak; the `cua-staging` realm on
+            // auth.cua.ai is a different realm with other users and keys.
+            Self::Staging => "https://auth.staging.cua.ai/realms/cua-staging",
         }
     }
 
@@ -266,7 +268,10 @@ mod tests {
     fn staging_flips_every_endpoint() {
         let e = endpoints(&[("CUA_ENV", "staging")]);
         assert_eq!(e.env, CuaEnv::Staging);
-        assert_eq!(e.oidc_issuer, "https://auth.cua.ai/realms/cua-staging");
+        assert_eq!(
+            e.oidc_issuer,
+            "https://auth.staging.cua.ai/realms/cua-staging"
+        );
         assert_eq!(e.relay_url, "https://relay.staging.cua.ai");
         assert_eq!(e.spaces_api_url, "https://api.staging.cua.ai");
         assert_eq!(e.spaces_site_url, "https://spaces.staging.cua.ai");

@@ -26,6 +26,7 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+
 CONVENTIONAL_RE = re.compile(
     r"^(?P<type>[a-z][a-z0-9-]*)(?:\((?P<scope>[^)]+)\))?(?P<breaking>!)?:\s+(?P<summary>\S.*)$"
 )
@@ -123,7 +124,6 @@ class ConventionalEntry:
 PULL_COMMITS_ENDPOINT_CAP = 250
 MAX_COMPARE_PAGES = 100
 
-
 class GitHubClient:
     """Small GitHub REST client with explicit, testable endpoints."""
 
@@ -171,9 +171,7 @@ class GitHubClient:
                 return commits
         raise ReleaseError(f"pull request #{number} has too many commits to validate safely")
 
-    def compare_commits(
-        self, repository: str, base: str, head: str
-    ) -> tuple[list[dict[str, Any]], int]:
+    def compare_commits(self, repository: str, base: str, head: str) -> tuple[list[dict[str, Any]], int]:
         """Every commit in ``base...head`` and GitHub's total, paging the compare API.
 
         The pull request commits endpoint stops at 250 commits; the compare
@@ -521,6 +519,27 @@ def unresolved_coauthor_identities(
     return sorted(unresolved.values(), key=lambda item: (item["email"], item["sha"]))
 
 
+def is_clean_main_sync(github, repository, sha, parents, main_sha) -> bool:
+    if len(parents) != 2 or not main_sha:
+        return False
+    try:
+        ancestry = github.get(f"repos/{repository}/compare/{parents[1]}...{main_sha}")
+        if ancestry.get("status") not in {"ahead", "identical"}:
+            return False
+        changed_paths = []
+        for parent in parents:
+            files = github.get(f"repos/{repository}/compare/{parent}...{sha}").get("files")
+            if files is None or len(files) >= 300:
+                return False
+            changed_paths.append(
+                {file.get(key) for file in files for key in ("filename", "previous_filename")}
+                - {None}
+            )
+        return changed_paths[0].isdisjoint(changed_paths[1])
+    except (ReleaseError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def validate_pr_attribution(
     *,
     repository: str,
@@ -614,38 +633,12 @@ def validate_pr_attribution(
         is_base_sync_merge = len(parents) > 1 and any(
             parent and parent not in commit_shas for parent in parents[1:]
         )
-        clean_main_sync = False
-        if is_base_sync_merge and len(parents) == 2 and main_sha:
-            try:
-                ancestry = github.get(f"repos/{repository}/compare/{parents[1]}...{main_sha}")
-                if ancestry["status"] in {"ahead", "identical"}:
-                    comparisons = [
-                        github.get(f"repos/{repository}/compare/{parent}...{sha}")["files"]
-                        for parent in parents
-                    ]
-                    if all(len(files) < 300 for files in comparisons):
-                        changed_paths = [
-                            {
-                                path
-                                for file in files
-                                for path in (file["filename"], file.get("previous_filename"))
-                                if path
-                            }
-                            for files in comparisons
-                        ]
-                        clean_main_sync = changed_paths[0].isdisjoint(changed_paths[1])
-            except (ReleaseError, OSError, ValueError):
-                pass
-        unlinked_author = not clean_main_sync and not author_login and author_email not in ignored
-        distinct_external_author = (
-            not clean_main_sync
-            and bool(author_login)
-            and (
-                author_login.lower() != pull_login.lower()
-                and not is_bot(author_login, bots)
-                and author_login.lower() not in internal
-                and author_login.lower() not in opt_out
-            )
+        unlinked_author = not author_login and author_email not in ignored
+        distinct_external_author = bool(author_login) and (
+            author_login.lower() != pull_login.lower()
+            and not is_bot(author_login, bots)
+            and author_login.lower() not in internal
+            and author_login.lower() not in opt_out
         )
         # An ordinary direct PR author is credited from pull-request metadata even
         # when their commit email is private. A distinct unlinked author committed
@@ -654,7 +647,9 @@ def validate_pr_attribution(
         # A base synchronization merge imports a parent outside the PR commit set,
         # so it is not salvaged contributor work. Its distinct author must still
         # have explicit coauthor credit elsewhere in the PR.
-        if is_base_sync_merge and distinct_external_author:
+        if is_base_sync_merge and is_clean_main_sync(github, repository, sha, parents, main_sha):
+            pass
+        elif is_base_sync_merge and distinct_external_author:
             if author_login.lower() not in credited_coauthors:
                 trailer = f"Co-authored-by: {author_name} <{author_email}>"
                 early_errors.append(
@@ -1475,7 +1470,9 @@ def validate_pr_command(args: argparse.Namespace) -> None:
     base_config = json.loads(args.config.read_text())
     head_config = client.file_json(head_repository, args.config.as_posix(), head_sha)
     trusted_sha = run_git(Path.cwd(), "rev-parse", "HEAD").strip()
-    comparison = client.get(f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1")
+    comparison = client.get(
+        f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1"
+    )
     ancestor_sha = str((comparison.get("merge_base_commit") or {}).get("sha") or "")
     if not ancestor_sha:
         raise ReleaseError("GitHub returned no merge base for attribution validation")

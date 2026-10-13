@@ -479,11 +479,13 @@ def test_compare_pages_that_stop_short_are_refused():
         ("ahead", [str(i) for i in range(300)], ["branch-change"], False, False),
         ("ahead", ["main-change"], [str(i) for i in range(300)], False, False),
         ("ahead", ["main-change"], ["branch-change"], True, False),
+        (None, ["main-change"], ["branch-change"], False, False),
+        ("ahead", ["main-change"], ["branch-change"], "missing-files", False),
     ],
 )
 def test_main_sync_merge_authorship(status, branch_files, main_files, failure, clean):
     comparisons = {
-        "repos/trycua/cua/compare/main-tip...trusted-main": {"status": status},
+        "repos/trycua/cua/compare/main-tip...trusted-main": {"status": status} if status else {},
         "repos/trycua/cua/compare/feature-tip...sync-merge": {
             "files": [
                 name if isinstance(name, dict) else {"filename": name} for name in branch_files
@@ -491,8 +493,12 @@ def test_main_sync_merge_authorship(status, branch_files, main_files, failure, c
         },
         "repos/trycua/cua/compare/main-tip...sync-merge": (
             ReleaseError("API failed")
-            if failure
-            else {"files": [{"filename": name} for name in main_files]}
+            if failure is True
+            else (
+                {}
+                if failure == "missing-files"
+                else {"files": [{"filename": name} for name in main_files]}
+            )
         ),
     }
     values = dict(
@@ -510,6 +516,11 @@ def test_main_sync_merge_authorship(status, branch_files, main_files, failure, c
     )
     if clean:
         validate(**values)
+        values["commits"][1]["commit"][
+            "message"
+        ] += "\n\nCo-authored-by: Pair <pair@institution.example>"
+        with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
+            validate(**values)
     else:
         with pytest.raises(ReleaseError, match="base synchronization merge"):
             validate(**values)

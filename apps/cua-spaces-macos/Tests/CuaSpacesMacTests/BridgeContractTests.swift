@@ -112,7 +112,10 @@ struct BridgeContractTests {
 
         func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
             if tool.hasPrefix("agent_keys.") { return try await keys.agentsTool(tool, args) }
-            if tool.hasPrefix("volume_") && !["volume_requests", "volume_grants"].contains(tool) {
+            // An agent's home and its files: the Agents fake.
+            let home = ["volume_read", "volume_history", "volume_restore"].contains(tool)
+                || (tool == "volume_ls" && (args["path"] as? String ?? "").hasPrefix("agents/"))
+            if tool.hasPrefix("volume_") && !["volume_requests", "volume_grants"].contains(tool) && !home {
                 return try await drive.agentsTool(tool, args)
             }
             return try await agents.agentsTool(tool, args)
@@ -196,7 +199,8 @@ struct BridgeContractTests {
     /// fixtures. A method left out says why in `skipped`.
     func cases(space: String) -> [(String, [String: Any])] {
         [
-            ("app.info", [:]), ("session.get", [:]), ("session.signOut", [:]),
+            // The relay allowance before the sign-out below (signed out, it is null).
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
             ("spaces.setPower", ["id": space, "on": true]),
@@ -204,6 +208,13 @@ struct BridgeContractTests {
             ("machines.list", [:]), ("host.status", [:]),
             ("agents.list", [:]), ("agents.runs", ["spaceId": "local:aurora"]), ("agents.setup", [:]),
             ("agents.configure", ["agents": ["claude-code"]]),
+            ("agents.detail", ["name": "ada"]), ("agents.readFile", ["path": "agents/ada/hermes/MEMORY.md"]),
+            ("agents.restoreFile", ["path": "agents/ada/hermes/MEMORY.md", "version": "v1"]),
+            ("agents.addRoutine", ["agent": "ada", "title": "Inbox", "prompt": "Sort my inbox", "everyMinutes": NSNull(),
+                                   "dailyAt": "08:00", "weeklyOn": NSNull()]),
+            ("agents.setRoutine", ["id": "R1", "enabled": false]), ("agents.removeRoutine", ["id": "R1"]),
+            ("agents.allowComputer", ["agent": "ada", "machine": "relay:0123"]),
+            ("agents.revokeComputer", ["agent": "ada", "machine": "relay:0123"]),
             ("agentKeys.list", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
@@ -215,6 +226,8 @@ struct BridgeContractTests {
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
+            ("devices.createPairingCode", ["team": NSNull()]), ("devices.pairingCodes", [:]),
+            ("devices.revokePairingCode", ["id": "pc_fixture1"]),
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
@@ -262,8 +275,8 @@ struct BridgeContractTests {
         "devices.revoke": "changes the fixture account", "devices.confirmMachine": "changes the fixture account",
         "stream.pip": "opens a picture-in-picture window",
         "keyvault.delete": "asks in an alert; TeleportBridgeTests answers it",
-        "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID",
-        "keyvault.setup": "sets the vault up with Touch ID; keyvaultSetupRefusesASetUpVault covers the fixture",
+        "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID or a passphrase in a sheet",
+        "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
         "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
     ]
 

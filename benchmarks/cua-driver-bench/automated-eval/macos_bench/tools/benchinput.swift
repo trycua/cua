@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // benchinput: a tiny CGEvent injector used only to validate the MB-* fixtures (oracle solutions).
 // Real HID-level events at global screen points (origin top-left, points).
 //

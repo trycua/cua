@@ -486,14 +486,14 @@
    "read_only": false
   },
   {
-   "description": "Click a target pid. Prefer `element_token` (from get_window_state): it identifies one snapshot element, works on backgrounded, minimized or off-Space windows, and moves no cursor or focus. Use `x, y` only for canvas / video / WebGL / custom-drawn surfaces missing from the AX tree.\n\n- element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n- x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\n`button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`.",
+   "description": "Click a target pid. Prefer `element_token` (from get_window_state): it identifies one snapshot element, works on backgrounded, minimized or off-Space windows, and moves no cursor or focus. Use `x, y` only for canvas / video / WebGL / custom-drawn surfaces missing from the AX tree.\n\n- element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n- x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\n`button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "action": {
-      "description": "AX action.",
+      "description": "AX action: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui. show_alternate_ui reveals hover-only controls on an element that lists it, without the pointer.",
       "type": "string"
      },
      "button": {
@@ -629,7 +629,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -649,16 +649,14 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "double_click",
    "read_only": false
   },
   {
-   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.\n\n- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always required.",
+   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.\n\n- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -685,7 +683,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -705,9 +703,7 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "right_click",
@@ -1071,7 +1067,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "scope": {
@@ -1153,7 +1149,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -1170,7 +1166,6 @@
      }
     },
     "required": [
-     "pid",
      "value"
     ],
     "type": "object"
@@ -1406,7 +1401,7 @@
    "read_only": true
   },
   {
-   "description": "Move a cursor to (x, y). In window scope (default), moves only the agent cursor overlay. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.",
+   "description": "Move a cursor to (x, y). With target {kind: \"window\", pid, window_id}, x/y are window screenshot pixels (as for click) and only the agent cursor moves there; in a background app it also hovers through a route that leaves the real pointer alone where one exists (AXShowAlternateUI on the element under the point, or an Electron page) and says so. Without a target, moves only the agent cursor overlay, in screen points. Other macOS hover and tooltips follow the real pointer, so most background apps see no hover. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1462,7 +1457,7 @@
       "type": "object"
      },
      "x": {
-      "description": "Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels.",
+      "description": "Destination X. Window target: window screenshot pixels. No target: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels.",
       "type": "number"
      },
      "y": {
@@ -1581,7 +1576,7 @@
       "type": "number"
      },
      "glide_duration_ms": {
-      "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+      "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
       "type": "number"
      },
      "idle_hide_ms": {
@@ -1613,11 +1608,15 @@
       "type": "string"
      },
      "timing": {
-      "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+      "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
       "enum": [
        "native",
        "fitts",
-       "fixed"
+       "fixed",
+       "relaxed",
+       "steady",
+       "calm",
+       "deliberate"
       ],
       "type": "string"
      },
@@ -1837,11 +1836,15 @@
       "type": "string"
      },
      "cursor.motion.timing": {
-      "description": "Saved default cursor move timing for new sessions.",
+      "description": "Saved default cursor move timing for new sessions. Built-in default: steady (a 600 ms floor on every move).",
       "enum": [
        "native",
        "fitts",
-       "fixed"
+       "fixed",
+       "relaxed",
+       "steady",
+       "calm",
+       "deliberate"
       ],
       "type": "string"
      },
@@ -2073,7 +2076,7 @@
    "read_only": true
   },
   {
-   "description": "Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.",
+   "description": "Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front for every new connection), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\"; the app that was in front is then brought back afterwards.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2082,6 +2085,15 @@
      "allow_launch": {
       "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false).",
       "type": "boolean"
+     },
+     "delivery_mode": {
+      "default": "background",
+      "description": "Existing-profile attachment only. background (default) refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
      },
      "pid": {
       "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true.",
@@ -2174,7 +2186,7 @@
    "read_only": false
   },
   {
-   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (Linux Chromium; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
+   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2182,7 +2194,7 @@
     "properties": {
      "delivery_mode": {
       "default": "background",
-      "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox).",
+      "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox).",
       "enum": [
        "background",
        "foreground"
@@ -2443,7 +2455,7 @@
      },
      "delivery_mode": {
       "default": "background",
-      "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox).",
+      "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox).",
       "enum": [
        "background",
        "foreground"
@@ -2734,7 +2746,7 @@
         "type": "number"
        },
        "glide_duration_ms": {
-        "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+        "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
         "type": "number"
        },
        "idle_hide_ms": {
@@ -2762,11 +2774,15 @@
         "type": "string"
        },
        "timing": {
-        "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+        "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
         "enum": [
          "native",
          "fitts",
-         "fixed"
+         "fixed",
+         "relaxed",
+         "steady",
+         "calm",
+         "deliberate"
         ],
         "type": "string"
        },

@@ -30,7 +30,8 @@ every registered Bench v2 run used. The copy differs from that revision only in
 licence and provenance metadata:
 
 * the `license` field of every `package.json` and `package-lock.json` is now
-  `MIT` (it was a proprietary licence reference);
+  `FSL-1.1-MIT` (it was a proprietary licence reference, and `MIT` in #4973
+  and #4978);
 * `PROVENANCE.md` and the `provenance` block of `task.cuabench.json` describe
   the origin for a public reader, and each task's `README.md` no longer links to
   documents of the private repository;
@@ -69,6 +70,9 @@ amendment registered before their first trial.
 
 ## Licence
 
-MIT, under the repository [LICENSE](../../../LICENSE.md). Copyright (c) 2026 Cua
-AI, Inc. Third-party software that the apps install is listed in
+FSL-1.1-MIT, under the benchmark's [LICENSE](../LICENSE). Copyright (c) 2026
+Cua AI, Inc. The task files carry no per-file SPDX headers because their
+content is pinned by digest; the folder-level LICENSE covers them. The copy
+published in #4973 and #4978 was MIT; its tree digests are kept in `pins.json`
+`cdb_pack.mit_release_tree_sha256`. Third-party software that the apps install is listed in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); none of it is vendored.

@@ -1,4 +1,7 @@
 #!/bin/zsh
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 # Assemble the private main-build app (ad-hoc signed, own bundle id) and its skill, inside the VM
 set -e
 M=~/bench-work/cua-main

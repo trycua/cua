@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Analysis of a run_bench.py results file with the pre-registered statistics in analyze.py.
 
     analyze_bench.py runs/<run>/results.jsonl --out-md report.md --out-json report.json

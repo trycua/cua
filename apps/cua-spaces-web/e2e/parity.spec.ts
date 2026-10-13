@@ -355,7 +355,9 @@ async function checkTelemetry(page: Page, cps: Of<"telemetry">[]): Promise<numbe
   await expect.poll(() => tracked(page)).toContainEqual({ type: "launched", onboardingEligible: false });
   const before = (await tracked(page)).length;
   for (const cp of cps) await track(page, cp.signals);
-  expect((await tracked(page)).slice(before), "the host recorded the core's events").toEqual(cps.flatMap((c) => c.signals));
+  // The getting-started checklist records its own steps as the page loads; they are not this flow's.
+  const ours = (await tracked(page)).slice(before).filter((s) => !(s.type === "step" && s.step.startsWith("checklist_")));
+  expect(ours, "the host recorded the core's events").toEqual(cps.flatMap((c) => c.signals));
 
   await page.evaluate(() => window.__cuaParity!.setTelemetry(false));
   const off = (await tracked(page)).length;

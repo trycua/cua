@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Fixture lifecycle for the MB-* tasks: setup, check, reset.
 
 The runner may use this module or reimplement the same three steps (they are the same as run_pilot.py's

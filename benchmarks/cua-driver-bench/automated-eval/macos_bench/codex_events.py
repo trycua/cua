@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Metrics from a timestamped Codex `exec --json` event log.
 
 The runner stores each stdout line as ``<epoch_ms>\\t<json>`` so tool latency can be

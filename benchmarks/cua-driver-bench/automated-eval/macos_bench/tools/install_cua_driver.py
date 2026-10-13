@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Install the pinned Cua Driver release for arm A as a private copy.
 
 Downloads the release assets named in pins.json from github.com/trycua/cua, checks their sha256 against pins.json

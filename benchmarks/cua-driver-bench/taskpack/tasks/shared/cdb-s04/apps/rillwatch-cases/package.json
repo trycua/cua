@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Benchmark-owned Rillwatch case review application.",
-  "license": "MIT",
+  "license": "FSL-1.1-MIT",
   "main": "main.js",
   "engines": { "node": ">=22" },
   "scripts": {

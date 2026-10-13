@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // BenchLabInterrupts: the Bench v2 interruption probes (IR-01..IR-04, Amendment 14, CUA-1283).
 // Same contract as BenchLab.swift: every UI event is appended to --events, the full state is
 // rewritten to --state, and no expected answer is ever written. The evaluators in ../probes

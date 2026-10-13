@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // BenchLabModes: the extra BenchLab modes used by the macOS bench (MB-02, MB-03, MB-06,
 // MB-08, MB-09, MB-11). Same contract as BenchLab.swift: every UI event is appended to
 // --events, the full state is rewritten to --state, and no expected answer is ever

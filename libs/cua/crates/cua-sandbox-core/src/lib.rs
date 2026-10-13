@@ -23,6 +23,9 @@ pub mod mcp;
 pub mod placement;
 /// Clean-up a dropped (cancelled) create hands off ([`cleanup::settle`]).
 pub use cua_vmm::cleanup;
+/// Why a local create failed, as a bounded telemetry word
+/// ([`cua_vmm::error::failure_kind`]).
+pub use cua_vmm::error::failure_kind as runtime_failure_kind;
 /// GPU options per runtime ([`gpu::GpuSupport`]).
 pub use cua_vmm::gpu;
 /// Create progress: what a create is doing (pulling, booting, waiting for

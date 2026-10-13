@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Validate the MB-* fixtures and checkers with real input.
 
 For every task: (1) no-op run -> fail; (2) oracle through real HID events (tools/benchinput, CGEvent) -> pass;

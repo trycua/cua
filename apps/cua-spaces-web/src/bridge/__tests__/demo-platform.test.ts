@@ -34,6 +34,11 @@ describe("the demo host on Windows and Linux", () => {
     expect((await a.call("spaces.createOptions", {})).local?.backends).toContain("lume");
   });
 
+  it("has the global shortcut on a Mac only", async () => {
+    expect((await demo().call("settings.get", {})).globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: true });
+    expect((await demo(demoPlatformOf("win32", "x64")).call("settings.get", {})).globalShortcut).toBeNull();
+  });
+
   it("names this machine after the system it runs on", async () => {
     for (const [p, name] of [
       [demoPlatformOf("win32", "x64"), "This PC"],

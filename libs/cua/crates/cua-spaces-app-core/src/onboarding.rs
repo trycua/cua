@@ -504,6 +504,7 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
         }
         (Mode, OnboardingAction::ModeChosen { mode }) => {
             n.mode = Some(*mode);
+            n.launch_at_login = *mode == OnboardingMode::Host;
             n.step = Done;
         }
         (_, OnboardingAction::DriveChecked { os, status }) => {
@@ -1195,7 +1196,7 @@ pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
         ),
         Signin => (
             "Sign in",
-            "Connect your machines and your team.",
+            "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
             "Continue",
         ),
         Agents => (
@@ -1402,6 +1403,24 @@ mod tests {
                 "Cua Spaces is in your system tray."
             );
         }
+    }
+
+    #[test]
+    fn signin_explains_account_access_and_allows_skipping() {
+        let s = reduce(&initial(None, None), &OnboardingAction::Start);
+        for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
+            let v = view_on(&s, os);
+            assert_eq!(v.title, "Sign in");
+            assert_eq!(
+                v.lede,
+                "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it."
+            );
+            assert!(v.can_skip);
+        }
+        assert_eq!(
+            reduce(&s, &OnboardingAction::SigninDone).step,
+            OnboardingStep::Agents
+        );
     }
 
     /// Cua Volume off (the default): no Volume page, dot, Done line or
@@ -1758,6 +1777,42 @@ mod tests {
                 .then(|| "Turn on Cua Volume in File System Extensions.".into()),
             settings_url: (state == "needs_approval")
                 .then(|| "x-apple.systempreferences:ext".into()),
+        }
+    }
+
+    #[test]
+    fn launch_at_login_defaults_to_the_chosen_mode() {
+        for installer_mode in [
+            None,
+            Some(OnboardingMode::Client),
+            Some(OnboardingMode::Host),
+        ] {
+            for mode in [OnboardingMode::Client, OnboardingMode::Host] {
+                let mut s = initial(installer_mode, None);
+                for action in [
+                    OnboardingAction::Start,
+                    OnboardingAction::SigninDone,
+                    OnboardingAction::AgentsDone { configured: vec![] },
+                    OnboardingAction::PresentationDone,
+                    OnboardingAction::ModeChosen { mode },
+                ] {
+                    s = reduce(&s, &action);
+                }
+                assert_eq!(s.step, OnboardingStep::Done);
+                let expected = mode == OnboardingMode::Host;
+                assert_eq!(s.launch_at_login, expected);
+                let checkbox = view(&s).launch_at_login.unwrap();
+                assert_eq!(checkbox.checked, expected);
+                assert_eq!(checkbox.note, crate::login_item::NOTE_WITHOUT_VOLUME);
+                s = reduce(
+                    &s,
+                    &OnboardingAction::LaunchAtLoginToggled { on: !expected },
+                );
+                assert_eq!(view(&s).launch_at_login.unwrap().checked, !expected);
+                s = reduce(&s, &OnboardingAction::Back);
+                s = reduce(&s, &OnboardingAction::ModeChosen { mode });
+                assert_eq!(s.launch_at_login, expected);
+            }
         }
     }
 

@@ -1,4 +1,7 @@
 #!/bin/zsh
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 # Amendment 6: the script arm's private app, a copy of the main-build app with its own bundle id
 # (com.trycua.driver.benchscript), so its TCC rows are its own. Same binary; the run_script flag is set by the
 # runner in the daemon's environment, not here. Run after assemble_main.sh, then tcc_grant.sh with this app and id.

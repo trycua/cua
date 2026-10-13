@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Screen recording for every trial, plus background compression.
 
 Why not `screencapture -v` or ffmpeg avfoundation: both are attributed to the launching app

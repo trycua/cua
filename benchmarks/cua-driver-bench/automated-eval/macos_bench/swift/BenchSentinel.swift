@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // BenchSentinel: a tiny always-there window that stays frontmost and key while an
 // agent works in other apps. It logs focus changes, leaked keys/clicks/scrolls and
 // pointer position as JSONL so a run can be scored for foreground disturbance.
@@ -144,6 +147,12 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
             "mouse": mouseInfo(), "front": frontInfo(), "active": NSApp.isActive,
             "key": window?.isKeyWindow ?? false, "idle": idleInfo(),
         ]
+        // Amendment 22 (multi-player background completion): the user's clipboard, whether the user's window is
+        // on the active Space, and whether a sheet or modal window appeared on the user's app.
+        out["clip"] = NSPasteboard.general.changeCount
+        out["onspace"] = window?.isOnActiveSpace ?? false
+        out["sheet"] = (window?.attachedSheet != nil) || (NSApp.modalWindow != nil)
+            || NSApp.windows.contains { $0 !== window && $0.isVisible }
         let above = windowsAbove()
         out["above_n"] = above.count
         if !above.isEmpty { out["above"] = above }
@@ -212,6 +221,12 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
         nc.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.emit("didResignActive", ["front": self?.frontInfo() ?? [:]]) }
+        // Amendment 22: a desktop Space or full-screen switch.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.emit("space", ["onspace": self?.window?.isOnActiveSpace ?? false])
+        }
         // Catches focus flips shorter than one sampler tick.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main

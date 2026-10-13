@@ -344,7 +344,7 @@ export function useSavedOnboarding(): SavedOnboarding {
 export interface OnboardingHook {
   /** The core's flow state; null until the session has loaded. */
   state: OnboardingFlowState | null;
-  /** The page as the core draws it (native-only pages left out). */
+  /** The page as the core draws it (the pages this host passes through left out). */
   view: OnboardingView | null;
   copy: OnboardingCopy;
   /** Sign in's line: signed in as, or what to do in the browser. */
@@ -359,8 +359,8 @@ export interface OnboardingHook {
   /** Done's "Launch at login" checkbox, where the host applies it (the
    * Electron shell; the core lays it out on Done). */
   launchAtLogin: OnboardingCheckbox | null;
-  /** Sends an action through the core. The usage-data switch also writes
-   * the machine's telemetry setting. */
+  /** Sends an action through the core. The usage-data switch and the Menu
+   * bar choice also write the machine's setting (telemetry, `menuBar`). */
   send(action: OnboardingAction): void;
   /** Leaves the flow for now; it resumes on the same page. */
   skip(): void;
@@ -447,6 +447,11 @@ export function useOnboarding(): OnboardingHook {
     // app writes it on leaving Welcome; the web can be left from any page.)
     if (action.type === "usage-data-toggled" && next.telemetry?.enabled === action.on && settings?.telemetry) {
       void updateSetting("telemetry", action.on);
+    }
+    // The Menu bar choice is the "Spaces tab in the notch" setting, written
+    // at once as the SwiftUI page does.
+    if (action.type === "presentation-picked" && next.menuBar === action.menuBar && settings && settings.values.menuBar !== action.menuBar) {
+      void updateSetting("menuBar", action.menuBar);
     }
     writeSavedOnboarding({ ...readSavedOnboarding(), state: next });
   };

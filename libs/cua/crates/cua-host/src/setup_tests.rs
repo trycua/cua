@@ -184,3 +184,43 @@ fn http_status_reads_relay_and_download_errors() {
     }
     assert_eq!(SetupStage::Register.as_str(), "register");
 }
+
+#[tokio::test]
+async fn a_pairing_code_sets_up_the_machine_once_and_a_failed_download_does_not_spend_it() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "ada", Some("ada@example.com"));
+    let code = RelayClient::new(&relay.url)
+        .unwrap()
+        .create_pairing_code("acct-token", &PairingCodeRequest::default())
+        .await
+        .unwrap()
+        .code
+        .unwrap();
+    let token = PairingCodeToken::parse(&code).unwrap();
+
+    // The driver is missing: setup stops at the download, before the relay
+    // is asked, so the code is still good.
+    let f = fixture();
+    let mut opts = f.opts(&relay.url);
+    opts.download_first = true;
+    opts.driver_bin = Some(f.home.join("missing-spacesd"));
+    let (stage, _) = f.host().setup_staged(opts, &token).await.unwrap_err();
+    assert_eq!(stage, SetupStage::Download);
+    assert_eq!(relay.register_calls(), 0);
+
+    // With the driver: registered as the account that made the code.
+    let mut opts = f.opts(&relay.url);
+    opts.download_first = true;
+    let status = f.host().setup(opts, &token).await.unwrap();
+    assert!(status.configured);
+    let id = f.host().config().unwrap().unwrap().machine_id.unwrap();
+    assert_eq!(relay.machine(&id).unwrap().owner.id, "ada");
+
+    // Spent: another machine cannot use it.
+    let g = fixture();
+    let mut opts = g.opts(&relay.url);
+    opts.download_first = true;
+    let (stage, e) = g.host().setup_staged(opts, &token).await.unwrap_err();
+    assert_eq!(stage, SetupStage::Register);
+    assert_eq!(e.http_status(), Some(401), "{e}");
+}

@@ -1,5 +1,8 @@
-# Standalone project: install with `pnpm install --ignore-workspace`.
-# This file only carries pnpm settings for this directory.
+# Standalone project: install with a plain `pnpm install --frozen-lockfile`
+# here, NOT `--ignore-workspace`. This file makes this directory its own
+# workspace root and carries its pnpm settings; `--ignore-workspace` skips
+# them, so the lockfile looks out of date (patchedDependencies) and the
+# install fails on the ignored electron-winstaller build script.
 allowBuilds:
   electron: true
   electron-winstaller: false

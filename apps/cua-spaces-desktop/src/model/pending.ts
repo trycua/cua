@@ -13,6 +13,7 @@ import type {
   SpaceAppIconRequest,
   SpaceCreateProgress,
   SpaceLike,
+  PresenceIdentity,
   TeleportLike,
 } from "../native/generated/index";
 import type { LiveSpacesBackend, SpacesBackend } from "./backend";
@@ -120,6 +121,7 @@ export class PendingSpacesBackend implements SpacesBackend {
   tool = async (tool: string, args: Record<string, unknown>) => (await this.b()).tool(tool, args);
   teleportContext = async (id: string): Promise<{ teleport: TeleportLike; space: SpaceLike } | null> => (await this.b()).teleportContext(id);
   teleportHandle = () => this.current?.teleportHandle() ?? null;
+  joinPresence = async (id: string, identity: PresenceIdentity, timeoutMs: number) => (await this.b()).joinPresence(id, identity, timeoutMs);
   appIcons = async (id: string, requests: SpaceAppIconRequest[]) => (await this.b()).appIcons(id, requests);
 }
 

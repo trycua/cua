@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Shared scoring for the Bench v2 interruption probes (IR-01..IR-04, Amendment 14).
 
 Every IR evaluator records one diagnostic, `interruption`, with four fields that the runner copies

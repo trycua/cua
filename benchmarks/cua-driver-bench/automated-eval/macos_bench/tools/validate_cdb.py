@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Offline validation of the CDB tasks in this runner. No model call, no GUI.
 
 For each task: reset through the runner's adapter (the pack's setup, then its byte-level verify), run the

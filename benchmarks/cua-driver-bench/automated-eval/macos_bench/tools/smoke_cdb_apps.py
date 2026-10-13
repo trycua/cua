@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Start the apps of one CDB task the way the runner does, place the windows, hold for a screenshot, stop.
 No model call. Run from Terminal.app inside the benchmark VM.   smoke_cdb_apps.py CDB-S01 [hold_seconds]"""
 

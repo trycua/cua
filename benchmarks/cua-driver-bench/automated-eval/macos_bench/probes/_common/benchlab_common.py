@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Shared plumbing for BenchLab probes: PRNG, seed derivation, log loading, scoring.
 
 The PRNG and the per-mode derivations below must stay identical to the Swift

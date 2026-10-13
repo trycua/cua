@@ -63,7 +63,7 @@ fn def() -> &'static ToolDef {
             "required": ["keys"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "pid": { "type": "integer", "description": "Target process ID. Required with x, y; optional with element_token (the token carries the pid)." },
                 "keys": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -200,7 +200,7 @@ impl Tool for HotkeyTool {
             };
         }
 
-        let pid = match args.require_i32("pid") {
+        let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -499,28 +499,12 @@ impl Tool for HotkeyTool {
                 } else {
                     ""
                 };
-                // A combo is never read-back-verifiable. On the background rung,
-                // point the agent at the foreground escalation for menu shortcuts
-                // an app drops in the background — same contract as type_text.
-                let mut structured = serde_json::json!({
-                    "path": if fg { "key_events_fg" } else { "key_events" },
-                    "verified": false,
-                    "effect": "unverifiable",
-                });
-                if !fg && window_id.is_some() {
-                    structured["escalation"] = serde_json::json!({
-                        "recommended": "foreground",
-                        "reason": "a background combo didn't land? menu key-equivalents \
-                                   often need the window fronted — re-call with \
-                                   delivery_mode:\"foreground\". (To type into a field, \
-                                   pixel-click to focus then type_text instead.)"
-                    });
-                }
                 ToolResult::text(format!(
-                    "Pressed {key_display} on pid {pid}{label}.{}",
+                    "Pressed {key_display} on pid {pid}{label}. Read the window before \
+                     sending it again.{}",
                     changes.result_suffix()
                 ))
-                .with_structured(structured)
+                .with_structured(delivered_structured(fg))
             }
             Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -528,9 +512,41 @@ impl Tool for HotkeyTool {
     }
 }
 
+fn delivered_structured(foreground: bool) -> Value {
+    serde_json::json!({
+        "path": if foreground { "key_events_fg" } else { "key_events" },
+        "verified": false,
+        "effect": "unverifiable",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_delivered_combo_suggests_no_resend() {
+        for foreground in [false, true] {
+            let structured = delivered_structured(foreground);
+            assert!(structured.get("escalation").is_none());
+            assert_eq!(structured["effect"], "unverifiable");
+            assert_eq!(structured["verified"], false);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_token_only_hotkey_takes_its_pid_from_the_token() {
+        let tool = HotkeyTool::new(Arc::new(ToolState::new(false, false, None)));
+        let result = tool
+            .invoke(serde_json::json!({
+                "keys": ["cmd", "c"],
+                "element_token": "s7fffffff:0",
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
+    }
 
     #[test]
     fn hotkey_contract_accepts_snapshot_bound_ax_targets() {

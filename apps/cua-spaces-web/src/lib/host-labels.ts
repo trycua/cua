@@ -21,9 +21,8 @@ export function thisComputerText(platform?: string): string {
 }
 
 /**
- * The menu bar switch and the global shortcut belong to the macOS app (the
- * notch, ⌘⇧Space). The Windows and Linux shells have a tray icon and no
- * global shortcut, so Settings leaves both rows out there.
+ * The menu bar switch belongs to the macOS app (the notch). The Windows and
+ * Linux shells have a tray icon instead, so Settings leaves the row out there.
  */
 export function showsMacShellSettings(platform?: string): boolean {
   return isMacPlatform(platform);
@@ -42,4 +41,13 @@ export function creatingLine(detail: string, platform?: string): string {
  * "Windows Hello", "the system keyring" (Linux). */
 export function keyvaultUnlockWay(platform?: string): string {
   return { macos: "Touch ID", windows: "Windows Hello", linux: "the system keyring" }[osOf(platform)];
+}
+
+/** The line under Settings' "Global shortcut" row: what the keys do, or,
+ * when the system refused them, why they do nothing and how to fix it (the
+ * host tries again each time Settings opens). */
+export function globalShortcutLine(shortcut: { label: string; registered: boolean }): string {
+  return shortcut.registered
+    ? "Brings Cua Spaces to the front from any app."
+    : `Another app is using ${shortcut.label}, so it does nothing here. Free it in that app, then open Settings again.`;
 }

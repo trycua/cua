@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Evaluate MB-11: read a native tooltip, type its code, Submit once.
 
 Usage: evaluate.py --seed N --state PATH --events PATH --result OUT.json

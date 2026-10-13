@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Evaluate MB-10 (was PROBE-HOVER): BenchLab hover mode.
 
 Usage: evaluate.py --seed N --state PATH --events PATH --result OUT.json

@@ -309,7 +309,7 @@ impl BrowserPointerTool {
                         "session": required_session_schema(),
                         "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"], "description": "Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y." },
                         "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted", "description": "trusted sends CDP Input events; dom_event synthesizes DOM events in the page and requires ref." },
-                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
+                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
                         "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },
                         "x": { "type": "number", "description": "Origin viewport x in CSS pixels." },
                         "y": { "type": "number", "description": "Origin viewport y in CSS pixels." },

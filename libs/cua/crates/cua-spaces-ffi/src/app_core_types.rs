@@ -3011,6 +3011,7 @@ pub struct AppLocalStorage {
     pub container: Option<AppStorageVolume>,
     /// Catalog refs already pulled here.
     pub pulled: Vec<String>,
+    pub linux_runtime_download_bytes: u64,
 }
 
 /// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,
@@ -9043,4 +9044,202 @@ pub enum AppTelemetrySignal {
         /// Their ids (`cua_volume`, ...); empty: none.
         experiments: Vec<String>,
     },
+}
+
+/// One step, in the order the checklist lists them
+/// ([`telemetry::CHECKLIST_STEPS`]).
+pub type AppChecklistStep = core::checklist::ChecklistStep;
+#[uniffi::remote(Enum)]
+pub enum AppChecklistStep {
+    /// Connect another computer you own.
+    AddMachine,
+    /// Create a Space.
+    CreateSpace,
+    /// Teleport an app into a Space.
+    Teleport,
+    /// Share a Space with someone.
+    Share,
+    /// Run an agent.
+    RunAgent,
+}
+
+/// What the checklist remembers between launches.
+pub type AppChecklistState = core::checklist::ChecklistState;
+#[uniffi::remote(Record)]
+pub struct AppChecklistState {
+    /// Steps done, each once, in checklist order.
+    pub done: Vec<AppChecklistStep>,
+    /// Closed with ×; Getting Started opens it again.
+    pub dismissed: bool,
+    /// It was on screen once (`checklist_shown` was recorded).
+    pub shown: bool,
+}
+
+/// `checklist::ChecklistAction`.
+pub type AppChecklistAction = core::checklist::ChecklistAction;
+#[uniffi::remote(Enum)]
+pub enum AppChecklistAction {
+    /// A step finished (a teleport ran, a Space was shared).
+    Done {
+        /// The step.
+        step: AppChecklistStep,
+    },
+    /// The checklist is on screen.
+    Shown,
+    /// Closed with ×.
+    Dismiss,
+    /// Getting Started (the palette, the Help menu): open it again.
+    Reopen,
+    /// What the app shows now: each `true` ticks its step off.
+    Observe {
+        /// One of your machines other than this one is listed.
+        other_machine: bool,
+        /// A Space of yours exists (running or stopped).
+        has_space: bool,
+        /// An agent exists or has run.
+        agent_ran: bool,
+    },
+}
+
+/// The state after an action and the usage events it means.
+pub type AppChecklistTransition = core::checklist::ChecklistTransition;
+#[uniffi::remote(Record)]
+pub struct AppChecklistTransition {
+    /// The new state (save it when it changed).
+    pub state: AppChecklistState,
+    /// `cua_onboarding_step` events to record (`checklist_<event>`).
+    pub signals: Vec<AppTelemetrySignal>,
+}
+
+/// One row of the checklist.
+pub type AppChecklistRow = core::checklist::ChecklistRow;
+#[uniffi::remote(Record)]
+pub struct AppChecklistRow {
+    /// The step.
+    pub step: AppChecklistStep,
+    /// "Add a machine".
+    pub title: String,
+    /// One line under the title.
+    pub detail: String,
+    /// The button that does it; hidden once done.
+    pub action: String,
+    /// Done (ticked, struck through).
+    pub done: bool,
+}
+
+/// The checklist as drawn.
+pub type AppChecklistView = core::checklist::ChecklistView;
+#[uniffi::remote(Record)]
+pub struct AppChecklistView {
+    /// On screen (not closed).
+    pub visible: bool,
+    /// Every step done.
+    pub complete: bool,
+    /// "Get started", or "You're set up" when complete.
+    pub title: String,
+    /// The line under the title.
+    pub detail: String,
+    /// "2 of 5".
+    pub progress: String,
+    /// The close button's accessibility label.
+    pub close_label: String,
+    /// The steps in order.
+    pub rows: Vec<AppChecklistRow>,
+}
+
+/// One command's default key.
+pub type AppKeybinding = core::palette::Keybinding;
+#[uniffi::remote(Record)]
+pub struct AppKeybinding {
+    /// `commandPalette.toggle`, `nav.spaces`, ...
+    pub command: String,
+    /// `mod+k`, `mod+shift+l`: `mod` is ⌘ on macOS and Ctrl elsewhere.
+    pub key: String,
+}
+
+/// What the palette matches a query against, for one command.
+pub type AppPaletteEntry = core::palette::PaletteEntry;
+#[uniffi::remote(Record)]
+pub struct AppPaletteEntry {
+    /// "Actions", "Go to", "Spaces".
+    pub group: String,
+    /// "New Space".
+    pub label: String,
+    /// Secondary text ("Linux").
+    pub hint: Option<String>,
+    /// Extra words it answers to ("create add").
+    pub keywords: Option<String>,
+}
+
+/// The team whose allowance is pooled.
+pub type AppRelayUsageTeam = core::relay_usage::RelayUsageTeam;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsageTeam {
+    /// Team id.
+    pub id: String,
+    /// Seats sharing the allowance.
+    pub seats: u32,
+}
+
+/// The relay's answer (`cua_host::RelayUsage`, camelCase: the web bridge's
+/// `relay.usage` result). Every field has a default.
+pub type AppRelayUsage = core::relay_usage::RelayUsage;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsage {
+    /// The relay meters this account (false: no allowance applies).
+    pub metered: bool,
+    /// The month counted (`2026-10`).
+    pub period: String,
+    /// `free`, `pro`, `team`, ...
+    pub plan: String,
+    /// The team whose allowance is pooled.
+    pub team: Option<AppRelayUsageTeam>,
+    /// Live sessions now.
+    pub live_sessions: u32,
+    /// Live sessions allowed at once (none: no limit).
+    pub live_sessions_limit: Option<u32>,
+    /// Relay hours used this month (the team's, when pooled).
+    pub hours_used: f64,
+    /// Relay hours allowed this month (none: no limit).
+    pub hours_limit: Option<f64>,
+    /// This account's own relay hours this month.
+    pub my_hours_used: f64,
+    /// Past the allowance (sessions keep working).
+    pub soft_limit_reached: bool,
+    /// What is past it: `sessions` and/or `hours`.
+    pub reasons: Vec<String>,
+    /// Where to get more (https only; see [`checked`]).
+    pub upgrade_url: Option<String>,
+}
+
+/// The line above every page past the allowance.
+pub type AppRelayAllowanceNotice = core::relay_usage::RelayAllowanceNotice;
+#[uniffi::remote(Record)]
+pub struct AppRelayAllowanceNotice {
+    /// "You've used your free relay allowance for this month. ..."
+    pub text: String,
+    /// [`UPGRADE`].
+    pub upgrade: String,
+    /// What Upgrade opens; none: no Upgrade button.
+    pub upgrade_url: Option<String>,
+    /// [`DISMISS`].
+    pub dismiss: String,
+    /// What a dismissal remembers: the month and the reasons. A new month,
+    /// or another limit reached, shows the notice again.
+    pub dismiss_key: String,
+}
+
+/// The allowance as drawn.
+pub type AppRelayUsageView = core::relay_usage::RelayUsageView;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsageView {
+    /// [`ROW_LABEL`].
+    pub label: String,
+    /// "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+    /// team pool when there is one.
+    pub line: String,
+    /// "Free plan" (empty when the relay names none).
+    pub plan: String,
+    /// Past the allowance.
+    pub notice: Option<AppRelayAllowanceNotice>,
 }

@@ -932,15 +932,25 @@ mod engine_impl {
     /// runtime only while its VM runs). Never boots or downloads anything:
     /// for views of what is there (disk use, downloaded images).
     pub async fn connect_if_up(cfg: ContainerConfig) -> Option<ContainerRuntime> {
-        match choose(cfg.clone(), LinuxSource::current()).await.ok()? {
-            Choice::System(rt) => Some(*rt),
-            Choice::Builtin(_) if running() => ContainerRuntime::connect(ContainerConfig {
-                endpoint: Some(endpoint()),
-                ..cfg
-            })
+        choose(cfg, LinuxSource::current())
             .await
-            .ok(),
-            Choice::Builtin(_) => None,
+            .ok()?
+            .connect_if_up()
+            .await
+    }
+
+    impl Choice {
+        pub async fn connect_if_up(self) -> Option<ContainerRuntime> {
+            match self {
+                Self::System(rt) => Some(*rt),
+                Self::Builtin(rt) if running() => ContainerRuntime::connect(ContainerConfig {
+                    endpoint: Some(endpoint()),
+                    ..rt.cfg.clone()
+                })
+                .await
+                .ok(),
+                Self::Builtin(_) => None,
+            }
         }
     }
 

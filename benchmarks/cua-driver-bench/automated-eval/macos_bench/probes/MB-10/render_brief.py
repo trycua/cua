@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Render the agent prompt for MB-10 from a seed."""
 
 from __future__ import annotations

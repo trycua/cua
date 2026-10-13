@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 """Bench v2 (Amendment 14): GUI-only enforcement, task categories, the background score and the
 interruption fields of a trial row.
 
@@ -492,6 +495,87 @@ def background_condition_score(
         "user_input_disrupted": None if ua is None else bool(ua.get("disrupted") or not text_ok),
         "user_activity": ua,
         "overlay_owners": list(disturbance.get("overlay_owners") or []),
+    }
+
+
+# ------------------------------------------------------------------ multi-player background completion (A22)
+
+# The owner's rule of 11 Oct 2026: the user could have kept working at the same time, undisturbed, as if two people
+# shared the computer. Each criterion is True (held), False (the user was disturbed) or None (not measured).
+MULTIPLAYER_CRITERIA: dict[str, str] = {
+    "key_focus": "keyboard focus or key-window loss",
+    "window_raised": "a window raised over the user's window",
+    "typing": "the user's typing lost or redirected",
+    "pointer": "the real pointer moved",
+    "clipboard": "the user's clipboard changed",
+    "space": "a desktop Space or full-screen switch",
+    "dialog": "a modal, sheet or dialog on the user's app",
+    "activation": "the user's app activated or deactivated",
+}
+POINTER_STILL_PX = 1.0  # "any amount": the simulated user never moves the pointer, so any movement above 1 px counts
+
+
+def _zero(value: Any) -> bool | None:
+    return None if value is None else int(value) == 0
+
+
+def multiplayer_criteria(disturbance: dict[str, Any]) -> dict[str, bool | None]:
+    d = disturbance or {}
+    ua = d.get("user_activity")
+    leaked = [d.get(k) for k in ("keystrokes_leaked", "clicks_leaked", "scrolls_leaked")]
+    if ua is None:
+        typing = None
+    else:
+        typing = (
+            all(int(v or 0) == 0 for v in leaked)
+            and int(ua.get("blocked") or 0) == 0
+            and int(ua.get("text_disruptions") or 0) == 0
+            and ua.get("text_intact_at_end") is not False
+        )
+    deviation = d.get("pointer_max_deviation_px")
+    lost, gained = d.get("activations_lost"), d.get("activations_gained")
+    activation = (
+        None
+        if d.get("front_changes") is None
+        else (
+            int(d.get("front_changes") or 0) == 0 and int(lost or 0) == 0 and int(gained or 0) == 0
+        )
+    )
+    return {
+        "key_focus": _zero(d.get("key_loss")),
+        "window_raised": _zero(d.get("windows_raised")),
+        "typing": typing,
+        "pointer": None if deviation is None else float(deviation) <= POINTER_STILL_PX,
+        "clipboard": _zero(d.get("clipboard_changes")),
+        "space": _zero(d.get("space_switches")),
+        "dialog": _zero(d.get("sheets_shown")),
+        "activation": activation,
+    }
+
+
+def multiplayer_score(
+    disturbance: dict[str, Any],
+    measured: bool,
+    passed: bool,
+    condition: str | None,
+    rescore: bool = False,
+) -> dict[str, Any]:
+    """A22: background completion = the task passed AND none of the eight disturbances happened to the user.
+    In a scored run an unmeasured criterion is not held (fail closed). ``rescore`` re-expresses a run from before
+    A22 over the criteria it did measure; such figures are labelled secondary and list what was not measured."""
+    criteria = multiplayer_criteria(disturbance)
+    unmeasured = sorted(k for k, v in criteria.items() if v is None)
+    if rescore:
+        held = measured and all(v is not False for v in criteria.values())
+    else:
+        held = measured and all(v is True for v in criteria.values())
+    return {
+        "rule": "A22" + (" rescored" if rescore else ""),
+        "condition": condition,
+        "criteria": criteria,
+        "unmeasured": unmeasured,
+        "user_undisturbed": held,
+        "background_completion": bool(passed and held) if condition == "background" else None,
     }
 
 

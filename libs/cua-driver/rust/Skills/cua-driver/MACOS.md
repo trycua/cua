@@ -114,6 +114,7 @@ is safe even for apps that normally foreground on media-load
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
 | Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
+| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
@@ -321,6 +322,33 @@ key focus back within a few tens of milliseconds. Prefer routes that do
 not ask the app to come forward: `set_value` on the address field or
 `browser_navigate` instead of `cmd+L`, and `AXOpen` through
 `double_click` on an element instead of a pixel double-click.
+### Hover in the background
+
+macOS apps track hover and show tooltips (help tags) from the real
+pointer. Pointer-move and enter events posted to a background app reach
+the app but never its tracking areas, so most hover-only controls and all
+native tooltips cannot be revealed in the background. A window-targeted
+`move_cursor` on a background app tries the two routes that leave the
+real pointer, focus and z-order alone. Its result says whether it hovered
+and how:
+
+- `ax_alternate_ui`: the element under the point (or an ancestor) lists
+  `showalternateui`, as sidebar section headers in Finder, Mail, Music and
+  System Settings do. The hover-only controls appear in the next
+  `get_window_state`; hovering elsewhere hides them. The same element can
+  be driven directly with `click` and `action:"show_alternate_ui"` /
+  `"show_default_ui"`.
+- `electron_input`: an Electron page gets `mouseEnter`/`mouseMove` through
+  the app's main process, so page hover effects update. Native tooltips do
+  not show.
+
+For a web page in Chrome use `browser_pointer` hover. Otherwise
+`move_cursor` moves only the agent cursor and says so. Look for the same
+command elsewhere first: a menu item, a context menu, a keyboard
+shortcut, or the control's help text in `get_window_state` (toolbar
+tooltips are usually there as `help=`). Otherwise the step needs the
+user's pointer (`move_cursor` with `scope:"desktop"`) or the app in front
+(`bring_to_front`); use either only if the user allows it, and say which.
 
 ### `delivery_mode` on the pointer family (macOS)
 
@@ -423,6 +451,18 @@ There is no backgrounded path that reaches these apps today.
   every non-HID-tap synthesis path. For context menus on
   AX-addressable elements (links, buttons, toolbar items), use
   `right_click({pid, element_token})` instead.
+
+### A value write the app does not apply (LibreOffice)
+
+Some apps accept an accessibility value write and ignore it. LibreOffice
+Calc cells do: `set_value` returns success at the AX level and the cell
+keeps its old content. `set_value` re-reads the value, and when it has
+not moved it fails with `code:"write_not_applied"` and
+`effect:"not_applied"`, so a `run_script` stops there. LibreOffice also
+drops background pointer input, so its cells cannot be edited in the
+background at all: the edit needs the window in front (`bring_to_front`,
+then `type_text`), only if the user allows it. Otherwise stop and report
+the step as blocked.
 
 ### Known text-input limits (Catalyst + Electron)
 

@@ -13,7 +13,7 @@ struct LegacyDiskAssemblyTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let cache = root.appendingPathComponent("cache")
-        let registry = ImageContainerRegistry(
+        let registry = try ImageContainerRegistry(
             registry: "unused.invalid", organization: "fixture",
             cacheDirectory: cache, cachingEnabled: cachingEnabled)
         let manifestId = "legacy-lz4-fixture"

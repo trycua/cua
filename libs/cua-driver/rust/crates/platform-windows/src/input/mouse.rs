@@ -10,7 +10,7 @@ use std::time::Duration;
 use windows::core::{Error, Owned};
 use windows::Win32::Foundation::{ERROR_INVALID_THREAD_ID, HANDLE, HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
-use windows::Win32::System::Diagnostics::Debug::{GetThreadContext, CONTEXT, CONTEXT_FLAGS};
+use windows::Win32::System::Diagnostics::Debug::{self, GetThreadContext, CONTEXT};
 use windows::Win32::System::Threading::{
     GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_GET_CONTEXT,
     THREAD_SUSPEND_RESUME,
@@ -37,13 +37,6 @@ const MK_RBUTTON: u32 = 0x0002;
 
 const CLICK_DELAY_MS: u64 = 35;
 
-#[cfg(target_arch = "x86_64")]
-const CONTEXT_CONTROL: CONTEXT_FLAGS =
-    windows::Win32::System::Diagnostics::Debug::CONTEXT_CONTROL_AMD64;
-#[cfg(target_arch = "aarch64")]
-const CONTEXT_CONTROL: CONTEXT_FLAGS =
-    windows::Win32::System::Diagnostics::Debug::CONTEXT_CONTROL_ARM64;
-
 #[repr(C, align(16))]
 struct AlignedContext(CONTEXT);
 
@@ -51,12 +44,9 @@ struct SuspendedThread(Owned<HANDLE>);
 
 impl SuspendedThread {
     fn suspend(hwnd: HWND) -> windows::core::Result<Self> {
-        let thread_id = unsafe {
-            windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, None)
-        };
-        if thread_id == unsafe { GetCurrentThreadId() } {
-            return Err(ERROR_INVALID_THREAD_ID.into());
-        }
+        let thread_id = Some(unsafe { crate::input::GetWindowThreadProcessId(hwnd, None) })
+            .filter(|&id| id != unsafe { GetCurrentThreadId() })
+            .ok_or(ERROR_INVALID_THREAD_ID)?;
         let access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT;
         let handle = unsafe { Owned::new(OpenThread(access, false, thread_id)?) };
         if unsafe { SuspendThread(*handle) } == u32::MAX {
@@ -64,9 +54,19 @@ impl SuspendedThread {
         }
         let suspended = Self(handle);
         let mut context = AlignedContext(CONTEXT::default());
-        context.0.ContextFlags = CONTEXT_CONTROL;
-        unsafe { GetThreadContext(*suspended.0, &mut context.0)? };
-        Ok(suspended)
+        #[cfg(target_arch = "x86_64")]
+        let control = Debug::CONTEXT_CONTROL_AMD64;
+        #[cfg(target_arch = "aarch64")]
+        let control = Debug::CONTEXT_CONTROL_ARM64;
+        context.0.ContextFlags = control;
+        unsafe { GetThreadContext(*suspended.0, &mut context.0) }.map(|()| suspended)
+    }
+
+    fn resume(self) -> windows::core::Result<()> {
+        let handle = unsafe { std::ptr::read(&std::mem::ManuallyDrop::new(self).0) };
+        (unsafe { ResumeThread(*handle) } != u32::MAX)
+            .then_some(())
+            .ok_or_else(Error::from_win32)
     }
 }
 
@@ -182,10 +182,10 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
     // call SetForegroundWindow from their event handlers. Keep the top-level
     // categorically non-activatable until the complete burst has settled.
     let _noact = crate::input::NoActivateGuard::arm(hwnd);
+    let unavailable = |error: Error| anyhow!("background_unavailable: target thread: {error}");
     for i in 0..count {
         let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
-        let suspended = SuspendedThread::suspend(hwnd)
-            .map_err(|error| anyhow!("background_unavailable: target thread: {error}"))?;
+        let suspended = SuspendedThread::suspend(hwnd).map_err(unavailable)?;
         let posted = unsafe {
             // WM_MOUSEMOVE first so hover state is correct before the click.
             PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)
@@ -194,7 +194,7 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
                 .and_then(|()| PostMessageW(hwnd, press_msg, wdown, lparam))
                 .and_then(|()| PostMessageW(hwnd, up_msg, wup, lparam))
         };
-        drop(suspended);
+        suspended.resume().map_err(unavailable)?;
         posted?;
         if i + 1 < count {
             sleep(Duration::from_millis(80));
@@ -1126,22 +1126,55 @@ mod nc_hit_tests {
 #[cfg(test)]
 mod wheel_tests {
     use super::{post_click_on, posted_press_message, wheel_mouse_data};
-    use std::cell::RefCell;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread::JoinHandle;
-    use windows::core::w;
+    use std::time::Duration;
+    use windows::core::{w, HSTRING, PCWSTR};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Controls::WM_MOUSELEAVE;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW,
-        PostMessageW, RegisterClassW, CS_DBLCLKS, MSG, PM_REMOVE, WINDOW_EX_STYLE,
-        WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_POPUP,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowLongPtrW,
+        PeekMessageW, PostMessageW, RegisterClassW, SetWindowLongPtrW, UnregisterClassW,
+        CS_DBLCLKS, GWLP_USERDATA, MSG, PM_REMOVE, WINDOW_EX_STYLE, WM_LBUTTONDBLCLK,
+        WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_POPUP,
     };
 
-    thread_local! {
-        static MOUSE_TRACE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+    const TRACE_CAPACITY: usize = 1024;
+    const PUMP_TIMEOUT: Duration = Duration::from_secs(10);
+
+    struct MouseTrace {
+        len: AtomicUsize,
+        messages: [AtomicU32; TRACE_CAPACITY],
+    }
+
+    impl MouseTrace {
+        fn leak() -> &'static Self {
+            Box::leak(Box::new(Self {
+                len: AtomicUsize::new(0),
+                messages: std::array::from_fn(|_| AtomicU32::new(0)),
+            }))
+        }
+
+        fn record(&self, msg: u32) {
+            let index = self.len.fetch_add(1, Ordering::AcqRel);
+            if let Some(slot) = self.messages.get(index) {
+                slot.store(msg, Ordering::Release);
+            }
+        }
+
+        fn snapshot(&self) -> Vec<u32> {
+            let len = self.len.load(Ordering::Acquire);
+            assert!(
+                len <= TRACE_CAPACITY,
+                "trace overflowed with {len} messages"
+            );
+            self.messages[..len]
+                .iter()
+                .map(|msg| msg.load(Ordering::Acquire))
+                .collect()
+        }
     }
 
     unsafe extern "system" fn leave_on_move_window_proc(
@@ -1150,11 +1183,14 @@ mod wheel_tests {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if matches!(
-            msg,
-            WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_LBUTTONUP | WM_MOUSELEAVE
-        ) {
-            MOUSE_TRACE.with_borrow_mut(|trace| trace.push(msg));
+        let trace = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const MouseTrace;
+        if let Some(trace) = trace.as_ref() {
+            if matches!(
+                msg,
+                WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_LBUTTONUP | WM_MOUSELEAVE
+            ) {
+                trace.record(msg);
+            }
         }
         if msg == WM_MOUSEMOVE {
             let _ = PostMessageW(hwnd, WM_MOUSELEAVE, WPARAM(0), LPARAM(0));
@@ -1164,25 +1200,30 @@ mod wheel_tests {
 
     struct PumpedWindow {
         hwnd: HWND,
+        trace: &'static MouseTrace,
         stop: Arc<AtomicBool>,
-        pump: Option<JoinHandle<Vec<u32>>>,
+        stopped: mpsc::Receiver<()>,
+        pump: Option<JoinHandle<()>>,
     }
 
     impl PumpedWindow {
-        fn spawn() -> Self {
+        fn spawn(class_name: &'static str) -> Self {
+            let trace = MouseTrace::leak();
             let stop = Arc::new(AtomicBool::new(false));
             let pump_stop = Arc::clone(&stop);
             let (hwnd_tx, hwnd_rx) = mpsc::channel();
+            let (stopped_tx, stopped) = mpsc::channel();
             let pump = std::thread::spawn(move || unsafe {
                 let instance = GetModuleHandleW(None).expect("module handle");
+                let class_name = HSTRING::from(class_name);
                 let class = WNDCLASSW {
                     style: CS_DBLCLKS,
                     lpfnWndProc: Some(leave_on_move_window_proc),
                     hInstance: instance.into(),
-                    lpszClassName: w!("CuaPostedClickLeaveOnMove"),
+                    lpszClassName: PCWSTR(class_name.as_ptr()),
                     ..Default::default()
                 };
-                RegisterClassW(&class);
+                assert_ne!(RegisterClassW(&class), 0, "register window class");
                 let hwnd = CreateWindowExW(
                     WINDOW_EX_STYLE(0),
                     class.lpszClassName,
@@ -1198,6 +1239,7 @@ mod wheel_tests {
                     None,
                 )
                 .expect("create leave-on-move window");
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, trace as *const MouseTrace as isize);
                 hwnd_tx.send(hwnd.0 as isize).expect("send window handle");
                 let mut msg = MSG::default();
                 while !pump_stop.load(Ordering::Acquire) {
@@ -1206,35 +1248,46 @@ mod wheel_tests {
                     }
                 }
                 let _ = DestroyWindow(hwnd);
-                MOUSE_TRACE.take()
+                let _ = UnregisterClassW(class.lpszClassName, instance);
+                let _ = stopped_tx.send(());
             });
-            let hwnd = HWND(hwnd_rx.recv().expect("leave-on-move window") as *mut _);
+            let hwnd = hwnd_rx
+                .recv_timeout(PUMP_TIMEOUT)
+                .expect("leave-on-move window");
             Self {
-                hwnd,
+                hwnd: HWND(hwnd as *mut _),
+                trace,
                 stop,
+                stopped,
                 pump: Some(pump),
             }
         }
 
         fn finish(mut self) -> Vec<u32> {
             self.stop.store(true, Ordering::Release);
+            self.stopped
+                .recv_timeout(PUMP_TIMEOUT)
+                .expect("pump thread stopped in time");
             let pump = self.pump.take().expect("pump thread");
-            pump.join().expect("pump thread panicked")
+            pump.join().expect("pump thread panicked");
+            self.trace.snapshot()
         }
     }
 
     impl Drop for PumpedWindow {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::Release);
-            if let Some(pump) = self.pump.take() {
-                let _ = pump.join();
+            if self.stopped.recv_timeout(PUMP_TIMEOUT).is_ok() {
+                if let Some(pump) = self.pump.take() {
+                    let _ = pump.join();
+                }
             }
         }
     }
 
     #[test]
     fn posted_click_release_is_queued_before_the_leave_its_move_triggers() {
-        let window = PumpedWindow::spawn();
+        let window = PumpedWindow::spawn("CuaPostedClickLeaveOnMoveRace");
         for _ in 0..200 {
             post_click_on(window.hwnd, 5, 5, 1, "left").expect("post click");
         }
@@ -1252,7 +1305,7 @@ mod wheel_tests {
 
     #[test]
     fn posted_double_click_queues_move_press_release_per_click() {
-        let window = PumpedWindow::spawn();
+        let window = PumpedWindow::spawn("CuaPostedClickLeaveOnMoveDouble");
         post_click_on(window.hwnd, 5, 5, 2, "left").expect("post double click");
         let clicks: Vec<u32> = window
             .finish()

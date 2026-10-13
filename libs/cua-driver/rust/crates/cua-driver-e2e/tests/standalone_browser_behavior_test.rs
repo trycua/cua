@@ -4931,12 +4931,15 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                 launch_additional_window(&mut fixture);
             assert_eq!(second_pid, fixture.pid);
             assert_ne!(second_window_id, fixture.window_id);
+            let session = format!("standalone-two-window-{}", fixture.pid);
+            let attached_before = prepare_same_space_attachment(&mut fixture, &session).is_some();
             run_with_background_oracles(&mut fixture, |fixture| {
-                let session = format!("standalone-two-window-{}", fixture.pid);
-                let started = fixture
-                    .driver
-                    .call("start_session", serde_json::json!({ "session": session }));
-                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                if !attached_before {
+                    let started = fixture
+                        .driver
+                        .call("start_session", serde_json::json!({ "session": session }));
+                    assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                }
                 let prepared = fixture.driver.call(
                     "browser_prepare",
                     serde_json::json!({
@@ -4946,13 +4949,17 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                         "strategy": {"kind": "existing_profile"},
                     }),
                 );
-                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
-                assert_eq!(
-                    prepared.structured()["action"],
-                    "attached_existing_profile",
-                    "{}",
-                    prepared.raw
-                );
+                if attached_before {
+                    assert_same_space_background_refusal(&prepared);
+                } else {
+                    assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                    assert_eq!(
+                        prepared.structured()["action"],
+                        "attached_existing_profile",
+                        "{}",
+                        prepared.raw
+                    );
+                }
                 let refused = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({

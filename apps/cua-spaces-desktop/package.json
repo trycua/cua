@@ -1,7 +1,7 @@
 {
   "name": "@cua/cua-spaces-desktop",
   "productName": "Cua Spaces",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "private": true,
   "license": "FSL-1.1-MIT",
   "description": "Cua Spaces desktop shell (Electron)",

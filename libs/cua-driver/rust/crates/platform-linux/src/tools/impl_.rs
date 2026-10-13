@@ -3129,13 +3129,15 @@ fn with_uinput_hint(mut refusal: ToolResult) -> ToolResult {
 /// Honest refusal for a background keyboard action that has no focus-free
 /// actuator. Carries the uinput hint whenever the MPX route is missing only
 /// because `/dev/uinput` is not writable (the fixable case).
-fn background_keyboard_refusal() -> ToolResult {
+fn background_keyboard_refusal(atspi_ok: bool) -> ToolResult {
     let mut refusal = crate::input::delivery::background_unavailable_error(
         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
     );
-    let probe = std::thread::spawn(crate::health_report::probe_a11y_bus);
-    let atspi_ok = crate::wayland::is_wayland() || probe.join().unwrap_or(false);
-    refusal.content.extend(atspi_hint(atspi_ok));
+    let bus = crate::health_report::START_ATSPI_BUS_HINT;
+    let hint = format!("AT-SPI is unavailable. {bus} Or use delivery_mode \"foreground\".");
+    refusal
+        .content
+        .extend((!atspi_ok).then(|| cua_driver_core::protocol::Content::text(hint)));
     if !crate::wayland::is_wayland() && !crate::input::uinput_accessible() {
         with_uinput_hint(refusal)
     } else {
@@ -3143,10 +3145,9 @@ fn background_keyboard_refusal() -> ToolResult {
     }
 }
 
-fn atspi_hint(atspi_ok: bool) -> Option<cua_driver_core::protocol::Content> {
-    let bus = crate::health_report::START_ATSPI_BUS_HINT;
-    let hint = format!("AT-SPI is unavailable. {bus} Or use delivery_mode \"foreground\".");
-    (!atspi_ok).then(|| cua_driver_core::protocol::Content::text(hint))
+fn atspi_up() -> bool {
+    let probe = std::thread::spawn(crate::health_report::probe_a11y_bus);
+    crate::wayland::is_wayland() || probe.join().unwrap_or(false)
 }
 
 fn unavailable_gtk_keyboard_background(
@@ -3157,7 +3158,7 @@ fn unavailable_gtk_keyboard_background(
         && is_gtk_process(pid)
         && !crate::wayland::is_inject_mode()
         && !crate::input::real_keyboard_input_available())
-    .then(background_keyboard_refusal)
+    .then(|| background_keyboard_refusal(atspi_up()))
 }
 
 /// Outcome of one background/foreground keyboard delivery on X11, funnelled
@@ -4827,28 +4828,41 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
 #[cfg(test)]
 #[test]
 fn background_keyboard_refusal_names_missing_atspi_bus() {
-    let Some(cua_driver_core::protocol::Content::Text { text: hint, .. }) = atspi_hint(false)
-    else {
-        panic!("missing AT-SPI hint");
+    let plain = crate::input::delivery::background_unavailable_error(
+        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+    );
+    let text = |refusal: &ToolResult| -> String {
+        refusal
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                cua_driver_core::protocol::Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
     };
+    let (missing, reachable) = (
+        background_keyboard_refusal(false),
+        background_keyboard_refusal(true),
+    );
     for needle in [
         "AT-SPI is unavailable",
         "at-spi-bus-launcher",
         "delivery_mode \"foreground\"",
     ] {
-        assert!(hint.contains(needle), "{needle} missing from {hint}");
+        assert!(
+            text(&missing).contains(needle),
+            "{needle} missing from {}",
+            text(&missing)
+        );
     }
-    assert!(atspi_hint(true).is_none());
-    let plain = crate::input::delivery::background_unavailable_error(
-        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-    );
-    let refusal = background_keyboard_refusal();
-    let (structured, plain) = (
-        refusal.structured_content.unwrap(),
-        plain.structured_content.unwrap(),
-    );
-    assert_eq!(structured["code"], plain["code"]);
-    assert_eq!(structured["escalation"], plain["escalation"]);
+    assert!(!text(&reachable).contains("AT-SPI is unavailable"));
+    for refusal in [missing, reachable] {
+        let structured = refusal.structured_content.unwrap();
+        let expected = plain.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], expected["code"]);
+        assert_eq!(structured["escalation"], expected["escalation"]);
+    }
 }
 
 #[cfg(test)]
@@ -7957,7 +7971,7 @@ impl Tool for TypeTextTool {
             })
             .await;
             return match result {
-                Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(),
+                Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(atspi_up()),
                 Ok(Ok((_, Some(report)))) => type_text_mpx_result(text_len, report),
                 Ok(Ok((path, None))) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
@@ -8087,7 +8101,7 @@ impl Tool for TypeTextTool {
                     ))
                     .with_structured(type_text_structured("key_events", text_len, false)),
                     Ok(Ok(Some(KeyRoute::Mpx(report)))) => type_text_mpx_result(text_len, report),
-                    Ok(Ok(_)) => background_keyboard_refusal(),
+                    Ok(Ok(_)) => background_keyboard_refusal(atspi_up()),
                     Ok(Err(e)) => input_error_result(e),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -8227,7 +8241,7 @@ impl Tool for TypeTextTool {
                 text_len,
                 &format!("via X11, delivery_mode={mode_label}"),
             ),
-            Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(),
+            Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(atspi_up()),
             Ok(Ok((_, Some(report)))) => type_text_mpx_result(text_len, report),
             Ok(Ok((path, None))) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."

@@ -20,6 +20,16 @@ on:
           - cua-spacesd
           - cua-sdk
           - cua-spaces
+          - agent
+          - core
+          - bench
+          - bench-ui
+          - som
+          - sandbox-apps
+          - train
+          - npm-core
+          - npm-playground
+          - cuabot
       bump:
         description: "Version bump for the selected component"
         required: true
@@ -63,7 +73,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-perception, cua-driver-rs, lume, sandbox, cua-spacesd, cua-sdk or cua-spaces when forcing a bump type."
+          echo "::error::Select a component (not automatic) when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history

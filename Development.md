@@ -138,20 +138,20 @@ instead of entering the public docs navigation.
 
 ## Releases
 
-Release Please manages the components listed in
-[`.github/releases/components.json`](.github/releases/components.json) (Cua
-Driver, Cua Perception, Lume, and the cua SDK) plus cua-sandbox
-(`sandbox-v*` tags). Their pull request titles decide the release; see
-[`CONTRIBUTING.md`](CONTRIBUTING.md#agent-assisted-contributions).
+Release Please manages Cua Driver, Cua Perception, Lume, Cua Spaces, the cua
+SDK, cua-spacesd, cua-sandbox and the Python and npm packages; the table in
+[`.github/releases/README.md`](.github/releases/README.md) lists each one's
+path, tag and publishing workflow. Their pull request titles decide the
+release; see [`CONTRIBUTING.md`](CONTRIBUTING.md#agent-assisted-contributions).
 
-Other packages are released through the
+The Docker images are still released through the
 [Legacy packages: Bump Version](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
-workflow. Its `service` input is the current target list. Each package's
-`.bumpversion.cfg`, Cargo manifest, or package manifest owns its version and
-tag format, and tag-triggered CD workflows publish.
+workflow. Its `service` input is the current target list. Each image's
+`.bumpversion.cfg` owns its version and tag format, and tag-triggered CD
+workflows publish.
 
-The root `Makefile` provides local version inspection and dry-run helpers. It
-does not publish production releases.
+The root `Makefile` prints the Release Please versions (`make show-versions`).
+It does not publish releases.
 
 ## Generated and Local Files
 

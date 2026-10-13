@@ -1,8 +1,9 @@
 //! `cua-image`: OCI images for the cua SDK.
 //!
 //! * [`registry`] — pull/push via `oci-client` with credentials from env,
-//!   docker config and credential helpers (anonymous otherwise), rate-limit
-//!   retries, streaming verified blob downloads/uploads, multi-arch indexes.
+//!   docker config and credential helpers (a pull asks the helper only after
+//!   the registry refuses it anonymously), rate-limit retries, streaming
+//!   verified blob downloads/uploads, multi-arch indexes.
 //! * [`cache`] — content-addressed local cache at `~/.cua/images`.
 //! * [`containerdisk`] — KubeVirt containerDisk (`FROM scratch` +
 //!   `/disk/disk.img`) extract/pack, and a [`cua_vmm::DiskResolver`] so the

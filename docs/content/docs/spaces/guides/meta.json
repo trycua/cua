@@ -8,6 +8,7 @@
     "send-files",
     "teleport-an-app",
     "persistent-agents",
+    "agent-keys",
     "keyvault",
     "site-login",
     "relay-security",

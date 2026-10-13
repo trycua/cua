@@ -318,6 +318,7 @@ Returned by [`app_stream_section`](#app_stream_section).
 .noSession
 .idle
 .connecting
+.reconnecting
 .streaming
 .suspended
 .failed
@@ -330,6 +331,7 @@ Returned by [`app_stream_section`](#app_stream_section).
 AppStreamPhase::NoSession
 AppStreamPhase::Idle
 AppStreamPhase::Connecting
+AppStreamPhase::Reconnecting
 AppStreamPhase::Streaming
 AppStreamPhase::Suspended
 AppStreamPhase::Failed
@@ -343,6 +345,7 @@ AppStreamPhase::Failed
 | `NoSession` | No session yet. |
 | `Idle` | A session that has not started. |
 | `Connecting` | Opening (no frame yet). |
+| `Reconnecting` | Opening again by itself after the stream dropped (no frame yet). |
 | `Streaming` | Frames arrive. |
 | `Suspended` | Paused by the Space (the stream view says why). |
 | `Failed` | It could not open. |

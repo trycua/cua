@@ -40,6 +40,10 @@ pub(crate) struct Stream(pub Arc<DesktopState>);
 
 const DEFAULT_TICKET_TTL: Duration = Duration::from_secs(60);
 const MAX_TICKET_TTL: Duration = Duration::from_secs(600);
+/// A guest's media ticket (a relayed caller other than the owner) only has
+/// to last until the attach: kept short so it can't outlive a revoke for
+/// long, whatever the client asks (CUA-1416). The guest reopens to refresh.
+const GUEST_TICKET_TTL: Duration = Duration::from_secs(60);
 
 fn media_codec(codec: &VideoCodec) -> MediaCodec {
     match codec {
@@ -287,6 +291,7 @@ impl StreamService for Stream {
     ) -> Result<Response<OpenMediaResponse>, Status> {
         let principal = caller_principal(&request);
         let viewer = cua_spacesd_server::caller(&request).viewer;
+        let relayed = cua_spacesd_server::caller(&request).account;
         // A principal the server authenticated (relay-asserted or a viewer
         // ticket), as opposed to one the caller merely declared.
         let authenticated = cua_spacesd_server::caller(&request).principal;
@@ -340,6 +345,10 @@ impl StreamService for Stream {
             .filter(|duration| !duration.is_zero())
             .unwrap_or(DEFAULT_TICKET_TTL)
             .min(MAX_TICKET_TTL);
+        let ttl = match &relayed {
+            Some(account) if account.role != "owner" => ttl.min(GUEST_TICKET_TTL),
+            _ => ttl,
+        };
         // A window's paired audio source is its app's stream when the audio
         // backend can capture per app; otherwise the desktop mix.
         let paired_source = match (&request.audio, &target) {
@@ -425,10 +434,13 @@ impl StreamService for Stream {
             .map_err(join_error)?
             .map_err(status::media)?;
         let session_id = opened.session.id().to_owned();
-        let (ticket, expires_at) =
-            self.0
-                .ctx
-                .mint_ticket(TicketScope::Media, &session_id, principal.as_ref(), ttl);
+        let (ticket, expires_at) = self.0.ctx.mint_ticket_issued(
+            TicketScope::Media,
+            &session_id,
+            principal.as_ref(),
+            relayed.as_ref().map(|a| a.issued_at),
+            ttl,
+        );
         self.0
             .ctx
             .media_sessions()

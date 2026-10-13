@@ -41,6 +41,8 @@ public final class ShareModel {
     /// Where usage events go (shared view-only or not, unshared, a role
     /// changed: never who; the app core's, like the Tauri app).
     public var telemetry: TelemetryRunning?
+    /// A Space was shared with someone (the getting-started checklist).
+    public var onShared: (() -> Void)?
 
     public func send(_ action: AppShareSheetAction) async {
         let wasBusy = state.busy
@@ -54,6 +56,7 @@ public final class ShareModel {
             case let .unshare(space, who): shares = try await backend.unshare(id: space, who: who)
             }
             telemetry?.record(appTelemetryShare(input: before, state: state, action: .done))
+            if case .share = request { onShared?() }
             state = appShareReduce(input: input, state: state, action: .done)
         } catch {
             let failed = AppShareSheetAction.failed(error: "\(error.localizedDescription)")

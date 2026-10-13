@@ -223,6 +223,7 @@ Returned by [`app_onboarding_initial`](#app_onboarding_initial), [`app_onboardin
 | `launch_at_login` / `launchAtLogin` | `bool` |  | Done's "Launch at login" checkbox (ticked unless unticked). The shell applies it when the first run finishes. |
 | `telemetry` | [`Option<AppTelemetryInput>`](/cua-sdk/reference/spaces/app-core/window#apptelemetryinput-record) |  | The usage-data switch on Welcome: the machine's telemetry setting (Settings' "Share anonymous usage data", `cua telemetry off`), none until the shell read it (then it shows on). |
 | `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: the Cua Volume page (and its Done line) only while Cua Volume is on. Off until the shell says otherwise. |
+| `run_counted` / `runCounted` | `bool` |  | The run's start was counted (`onboarding_shown`, Welcome shown): when Welcome showed on a machine whose usage notice was already shown, else when Welcome was left. Once per run, however often Welcome shows again (Back). |
 
 ## `AppOnboardingView` record
 
@@ -359,6 +360,7 @@ Returned by [`app_settings_load`](#app_settings_load).
 .launchAtLoginToggled(on: Bool)
 .back
 .telemetryLoaded(telemetry: AppTelemetryInput)
+.welcomeShown
 .usageDataToggled(on: Bool)
 .experimentsLoaded(experiments: AppExperiments)
 ```
@@ -387,6 +389,7 @@ AppOnboardingAction::DriveStorageSaved { check: AppDriveCheckInput }
 AppOnboardingAction::LaunchAtLoginToggled { on: bool }
 AppOnboardingAction::Back
 AppOnboardingAction::TelemetryLoaded { telemetry: AppTelemetryInput }
+AppOnboardingAction::WelcomeShown
 AppOnboardingAction::UsageDataToggled { on: bool }
 AppOnboardingAction::ExperimentsLoaded { experiments: AppExperiments }
 ```
@@ -416,6 +419,7 @@ AppOnboardingAction::ExperimentsLoaded { experiments: AppExperiments }
 | `LaunchAtLoginToggled` | Done's "Launch at login" checkbox. Fields: `on: bool` |
 | `Back` | Back one page (not from Welcome or Done). |
 | `TelemetryLoaded` | The machine's telemetry setting, as the shell read it. Any page. Fields: `telemetry: AppTelemetryInput` |
+| `WelcomeShown` | Welcome is on screen (each time it shows; after `telemetry-loaded`). On a machine that already showed the usage notice, with usage data on, the run's start counts now rather than when Welcome is left. |
 | `UsageDataToggled` | Welcome's "Share anonymous usage data" switch (not while the environment decides). The shell writes the setting. Fields: `on: bool` |
 | `ExperimentsLoaded` | Settings, Experiments, as the shell read them (at the start, and whenever a switch changes). Any page; turning Cua Volume off on its page moves on. Fields: `experiments: AppExperiments` |
 

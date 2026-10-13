@@ -426,7 +426,7 @@ where
 }
 
 fn proxy_knows_tool(cached_tools_list: &serde_json::Value, name: &str) -> bool {
-    if name == "type_text_chars" {
+    if name == "type_text_chars" || cua_driver_core::tool::renamed_tool(name).is_some() {
         return true;
     }
     cached_tools_list
@@ -780,13 +780,14 @@ fn proxy_output_schema<'a>(
         .iter()
         .find(|tool| tool.get("name").and_then(serde_json::Value::as_str) == Some(name))
         .or_else(|| {
-            (name == "type_text_chars")
-                .then(|| {
-                    tools.iter().find(|tool| {
-                        tool.get("name").and_then(serde_json::Value::as_str) == Some("type_text")
-                    })
-                })
-                .flatten()
+            let current = if name == "type_text_chars" {
+                Some("type_text")
+            } else {
+                cua_driver_core::tool::renamed_tool(name)
+            }?;
+            tools
+                .iter()
+                .find(|tool| tool.get("name").and_then(serde_json::Value::as_str) == Some(current))
         })?
         .get("outputSchema")
 }

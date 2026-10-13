@@ -263,6 +263,7 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                     email: claims.email.clone(),
                     name: claims.name.clone(),
                     role: if owner { "owner" } else { "shared" }.into(),
+                    issued_at: claims.iat,
                 }),
             })
         })())

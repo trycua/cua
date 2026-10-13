@@ -137,7 +137,7 @@ public final class LiveTelemetry: TelemetryRunning, @unchecked Sendable {
 
     static func input(_ s: TelemetryStatus) -> AppTelemetryInput {
         let locked = s.sourceKind != "config" && s.sourceKind != "default"
-        return AppTelemetryInput(enabled: s.enabled, lockedBy: locked ? s.source : nil)
+        return AppTelemetryInput(enabled: s.enabled, lockedBy: locked ? s.source : nil, noticeShown: s.noticeShown)
     }
 
     public func status() -> AppTelemetryInput { Self.input(telemetryStatus()) }
@@ -152,7 +152,7 @@ public final class LiveTelemetry: TelemetryRunning, @unchecked Sendable {
 
 /// An in-memory switch (fixtures, tests).
 public final class FixtureTelemetry: TelemetryRunning, @unchecked Sendable {
-    public var current = AppTelemetryInput(enabled: true, lockedBy: nil)
+    public var current = AppTelemetryInput(enabled: true, lockedBy: nil, noticeShown: false)
     public init() {}
     public func status() -> AppTelemetryInput { current }
     public func setEnabled(_ on: Bool) throws -> AppTelemetryInput {
@@ -169,7 +169,15 @@ public final class FixtureTelemetry: TelemetryRunning, @unchecked Sendable {
 /// A started sign-in: the code to confirm (device flow), then the identity.
 public struct SignInAttempt: Sendable {
     public var userCode: String?
+    /// The page the sign-in finishes on (to open it again).
+    public var url: URL?
     public var wait: @Sendable () async throws -> String?
+
+    public init(userCode: String?, url: URL? = nil, wait: @escaping @Sendable () async throws -> String?) {
+        self.userCode = userCode
+        self.url = url
+        self.wait = wait
+    }
 }
 
 /// The signed-in account's claims, for the presence name and id.
@@ -227,10 +235,11 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
 
     public func beginSignIn() async throws -> SignInAttempt {
         let attempt = try await auth.beginLogin(flow: nil)
-        if let url = URL(string: attempt.url()) {
+        let url = URL(string: attempt.url())
+        if let url {
             await MainActor.run { _ = NSWorkspace.shared.open(url) }
         }
-        return SignInAttempt(userCode: attempt.userCode()) {
+        return SignInAttempt(userCode: attempt.userCode(), url: url) {
             Self.display(try await attempt.wait())
         }
     }

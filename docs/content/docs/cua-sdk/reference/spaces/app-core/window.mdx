@@ -1,6 +1,6 @@
 ---
 title: "Window, menu bar and Settings"
-description: "The window chrome, a Space's toolbar and sections, the menu bar menu, Settings and the coding agents' rows."
+description: "The window chrome, a Space's toolbar and sections, the menu bar menu and Settings."
 ---
 
 {/*
@@ -17,11 +17,11 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space's sections; the agent functions turn `AgentSetup` results into Settings rows. `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.
+`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space's sections. The coding agents' rows of Settings are on [Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys). `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.
 
 ## `app_display_name`
 
-"brave-otter" as "Brave Otter".
+A Space name as shown: as typed, trimmed.
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
@@ -415,6 +415,7 @@ AppSignInPhase::Failed { message: String }
 | --- | --- | --- | --- |
 | `enabled` | `bool` |  | Usage data is shared. |
 | `locked_by` / `lockedBy` | `Option<String>` |  | The environment decides (`DO_NOT_TRACK`, `CUA_TELEMETRY`, CI): who. |
+| `notice_shown` / `noticeShown` | `bool` |  | The first-run usage notice was already shown on this machine (by `cua`, or an earlier run of the app): events may be sent before Welcome is left. |
 
 ## `app_menu`
 
@@ -447,7 +448,7 @@ pub fn app_menu(input: AppMenuInput) -> Vec<AppMenuItem>
 
 ## `AppMenuInput` record
 
-Returned by [`app_menu_input_from_json`](/cua-sdk/reference/spaces/app-core#app_menu_input_from_json).
+Returned by [`app_menu_input_from_json`](#app_menu_input_from_json).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -457,6 +458,33 @@ Returned by [`app_menu_input_from_json`](/cua-sdk/reference/spaces/app-core#app_
 | `now_ms` / `nowMs` | `u64` |  | Now (Unix ms): a feed that has not answered for `OFFLINE_AFTER_MS` is offline. |
 | `backend` | `Option<String>` |  | `volume_storage`'s backend (`fs`, `s3`), when read: this machine's store with no other device has nothing to sync. |
 | `experiments` | [`Option<AppExperiments>`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: Cua Volume's sync state and conflicts only with Cua Volume on (none: shown, for callers that predate experiments). Off hides them; the volume keeps syncing. |
+
+## `app_menu_input_from_json`
+
+The menu bar item's menu input from JSON (fixtures, parity).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appMenuInputFromJson(json: String) throws -> AppMenuInput
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_menu_input_from_json(json: String) -> Result<AppMenuInput, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `json` | `String` | required |
+
+**Returns** [`AppMenuInput`](#appmenuinput-record) · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ## `app_openable_count`
 
@@ -484,60 +512,6 @@ pub fn app_openable_count(spaces: Vec<AppSpace>) -> u32
 | `spaces` | [`Vec<AppSpace>`](/cua-sdk/reference/spaces/app-core/spaces#appspace-record) | required |
 
 **Returns** `u32`
-
-## `AppAgentSettingsRow` record
-
-Returned by [`app_agent_settings_rows`](#app_agent_settings_rows).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `agent` | `String` |  | Registry id. |
-| `name` | `String` |  | Display name. |
-| `installed` | `bool` |  | Installed. |
-| `configured` | `bool` |  | cua skills and the cua MCP server are both in place (where supported). |
-| `detail` | `String` |  | One line for the row. |
-| `skills_installed` / `skillsInstalled` | `u32` |  | Bundled skills present. |
-| `skills_total` / `skillsTotal` | `u32` |  | Bundled skills. |
-| `mcp_config` / `mcpConfig` | `Option<String>` |  | MCP config file. |
-| `skills_dir` / `skillsDir` | `Option<String>` |  | Skills directory. |
-
-## `AppAgentSetupOutcomeInput` record
-
-Returned by [`app_agent_setup_outcome`](#app_agent_setup_outcome), [`app_agent_setup_outcomes_from_json`](#app_agent_setup_outcomes_from_json).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `agents` | `Vec<String>` |  | Agents it served. |
-| `target` | `String` |  | `skill` or `mcp`. |
-| `item` | `String` |  | Skill or server name. |
-| `change` | `String` |  | `created`, `updated`, `unchanged`, `removed`, `skipped`, `failed`. |
-| `detail` | `String` |  | Explanation. |
-
-## `AppAgentSetupStatus` record
-
-Returned by [`app_agent_setup_status`](#app_agent_setup_status), [`app_agent_setup_statuses_from_json`](#app_agent_setup_statuses_from_json).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `id` | `String` |  | Registry id (`claude-code`, `codex`, ...). |
-| `name` | `String` |  | Display name. |
-| `installed` | `bool` |  | Looks installed. |
-| `skills_dir` / `skillsDir` | `Option<String>` |  | User skills directory, when it supports skills. |
-| `mcp_config` / `mcpConfig` | `Option<String>` |  | MCP config file, when it supports MCP. |
-| `cua_configured` / `cuaConfigured` | `bool` |  | The cua MCP server is configured. |
-| `skills_installed` / `skillsInstalled` | `Vec<String>` |  | Bundled skills present. |
-| `skills_outdated` / `skillsOutdated` | `Vec<String>` |  | Installed skills that differ from the bundled copy. |
-| `error` | `Option<String>` |  | Problem reading its config. |
-
-## `AppAgentSetupSummary` record
-
-Returned by [`app_agent_setup_summary`](#app_agent_setup_summary).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `text` | `String` |  | "cua MCP server configured, 3 skills installed". |
-| `failed` | `Vec<String>` |  | "name: why" per failed target. |
-| `line` | `String` |  | "Claude Code: done" / "Claude Code: failed". |
 
 ## `AppChromeInput` record
 
@@ -617,7 +591,7 @@ Returned by [`app_settings_input_from_json`](#app_settings_input_from_json).
 | `default_location` / `defaultLocation` | [`AppLocation`](/cua-sdk/reference/spaces/app-core/new-space#applocation-enum) |  | Where New Space starts. |
 | `location_locked_by` / `locationLockedBy` | `Option<String>` |  | The environment sets the default location: which variable. |
 | `telemetry` | [`Option<AppTelemetryInput>`](#apptelemetryinput-record) |  | The telemetry switch (none until read). |
-| `agents` | [`Option<Vec<AppAgentSettingsRow>>`](#appagentsettingsrow-record) |  | Coding agents (none while detecting). |
+| `agents` | [`Option<Vec<AppAgentSettingsRow>>`](/cua-sdk/reference/spaces/app-core/agent-keys#appagentsettingsrow-record) |  | Coding agents (none while detecting). |
 | `agents_busy` / `agentsBusy` | `bool` |  | "Configure all" is running. |
 | `agents_pending` / `agentsPending` | `Vec<String>` |  | Agents with an action running. |
 | `billing` | [`Option<AppBillingStatus>`](/cua-sdk/reference/spaces/app-core/billing#appbillingstatus-record) |  | The account's Cua Cloud billing, once read (signed in). |
@@ -796,171 +770,6 @@ AppSettingsRowKind::Toggle
 | `Prompt` | A label over read-only text to copy (`value`), with a Copy button. |
 | `Link` | A small link-style button (the label). |
 | `Toggle` | Label and a switch: `options` are `on` and `off`, the active one is its state (a choice drawn as a switch). |
-
-## `app_agent_settings_rows`
-
-Settings rows for the coding agents (`total`: bundled skills).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appAgentSettingsRows(statuses: [AppAgentSetupStatus], total: UInt32) -> [AppAgentSettingsRow]
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_agent_settings_rows(statuses: Vec<AppAgentSetupStatus>, total: u32) -> Vec<AppAgentSettingsRow>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `statuses` | [`Vec<AppAgentSetupStatus>`](#appagentsetupstatus-record) | required |
-| `total` | `u32` | required |
-
-**Returns** [`Vec<AppAgentSettingsRow>`](#appagentsettingsrow-record)
-
-## `app_agent_setup_outcome`
-
-The SDK's setup outcome as the app core reads it.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appAgentSetupOutcome(outcome: AgentSetupOutcome) -> AppAgentSetupOutcomeInput
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_agent_setup_outcome(outcome: AgentSetupOutcome) -> AppAgentSetupOutcomeInput
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `outcome` | [`AgentSetupOutcome`](/cua-sdk/reference/agent-setup#agentsetupoutcome-record) | required |
-
-**Returns** [`AppAgentSetupOutcomeInput`](#appagentsetupoutcomeinput-record)
-
-## `app_agent_setup_outcomes_from_json`
-
-Agent setup outcomes from JSON (parity flows).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appAgentSetupOutcomesFromJson(json: String) throws -> [AppAgentSetupOutcomeInput]
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_agent_setup_outcomes_from_json(json: String) -> Result<Vec<AppAgentSetupOutcomeInput>, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `json` | `String` | required |
-
-**Returns** [`Vec<AppAgentSetupOutcomeInput>`](#appagentsetupoutcomeinput-record) · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-## `app_agent_setup_status`
-
-The SDK's agent detection as the app core reads it.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appAgentSetupStatus(info: AgentInfo) -> AppAgentSetupStatus
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_agent_setup_status(info: AgentInfo) -> AppAgentSetupStatus
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `info` | [`AgentInfo`](/cua-sdk/reference/agent-setup#agentinfo-record) | required |
-
-**Returns** [`AppAgentSetupStatus`](#appagentsetupstatus-record)
-
-## `app_agent_setup_statuses_from_json`
-
-Coding agents' setup states from JSON (fixtures, parity flows).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appAgentSetupStatusesFromJson(json: String) throws -> [AppAgentSetupStatus]
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_agent_setup_statuses_from_json(json: String) -> Result<Vec<AppAgentSetupStatus>, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `json` | `String` | required |
-
-**Returns** [`Vec<AppAgentSetupStatus>`](#appagentsetupstatus-record) · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-## `app_agent_setup_summary`
-
-What an agent setup did for one agent.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appAgentSetupSummary(outcomes: [AppAgentSetupOutcomeInput], agent: String, name: String) -> AppAgentSetupSummary
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_agent_setup_summary(outcomes: Vec<AppAgentSetupOutcomeInput>, agent: String, name: String) -> AppAgentSetupSummary
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `outcomes` | [`Vec<AppAgentSetupOutcomeInput>`](#appagentsetupoutcomeinput-record) | required |
-| `agent` | `String` | required |
-| `name` | `String` | required |
-
-**Returns** [`AppAgentSetupSummary`](#appagentsetupsummary-record)
 
 ## `app_chrome_input_from_json`
 

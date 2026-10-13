@@ -82,10 +82,10 @@ Returned by [`app_wizard_placement_options`](#app_wizard_placement_options).
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | `String` |  | What choosing it sets as the create's `on`: `local`, `cloud`, `host:<machine>`, or a connected cloud's word (`aws`). |
-| `label` | `String` |  | The menu's text: "This Mac", "Mac mini", "Mac mini (offline)", "AWS · us-west-2". |
+| `label` | `String` |  | The menu's text: "This Mac", "Mac mini", "Mac mini (offline)", "Mac mini (not sharing)", "AWS · us-west-2". |
 | `group` | `String` |  | Its group, in menu order (a separator between groups): `this-mac`, `hosts`, `clouds`. |
 | `selected` | `bool` |  | Chosen. |
-| `enabled` | `bool` |  | It can be chosen now (offline, at its limit: not). |
+| `enabled` | `bool` |  | It can be chosen now (offline, not sharing, at its limit: not). |
 | `detail` | `String` |  | One line: why not, or what it runs (the tooltip). |
 
 ## `AppSpaceHost` record
@@ -97,6 +97,6 @@ Returned by [`app_space_host`](#app_space_host).
 | `id` | `String` |  | What `on="host:<id>"` takes: the relay machine id, or the name a direct host was added as. |
 | `name` | `String` |  | Its name ("Mac mini"). |
 | `via` | `String` |  | `relay` or `direct` (its Tailscale or LAN address). |
-| `online` | `bool` |  | It answered just now. |
+| `online` | `bool` |  | It is online: it answered just now, or the relay sees it connected (the Machines page says the same). |
 | `os` | `String` |  | Its operating system (`macos`, `linux`, `windows`), when it answered. |
-| `limits` | [`Vec<AppHostLimit>`](/cua-sdk/reference/spaces/app-core/this-machine#apphostlimit-record) |  | Its limits, when it answered. |
+| `limits` | [`Vec<AppHostLimit>`](/cua-sdk/reference/spaces/app-core/this-machine#apphostlimit-record) |  | Its limits, when it answered; a `HOST_SHARING_STOPPED` entry when it is online and refused because its owner stopped sharing it. |

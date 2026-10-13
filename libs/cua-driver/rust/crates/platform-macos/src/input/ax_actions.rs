@@ -210,7 +210,7 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
 
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action);
+    let ax_action = map_action(action)?;
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 
@@ -221,16 +221,31 @@ pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()>
     }
 }
 
-fn map_action(action: &str) -> &'static str {
-    match action.to_lowercase().as_str() {
+/// The AX action named by a tool's `action` argument. Accepts the short
+/// names (`press`, `show_menu`, ...) and the tree's spelling (`showalternateui`,
+/// `AXShowAlternateUI`). An unknown name is an error: falling back to AXPress
+/// would press a control the caller meant only to reveal.
+pub fn map_action(action: &str) -> anyhow::Result<&'static str> {
+    let key: String = action
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .collect::<String>()
+        .to_lowercase();
+    let key = key.strip_prefix("ax").unwrap_or(&key);
+    Ok(match key {
         "press" | "click" => "AXPress",
-        "show_menu" | "right_click" | "rightclick" => "AXShowMenu",
+        "showmenu" | "rightclick" => "AXShowMenu",
         "pick" => "AXPick",
         "confirm" => "AXConfirm",
         "cancel" => "AXCancel",
         "open" => "AXOpen",
-        _ => "AXPress",
-    }
+        "showalternateui" => "AXShowAlternateUI",
+        "showdefaultui" => "AXShowDefaultUI",
+        _ => anyhow::bail!(
+            "unknown action \"{action}\": use press, show_menu, pick, confirm, cancel, open, \
+             show_alternate_ui or show_default_ui"
+        ),
+    })
 }
 
 /// Set AXFocused=true on an element (for pre-focusing before key press).
@@ -280,6 +295,21 @@ pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn action_names_accept_the_tree_spelling_and_refuse_unknown_ones() {
+        use super::map_action;
+        assert_eq!(map_action("press").unwrap(), "AXPress");
+        assert_eq!(
+            map_action("show_alternate_ui").unwrap(),
+            "AXShowAlternateUI"
+        );
+        assert_eq!(map_action("showalternateui").unwrap(), "AXShowAlternateUI");
+        assert_eq!(map_action("AXShowDefaultUI").unwrap(), "AXShowDefaultUI");
+        assert_eq!(map_action("right_click").unwrap(), "AXShowMenu");
+        // An unknown name must not fall back to pressing the control.
+        assert!(map_action("hover").is_err());
+    }
+
     use super::*;
 
     #[test]

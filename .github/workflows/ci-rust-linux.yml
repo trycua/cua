@@ -145,7 +145,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            imagemagick xvfb xauth x11-utils ffmpeg
+            imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon
+      - name: Prove the AT-SPI connection graph excludes peer-to-peer
+        working-directory: libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          graph=$(cargo tree --locked -p cua-driver -e features -i atspi-connection --prefix none)
+          if grep -q '^atspi-connection feature "p2p"' <<<"$graph"; then
+            echo "::error::cua-driver resolves atspi-connection with its p2p feature; see the atspi-connection entry in crates/platform-linux/Cargo.toml"
+            exit 1
+          fi
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         env:

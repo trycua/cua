@@ -171,7 +171,7 @@ Returned by [`app_host_form_view`](#app_host_form_view).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `resource` | `String` |  | `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that Mac). |
+| `resource` | `String` |  | `spaces` (every Space it provides), `macos_vms` (macOS VMs on that Mac), or `HOST_SHARING_STOPPED` (not a limit: its owner stopped sharing it). |
 | `used` | `u32` |  | In use now. |
 | `limit` | `u32` |  | The limit (0: none). |
 | `reason` | `String` |  | Why the limit exists, for people ("Apple's macOS license allows two macOS VMs per Mac"). |

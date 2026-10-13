@@ -159,24 +159,65 @@ impl ContainerRuntime {
     /// Connect to the engine (discovering it when no endpoint is configured).
     pub async fn connect(cfg: ContainerConfig) -> Result<Self> {
         let endpoint = match &cfg.endpoint {
-            Some(uri) => EngineEndpoint { kind: engine::classify(uri), uri: uri.clone(), source: "config".into() },
-            None => engine::discover().ok_or_else(|| {
-                VmmError::missing(
-                    "a container engine",
-                    "no Docker-API socket found (DOCKER_HOST, docker context, ~/.colima, ~/.orbstack, \
-                     ~/.docker/run, /var/run/docker.sock). Install one (macOS: `brew install colima docker && colima start`) \
-                     or let cua boot its managed runtime VM",
-                )
-            })?,
+            Some(uri) => EngineEndpoint {
+                kind: engine::classify(uri),
+                uri: uri.clone(),
+                source: "config".into(),
+            },
+            None => match engine::discover() {
+                Some(ep) => ep,
+                // Docker Desktop quit (its context's socket is gone): start
+                // it, rather than install one.
+                None => match engine::stopped_context() {
+                    Some(ep) => {
+                        return Err(VmmError::NotRunning {
+                            what: format!("container engine at {}", ep.uri),
+                            hint: engine::start_hint(&ep.kind).into(),
+                        });
+                    }
+                    None => {
+                        return Err(VmmError::missing(
+                            "a container engine",
+                            format!(
+                                "no Docker-API socket found (DOCKER_HOST, docker context, \
+                                 ~/.colima, ~/.orbstack, ~/.docker/run, /var/run/docker.sock); {}",
+                                engine::install_hint()
+                            ),
+                        ));
+                    }
+                },
+            },
         };
+        let at = format!("container engine at {}", endpoint.uri);
+        let check = engine::check_socket(&endpoint.uri).await;
+        match &check {
+            Some(engine::SocketCheck::PermissionDenied) => {
+                return Err(VmmError::PermissionDenied(engine::permission_hint(
+                    &endpoint.uri,
+                )));
+            }
+            Some(engine::SocketCheck::Missing | engine::SocketCheck::NotListening) => {
+                return Err(VmmError::NotRunning {
+                    what: at,
+                    hint: engine::start_hint(&endpoint.kind).into(),
+                });
+            }
+            _ => {}
+        }
         let docker = connect_uri(&endpoint.uri)?;
-        docker.ping().await.map_err(|e| {
-            VmmError::missing(
-                format!("container engine at {}", endpoint.uri),
-                format!(
-                    "engine did not answer ping ({e}); is it running? (Colima: `colima start`)"
+        docker.ping().await.map_err(|e| match check {
+            // Something accepts on the socket but does not speak the
+            // Docker API as expected: an engine error, not a stopped one.
+            Some(engine::SocketCheck::Accepting) => {
+                VmmError::Engine(format!("{at} did not answer ping: {e}"))
+            }
+            _ => VmmError::NotRunning {
+                what: at,
+                hint: format!(
+                    "it did not answer ({e}); {}",
+                    engine::start_hint(&endpoint.kind)
                 ),
-            )
+            },
         })?;
         Ok(Self {
             docker,

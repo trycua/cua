@@ -17,6 +17,11 @@ use crate::core::{AppCore, CmdResult};
 
 /// The Spaces tools these pages may call (nothing that creates or deletes).
 pub const TOOLS: &[&str] = &[
+    // Settings → Agents (the daemon's app methods, not MCP tools). A key's
+    // value only ever travels in `agent_keys.set`'s arguments.
+    "agent_keys.list",
+    "agent_keys.set",
+    "agent_keys.remove",
     "persistent_agent_list",
     "persistent_agent_save",
     "agent_pause",

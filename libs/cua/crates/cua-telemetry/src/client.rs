@@ -761,9 +761,12 @@ impl Telemetry {
                 batch.clear();
             }
         }
+        // No project for this `CUA_ENV`: `is_enabled` is already false, so
+        // the batch is empty; never fall back to production's key.
+        let api_key = config::posthog_key(&*self.inner.env).unwrap_or_default();
         for chunk in batch.chunks(BATCH_SIZE) {
             let body = serde_json::json!({
-                "api_key": sink::POSTHOG_API_KEY,
+                "api_key": api_key,
                 "batch": chunk,
             });
             match self.inner.sink.send(&body) {

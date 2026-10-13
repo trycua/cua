@@ -7,7 +7,8 @@ fixture window (GTK3 on Linux, WinForms on Windows) and checks:
   * get_window_state's default (lean) output and `full_output: true`,
   * the act-by-element_token loop (snapshot, click a token, fresh snapshot),
   * `since` (a diff against an earlier snapshot, and `no change`),
-  * run_actions (one batch with an end-of-batch observation),
+  * run_steps (one batch with an end-of-batch observation),
+  * run_script (listed by default; a script loop clicks by token; no I/O),
   * set_value on a drop-down combo box and on an editable combo box,
   * display_only previews (and plain screenshot-only reads) keep the agent's
     element tokens valid.
@@ -352,7 +353,7 @@ def run_checks(smoke):
         f"full read {after.size}; repeat read: no_change",
     )
 
-    # 5. run_actions: set a field, click Apply, click Increment, observe once.
+    # 5. run_steps: set a field, click Apply, click Increment, observe once.
     state = smoke.read()
     md = tree(state)
     targets = {
@@ -361,7 +362,7 @@ def run_checks(smoke):
         "increment": find_row(md, BUTTON, "Increment"),
     }
     if None in targets.values():
-        smoke.record("run_actions batch", "fail", f"fixture rows not found: {targets}")
+        smoke.record("run_steps batch", "fail", f"fixture rows not found: {targets}")
     else:
         batch_args = {
             "steps": [
@@ -371,7 +372,7 @@ def run_checks(smoke):
             ],
             "observe": {"pid": smoke.pid, "window_id": smoke.window_id},
         }
-        batch = smoke.call("run_actions", batch_args)
+        batch = smoke.call("run_steps", batch_args)
         b = batch.structured
         observed = ((b.get("observation") or {}).get("state") or {}).get("tree_markdown") or ""
         problems = []
@@ -388,7 +389,7 @@ def run_checks(smoke):
             if missing:
                 problems.append(f"neither the observation nor a fresh read shows {missing}")
         smoke.record(
-            "run_actions batch (set_value + 2 clicks + observe)",
+            "run_steps batch (set_value + 2 clicks + observe)",
             "fail" if problems else "pass",
             "; ".join(problems)
             or "3/3 steps ok; "
@@ -408,8 +409,14 @@ def run_checks(smoke):
     display_only_check(smoke)
 
     # 7b. Lean-read ergonomics from the v035 bench: since:"latest", a bare row
-    # number as element_token, run_actions observe:true, zoom x/y/width/height.
+    # number as element_token, run_steps observe:true, zoom x/y/width/height.
     lean_read_ergonomics_check(smoke)
+
+    # 7c. The pre-0.35 name run_actions still runs, unlisted, with a note.
+    renamed_tool_alias_check(smoke)
+
+    # 7d. run_script is on by default: listed, runs a loop, has no I/O.
+    run_script_check(smoke)
 
     # 8. The drop-down combo with delivery_mode foreground (last because a
     # broken route may leave a popup open), then a click by token must still
@@ -553,7 +560,7 @@ def display_only_check(smoke):
 
 
 def lean_read_ergonomics_check(smoke):
-    check = "since:latest, bare row token, run_actions observe:true, zoom x/y/width/height, scroll dy"
+    check = "since:latest, bare row token, run_steps observe:true, zoom x/y/width/height, scroll dy"
     problems = []
     smoke.read()
     latest = smoke.read(since="latest")
@@ -572,7 +579,7 @@ def lean_read_ergonomics_check(smoke):
         problems.append(f"bare row click ok but the count did not move from {before}")
 
     increment = find_row(tree(after), BUTTON, "Increment")
-    batch = smoke.call("run_actions", {
+    batch = smoke.call("run_steps", {
         "steps": [{"tool": "click", "args": {"pid": smoke.pid, "window_id": smoke.window_id,
                                              "element_token": token(after, increment)}}],
         "observe": True,
@@ -580,7 +587,7 @@ def lean_read_ergonomics_check(smoke):
     observed = ((batch.structured.get("observation") or {}).get("state") or {})
     if batch.is_error or observed.get("since_status") not in ("diff", "no_change"):
         problems.append(
-            f"run_actions observe:true -> is_error={batch.is_error}, "
+            f"run_steps observe:true -> is_error={batch.is_error}, "
             f"since_status={observed.get('since_status')!r}: {batch.first_line()}"
         )
 
@@ -602,6 +609,73 @@ def lean_read_ergonomics_check(smoke):
         f"{str(increment)!r} + window_id -> Count moved; observe:true -> "
         f"{observed.get('since_status')}; zoom x/y/width/height -> "
         f"{'ok' if not zoom.is_error else zoom.first_line()}",
+    )
+
+
+def renamed_tool_alias_check(smoke):
+    """run_actions was renamed run_steps: only run_steps is listed, and a
+    call to the old name still runs and ends with a deprecation note."""
+    check = "run_actions alias: unlisted, runs, deprecation note"
+    problems = []
+    listed = smoke.mcp.request("tools/list", {})
+    names = {t.get("name") for t in (listed.get("result") or {}).get("tools") or []}
+    if "run_steps" not in names:
+        problems.append("tools/list lacks run_steps")
+    if "run_actions" in names:
+        problems.append("tools/list still lists run_actions")
+
+    state = smoke.read()
+    increment = find_row(tree(state), BUTTON, "Increment")
+    if increment is None:
+        problems.append("fixture Increment row not found")
+    else:
+        old = smoke.call("run_actions", {
+            "steps": [{"tool": "click", "args": {"pid": smoke.pid, "window_id": smoke.window_id,
+                                                 "element_token": token(state, increment)}}],
+        })
+        if old.is_error:
+            problems.append(f"run_actions -> {old.first_line()}")
+        if "`run_actions` is deprecated" not in old.text or "`run_steps`" not in old.text:
+            problems.append(f"no deprecation note in the run_actions result: {old.text[-300:]!r}")
+    smoke.record(check, "fail" if problems else "pass", "; ".join(problems) or "listed: run_steps only; run_actions ran with the note")
+
+
+def run_script_check(smoke):
+    """run_script is listed by default, a script clicks Increment twice in a
+    loop, and the sandbox has no require, process or fetch."""
+    check = "run_script: listed by default, loop of clicks, sandboxed"
+    problems = []
+    listed = smoke.mcp.request("tools/list", {})
+    names = {t.get("name") for t in (listed.get("result") or {}).get("tools") or []}
+    if "run_script" not in names:
+        problems.append("tools/list lacks run_script")
+
+    state = smoke.read()
+    before = count_value(tree(state))
+    increment = find_row(tree(state), BUTTON, "Increment")
+    if before is None or increment is None:
+        problems.append("fixture Increment row or Count label not found")
+    else:
+        script = (
+            f"const app = await cua.getApp({{pid: {smoke.pid}, windowId: {smoke.window_id}}});\n"
+            f"for (let i = 0; i < 2; i++) await app.click({json.dumps(token(state, increment))});\n"
+            "return {sandbox: [typeof require, typeof process, typeof fetch].join(',')};"
+        )
+        ran = smoke.call("run_script", {"script": script, "timeout_ms": 30000})
+        value = (ran.structured or {}).get("value") or {}
+        if ran.is_error:
+            problems.append(f"run_script -> {ran.text[:600]!r}")
+        elif value.get("sandbox") != "undefined,undefined,undefined":
+            problems.append(f"sandbox exposes {value.get('sandbox')!r}")
+        after = smoke.wait_for_text(f"Count: {before + 2}")
+        if f"Count: {before + 2}" not in tree(after):
+            problems.append(f"Count went {before} -> {count_value(tree(after))}, expected {before + 2}")
+    smoke.record(
+        check,
+        "fail" if problems else "pass",
+        "; ".join(problems)
+        or f"listed; 2 clicks in a script loop moved Count {before} -> {before + 2}; "
+        "require/process/fetch undefined",
     )
 
 

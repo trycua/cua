@@ -22,9 +22,11 @@
     "onboarding-settings",
     "about",
     "billing",
+    "relay",
     "this-machine",
     "window",
     "devices",
+    "agent-keys",
     "share",
     "telemetry"
   ]

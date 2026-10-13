@@ -4,7 +4,7 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.34.0"  # x-release-please-version
+__version__ = "0.35.1"  # x-release-please-version
 
 from ._native import (
     ActionCompletion,
@@ -123,6 +123,7 @@ from ._native_contract import (
     ClickButton,
     ClickInput,
     CursorAction,
+    CursorEffectSetting,
     CursorMotionEffects,
     CursorMotionStyle,
     CursorMotionTiming,
@@ -282,6 +283,7 @@ __all__ = [
     "CuaDriver",
     "CuaDriverSession",
     "CursorAction",
+    "CursorEffectSetting",
     "CursorMotionEffects",
     "CursorMotionStyle",
     "CursorMotionTiming",

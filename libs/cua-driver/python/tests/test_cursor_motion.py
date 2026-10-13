@@ -52,7 +52,16 @@ class CursorMotionGoldenTests(unittest.TestCase):
         return n.CursorMotionParams(
             style=getattr(c.CursorMotionStyle, p["style"].upper()),
             timing=getattr(c.CursorMotionTiming, p["timing"].upper()),
-            effects=c.CursorMotionEffects(**{k: p["effects"][k] for k in self.effect_names}),
+            effects=c.CursorMotionEffects(
+                **{
+                    k: None
+                    if p["effects"][k] is None
+                    else c.CursorEffectSetting.ON
+                    if p["effects"][k]
+                    else c.CursorEffectSetting.OFF
+                    for k in self.effect_names
+                }
+            ),
             start_handle=p["start_handle"],
             end_handle=p["end_handle"],
             arc_size=p["arc_size"],
@@ -174,6 +183,36 @@ class CursorMotionGoldenTests(unittest.TestCase):
             traj = self.n.plan_cursor_spec(self.spec(case["spec"]), self.request(case["request"]))
             self.check(case["name"], traj, case["out"])
 
+    def test_legacy_boolean_effects_reach_native_planner(self) -> None:
+        n, c = self.n, self.c
+        request = self.request(self.golden["cases"][0]["request"])
+        for name in self.effect_names:
+            for legacy, canonical in ((True, c.CursorEffectSetting.ON),
+                                      (False, c.CursorEffectSetting.OFF),
+                                      (None, None),
+                                      (c.CursorEffectSetting.DEFAULT, c.CursorEffectSetting.DEFAULT)):
+                with self.subTest(effect=name, value=legacy):
+                    params = n.default_cursor_motion_params()
+                    fields = dict.fromkeys(self.effect_names)
+                    fields[name] = legacy
+                    params.effects = c.CursorMotionEffects(**fields)
+                    actual = n.plan_cursor_move(params, request).effects()
+                    fields[name] = canonical
+                    params.effects = c.CursorMotionEffects(**fields)
+                    expected = n.plan_cursor_move(params, request).effects()
+                    self.assertEqual(actual, expected)
+                    if type(legacy) is bool:
+                        self.assertEqual(getattr(actual, name), legacy)
+
+    def test_invalid_effect_is_refused_before_native_dispatch(self) -> None:
+        params = self.n.default_cursor_motion_params()
+        request = self.request(self.golden["cases"][0]["request"])
+        for invalid in ("true", "on", 1, 0, [], {}):
+            with self.subTest(value=invalid):
+                params.effects.trail = invalid
+                with self.assertRaises(ValueError):
+                    self.n.plan_cursor_move(params, request)
+
     def test_the_arc_styles_are_specs(self) -> None:
         n, c = self.n, self.c
         params = n.default_cursor_motion_params()
@@ -181,6 +220,8 @@ class CursorMotionGoldenTests(unittest.TestCase):
         spec = n.cursor_motion_spec_for_style(c.CursorMotionStyle.COMET_SWOOP, params)
         self.assertIsNotNone(spec)
         params.style = c.CursorMotionStyle.COMET_SWOOP
+        # A raw spec matches the planned move under native timing; the default (steady) adds a floor.
+        params.timing = c.CursorMotionTiming.NATIVE
         a = n.plan_cursor_move(params, request).samples()
         b = n.plan_cursor_spec(spec, request).samples()
         self.assertEqual(a, b)

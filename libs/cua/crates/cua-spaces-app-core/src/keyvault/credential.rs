@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::wire::KeyvaultOverview;
+use crate::model::SpaceOs;
 
 /// The shortest passphrase setup accepts (the broker's own minimum,
 /// `cua_keyvault::protector::MIN_PASSPHRASE_CHARS`).
@@ -55,7 +56,11 @@ pub struct KvCredentialForm {
 }
 
 /// The OS key store kinds `cua_keyvault::protector::ProtectorKind` names.
-const OS_KINDS: [&str; 2] = ["macos-keychain", "windows-credential"];
+const OS_KINDS: [&str; 3] = [
+    "macos-keychain",
+    "windows-credential",
+    "linux-secret-service",
+];
 
 /// The vault unlocks with a passphrase and not with the OS key store.
 pub fn passphrase_only(s: &super::wire::KvStatus) -> bool {
@@ -66,21 +71,61 @@ pub fn passphrase_only(s: &super::wire::KvStatus) -> bool {
             .any(|k| OS_KINDS.contains(&k.as_str()))
 }
 
+/// How the system the Keyvault runs on confirms presence: Touch ID on a
+/// Mac, Windows Hello, the desktop's password prompt (polkit) on Linux.
+pub fn presence_word(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Windows => "Windows Hello",
+        SpaceOs::Linux => "your password",
+        SpaceOs::Macos | SpaceOs::Unknown => "Touch ID",
+    }
+}
+
+/// Setup's line with the OS key store: what confirms, where the key stays.
+fn setup_help(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Windows => {
+            "Windows Hello confirms. The vault key stays in Windows Credential Manager."
+        }
+        SpaceOs::Linux => {
+            "Your password confirms (polkit). The vault key stays in the system keyring."
+        }
+        SpaceOs::Macos | SpaceOs::Unknown => {
+            "Touch ID confirms. The vault key stays in your login keychain."
+        }
+    }
+}
+
+/// Unlock's line with the OS key store.
+fn unlock_help(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Windows => "Unlocks with Windows Credential Manager.",
+        SpaceOs::Linux => "Unlocks with the system keyring.",
+        SpaceOs::Macos | SpaceOs::Unknown => "Unlocks with your login keychain.",
+    }
+}
+
 /// The form the page shows: setup when there is no vault, unlock when it is
 /// locked, else none. Touch ID when the daemon can use the OS key store
 /// (setup) or the vault has an OS protector this daemon can use (unlock);
-/// otherwise a passphrase.
+/// otherwise a passphrase. In a Mac's words.
 pub fn credential_form(o: &KeyvaultOverview) -> Option<KvCredentialForm> {
+    credential_form_on(o, SpaceOs::Macos)
+}
+
+/// [`credential_form`] in the words of the system the Keyvault runs on
+/// (`os`): Windows Hello and Windows Credential Manager, the system keyring.
+pub fn credential_form_on(o: &KeyvaultOverview, os: SpaceOs) -> Option<KvCredentialForm> {
     let s = o.status.as_ref();
-    let labels = super::view::labels();
+    let labels = super::view::labels_on(os);
     match o.availability.as_str() {
         "no_vault" => {
-            let os = s.is_some_and(|s| s.os_protector_available);
-            Some(if os {
+            let key_store = s.is_some_and(|s| s.os_protector_available);
+            Some(if key_store {
                 KvCredentialForm {
                     mode: KvFormMode::Setup,
                     method: KvMethod::TouchId,
-                    help: "Touch ID confirms. The vault key stays in your login keychain.".into(),
+                    help: setup_help(os).into(),
                     passphrase_label: None,
                     confirm_label: None,
                     submit_label: labels.set_up,
@@ -100,16 +145,16 @@ pub fn credential_form(o: &KeyvaultOverview) -> Option<KvCredentialForm> {
             })
         }
         "locked" => {
-            let os = s.is_some_and(|s| {
+            let key_store = s.is_some_and(|s| {
                 s.unlock_protectors
                     .iter()
                     .any(|k| OS_KINDS.contains(&k.as_str()))
             });
-            Some(if os {
+            Some(if key_store {
                 KvCredentialForm {
                     mode: KvFormMode::Unlock,
                     method: KvMethod::TouchId,
-                    help: "Unlocks with your login keychain.".into(),
+                    help: unlock_help(os).into(),
                     passphrase_label: None,
                     confirm_label: None,
                     submit_label: labels.unlock,
@@ -276,6 +321,54 @@ mod tests {
         assert!(credential_form(&overview("ready", true, &["passphrase"])).is_none());
     }
 
+    /// Windows and Linux say how their system confirms and keeps the key,
+    /// and the Mac's words stay as they are.
+    #[test]
+    fn the_os_key_store_is_named_in_the_hosts_words() {
+        let help = |os| {
+            let setup = credential_form_on(&overview("no_vault", true, &[]), os).unwrap();
+            let unlock = credential_form_on(
+                &overview("locked", true, &["windows-credential", "recovery"]),
+                os,
+            )
+            .unwrap();
+            (setup.help, unlock.help)
+        };
+        assert_eq!(
+            help(SpaceOs::Macos),
+            (
+                "Touch ID confirms. The vault key stays in your login keychain.".into(),
+                "Unlocks with your login keychain.".into()
+            )
+        );
+        assert_eq!(
+            credential_form(&overview("no_vault", true, &[]))
+                .unwrap()
+                .help,
+            help(SpaceOs::Macos).0
+        );
+        assert_eq!(
+            help(SpaceOs::Windows),
+            (
+                "Windows Hello confirms. The vault key stays in Windows Credential Manager.".into(),
+                "Unlocks with Windows Credential Manager.".into()
+            )
+        );
+        assert_eq!(
+            help(SpaceOs::Linux),
+            (
+                "Your password confirms (polkit). The vault key stays in the system keyring."
+                    .into(),
+                "Unlocks with the system keyring.".into()
+            )
+        );
+        for os in [SpaceOs::Windows, SpaceOs::Linux] {
+            let (setup, unlock) = help(os);
+            assert!(!format!("{setup} {unlock}").contains("Touch ID"), "{os:?}");
+            assert!(!format!("{setup} {unlock}").contains("keychain"), "{os:?}");
+        }
+    }
+
     #[test]
     fn unlock_follows_the_enrolled_protectors() {
         let f =
@@ -284,6 +377,28 @@ mod tests {
         let f = credential_form(&overview("locked", false, &["passphrase", "recovery"])).unwrap();
         assert_eq!(f.method, KvMethod::Passphrase);
         assert!(f.confirm_label.is_none());
+    }
+
+    #[test]
+    fn every_os_key_store_unlocks_without_a_passphrase() {
+        // The Mac's keychain, Windows' Credential Manager and the Linux
+        // desktop's keyring are all "the OS key store" to the form.
+        for kind in [
+            "macos-keychain",
+            "windows-credential",
+            "linux-secret-service",
+        ] {
+            let f = credential_form(&overview("locked", true, &[kind, "recovery"])).unwrap();
+            assert_eq!(f.method, KvMethod::TouchId, "{kind}");
+            assert!(!passphrase_only(
+                overview("locked", true, &[kind, "recovery"])
+                    .status
+                    .as_ref()
+                    .unwrap()
+            ));
+        }
+        let only = overview("locked", false, &["passphrase", "recovery"]);
+        assert!(passphrase_only(only.status.as_ref().unwrap()));
     }
 
     #[test]

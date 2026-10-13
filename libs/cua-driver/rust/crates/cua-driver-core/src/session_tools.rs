@@ -132,12 +132,13 @@ fn invalid_cursor_motion(args: &Value) -> Option<ToolResult> {
         }
     }
     if let Some(timing) = motion.get("timing").filter(|value| !value.is_null()) {
-        let valid = timing
-            .as_str()
-            .is_some_and(|name| matches!(name, "native" | "fitts" | "fixed"));
+        let names = cua_driver_contract::CursorMotionTiming::ALL
+            .map(cua_driver_contract::CursorMotionTiming::as_str);
+        let valid = timing.as_str().is_some_and(|name| names.contains(&name));
         if !valid {
             return reject(format!(
-                "invalid cursor_motion.timing {timing}; expected native, fitts or fixed"
+                "invalid cursor_motion.timing {timing}; expected one of {}",
+                names.join(", ")
             ));
         }
     }
@@ -600,7 +601,7 @@ mod tests {
         let structured = result.structured_content.as_ref().unwrap();
         assert_eq!(structured["cursor_motion"]["style"], "magnetic");
         assert_eq!(structured["cursor_motion"]["timing"], "fitts");
-        assert_eq!(structured["cursor_motion"]["effects"]["trail"], true);
+        assert_eq!(structured["cursor_motion"]["effects"]["trail"], "on");
         EndSessionTool.invoke(json!({"session": id})).await;
 
         // Optional: absent unless the call set it.

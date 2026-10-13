@@ -1,0 +1,273 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.shared.cdb-s03.invoice-reconciliation",
+  "version": "1.0.0",
+  "title": "CDB-S03: Invoice reconciliation",
+  "authors": [
+    {
+      "name": "Cua AI"
+    }
+  ],
+  "provenance": {
+    "origin": "original",
+    "sources_consulted": [
+      {
+        "title": "Cua Driver Bench design record: version 0.1 task portfolio (internal)",
+        "purpose": "Required CDB-S03 workflow and graded outcome"
+      },
+      {
+        "title": "Internal implementation issue: implement CDB-S03 invoice reconciliation",
+        "purpose": "Scope and acceptance evidence"
+      },
+      {
+        "title": "Cua Driver Bench schema and runtime evaluator contract",
+        "purpose": "Manifest and evaluator lifecycle shape"
+      },
+      {
+        "title": "GnuCash 5 documentation",
+        "purpose": "Public XML persistence and cross-platform launch behavior"
+      },
+      {
+        "title": "A Cua-produced customer sample (abstract structure only)",
+        "purpose": "Abstract workload properties only; no content, wording, data or implementation reused"
+      }
+    ],
+    "third_party_material": false,
+    "notes": "Independently implemented with structural inspiration; not strict clean-room. The customer sample informed only abstract workload structure. The scenario, wording, application identity, fixture data, identifiers, exact workflow, accounting cases, workbook, code, evaluator, oracle, UI copy, and tests are original. Similarity review completed 2026-10-10; see PROVENANCE.md."
+  },
+  "instructions": "Review the source correspondence in Ledger Lantern Mail, the reconciliation workbook in LibreOffice Calc, and the recorded payments in GnuCash. Reconcile only exact, uniquely supported payments; classify and document discrepancies, duplicates, and one-sided records without forcing a balance or changing source amounts. Preserve unrelated and protected state. See brief.md.",
+  "variants": [
+    {
+      "id": "fixture.kestrel-wharf",
+      "fixture_artifacts": [
+        {
+          "path": "brief.md",
+          "sha256": "8571796862e8b24fba1a3641ba4b885ec148d60dbc98fa511291bf417c76671b"
+        },
+        {
+          "path": "reset/setup.py",
+          "sha256": "99ac7b645d64b1d15cc4ea89e0775b64b7cd4d68f9b9518ef6180dfe187e3c06"
+        },
+        {
+          "path": "reset/verify.py",
+          "sha256": "14963a1a57b969b64071ab319be0a95d0e64f997d8e5840088442612074da0e0"
+        },
+        {
+          "path": "fixture/mail/messages.json",
+          "sha256": "2617f8ad065e159c877fe0c1435c0c3b0b24eba6a3a46e7b0fff9b4e1a7b6bef"
+        },
+        {
+          "path": "fixture/mail/attachments/NAR-773.txt",
+          "sha256": "f9e0fa484e987541859e74a07f75ba1c1f3f0d578c43d7cd24dd6a9b07cd037a"
+        },
+        {
+          "path": "fixture/mail/attachments/OCP-4821.txt",
+          "sha256": "b7d001fac2f68cacc32aeb40db79c77f39852b4cc24b5b54c1dfb425ea3f163a"
+        },
+        {
+          "path": "fixture/mail/attachments/OCP-4827.txt",
+          "sha256": "d762c979a453e1767685c6fef4516eaac94a288b9b2069a0a993d1fd60eba102"
+        },
+        {
+          "path": "fixture/mail/attachments/SVL-119.txt",
+          "sha256": "7e0fcfecc10a5a7432253ae3cf34b07c37ebaacdd32743a7319debb142ea7d85"
+        },
+        {
+          "path": "fixture/mail/attachments/open-house-menu.txt",
+          "sha256": "522b33f445606ff24364052dfec0e3a709c3b50246655b058223124ef7928241"
+        },
+        {
+          "path": "fixture/mail/attachments/receiving-log-october.txt",
+          "sha256": "63bb2e90dd210a9f6a81431d551feacc0d58f613ab2e9d5fc112ae37d4ec4795"
+        },
+        {
+          "path": "fixture/book/kestrel-wharf.gnucash",
+          "sha256": "4b00c64d3a6acd84fba4f67ad2285bc341485f6b1aed2957645c341ed2594cad"
+        },
+        {
+          "path": "fixture/planning/kestrel-wharf-reconciliation.ods",
+          "sha256": "ef7c420e61c58bec3a7ca1ca80d647b0e289d561d9248bec573fe0bf1c8f3f9b"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/main.js",
+          "sha256": "56165d308076cc4315f75b25acdf85ec1f5195b32cc3f626c645d06bd0c3c0a3"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/preload.js",
+          "sha256": "e27985e9b415e315e81e1754537f53895b5888cbaf3afb184c8190b2ad488099"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/store.js",
+          "sha256": "268e03c565792a1c1ae26c36e99c141e00ab79479a736b81095bcf1c35fb56c9"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/package.json",
+          "sha256": "278704dd0704cf6cee7301af5ce7e7cb4a9f0e5a802dfc7b4ce420c0541d7af5"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/package-lock.json",
+          "sha256": "f2238692f558cdcef175d01e107eddc73e852a3d7fe9cd9716ca5b475ae43b01"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/renderer/index.html",
+          "sha256": "5e86eec18c707f027364f0848aca22502e7bf6b8eb06369d44d53ed04888c068"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/renderer/app.js",
+          "sha256": "7a822fe98133f74ae3973d98beffd80b4f3ce8633ffc62d76e7e094b14ba81db"
+        },
+        {
+          "path": "apps/ledger-lantern-mail/renderer/styles.css",
+          "sha256": "7cf60352ae12094083832517b598e619d1a70ff6640e2401e9f03c3d396d4821"
+        },
+        {
+          "path": "platform/README.md",
+          "sha256": "f1eee158e664b3984635f54ee0af8e7e666265dba4cea2f937b2c5e5320e114e"
+        },
+        {
+          "path": "platform/launch.macos.json",
+          "sha256": "7dc066a46ea5c4b88e19c6b01dbb41aa6fd73b16df9ebf0e6cf839f2c5684416"
+        },
+        {
+          "path": "platform/launch.windows.json",
+          "sha256": "1be6d14a12828c2261bc29ff4acf483dedf900d6b0af9a904a63fcf49e2aa8a9"
+        },
+        {
+          "path": "platform/launch.linux.json",
+          "sha256": "c678ec18076928995cc2f5f1a621d2ceb9ebecc6da24648a476c240e154511ca"
+        }
+      ],
+      "parameters": {
+        "review_period": "2026-10",
+        "currency": "USD",
+        "workspace_layout": {
+          "mail": "mail",
+          "planning": "planning",
+          "book": "book"
+        }
+      }
+    }
+  ],
+  "required_capabilities": [
+    "observe.screen",
+    "observe.accessibility",
+    "observe.window-metadata",
+    "act.pointer",
+    "act.keyboard",
+    "target.window"
+  ],
+  "observation_surfaces": [
+    "screen",
+    "accessibility",
+    "window-system",
+    "process",
+    "filesystem"
+  ],
+  "network_policy": {
+    "setup": {
+      "mode": "deny"
+    },
+    "agent": {
+      "mode": "deny"
+    },
+    "evaluation": {
+      "mode": "deny"
+    },
+    "cleanup": {
+      "mode": "deny"
+    }
+  },
+  "limits": {
+    "agent_seconds": 1800,
+    "evaluator_seconds": 180
+  },
+  "side_effects": {
+    "allowed": [
+      {
+        "scope": "workspace.book.reconciliation",
+        "description": "Update reconcile state and exception memos on in-scope Checking Account splits."
+      },
+      {
+        "scope": "workspace.planning.reconciliation",
+        "description": "Edit logical cells in the Reconciliation sheet."
+      },
+      {
+        "scope": "workspace.processes",
+        "description": "Operate Ledger Lantern Mail, LibreOffice Calc, and GnuCash."
+      }
+    ],
+    "forbidden": [
+      {
+        "scope": "workspace.mail",
+        "description": "Change mail messages, attachments, or metadata."
+      },
+      {
+        "scope": "workspace.book.monetary-state",
+        "description": "Add or remove transactions, or change identities, dates, descriptions, accounts, values, quantities, or splits."
+      },
+      {
+        "scope": "workspace.book.unrelated",
+        "description": "Change the protected prior-period transaction or any unrelated ledger state."
+      },
+      {
+        "scope": "workspace.planning.controls",
+        "description": "Change workbook controls, formulas, sheet names, or unrelated structure."
+      },
+      {
+        "scope": "network.external",
+        "description": "Reach any non-loopback host."
+      }
+    ]
+  },
+  "evaluator": {
+    "entrypoint": "evaluator/evaluate.py",
+    "inputs": [
+      {
+        "path": "evaluator/evaluate.py",
+        "sha256": "e24a52be87ccff2d8aef0b2d284f180c7e486fba59ff8569a50bd0cfd8b8878b"
+      },
+      {
+        "path": "evaluator/gnucash.py",
+        "sha256": "d34e0de2a1e2966554393991916d37f638d0070025dc002f147bb976d6c47c72"
+      },
+      {
+        "path": "evaluator/ods.py",
+        "sha256": "b979a545fefec8f1a977fc8b326df506fe45b1fd073c10cdc6403c95b7ca01c8"
+      },
+      {
+        "path": "evaluator/oracle.json",
+        "sha256": "cc8bf14d377698158ff967db6a8e92a14189ed2b8f03fcd482e75a242c39d466"
+      }
+    ],
+    "staging": "agent-inaccessible",
+    "oracle": {
+      "required": true,
+      "staging": "before-setup"
+    }
+  },
+  "reset": {
+    "entrypoint": "reset/setup.py",
+    "verification": {
+      "entrypoint": "reset/verify.py",
+      "timeout_seconds": 30
+    },
+    "failure_fixtures": [
+      {
+        "id": "reset.stale-book",
+        "artifact": {
+          "path": "reset/failure-fixtures/stale-book.txt",
+          "sha256": "bf78bdd30c6d214bb1490854ea80ecd72469e50139f83200413ecd169aeccc09"
+        },
+        "expected_failure": "reset verification detects a stale or extra book artifact"
+      },
+      {
+        "id": "reset.stale-workbook",
+        "artifact": {
+          "path": "reset/failure-fixtures/stale-workbook.txt",
+          "sha256": "71c96a6ec897d1a2d5e58b68ccb731b51138d548f5ddabb4a267c8fedd6a1f7a"
+        },
+        "expected_failure": "reset verification detects a stale workbook edit"
+      }
+    ]
+  }
+}

@@ -1177,6 +1177,23 @@ async fn a_host_that_stopped_sharing_says_so_and_lists_its_state() {
     let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
     relay.stop_sharing("ada-token", &host).await.unwrap();
 
+    // "Run on" lists it as the Machines page does (connected) and says it
+    // is not sharing, instead of calling it offline.
+    let hosts = spaces.hosts().await.unwrap();
+    let listed = hosts
+        .iter()
+        .find(|h| h.name == "Mac mini (spare)")
+        .expect("still listed");
+    assert!(listed.online, "the relay sees it connected: {listed:?}");
+    assert!(
+        listed
+            .limits
+            .iter()
+            .any(|l| l.resource == cua_spaces::host_spaces::STOPPED_SHARING
+                && l.reason.contains("stopped sharing: ask its owner")),
+        "{listed:?}"
+    );
+
     let e = spaces
         .create(on_host("Mac mini (spare)"))
         .await

@@ -58,6 +58,7 @@ struct HTTPResponse {
     enum StatusCode: Int {
         case ok = 200
         case accepted = 202
+        case conflict = 409
         case badRequest = 400
         case conflict = 409
         case notFound = 404
@@ -67,6 +68,7 @@ struct HTTPResponse {
             switch self {
             case .ok: return "OK"
             case .accepted: return "Accepted"
+            case .conflict: return "Conflict"
             case .badRequest: return "Bad Request"
             case .conflict: return "Conflict"
             case .notFound: return "Not Found"

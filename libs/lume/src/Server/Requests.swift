@@ -112,6 +112,7 @@ struct PullRequest: Codable {
 
 struct PullCancelRequest: Codable {
     let name: String
+    let token: UUID?
 }
 
 struct CreateVMRequest: Codable {

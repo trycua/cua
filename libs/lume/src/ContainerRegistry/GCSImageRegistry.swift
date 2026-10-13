@@ -33,10 +33,9 @@ class GCSImageRegistry: ImageRegistry, @unchecked Sendable {
         locationName: String?,
         force: Bool = false,
         progressHandler: PullProgressHandler? = nil,
-        preparationWorkRoot: URL? = nil,
-        preparationOperationID: String? = nil
+        preparation: OwnedPreparation? = nil
     ) async throws -> VMDirectory {
-        if preparationWorkRoot != nil || preparationOperationID != nil {
+        if preparation != nil {
             throw PreparationPlacementError.unsupportedGCSWorkRoot
         }
         // Parse image name and tag

@@ -6,6 +6,8 @@ enum PreparationPlacementError: Error, LocalizedError, Equatable, Sendable {
     case invalidWorkRoot
     case invalidScopeIdentifier
     case invalidOperationIdentifier
+    case incompletePreparationTuple
+    case invalidDigest
     case operationExists
     case unsupportedGCSWorkRoot
     case responseRejected(Int)
@@ -24,6 +26,8 @@ enum PreparationPlacementError: Error, LocalizedError, Equatable, Sendable {
         case .invalidWorkRoot: return "preparation work root must be an absolute, non-symlink path"
         case .invalidScopeIdentifier: return "preparation scope identifier is invalid"
         case .invalidOperationIdentifier: return "preparation operation identifier is invalid"
+        case .incompletePreparationTuple: return "preparation work root, scope and operation must be supplied together"
+        case .invalidDigest: return "layer digest is not a supported content-address value"
         case .operationExists: return "preparation operation already exists"
         case .unsupportedGCSWorkRoot: return "owned preparation work roots are supported for GHCR only"
         case .responseRejected(let status): return "layer download returned HTTP status \(status)"
@@ -39,7 +43,69 @@ enum PreparationPlacementError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
-struct OwnedScopeWorkRoot: Sendable, Equatable {
+struct OwnedPreparation: Sendable, Equatable, Hashable {
+    let scopeID: String
+    let operationID: String
+    let workRoot: OwnedScopeWorkRoot
+
+    init(workRoot: String, scopeID: String, operationID: String) throws {
+        self.workRoot = try OwnedScopeWorkRoot(
+            scopeID: scopeID,
+            root: URL(fileURLWithPath: workRoot, isDirectory: true)
+        )
+        guard OwnedScopeWorkRoot.isSafeIdentifier(operationID) else {
+            throw PreparationPlacementError.invalidOperationIdentifier
+        }
+        self.scopeID = scopeID
+        self.operationID = operationID
+    }
+
+    static func make(
+        workRoot: String?,
+        scopeID: String?,
+        operationID: String?
+    ) throws -> OwnedPreparation? {
+        let values = [workRoot, scopeID, operationID]
+        guard values.contains(where: { $0 != nil }) else { return nil }
+        guard let workRoot, let scopeID, let operationID else {
+            throw PreparationPlacementError.incompletePreparationTuple
+        }
+        return try OwnedPreparation(workRoot: workRoot, scopeID: scopeID, operationID: operationID)
+    }
+
+    var identity: PullPreparationIdentity {
+        PullPreparationIdentity(scopeID: scopeID, operationID: operationID, workRoot: workRoot.root.path)
+    }
+}
+
+struct PullPreparationIdentity: Sendable, Equatable, Hashable, Codable {
+    let scopeID: String
+    let operationID: String
+    let workRoot: String
+}
+
+struct ContentAddress: Sendable, Equatable, Hashable {
+    let algorithm: String
+    let hex: String
+
+    init(_ value: String) throws {
+        let parts = value.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { throw PreparationPlacementError.invalidDigest }
+        let algorithm = String(parts[0]).lowercased()
+        let hex = String(parts[1]).lowercased()
+        guard !algorithm.isEmpty, !hex.isEmpty,
+              algorithm.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 122) || $0 == 45 }),
+              hex.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102) })
+        else { throw PreparationPlacementError.invalidDigest }
+        self.algorithm = algorithm
+        self.hex = hex
+    }
+
+    var canonical: String { "\(algorithm):\(hex)" }
+    var fileName: String { "\(algorithm)-\(hex)" }
+}
+
+struct OwnedScopeWorkRoot: Sendable, Equatable, Hashable {
     let scopeID: String
     let root: URL
 
@@ -74,13 +140,6 @@ struct OwnedScopeWorkRoot: Sendable, Equatable {
         }
         try fm.createDirectory(at: operation, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         return operation
-    }
-
-    func coordinationDirectory() throws -> URL {
-        let directory = root.appendingPathComponent("locks", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-        return directory
     }
 
     static func isSafeIdentifier(_ value: String) -> Bool {

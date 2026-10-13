@@ -45,6 +45,14 @@ private func placementDigest(_ data: Data) -> String {
     "sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
+private final class CallbackCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() { lock.withLock { value += 1 } }
+    func read() -> Int { lock.withLock { value } }
+}
+
 private func placementTemp(_ name: String) throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("lume-placement-\(name)-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -73,6 +81,75 @@ struct PreparationPlacementTests {
         #expect(throws: PreparationPlacementError.unsupportedGCSWorkRoot) {
             try RegistryFactory.createRegistry(config: config, preparationWorkRoot: base.path, preparationScopeID: "scope", preparationOperationID: "op")
         }
+    }
+
+    @Test func preparationTupleAndOverlapValidationRejectUnsafePlacement() throws {
+        let base = try placementTemp("boundaries")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let rootURL = base.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let root = try OwnedScopeWorkRoot(scopeID: "scope", root: rootURL)
+        #expect(throws: PreparationPlacementError.incompletePreparationTuple) {
+            try OwnedPreparation.make(workRoot: rootURL.path, scopeID: "scope", operationID: nil)
+        }
+        #expect(ImageContainerRegistry.pathsOverlap(root.root, root.root))
+        #expect(ImageContainerRegistry.pathsOverlap(root.root, root.root.appendingPathComponent("child")))
+        let alias = base.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root.root)
+        #expect(ImageContainerRegistry.pathsOverlap(root.root, alias))
+        #expect(throws: PreparationPlacementError.invalidWorkRoot) {
+            try RegistryFactory.createRegistry(
+                config: RegistryConfig(type: .ghcr, ghcr: .defaultConfig, gcs: nil),
+                preparationWorkRoot: "/",
+                preparationScopeID: "scope",
+                preparationOperationID: "op")
+        }
+        #expect(throws: PreparationPlacementError.incompletePreparationTuple) {
+            try RegistryFactory.createRegistry(
+                config: RegistryConfig(type: .ghcr, ghcr: .defaultConfig, gcs: nil),
+                preparationScopeID: "scope")
+        }
+    }
+
+    @Test func digestLockNamesAreBoundedAndSharedAcrossPreparationRoots() throws {
+        let digest = "sha256:" + String(repeating: "a", count: 64)
+        let rootA = try placementTemp("lock-a")
+        let rootB = try placementTemp("lock-b")
+        defer {
+            try? FileManager.default.removeItem(at: rootA)
+            try? FileManager.default.removeItem(at: rootB)
+        }
+        _ = try OwnedPreparation(workRoot: rootA.path, scopeID: "scope-a", operationID: "op-a")
+        _ = try OwnedPreparation(workRoot: rootB.path, scopeID: "scope-b", operationID: "op-b")
+        #expect(try ImageContainerRegistry.coordinationLockName(for: digest) == "sha256-" + String(repeating: "a", count: 64) + ".lock")
+        #expect(throws: PreparationPlacementError.invalidDigest) {
+            try ImageContainerRegistry.coordinationLockName(for: "../../outside")
+        }
+    }
+
+    @Test func finalPublicationRefusesCrossVolumeAndKeepsPriorDestination() throws {
+        let base = try placementTemp("publication")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let source = base.appendingPathComponent("source")
+        let destination = base.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("new".utf8).write(to: source.appendingPathComponent("disk.img"))
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        try Data("prior".utf8).write(to: destination.appendingPathComponent("disk.img"))
+        var volumeCall = 0
+        do {
+            try ImageContainerRegistry.publishDirectoryAtomically(
+                source: source,
+                destination: destination,
+                volumeNumber: { _ in
+                    volumeCall += 1
+                    return volumeCall == 1 ? 1 : 2
+                })
+            Issue.record("expected cross-volume refusal")
+        } catch let error as PreparationPlacementError {
+            #expect(error == .destinationVolumeMismatch)
+        }
+        #expect(try Data(contentsOf: destination.appendingPathComponent("disk.img")) == Data("prior".utf8))
     }
 
     @Test func streamingCommitEnforcesDigestAndBodyLimitAndPreservesDestination() async throws {
@@ -147,22 +224,29 @@ struct PreparationPlacementTests {
         let destination = base.appendingPathComponent("destination")
         let prior = Data("verified".utf8)
         try prior.write(to: destination)
+        let callbackCount = CallbackCounter()
         PlacementFixtureProtocol.plan = .init(status: 200, body: Data(repeating: 0x11, count: 10), contentLength: true, delay: 0.2)
         let input = StreamingLayerRequest(
             request: URLRequest(url: URL(string: "http://placement.invalid/layer")!),
             operationRoot: base.appendingPathComponent("operation"),
             destination: destination,
             admission: BodyAdmissionPolicy(maximumBytes: 128),
-            onBytes: { _ in })
+            onBytes: { _ in callbackCount.increment() })
         let task = Task { try await StreamingLayerWriter.run(input, configuration: placementFixtureConfiguration()) }
+        while !FileManager.default.fileExists(atPath: input.operationRoot.path) {
+            await Task.yield()
+        }
         task.cancel()
         do {
             _ = try await task.value
             Issue.record("expected cancellation")
+        } catch let error as PreparationPlacementError {
+            #expect(error == .cancelled)
         } catch {
-            #expect(true)
+            Issue.record("unexpected cancellation error: \(error)")
         }
         #expect(try Data(contentsOf: destination) == prior)
         #expect((try? FileManager.default.contentsOfDirectory(at: input.operationRoot, includingPropertiesForKeys: nil).filter { $0.pathExtension == "part" }.isEmpty) ?? true)
+        #expect(callbackCount.read() == 0)
     }
 }

@@ -26,6 +26,10 @@ struct RegistryFactory {
         preparationScopeID: String? = nil,
         preparationOperationID: String? = nil
     ) throws -> any ImageRegistry {
+        let preparation = try OwnedPreparation.make(
+            workRoot: preparationWorkRoot,
+            scopeID: preparationScopeID,
+            operationID: preparationOperationID)
         let settings = SettingsManager.shared.getSettings()
         let config = settings.registry ?? .defaultConfig
 
@@ -37,24 +41,22 @@ struct RegistryFactory {
         if hasCliOverride {
             let registryURL = registry ?? defaultGHCRRegistry
             let org = organization ?? defaultGHCROrganization
-            return ImageContainerRegistry(registry: registryURL, organization: org, username: username, password: password, preparationWorkRoot: preparationWorkRoot.map { URL(fileURLWithPath: $0) }, preparationScopeID: preparationScopeID, preparationOperationID: preparationOperationID)
+            return try ImageContainerRegistry(registry: registryURL, organization: org, username: username, password: password, preparation: preparation)
         }
 
         // Otherwise use configured registry type
         switch config.type {
         case .ghcr:
-            return ImageContainerRegistry(
+            return try ImageContainerRegistry(
                 registry: config.ghcr.registry,
                 organization: config.ghcr.organization,
                 username: username,
                 password: password,
-                preparationWorkRoot: preparationWorkRoot.map { URL(fileURLWithPath: $0) },
-                preparationScopeID: preparationScopeID,
-                preparationOperationID: preparationOperationID
+                preparation: preparation
             )
 
         case .gcs:
-            if preparationWorkRoot != nil || preparationScopeID != nil || preparationOperationID != nil {
+            if preparation != nil {
                 throw PreparationPlacementError.unsupportedGCSWorkRoot
             }
             guard let gcsConfig = config.gcs else {
@@ -66,18 +68,20 @@ struct RegistryFactory {
 
     /// Create a registry with explicit configuration (useful for testing or direct API calls)
     static func createRegistry(config: RegistryConfig, preparationWorkRoot: String? = nil, preparationScopeID: String? = nil, preparationOperationID: String? = nil) throws -> any ImageRegistry {
+        let preparation = try OwnedPreparation.make(
+            workRoot: preparationWorkRoot,
+            scopeID: preparationScopeID,
+            operationID: preparationOperationID)
         switch config.type {
         case .ghcr:
-            return ImageContainerRegistry(
+            return try ImageContainerRegistry(
                 registry: config.ghcr.registry,
                 organization: config.ghcr.organization,
-                preparationWorkRoot: preparationWorkRoot.map { URL(fileURLWithPath: $0) },
-                preparationScopeID: preparationScopeID,
-                preparationOperationID: preparationOperationID
+                preparation: preparation
             )
 
         case .gcs:
-            if preparationWorkRoot != nil || preparationScopeID != nil || preparationOperationID != nil {
+            if preparation != nil {
                 throw PreparationPlacementError.unsupportedGCSWorkRoot
             }
             guard let gcsConfig = config.gcs else {

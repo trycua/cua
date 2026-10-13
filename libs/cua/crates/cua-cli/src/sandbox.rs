@@ -2111,13 +2111,22 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
 }
 
 /// The remembered spacesd token of a direct sandbox (saved under its name
-/// and its `direct:<host:port>` ref), or `CUA_ENV_TOKEN`.
+/// and its `direct:<host:port>` ref), the spacesd token of the Space added
+/// at that address, or `CUA_ENV_TOKEN`.
 fn direct_token(info: &SandboxInfo) -> Option<String> {
     let tokens = load_tokens();
     [&info.id, &info.name]
         .iter()
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
+        .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
         .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()

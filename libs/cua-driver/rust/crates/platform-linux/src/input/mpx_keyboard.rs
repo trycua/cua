@@ -787,42 +787,25 @@ mod tests {
 
     #[test]
     fn text_plan_taps_keys_and_wraps_shifted_glyphs_in_shift() {
-        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "a!\n", |_| None);
+        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "aA1!\n", |_| None);
         assert!(missing.is_empty());
         assert_eq!(
             steps,
             vec![
                 step(30, true),
                 step(30, false),
+                step(42, true),
+                step(30, true),
+                step(30, false),
+                step(42, false),
+                step(2, true),
+                step(2, false),
                 step(42, true),
                 step(2, true),
                 step(2, false),
                 step(42, false),
                 step(28, true),
                 step(28, false),
-            ]
-        );
-    }
-
-    #[test]
-    fn text_plan_wraps_only_the_shifted_taps_of_a_mixed_case_string() {
-        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "aA1!", |_| None);
-        assert!(missing.is_empty());
-        assert_eq!(
-            steps,
-            vec![
-                step(30, true),
-                step(30, false),
-                step(42, true),
-                step(30, true),
-                step(30, false),
-                step(42, false),
-                step(2, true),
-                step(2, false),
-                step(42, true),
-                step(2, true),
-                step(2, false),
-                step(42, false),
             ]
         );
     }

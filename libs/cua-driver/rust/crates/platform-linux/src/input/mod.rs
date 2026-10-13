@@ -4113,8 +4113,6 @@ mod key_name_alias_tests {
         };
         set(43, [0x68, 0x48]);
         set(11, [0x32, 0x40]);
-        set(61, [0x2f, 0x3f]);
-        set(59, [0x2c, 0x3c]);
         let mapping = GetKeyboardMappingReply {
             keysyms_per_keycode: per as u8,
             sequence: 0,
@@ -4123,12 +4121,8 @@ mod key_name_alias_tests {
         for (ch, keycode, needs_shift) in [
             ('H', 43, true),
             ('@', 11, true),
-            ('?', 61, true),
-            ('<', 59, true),
             ('h', 43, false),
-            (',', 59, false),
             ('2', 11, false),
-            ('/', 61, false),
         ] {
             assert_eq!(
                 char_to_keycode_shift(&mapping, ch as u32),

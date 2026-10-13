@@ -2616,12 +2616,9 @@ fn input_error_result(e: anyhow::Error) -> ToolResult {
         // The focus-free real-input route exists but this process cannot open
         // /dev/uinput: an honest refusal the operator can act on, not a bare
         // I/O error.
-        let mut refusal = with_hint(
-            crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-            ),
-            UINPUT_KEYBOARD_HINT,
-        );
+        let mut refusal = with_uinput_hint(crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+        ));
         if let Some(structured) = refusal.structured_content.as_mut() {
             structured["cause"] = json!(crate::input::UINPUT_UNAVAILABLE_CODE);
             structured["detail"] = json!(text);
@@ -3117,12 +3114,14 @@ const UINPUT_KEYBOARD_HINT: &str = "Background keyboard delivery on X11 needs a 
     'input' group and restart it) and retry. Xvfb/Xtigervnc cannot hot-add \
     input devices, so the route is unavailable there.";
 
-fn with_hint(mut refusal: ToolResult, hint: &str) -> ToolResult {
+fn with_uinput_hint(mut refusal: ToolResult) -> ToolResult {
     refusal
         .content
-        .push(cua_driver_core::protocol::Content::text(hint));
+        .push(cua_driver_core::protocol::Content::text(
+            UINPUT_KEYBOARD_HINT,
+        ));
     if let Some(structured) = refusal.structured_content.as_mut() {
-        structured["hint"] = json!(hint);
+        structured["hint"] = json!(UINPUT_KEYBOARD_HINT);
     }
     refusal
 }
@@ -3134,20 +3133,20 @@ fn background_keyboard_refusal() -> ToolResult {
     let mut refusal = crate::input::delivery::background_unavailable_error(
         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
     );
-    let x11 = !crate::wayland::is_wayland();
-    if x11 && !crate::input::uinput_accessible() {
-        refusal = with_hint(refusal, UINPUT_KEYBOARD_HINT);
+    let probe = std::thread::spawn(crate::health_report::probe_a11y_bus);
+    let atspi_ok = crate::wayland::is_wayland() || probe.join().unwrap_or(false);
+    refusal.content.extend(atspi_hint(atspi_ok));
+    if !crate::wayland::is_wayland() && !crate::input::uinput_accessible() {
+        with_uinput_hint(refusal)
+    } else {
+        refusal
     }
-    if x11
-        && !std::thread::spawn(crate::health_report::probe_a11y_bus)
-            .join()
-            .unwrap_or(false)
-    {
-        let bus = crate::health_report::START_ATSPI_BUS_HINT;
-        let hint = format!("AT-SPI is unavailable. {bus} Or use delivery_mode \"foreground\".");
-        refusal = with_hint(refusal, &hint);
-    }
-    refusal
+}
+
+fn atspi_hint(atspi_ok: bool) -> Option<cua_driver_core::protocol::Content> {
+    let bus = crate::health_report::START_ATSPI_BUS_HINT;
+    let hint = format!("AT-SPI is unavailable. {bus} Or use delivery_mode \"foreground\".");
+    (!atspi_ok).then(|| cua_driver_core::protocol::Content::text(hint))
 }
 
 fn unavailable_gtk_keyboard_background(
@@ -4828,17 +4827,28 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
 #[cfg(test)]
 #[test]
 fn background_keyboard_refusal_names_missing_atspi_bus() {
+    let Some(cua_driver_core::protocol::Content::Text { text: hint, .. }) = atspi_hint(false)
+    else {
+        panic!("missing AT-SPI hint");
+    };
+    for needle in [
+        "AT-SPI is unavailable",
+        "at-spi-bus-launcher",
+        "delivery_mode \"foreground\"",
+    ] {
+        assert!(hint.contains(needle), "{needle} missing from {hint}");
+    }
+    assert!(atspi_hint(true).is_none());
     let plain = crate::input::delivery::background_unavailable_error(
         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
     );
-    let plain_structured = plain.structured_content.clone().unwrap();
-    let refusal = with_hint(plain, crate::health_report::START_ATSPI_BUS_HINT);
-    let structured = refusal.structured_content.as_ref().unwrap();
-    let hint = structured["hint"].as_str().unwrap();
-    assert!(hint.contains("at-spi-bus-launcher"), "{hint}");
-    assert_eq!(structured["code"], plain_structured["code"]);
-    assert_eq!(structured["escalation"], plain_structured["escalation"]);
-    assert!(plain_structured.get("hint").is_none());
+    let refusal = background_keyboard_refusal();
+    let (structured, plain) = (
+        refusal.structured_content.unwrap(),
+        plain.structured_content.unwrap(),
+    );
+    assert_eq!(structured["code"], plain["code"]);
+    assert_eq!(structured["escalation"], plain["escalation"]);
 }
 
 #[cfg(test)]

@@ -527,6 +527,7 @@ def validate_pr_attribution(
     base_config: Mapping[str, Any],
     identity_changes: Mapping[str, str | None],
     github: GitHubClient,
+    main_sha: str = "",
 ) -> None:
     """Fail closed when preserved human authorship cannot reach a GitHub login.
 
@@ -611,12 +612,30 @@ def validate_pr_attribution(
         is_base_sync_merge = len(parents) > 1 and any(
             parent and parent not in commit_shas for parent in parents[1:]
         )
-        unlinked_author = not author_login and author_email not in ignored
-        distinct_external_author = bool(author_login) and (
-            author_login.lower() != pull_login.lower()
-            and not is_bot(author_login, bots)
-            and author_login.lower() not in internal
-            and author_login.lower() not in opt_out
+        clean_main_sync = False
+        if is_base_sync_merge and len(parents) == 2 and main_sha:
+            try:
+                ancestry = github.get(f"repos/{repository}/compare/{parents[1]}...{main_sha}")
+                if ancestry["status"] in {"ahead", "identical"}:
+                    comparisons = [
+                        github.get(f"repos/{repository}/compare/{parent}...{sha}")["files"]
+                        for parent in parents
+                    ]
+                    clean_main_sync = all(len(files) < 300 for files in comparisons) and {
+                        file["filename"] for file in comparisons[0]
+                    }.isdisjoint(file["filename"] for file in comparisons[1])
+            except (ReleaseError, OSError, ValueError, KeyError, TypeError):
+                pass
+        unlinked_author = not clean_main_sync and not author_login and author_email not in ignored
+        distinct_external_author = (
+            not clean_main_sync
+            and bool(author_login)
+            and (
+                author_login.lower() != pull_login.lower()
+                and not is_bot(author_login, bots)
+                and author_login.lower() not in internal
+                and author_login.lower() not in opt_out
+            )
         )
         # An ordinary direct PR author is credited from pull-request metadata even
         # when their commit email is private. A distinct unlinked author committed
@@ -1467,6 +1486,7 @@ def validate_pr_command(args: argparse.Namespace) -> None:
         base_config=base_config,
         identity_changes=identity_changes,
         github=client,
+        main_sha=trusted_sha,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")
 

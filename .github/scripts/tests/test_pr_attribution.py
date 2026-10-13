@@ -58,9 +58,16 @@ def commit(
 
 
 class SourceGitHub:
-    def __init__(self, authors, source_emails):
+    def __init__(self, authors, source_emails, comparisons=None):
         self.authors = authors
         self.source_emails = source_emails
+        self.comparisons = comparisons or {}
+
+    def get(self, path):
+        value = self.comparisons[path]
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def pull(self, repository: str, number: int):
         assert repository == "trycua/cua"
@@ -81,6 +88,8 @@ def validate(
     changes=None,
     authors=None,
     source_emails=None,
+    comparisons=None,
+    main_sha="",
 ):
     base = base or config()
     validate_pr_attribution(
@@ -89,7 +98,8 @@ def validate(
         commits=commits or [],
         base_config=base,
         identity_changes=changes or {},
-        github=SourceGitHub(authors or {}, source_emails or {}),
+        github=SourceGitHub(authors or {}, source_emails or {}, comparisons),
+        **({"main_sha": main_sha} if main_sha else {}),
     )
 
 
@@ -456,3 +466,47 @@ def test_compare_pages_that_stop_short_are_refused():
     client = PagedCompareGitHub(total=250, reported_total=300)
     with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
         client.all_pull_commits("trycua/cua-staging", large_pull())
+
+
+@pytest.mark.parametrize(
+    "status, branch_files, main_files, failure, clean",
+    [
+        ("ahead", ["main-change"], ["branch-change"], False, True),
+        ("identical", ["main-change"], ["branch-change"], False, True),
+        ("ahead", ["conflict"], ["conflict"], False, False),
+        ("diverged", ["main-change"], ["branch-change"], False, False),
+        ("ahead", [str(i) for i in range(300)], ["branch-change"], False, False),
+        ("ahead", ["main-change"], [str(i) for i in range(300)], False, False),
+        ("ahead", ["main-change"], ["branch-change"], True, False),
+    ],
+)
+def test_main_sync_merge_authorship(status, branch_files, main_files, failure, clean):
+    comparisons = {
+        "repos/trycua/cua/compare/main-tip...trusted-main": {"status": status},
+        "repos/trycua/cua/compare/feature-tip...sync-merge": {
+            "files": [{"filename": name} for name in branch_files]
+        },
+        "repos/trycua/cua/compare/main-tip...sync-merge": (
+            ReleaseError("API failed")
+            if failure
+            else {"files": [{"filename": name} for name in main_files]}
+        ),
+    }
+    values = dict(
+        commits=[
+            commit(sha="feature-tip", login="landing-author"),
+            commit(
+                sha="sync-merge",
+                login="injaneity",
+                email="44902825+injaneity@users.noreply.github.com",
+                parent_shas=("feature-tip", "main-tip"),
+            ),
+        ],
+        comparisons=comparisons,
+        main_sha="trusted-main",
+    )
+    if clean:
+        validate(**values)
+    else:
+        with pytest.raises(ReleaseError, match="base synchronization merge"):
+            validate(**values)

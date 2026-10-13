@@ -203,6 +203,25 @@ struct PreparationPlacementTests {
         }
     }
 
+    @Test func publicationPolicyIsStrictOnlyForOwnedPreparation() throws {
+        #expect(ImageContainerRegistry.requiresSameVolumeForPublication(ownedPreparation: nil) == false)
+        let root = try placementTemp("publication-policy")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let preparation = try OwnedPreparation(
+            workRoot: root.path, scopeID: "scope", operationID: "operation")
+        #expect(ImageContainerRegistry.requiresSameVolumeForPublication(ownedPreparation: preparation))
+    }
+
+    @Test func partialOwnedOperationRootsAreRemovableBeforeLayoutCompletes() throws {
+        let root = try placementTemp("partial-layout")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let operationRoot = root.appendingPathComponent("operations/op", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: operationRoot.appendingPathComponent("whole-vm"), withIntermediateDirectories: true)
+        ImageContainerRegistry.cleanupOwnedOperationRoot(operationRoot)
+        #expect(!FileManager.default.fileExists(atPath: operationRoot.path))
+    }
+
     @Test func finalPublicationRefusesCrossVolumeAndKeepsPriorDestination() throws {
         let base = try placementTemp("publication")
         defer { try? FileManager.default.removeItem(at: base) }

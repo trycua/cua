@@ -669,6 +669,22 @@ struct PullRouteTests {
         }
         #expect(await tracker.getError(for: name) == nil)
     }
+
+    @Test("synchronous pulls do not expose a cancellable operation token")
+    func synchronousPullHasNoCancellationToken() async {
+        let name = "pull-sync-token-\(UUID().uuidString)"
+        let tracker = PullProgressTracker()
+        let key = PullOperationKey(
+            name: name, destination: "home", image: "image:latest", registry: "ghcr.io",
+            organization: "org", preparation: nil)
+        guard case .started(let token) = await tracker.begin(key: key, cancellable: false) else {
+            Issue.record("synchronous operation did not start")
+            return
+        }
+        #expect(await tracker.activeToken(for: name) == token)
+        #expect(await tracker.activeCancellableToken(for: name) == nil)
+        await tracker.finish(key: key, token: token, outcome: .completed)
+    }
 }
 
 // MARK: - Shared blobs are decompressed once

@@ -806,6 +806,14 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
     }
 
+    static func cleanupOwnedOperationRoot(_ operationRoot: URL) {
+        try? FileManager.default.removeItem(at: operationRoot)
+    }
+
+    static func requiresSameVolumeForPublication(ownedPreparation: OwnedPreparation?) -> Bool {
+        ownedPreparation != nil
+    }
+
     // Constants for zero-skipping write logic
     private static let holeGranularityBytes = 4 * 1024 * 1024  // 4MB block size for checking zeros
     private static let zeroChunk = Data(count: holeGranularityBytes)
@@ -1226,23 +1234,24 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             name: vmName)
 
         let configuredWorkRoot = effectivePreparation?.workRoot
+        var operationRootForCleanup: URL?
+        defer {
+            if let operationRootForCleanup {
+                Self.cleanupOwnedOperationRoot(operationRootForCleanup)
+            }
+        }
         let workLayout: StagingLayout?
-        let operationRootForCleanup: URL?
         if let configuredWorkRoot {
             let operationID = effectivePreparation?.operationID ?? UUID().uuidString
             let operationRoot = try configuredWorkRoot.operationRoot(operationID)
+            operationRootForCleanup = operationRoot
             let layout = try StagingLayout(operationRoot: operationRoot)
             workLayout = layout
-            operationRootForCleanup = operationRoot
         } else {
             if preparation != nil {
                 throw PreparationPlacementError.workRootRequired
             }
             workLayout = nil
-            operationRootForCleanup = nil
-        }
-        defer {
-            if let operationRootForCleanup { try? FileManager.default.removeItem(at: operationRootForCleanup) }
         }
 
         let lifecycleLock: DigestFileLock?
@@ -1595,9 +1604,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // The final handoff is deliberately same-volume and atomic. The prior
         // verified VM remains in place until replaceItemAt succeeds.
-        try Self.publishDirectoryAtomically(
+        try Self.publishDirectory(
             source: assembledVMDir,
-            destination: URL(fileURLWithPath: vmDir.dir.path))
+            destination: URL(fileURLWithPath: vmDir.dir.path),
+            ownedPreparation: effectivePreparation)
 
         // Log the final destination
         Logger.debug(
@@ -1639,6 +1649,22 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         } else {
             try fm.moveItem(at: source, to: destination)
         }
+    }
+
+    static func publishDirectory(
+        source: URL,
+        destination: URL,
+        ownedPreparation: OwnedPreparation?
+    ) throws {
+        if Self.requiresSameVolumeForPublication(ownedPreparation: ownedPreparation) {
+            try publishDirectoryAtomically(source: source, destination: destination)
+            return
+        }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.moveItem(at: source, to: destination)
     }
 
     private static func sameVolume(

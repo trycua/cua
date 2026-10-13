@@ -51,7 +51,7 @@ extension Server {
         // Check if an async pull is in progress for this VM name
         let pullProgress = await PullProgressTracker.shared.getPullProgress(for: name)
         let pullError = await PullProgressTracker.shared.getError(for: name)
-        let operationToken = await PullProgressTracker.shared.activeToken(for: name)
+        let operationToken = await PullProgressTracker.shared.activeCancellableToken(for: name)
 
         if let errorMsg = pullError {
             // Pull failed — surface the error
@@ -197,7 +197,7 @@ extension Server {
             return HTTPResponse(
                 statusCode: .conflict,
                 headers: ["Content-Type": "application/json"],
-                body: try JSONEncoder().encode(APIError(message: "a pull for (vmName) is already active with a different operation identity"))
+                body: try JSONEncoder().encode(APIError(message: "a pull for \(vmName) is already active with a different operation identity"))
             )
         case .started(let started):
             token = started

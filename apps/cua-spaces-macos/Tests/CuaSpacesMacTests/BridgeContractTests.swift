@@ -228,6 +228,7 @@ struct BridgeContractTests {
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
             ("devices.createPairingCode", ["team": NSNull()]), ("devices.pairingCodes", [:]),
+            ("teams.list", [:]),
             ("devices.revokePairingCode", ["id": "pc_fixture1"]),
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markAllRead", [:]),

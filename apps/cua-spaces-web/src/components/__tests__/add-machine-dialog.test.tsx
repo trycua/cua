@@ -27,7 +27,7 @@ function host(options: DemoOptions = {}, override: Record<string, (args: Record<
   return { adapter, calls };
 }
 
-function Harness() {
+function Harness({ team = null }: { team?: string | null }) {
   const { data: machines = [], setupGuide } = useMachines();
   return (
     <>
@@ -36,15 +36,15 @@ function Harness() {
           <li key={m.id}>{m.name}</li>
         ))}
       </ul>
-      <AddMachineDialog open onOpenChange={() => {}} guide={setupGuide} pollMs={20} />
+      <AddMachineDialog open onOpenChange={() => {}} guide={setupGuide} pollMs={20} team={team} />
     </>
   );
 }
 
-async function mount(adapter: DataAdapter) {
+async function mount(adapter: DataAdapter, team: string | null = null) {
   render(
     <BridgeProvider adapter={adapter} core={unavailableCore("test: no core")}>
-      <Harness />
+      <Harness team={team} />
     </BridgeProvider>,
   );
   await act(() => new Promise((r) => setTimeout(r, 10)));
@@ -81,6 +81,73 @@ describe("Add a machine by link or QR code", () => {
     // (The page behind the dialog is inert, so not by role.)
     await waitFor(() => expect(document.querySelector('ul[aria-label="Machines"]')?.textContent).toContain("Office PC"));
     expect(screen.queryByText("Revoke link")).toBeNull();
+  });
+
+  it("adds the new machine to the team once it joined (pairing alone does not)", async () => {
+    const org = "0f1e2d3c-0000-4000-8000-000000000001";
+    const shared: Record<string, unknown>[] = [];
+    let finish: () => void = () => {};
+    const { adapter } = host({}, {
+      "sharing.share": (args) => {
+        shared.push(args);
+        // A plan bought a moment ago: the host is still retrying.
+        return new Promise((r) => (finish = () => r([])));
+      },
+    });
+    await mount(adapter, org);
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="adding"]')?.textContent).toContain("Finishing setup…"), { timeout: 3000 });
+    expect(shared).toHaveLength(1);
+    expect(shared[0]).toMatchObject({ who: `team:${org}`, role: "editor" });
+    expect(String(shared[0]?.spaceId)).toMatch(/^relay:/);
+    finish();
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="added"]')?.textContent).toMatch(/Your team can use it now\./));
+  });
+
+  it("lets you choose the team, the current one by default, and adds the machine to it", async () => {
+    const acme = "0f1e2d3c-0000-4000-8000-0000000000a1";
+    const shared: Record<string, unknown>[] = [];
+    const { adapter } = host({}, {
+      "teams.list": () =>
+        Promise.resolve({
+          teams: [
+            { id: acme, alias: "acme", name: "Acme", role: "owner", plan: "teams" },
+            { id: "0f1e2d3c-0000-4000-8000-0000000000b2", alias: "side", name: "", role: "member", plan: "teams" },
+          ],
+          currentTeamId: acme,
+        }),
+      "sharing.share": (args) => {
+        shared.push(args);
+        return Promise.resolve([]);
+      },
+    });
+    await mount(adapter);
+    // Offered: just me, or Acme (the member-only team is not); Acme is the current team.
+    await waitFor(() => expect(document.querySelector("[data-add-machine-team]")?.getAttribute("data-add-machine-team")).toBe(acme));
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="added"]')).toBeTruthy(), { timeout: 3000 });
+    expect(shared[0]).toMatchObject({ who: `team:${acme}` });
+  });
+
+  it("adds the machine to no team when there is none to choose", async () => {
+    const shared: unknown[] = [];
+    const { adapter } = host({}, {
+      "teams.list": () => Promise.resolve({ teams: [], currentTeamId: null }),
+      "sharing.share": (args) => {
+        shared.push(args);
+        return Promise.resolve([]);
+      },
+    });
+    await mount(adapter);
+    await waitFor(() => expect(phase()).toBe("used"), { timeout: 3000 });
+    expect(document.querySelector("[data-add-machine-team]")).toBeNull();
+    expect(shared).toHaveLength(0);
+  });
+
+  it("says when the machine could not join the team", async () => {
+    const { adapter } = host({}, {
+      "sharing.share": () => Promise.reject(new Error("Teams are not available on this server yet. Try again later, or update Cua.")),
+    });
+    await mount(adapter, "acme");
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')?.textContent).toMatch(/isn't on your team yet: Teams are not available/), { timeout: 3000 });
   });
 
   it("revokes the link, then makes a new one", async () => {

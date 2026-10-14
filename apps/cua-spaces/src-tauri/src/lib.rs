@@ -514,6 +514,7 @@ pub fn run() {
             commands::devices_confirm_machine,
             commands::devices_create_pairing_code,
             commands::devices_pairing_codes,
+            commands::teams_list,
             commands::devices_revoke_pairing_code,
             commands::devices_notify,
             commands::space_shares,

@@ -3383,50 +3383,58 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
-fn type_text_with_preflight<G>(
+fn type_text_in_spare_batches<G>(
     text: &str,
-    keymap: &GetKeyboardMappingReply,
+    mapping: &GetKeyboardMappingReply,
     mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
-    mut send: impl FnMut(u8, bool, bool) -> Result<()>,
-) -> Result<Vec<G>> {
-    let mut mapping = keymap.clone();
-    let mut guards = Vec::new();
-    let mut resolved = std::collections::HashMap::new();
-    let mut keys = Vec::new();
-    for ch in text.chars() {
-        let key = match resolved.get(&ch).copied() {
-            Some(key) => key,
-            None => {
-                let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
-                    Some((keycode, needs_shift)) => (keycode, needs_shift, false),
-                    None => {
-                        let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
-                            let needed = text
-                                .chars()
-                                .map(mpx_keyboard::keysym_for_char)
-                                .filter(|keysym| !keymap.keysyms.contains(keysym))
-                                .collect::<std::collections::HashSet<_>>()
-                                .len();
-                            anyhow::anyhow!(
-                                "typed 0 of {} characters: the text needs {needed} spare keycodes: {error:#}",
-                                text.chars().count()
-                            )
-                        })?;
-                        let borrowed = guard.is_some();
-                        guards.extend(guard);
-                        (keycode, false, borrowed)
-                    }
-                };
-                resolved.insert(ch, key);
-                key
-            }
-        };
-        keys.push(key);
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+    mut finish: impl FnMut(),
+) -> Result<()> {
+    let total = text.chars().count();
+    let spares = match mapping.keysyms_per_keycode as usize {
+        0 => 0,
+        per => mapping
+            .keysyms
+            .chunks(per)
+            .filter(|syms| syms.iter().all(|&s| s == 0))
+            .count(),
+    };
+    let mut rest = text.chars().peekable();
+    let mut typed = 0;
+    while rest.peek().is_some() {
+        let mut mapping = mapping.clone();
+        let mut guards = Vec::new();
+        let mut resolved = std::collections::HashMap::new();
+        let mut remapped = 0;
+        let mut keys = Vec::new();
+        while let Some(&ch) = rest.peek() {
+            let key = match resolved
+                .get(&ch)
+                .copied()
+                .or_else(|| char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)))
+            {
+                Some(key) => key,
+                None if spares > 0 && remapped == spares => break,
+                None => {
+                    let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
+                        anyhow::anyhow!("typed {typed} of {total} characters: {error:#}")
+                    })?;
+                    remapped += 1;
+                    guards.extend(guard);
+                    resolved.insert(ch, (keycode, false));
+                    (keycode, false)
+                }
+            };
+            keys.push(key);
+            rest.next();
+        }
+        for (keycode, needs_shift) in keys {
+            send(keycode, needs_shift)?;
+            typed += 1;
+        }
+        finish();
     }
-    for (keycode, needs_shift, borrowed) in keys {
-        send(keycode, needs_shift, borrowed)?;
-    }
-    Ok(guards)
+    Ok(())
 }
 
 /// Type a string with an additional `inter_char_ms` delay between each character.
@@ -3436,12 +3444,12 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let client = RefCell::new(TextClient::new(&conn, Some(window)));
-    type_text_with_preflight(
+    type_text_in_spare_batches(
         text,
         &mapping,
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
-        |keycode, needs_shift, borrowed| {
-            if borrowed {
+        |keycode, needs_shift| {
+            if !client.borrow().borrowed.is_empty() {
                 client.borrow_mut().record_recipient();
             }
             let state = if needs_shift {
@@ -3492,6 +3500,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             }
             Ok(())
         },
+        || *client.borrow_mut() = TextClient::new(&conn, Some(window)),
     )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
@@ -3518,12 +3527,12 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
     let client = RefCell::new(TextClient::new(&conn, None));
-    type_text_with_preflight(
+    type_text_in_spare_batches(
         text,
         &mapping,
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
-        |keycode, needs_shift, borrowed| {
-            if borrowed {
+        |keycode, needs_shift| {
+            if !client.borrow().borrowed.is_empty() {
                 client.borrow_mut().record_recipient();
             }
             if needs_shift {
@@ -3538,6 +3547,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
+        || *client.borrow_mut() = TextClient::new(&conn, None),
     )?;
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
@@ -4133,8 +4143,8 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 #[cfg(test)]
 mod key_name_alias_tests {
     use super::{
-        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode, type_text_with_preflight,
-        GetKeyboardMappingReply,
+        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode,
+        type_text_in_spare_batches, type_text_with_preflight, GetKeyboardMappingReply,
     };
 
     #[test]
@@ -4151,7 +4161,7 @@ mod key_name_alias_tests {
                 text,
                 &mapping,
                 |_, _| anyhow::bail!("no spare keycode"),
-                |keycode, shift, _| {
+                |keycode, shift| {
                     events.extend([keycode, keycode]);
                     target.push(if shift { 'A' } else { 'a' });
                     Ok(())
@@ -4186,7 +4196,7 @@ mod key_name_alias_tests {
                 )
                 .map(|(keycode, guard)| (keycode, Some(guard)))
             },
-            |keycode, _, _| {
+            |keycode, _| {
                 events.push(keycode);
                 target.push('a');
                 Ok(())
@@ -4210,6 +4220,88 @@ mod key_name_alias_tests {
         fn drop(&mut self) {
             self.0.set(self.0.get() + 1);
         }
+    }
+
+    #[test]
+    fn text_batches_types_more_distinct_unmapped_characters_than_spares() {
+        use std::cell::RefCell;
+        struct Restore<'a>(u8, &'a RefCell<Vec<(&'static str, u8)>>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.1.borrow_mut().push(("restore", self.0));
+            }
+        }
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0, 0, 0],
+        };
+        let log = RefCell::new(Vec::new());
+        type_text_in_spare_batches(
+            "a你好你世a世",
+            &mapping,
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |spare, _, _, _| {
+                        log.borrow_mut().push(("remap", spare));
+                        Ok(Restore(spare, &log))
+                    },
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
+            |keycode, _| {
+                log.borrow_mut().push(("send", keycode));
+                Ok(())
+            },
+            || {},
+        )
+        .unwrap();
+        assert_eq!(
+            log.into_inner(),
+            [
+                ("remap", 10),
+                ("remap", 9),
+                ("send", 8),
+                ("send", 10),
+                ("send", 9),
+                ("send", 10),
+                ("restore", 10),
+                ("restore", 9),
+                ("remap", 10),
+                ("send", 10),
+                ("send", 8),
+                ("send", 10),
+                ("restore", 10),
+            ]
+        );
+    }
+
+    #[test]
+    fn text_batches_reports_progress_when_a_later_batch_fails() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        let mut events = Vec::new();
+        let error = type_text_in_spare_batches::<()>(
+            "你a好",
+            &mapping,
+            |ch, _| match ch {
+                '你' => Ok((9, None)),
+                _ => anyhow::bail!("keymap changed"),
+            },
+            |keycode, _| {
+                events.push(keycode);
+                Ok(())
+            },
+            || {},
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "typed 2 of 3 characters: keymap changed");
+        assert_eq!(events, [9, 8]);
     }
 
     #[test]
@@ -4237,7 +4329,7 @@ mod key_name_alias_tests {
                     )
                     .map(|(keycode, guard)| (keycode, Some(guard)))
                 },
-                |_, _, _| {
+                |_, _| {
                     events += 1;
                     if fail_send {
                         anyhow::bail!("send failed");
@@ -4273,8 +4365,8 @@ mod key_name_alias_tests {
                 )
                 .map(|(keycode, guard)| (keycode, Some(guard)))
             },
-            |keycode, shift, borrowed| {
-                events.push((keycode, shift, borrowed));
+            |keycode, shift| {
+                events.push((keycode, shift));
                 Ok(())
             },
         )
@@ -4282,13 +4374,7 @@ mod key_name_alias_tests {
         assert_eq!(remaps, 2);
         assert_eq!(
             events,
-            [
-                (8, false, false),
-                (8, true, false),
-                (10, false, true),
-                (9, false, true),
-                (10, false, true)
-            ]
+            [(8, false), (8, true), (10, false), (9, false), (10, false)]
         );
     }
 
@@ -4308,7 +4394,7 @@ mod key_name_alias_tests {
                 assert!(mapping.keysyms.contains(&(ch as u32)));
                 Ok((8, None))
             },
-            |keycode, shift, _| {
+            |keycode, shift| {
                 events.push((keycode, shift));
                 Ok(())
             },

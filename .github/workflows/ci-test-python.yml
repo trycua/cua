@@ -22,6 +22,10 @@ env:
   CARGO_HTTP_TIMEOUT: "120"
   CARGO_HTTP_MULTIPLEXING: "false"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test ${{ matrix.package }}
@@ -146,7 +150,7 @@ jobs:
     name: Test Summary
     runs-on: ubuntu-latest
     needs: [test, cua-sandbox]
-    if: always()
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Check test results

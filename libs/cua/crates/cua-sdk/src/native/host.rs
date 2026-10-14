@@ -980,6 +980,9 @@ impl Devices {
     ) -> Result<PairingCode> {
         let auth = self.auth.clone();
         let tokens = self.tokens.clone();
+        // `team` (an organization id) is only echoed back: the relay's own
+        // teams are retired, and the machine becomes a team machine once it
+        // joined, by sharing it with `team:<id>` (the Spaces API).
         run(async move {
             let session = auth.session().await?;
             let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
@@ -990,11 +993,15 @@ impl Devices {
                     &token,
                     &cua_host::PairingCodeRequest {
                         name: None,
-                        team,
+                        team: None,
                         ttl_secs,
                     },
                 )
                 .await?;
+            let code = cua_host::PairingCode {
+                team: team.filter(|t| !t.trim().is_empty()),
+                ..code
+            };
             Ok(PairingCode::from_host(code, &relay))
         })
         .await

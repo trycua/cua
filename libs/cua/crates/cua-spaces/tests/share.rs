@@ -201,9 +201,9 @@ async fn sharing_a_space_attaches_it_and_moves_people_between_roles() {
         "machine removed"
     );
 
-    // Teams are not relay principals.
+    // Not a team (an organization id or alias), and never sent anywhere.
     let e = spaces
-        .share_space(&info.id, "team:design", ShareRole::Viewer)
+        .share_space(&info.id, "team:Design Team", ShareRole::Viewer)
         .await
         .unwrap_err();
     assert_eq!(e.tag(), "invalid_argument");
@@ -686,28 +686,29 @@ async fn only_the_owner_removes_a_relay_record() {
     assert!(relay.machine(gone).is_none());
 }
 
-/// `team:<id>` makes a Space a team machine (attaching it first, with the
-/// user's confirmation and the Space's OS on its relay record); a Mac
-/// can be one too (Macs, Linux and Windows machines all can); `unshare team:<id>`
-/// takes it off.
+/// `team:<org>` makes a Space a team machine of the organization on the
+/// Spaces API (attaching it first, with the user's confirmation and the
+/// Space's OS); a Mac can be one too; `unshare team:<org>` takes it off. A
+/// plan bought a moment ago (402 feature_required) is waited for.
 #[tokio::test]
 async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
     // Teams are on by default; pin them on regardless of the environment.
     cua_home::experimental::set_teams_enabled(Some(true));
     let relay = FakeRelay::start().await;
     relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    let api = cua_host::testing::FakeSpacesApi::start().await;
+    api.add_account("ada-token", "ada", "ada@example.com");
+    let team = api.add_org("aigis", "AIGIS", "ada", &["team_machines"]);
     let home = tempfile::tempdir().unwrap();
     let consent = yes();
     let spaces = Spaces::builder()
         .home(home.path())
-        .relay(RelayAccount::new(
-            &relay.url,
-            Arc::new(StaticToken("ada-token".into())),
-        ))
+        .relay(
+            RelayAccount::new(&relay.url, Arc::new(StaticToken("ada-token".into())))
+                .with_spaces_api(&api.url),
+        )
         .share_consent(consent.clone())
         .build();
-    let client = cua_host::RelayClient::new(&relay.url).unwrap();
-    let team = client.create_team("ada-token", "AIGIS").await.unwrap();
 
     let linux = MockServer::start(MockAuth::default()).await;
     linux.state.advertise(&["relay_attach"]);
@@ -734,8 +735,10 @@ async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
             panic!("never attached");
         }
     });
+    // The plan was just bought: the first answer is 402, then it arrives.
+    api.feature_lag(1);
     let shares = spaces
-        .share_space(&info.id, &format!("team:{}", team.id), ShareRole::Viewer)
+        .share_space(&info.id, "team:aigis", ShareRole::Viewer)
         .await
         .unwrap();
     let attached = online.await.unwrap();
@@ -745,14 +748,15 @@ async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
             .lock()
             .unwrap()
             .iter()
-            .any(|r| r.contains(&format!("every member of team {}", team.id))),
+            .any(|r| r.contains("every member of team AIGIS")),
         "the user confirmed"
     );
-    // A team gets full use, whatever role was asked for.
+    // A team gets full use, whatever role was asked for; it is named by
+    // its organization id.
     assert_eq!(
         shares.shares,
         vec![cua_spaces::share::ShareEntry {
-            who: format!("team:{}", team.id),
+            who: format!("team:{team}"),
             role: ShareRole::Editor,
             connected: false,
         }]
@@ -762,23 +766,16 @@ async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
         m.meta.get("cua.space.os").map(String::as_str),
         Some("linux")
     );
-    let t = client.team("ada-token", &team.id).await.unwrap();
-    assert_eq!(t.machines[0].id, attached.machine_id);
+    assert_eq!(api.machines(&team), vec![attached.machine_id.clone()]);
+    assert!(api.entitlement_reads() >= 1, "entitlements refreshed");
 
     // Off the team again.
     let shares = spaces
-        .unshare_space(&info.id, Some(&format!("team:{}", team.id)))
+        .unshare_space(&info.id, Some(&format!("team:{team}")))
         .await
         .unwrap();
     assert!(shares.shares.is_empty(), "{shares:?}");
-    assert!(
-        client
-            .team("ada-token", &team.id)
-            .await
-            .unwrap()
-            .machines
-            .is_empty()
-    );
+    assert!(api.machines(&team).is_empty());
 
     // A Mac can be a team machine like any other.
     let mac = MockServer::start(MockAuth::default()).await;
@@ -807,22 +804,24 @@ async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
         }
     });
     spaces
-        .share_space(
-            &mac_info.id,
-            &format!("team:{}", team.id),
-            ShareRole::Editor,
-        )
+        .share_space(&mac_info.id, &format!("team:{team}"), ShareRole::Editor)
         .await
         .unwrap();
     let mac_attached = mac_online.await.unwrap();
-    let t = client.team("ada-token", &team.id).await.unwrap();
-    assert_eq!(t.machines.len(), 1);
-    assert_eq!(t.machines[0].id, mac_attached.machine_id);
+    assert_eq!(api.machines(&team), vec![mac_attached.machine_id]);
 
-    // Not a team id.
+    // The old relay team ids are refused before anything is sent.
     let e = spaces
-        .share_space(&info.id, "team:design", ShareRole::Editor)
+        .share_space(&info.id, "team:team-0a1b2c3d4e5f6a7b", ShareRole::Editor)
         .await
         .unwrap_err();
     assert_eq!(e.tag(), "invalid_argument", "{e}");
+
+    // A server without Teams says so; nothing falls back to the relay.
+    api.without_teams();
+    let e = spaces
+        .share_space(&info.id, "team:aigis", ShareRole::Editor)
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("Teams are not available"), "{e}");
 }

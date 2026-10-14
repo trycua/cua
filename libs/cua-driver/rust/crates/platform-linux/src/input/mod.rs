@@ -3431,7 +3431,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    type_text_with_preflight(
+    let _guards = type_text_with_preflight(
         text,
         &mapping,
         |ch, mapping| {
@@ -3516,7 +3516,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    type_text_with_preflight(
+    let _guards = type_text_with_preflight(
         text,
         &mapping,
         |ch, mapping| {

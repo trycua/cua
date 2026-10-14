@@ -656,10 +656,12 @@ pub(crate) fn type_xtest(
         },
         |code, shift| Ok(tap(conn, root, keymap, code, shift)?),
     )
-    .map_err(|error| error.downcast::<TargetedInputError>().unwrap_or_else(failed))?;
+    .map_err(|error| {
+        error
+            .downcast::<TargetedInputError>()
+            .unwrap_or_else(failed)
+    })?;
     if !guards.is_empty() {
-        // Let the focused client translate the events under the temporary
-        // mapping before the guards restore it.
         sync(conn)?;
         std::thread::sleep(Duration::from_millis(10));
     }

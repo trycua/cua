@@ -441,6 +441,8 @@ export function useOnboarding(): OnboardingHook {
   const send = (action: OnboardingAction) => {
     const current = readSavedOnboarding().state;
     if (!current) return;
+    // Skipping Sign in leaves the browser login behind: stop waiting for it.
+    if (action.type === "signin-done") store?.cancelSignIn();
     const next = onboardingReduce(core, current, action, ctx);
     // The switch writes the setting at once, so what it shows is what the
     // machine does even if the flow is skipped from Welcome. (The SwiftUI
@@ -469,6 +471,7 @@ export function useOnboarding(): OnboardingHook {
     skip: () => {
       const current = readSavedOnboarding().state;
       if (current) store?.trackOnboardingSkipped(current);
+      store?.cancelSignIn();
       writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     },
     finish: async () => {

@@ -1115,15 +1115,24 @@ mod tests {
 
     /// The page's core has no environment: Upgrade's billing fallback is the
     /// account app the host names, else production's; only https is taken.
+    /// (A plan that is named goes to its checkout instead: Pro for free.)
     #[test]
     fn relay_upgrade_falls_back_to_the_hosts_account_app() {
         let usage = json!({
-            "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
+            "metered": true, "plan": "", "hoursUsed": 20.2, "hoursLimit": 20.0,
             "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
         });
         let upgrade = |args: Value| {
             call_value("relayUsage.view", args).unwrap()["notice"]["upgradeUrl"].clone()
         };
+        let free = json!({
+            "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
+            "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
+        });
+        assert_eq!(
+            upgrade(json!({"usage": free, "accountApp": "https://app.staging.cua.ai"})),
+            json!("https://app.cua.ai/buy/pro")
+        );
         assert_eq!(
             upgrade(json!({"usage": usage, "accountApp": "https://app.staging.cua.ai"})),
             json!("https://app.staging.cua.ai/billing")

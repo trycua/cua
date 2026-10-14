@@ -9515,7 +9515,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Add the machine for this team (its id).",
+       "help": "Add the machine for this team (its id)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

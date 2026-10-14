@@ -171,7 +171,7 @@ capture_command_output() {
 if [[ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ]]; then
   [[ ( "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v* ) \
       || ( "${GITHUB_EVENT_NAME:-}" == schedule && "${GITHUB_REF:-}" == refs/heads/main ) ]] \
-    || fail "runs only from workflow_dispatch a stable cua-driver-rs tag release gate, or the nightly schedule on main"
+    || fail "runs only from workflow_dispatch, a stable cua-driver-rs tag release gate, or the nightly schedule on main"
 fi
 [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] \
   || fail "requires a GitHub-hosted runner"

@@ -174,7 +174,7 @@ export type PickerEvent =
   | { type: "select-shown-passwords"; value: boolean }
   | { type: "password-query"; text: string }
   | { type: "send-from"; source: "live" | "vault" }
-  | { type: "vault-items"; count: number; newestMs: number; nowMs: number; selected: string[]; passwordIds: string[]; passwords?: VaultPassword[] }
+  | { type: "vault-items"; count: number; newestMs: number; nowMs: number; selected: string[]; passwordIds: string[]; passwords?: VaultPassword[]; passwordPicks?: boolean }
   | { type: "vault-selection"; selected: string[] }
   | { type: "confirm" }
   | { type: "progress"; event: RunEvent }

@@ -30066,7 +30066,11 @@ export type AppVaultSource = {
      * The same passwords with their site and username (never a value), for
      * the review to list.
      */
-    passwords: Array<AppVaultPassword>
+    passwords: Array<AppVaultPassword>,
+    /**
+     * The Keyvault daemon enforces a choice of passwords by site.
+     */
+    passwordPicks: boolean
 }
 
 /**
@@ -30074,7 +30078,8 @@ export type AppVaultSource = {
  */
 export const AppVaultSource = (() => {
     const defaults = () => ({
-        passwords: []
+        passwords: [],
+        passwordPicks: false
     });
     const create = (() => {
         return uniffiCreateRecord<AppVaultSource, ReturnType<typeof defaults>>(defaults);
@@ -30096,7 +30101,8 @@ const FfiConverterTypeAppVaultSource = (() => {
                 saved: FfiConverterString.read(from),
                 selected: FfiConverterSequenceString.read(from),
                 passwordIds: FfiConverterSequenceString.read(from),
-                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from)
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from),
+                passwordPicks: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -30106,6 +30112,7 @@ const FfiConverterTypeAppVaultSource = (() => {
             FfiConverterSequenceString.write(value.selected, into);
             FfiConverterSequenceString.write(value.passwordIds, into);
             FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into);
+            FfiConverterBool.write(value.passwordPicks, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.available) +
@@ -30113,7 +30120,8 @@ const FfiConverterTypeAppVaultSource = (() => {
              FfiConverterString.allocationSize(value.saved) +
              FfiConverterSequenceString.allocationSize(value.selected) +
              FfiConverterSequenceString.allocationSize(value.passwordIds) +
-             FfiConverterSequenceTypeAppVaultPassword.allocationSize(value.passwords);
+             FfiConverterSequenceTypeAppVaultPassword.allocationSize(value.passwords) +
+             FfiConverterBool.allocationSize(value.passwordPicks);
 
         }
     };
@@ -37601,7 +37609,12 @@ export type KvStatus = {
     /**
      * An earlier preview's vault was found and set aside.
      */
-    resetNotice?: string
+    resetNotice?: string,
+    /**
+     * What the daemon supports beyond the original protocol
+     * (`password_domains`); empty from an older one.
+     */
+    features: Array<string>
 }
 
 /**
@@ -37609,6 +37622,7 @@ export type KvStatus = {
  */
 export const KvStatus = (() => {
     const defaults = () => ({
+        features: []
     });
     const create = (() => {
         return uniffiCreateRecord<KvStatus, ReturnType<typeof defaults>>(defaults);
@@ -37640,7 +37654,8 @@ const FfiConverterTypeKvStatus = (() => {
                 unlockProtectors: FfiConverterSequenceString.read(from),
                 browseUntilMs: FfiConverterOptionalUInt64.read(from),
                 skipUnlockPrompt: FfiConverterOptionalBoolean.read(from),
-                resetNotice: FfiConverterOptionalString.read(from)
+                resetNotice: FfiConverterOptionalString.read(from),
+                features: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -37660,6 +37675,7 @@ const FfiConverterTypeKvStatus = (() => {
             FfiConverterOptionalUInt64.write(value.browseUntilMs, into);
             FfiConverterOptionalBoolean.write(value.skipUnlockPrompt, into);
             FfiConverterOptionalString.write(value.resetNotice, into);
+            FfiConverterSequenceString.write(value.features, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.version) +
@@ -37677,7 +37693,8 @@ const FfiConverterTypeKvStatus = (() => {
              FfiConverterSequenceString.allocationSize(value.unlockProtectors) +
              FfiConverterOptionalUInt64.allocationSize(value.browseUntilMs) +
              FfiConverterOptionalBoolean.allocationSize(value.skipUnlockPrompt) +
-             FfiConverterOptionalString.allocationSize(value.resetNotice);
+             FfiConverterOptionalString.allocationSize(value.resetNotice) +
+             FfiConverterSequenceString.allocationSize(value.features);
 
         }
     };
@@ -42529,7 +42546,11 @@ export type KvVaultSource = {
     /**
      * The same passwords with their site and username (never a value).
      */
-    passwords: Array<AppVaultPassword>
+    passwords: Array<AppVaultPassword>,
+    /**
+     * The daemon enforces a choice of passwords by site.
+     */
+    passwordPicks: boolean
 }
 
 /**
@@ -42557,7 +42578,8 @@ const FfiConverterTypeKvVaultSource = (() => {
                 newestMs: FfiConverterInt64.read(from),
                 ids: FfiConverterSequenceString.read(from),
                 passwordIds: FfiConverterSequenceString.read(from),
-                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from)
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from),
+                passwordPicks: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -42566,13 +42588,15 @@ const FfiConverterTypeKvVaultSource = (() => {
             FfiConverterSequenceString.write(value.ids, into);
             FfiConverterSequenceString.write(value.passwordIds, into);
             FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into);
+            FfiConverterBool.write(value.passwordPicks, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.count) +
              FfiConverterInt64.allocationSize(value.newestMs) +
              FfiConverterSequenceString.allocationSize(value.ids) +
              FfiConverterSequenceString.allocationSize(value.passwordIds) +
-             FfiConverterSequenceTypeAppVaultPassword.allocationSize(value.passwords);
+             FfiConverterSequenceTypeAppVaultPassword.allocationSize(value.passwords) +
+             FfiConverterBool.allocationSize(value.passwordPicks);
 
         }
     };
@@ -52238,7 +52262,7 @@ inner: {source: AppSendSource }): SendFrom_ {
     type VaultItems__interface = {
         tag: AppPickerEvent_Tags.VaultItems;
         inner:
-Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>}>
+Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>; passwordPicks: boolean}>
     };
     /**
      * The app's saved Keyvault items (what the Keyvault holds for it).
@@ -52251,17 +52275,18 @@ Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string
         readonly [uniffiTypeNameSymbol] = "AppPickerEvent";
         readonly tag = AppPickerEvent_Tags.VaultItems;
         readonly inner:
-Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>}>;
+Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>; passwordPicks: boolean}>;
         constructor(
-inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword> }) {
+inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>; passwordPicks: boolean }) {
             super("AppPickerEvent", "VaultItems");
 
             this.inner = Object.freeze(inner);
         }
         static new = (() => {
-            type Inner = {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword> };
+            type Inner = {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>; passwordPicks: boolean };
             const defaults = () => ({
-                passwords: []
+                passwords: [],
+                passwordPicks: false
             });
             const create = uniffiCreateRecord<Inner, ReturnType<typeof defaults>>(defaults);
             return (partial: Parameters<typeof create>[0]): VaultItems_ =>
@@ -52641,7 +52666,7 @@ const FfiConverterTypeAppPickerEvent = (() => {
                 case 20: return new AppPickerEvent.DomainQuery({text: FfiConverterString.read(from) });
                 case 21: return new AppPickerEvent.ToggleItem({key: FfiConverterString.read(from) });
                 case 22: return new AppPickerEvent.SendFrom({source: FfiConverterTypeAppSendSource.read(from) });
-                case 23: return new AppPickerEvent.VaultItems({count: FfiConverterUInt32.read(from), newestMs: FfiConverterInt64.read(from), nowMs: FfiConverterInt64.read(from), selected: FfiConverterSequenceString.read(from), passwordIds: FfiConverterSequenceString.read(from), passwords: FfiConverterSequenceTypeAppVaultPassword.read(from) });
+                case 23: return new AppPickerEvent.VaultItems({count: FfiConverterUInt32.read(from), newestMs: FfiConverterInt64.read(from), nowMs: FfiConverterInt64.read(from), selected: FfiConverterSequenceString.read(from), passwordIds: FfiConverterSequenceString.read(from), passwords: FfiConverterSequenceTypeAppVaultPassword.read(from), passwordPicks: FfiConverterBool.read(from) });
                 case 24: return new AppPickerEvent.TogglePasswords({value: FfiConverterBool.read(from) });
                 case 25: return new AppPickerEvent.TogglePassword({key: FfiConverterString.read(from) });
                 case 26: return new AppPickerEvent.SelectShownPasswords({value: FfiConverterBool.read(from) });
@@ -52798,6 +52823,7 @@ const FfiConverterTypeAppPickerEvent = (() => {
                     FfiConverterSequenceString.write(inner.selected, into);
                     FfiConverterSequenceString.write(inner.passwordIds, into);
                     FfiConverterSequenceTypeAppVaultPassword.write(inner.passwords, into);
+                    FfiConverterBool.write(inner.passwordPicks, into);
                     return;
                 }
                 case AppPickerEvent_Tags.TogglePasswords: {
@@ -52997,6 +53023,7 @@ const FfiConverterTypeAppPickerEvent = (() => {
                     size += FfiConverterSequenceString.allocationSize(inner.selected);
                     size += FfiConverterSequenceString.allocationSize(inner.passwordIds);
                     size += FfiConverterSequenceTypeAppVaultPassword.allocationSize(inner.passwords);
+                    size += FfiConverterBool.allocationSize(inner.passwordPicks);
                     return size;
                 }
                 case AppPickerEvent_Tags.TogglePasswords: {

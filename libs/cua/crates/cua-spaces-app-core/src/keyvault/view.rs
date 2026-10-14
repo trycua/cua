@@ -986,6 +986,7 @@ mod host_words_tests {
         KeyvaultOverview {
             availability: "locked".into(),
             status: Some(KvStatus {
+                features: vec![],
                 version: "1".into(),
                 initialized: true,
                 unlocked: false,

@@ -835,6 +835,10 @@ pub struct KvVaultSource {
     /// for the review to list and pick from.
     #[serde(default)]
     pub passwords: Vec<crate::teleport::review::VaultPassword>,
+    /// The daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status): the review may offer one.
+    #[serde(default)]
+    pub password_picks: bool,
 }
 
 /// The saved items of `provider_id` a teleport can send.
@@ -861,6 +865,10 @@ pub fn vault_source(o: &KeyvaultOverview, provider_id: &str) -> KvVaultSource {
     KvVaultSource {
         password_ids,
         passwords,
+        password_picks: o
+            .status
+            .as_ref()
+            .is_some_and(|s| s.features.iter().any(|f| f == "password_domains")),
         count: items.len() as u32,
         newest_ms: items.iter().map(|i| i.updated_ms as i64).max().unwrap_or(0),
         ids: items.iter().map(|i| i.id.clone()).collect(),
@@ -1337,6 +1345,7 @@ mod tests {
         }
         // "Never ask again" skips the prompt, never the Touch ID check.
         o.status = Some(KvStatus {
+            features: vec![],
             version: "0".into(),
             initialized: true,
             unlocked: true,
@@ -1465,6 +1474,24 @@ mod tests {
         assert_eq!(src.newest_ms, (NOW - 120_000));
         assert_eq!(vault_source(&o, "slack").count, 2);
         assert_eq!(vault_source(&o, "arc"), KvVaultSource::default());
+        // Its saved passwords by site and username (never a value), and a
+        // choice of them only from a daemon that enforces one.
+        assert!(
+            src.passwords
+                .iter()
+                .all(|p| src.password_ids.contains(&p.id))
+        );
+        assert!(!src.password_picks, "an older daemon lists no features");
+        let mut newer = o.clone();
+        newer.status = Some(KvStatus {
+            features: vec!["password_domains".into()],
+            ..serde_json::from_value(serde_json::json!({
+                "version": "1", "initialized": true, "unlocked": true, "disabled": false,
+                "caller_first_party": true, "caller_display": "Cua", "items": 9, "pending": 0,
+            }))
+            .unwrap()
+        });
+        assert!(vault_source(&newer, "chrome").password_picks);
     }
 
     #[test]

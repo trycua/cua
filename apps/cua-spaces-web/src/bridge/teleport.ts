@@ -421,6 +421,7 @@ export class TeleportStore {
         selected: source.ids,
         passwordIds: source.passwordIds,
         passwords: source.passwords ?? [],
+        passwordPicks: source.passwordPicks ?? false,
       });
     } catch {
       /* no Keyvault: nothing saved to send from */

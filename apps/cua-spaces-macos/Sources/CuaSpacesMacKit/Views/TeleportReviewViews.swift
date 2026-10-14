@@ -32,7 +32,8 @@ struct TeleportReview: View {
                     Text("Off by default. Passwords are re-encrypted for the browser in the Space and need " +
                          "that browser to have been opened once.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if review.includePasswords { passwords }
+                    // The picker only where the Keyvault keeps the choice.
+                    if review.includePasswords && !review.passwordSummary.isEmpty { passwords }
                 }
             }
             Section { summary }

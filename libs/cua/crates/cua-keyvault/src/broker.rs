@@ -764,6 +764,16 @@ pub struct TeleportOutcome {
     pub expires_ms: u64,
 }
 
+/// The [`ImportSpec::password_domains`] filter is honored: a capture
+/// reads only the saved passwords of those sites. A daemon that does not
+/// list it ignores the field and reads the passwords of `domains`, so a
+/// caller must not send a narrower choice of passwords to one.
+pub const FEATURE_PASSWORD_DOMAINS: &str = "password_domains";
+
+/// What this daemon supports beyond the original protocol
+/// ([`Status::features`]).
+pub const FEATURES: &[&str] = &[FEATURE_PASSWORD_DOMAINS];
+
 /// Vault status (safe for any caller).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
@@ -816,6 +826,10 @@ pub struct Status {
     /// new one is created (one line for the UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_notice: Option<String>,
+    /// What this daemon supports beyond the original protocol
+    /// ([`FEATURES`]); empty from a daemon that predates the list.
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 /// Creating a vault. Its `Debug` never prints the passphrase, and the
@@ -1324,6 +1338,7 @@ impl Broker {
                 }
                 _ => Vec::new(),
             },
+            features: FEATURES.iter().map(|f| f.to_string()).collect(),
         }
     }
 

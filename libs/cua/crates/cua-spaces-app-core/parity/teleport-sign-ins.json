@@ -1,6 +1,6 @@
 {
   "name": "teleport-sign-ins",
-  "about": "The signed-in state move's opt-ins: \"Keep me signed in\" (the session cookies) and the separate, unchecked \"Saved passwords\" and \"Browsing history\"; an app that offers none shows none. Ticking \"Saved passwords\" in the review lists them to pick, like the sites: reading the app, its sites with counts (starting from the sites kept signed in); from the Keyvault, each saved password's site and username, never a value.",
+  "about": "The signed-in state move's opt-ins: \"Keep me signed in\" (the session cookies) and the separate, unchecked \"Saved passwords\" and \"Browsing history\"; an app that offers none shows none. Ticking \"Saved passwords\" in the review lists them to pick, like the sites: reading the app, its sites with counts (starting from the sites kept signed in); from the Keyvault, each saved password's site and username, never a value. A Keyvault daemon that does not advertise password_domains gets no picker: the chosen sites' passwords, as before.",
   "spaceName": "Space B",
   "entries": [
     {
@@ -202,6 +202,34 @@
       "remembered": null
     },
     {
+      "type": "vault-items",
+      "count": 0,
+      "newestMs": 0,
+      "nowMs": 1800000000000,
+      "selected": [],
+      "passwordIds": [],
+      "passwords": [],
+      "passwordPicks": false
+    },
+    {
+      "type": "toggle-passwords",
+      "value": true
+    },
+    {
+      "type": "toggle-password",
+      "key": "bank.example"
+    },
+    {
+      "type": "vault-items",
+      "count": 0,
+      "newestMs": 0,
+      "nowMs": 1800000000000,
+      "selected": [],
+      "passwordIds": [],
+      "passwords": [],
+      "passwordPicks": true
+    },
+    {
       "type": "toggle-passwords",
       "value": true
     },
@@ -244,7 +272,8 @@
           "site": "https://accounts.google.com/",
           "username": "ada@example.test"
         }
-      ]
+      ],
+      "passwordPicks": true
     },
     {
       "type": "send-from",

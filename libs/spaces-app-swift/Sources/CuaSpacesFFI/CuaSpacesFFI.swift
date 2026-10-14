@@ -34190,6 +34190,10 @@ public struct AppVaultSource: Equatable, Hashable {
      * the review to list.
      */
     public var passwords: [AppVaultPassword]
+    /**
+     * The Keyvault daemon enforces a choice of passwords by site.
+     */
+    public var passwordPicks: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -34212,13 +34216,17 @@ public struct AppVaultSource: Equatable, Hashable {
         /**
          * The same passwords with their site and username (never a value), for
          * the review to list.
-         */passwords: [AppVaultPassword] = []) {
+         */passwords: [AppVaultPassword] = [],
+        /**
+         * The Keyvault daemon enforces a choice of passwords by site.
+         */passwordPicks: Bool = false) {
         self.available = available
         self.items = items
         self.saved = saved
         self.selected = selected
         self.passwordIds = passwordIds
         self.passwords = passwords
+        self.passwordPicks = passwordPicks
     }
 
 
@@ -34242,7 +34250,8 @@ public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
                 saved: FfiConverterString.read(from: &buf),
                 selected: FfiConverterSequenceString.read(from: &buf),
                 passwordIds: FfiConverterSequenceString.read(from: &buf),
-                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from: &buf)
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from: &buf),
+                passwordPicks: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -34253,6 +34262,7 @@ public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.selected, into: &buf)
         FfiConverterSequenceString.write(value.passwordIds, into: &buf)
         FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into: &buf)
+        FfiConverterBool.write(value.passwordPicks, into: &buf)
     }
 }
 
@@ -39518,6 +39528,11 @@ public struct KvStatus: Equatable, Hashable {
      * An earlier preview's vault was found and set aside.
      */
     public var resetNotice: String?
+    /**
+     * What the daemon supports beyond the original protocol
+     * (`password_domains`); empty from an older one.
+     */
+    public var features: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -39573,7 +39588,11 @@ public struct KvStatus: Equatable, Hashable {
          */skipUnlockPrompt: Bool?,
         /**
          * An earlier preview's vault was found and set aside.
-         */resetNotice: String?) {
+         */resetNotice: String?,
+        /**
+         * What the daemon supports beyond the original protocol
+         * (`password_domains`); empty from an older one.
+         */features: [String] = []) {
         self.version = version
         self.initialized = initialized
         self.unlocked = unlocked
@@ -39590,6 +39609,7 @@ public struct KvStatus: Equatable, Hashable {
         self.browseUntilMs = browseUntilMs
         self.skipUnlockPrompt = skipUnlockPrompt
         self.resetNotice = resetNotice
+        self.features = features
     }
 
 
@@ -39623,7 +39643,8 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
                 unlockProtectors: FfiConverterSequenceString.read(from: &buf),
                 browseUntilMs: FfiConverterOptionUInt64.read(from: &buf),
                 skipUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
-                resetNotice: FfiConverterOptionString.read(from: &buf)
+                resetNotice: FfiConverterOptionString.read(from: &buf),
+                features: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -39644,6 +39665,7 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
         FfiConverterOptionUInt64.write(value.browseUntilMs, into: &buf)
         FfiConverterOptionBool.write(value.skipUnlockPrompt, into: &buf)
         FfiConverterOptionString.write(value.resetNotice, into: &buf)
+        FfiConverterSequenceString.write(value.features, into: &buf)
     }
 }
 
@@ -40541,6 +40563,10 @@ public struct KvVaultSource: Equatable, Hashable {
      * The same passwords with their site and username (never a value).
      */
     public var passwords: [AppVaultPassword]
+    /**
+     * The daemon enforces a choice of passwords by site.
+     */
+    public var passwordPicks: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -40560,12 +40586,16 @@ public struct KvVaultSource: Equatable, Hashable {
          */passwordIds: [String],
         /**
          * The same passwords with their site and username (never a value).
-         */passwords: [AppVaultPassword]) {
+         */passwords: [AppVaultPassword],
+        /**
+         * The daemon enforces a choice of passwords by site.
+         */passwordPicks: Bool) {
         self.count = count
         self.newestMs = newestMs
         self.ids = ids
         self.passwordIds = passwordIds
         self.passwords = passwords
+        self.passwordPicks = passwordPicks
     }
 
 
@@ -40588,7 +40618,8 @@ public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
                 newestMs: FfiConverterInt64.read(from: &buf),
                 ids: FfiConverterSequenceString.read(from: &buf),
                 passwordIds: FfiConverterSequenceString.read(from: &buf),
-                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from: &buf)
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from: &buf),
+                passwordPicks: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -40598,6 +40629,7 @@ public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.ids, into: &buf)
         FfiConverterSequenceString.write(value.passwordIds, into: &buf)
         FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into: &buf)
+        FfiConverterBool.write(value.passwordPicks, into: &buf)
     }
 }
 
@@ -49333,7 +49365,10 @@ public enum AppPickerEvent: Equatable, Hashable {
         /**
          * The same passwords with their site and username (never a
          * value).
-         */passwords: [AppVaultPassword] = []
+         */passwords: [AppVaultPassword] = [],
+        /**
+         * The Keyvault daemon enforces a choice of passwords by site.
+         */passwordPicks: Bool = false
     )
     /**
      * Tick or untick "Also send saved passwords".
@@ -49485,7 +49520,7 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
         case 22: return .sendFrom(source: try FfiConverterTypeAppSendSource.read(from: &buf)
         )
 
-        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf), passwordIds: try FfiConverterSequenceString.read(from: &buf), passwords: try FfiConverterSequenceTypeAppVaultPassword.read(from: &buf)
+        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf), passwordIds: try FfiConverterSequenceString.read(from: &buf), passwords: try FfiConverterSequenceTypeAppVaultPassword.read(from: &buf), passwordPicks: try FfiConverterBool.read(from: &buf)
         )
 
         case 24: return .togglePasswords(value: try FfiConverterBool.read(from: &buf)
@@ -49634,7 +49669,7 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
             FfiConverterTypeAppSendSource.write(source, into: &buf)
 
 
-        case let .vaultItems(count,newestMs,nowMs,selected,passwordIds,passwords):
+        case let .vaultItems(count,newestMs,nowMs,selected,passwordIds,passwords,passwordPicks):
             writeInt(&buf, Int32(23))
             FfiConverterUInt32.write(count, into: &buf)
             FfiConverterInt64.write(newestMs, into: &buf)
@@ -49642,6 +49677,7 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
             FfiConverterSequenceString.write(selected, into: &buf)
             FfiConverterSequenceString.write(passwordIds, into: &buf)
             FfiConverterSequenceTypeAppVaultPassword.write(passwords, into: &buf)
+            FfiConverterBool.write(passwordPicks, into: &buf)
 
 
         case let .togglePasswords(value):

@@ -396,7 +396,8 @@ public final class TeleportModel {
             reviewVault = KvVaultState(query: "", selected: source.ids, expanded: [provider], app: provider)
             send(.vaultItems(count: source.count, newestMs: source.newestMs,
                              nowMs: Int64(keyvault.clock().timeIntervalSince1970 * 1000), selected: source.ids,
-                             passwordIds: source.passwordIds, passwords: source.passwords))
+                             passwordIds: source.passwordIds, passwords: source.passwords,
+                             passwordPicks: source.passwordPicks))
         }
         guard review.needsDomains else { return }
         guard let client = keyvault?.client else { send(.domainsFailed); return }

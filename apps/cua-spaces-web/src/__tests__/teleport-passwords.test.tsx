@@ -23,9 +23,16 @@ const flow = JSON.parse(
   readFileSync(join(import.meta.dirname, "../../../../libs/cua/crates/cua-spaces-app-core/parity/teleport-sign-ins.json"), "utf8"),
 ) as { spaceName: string; entries: unknown; plan: unknown; picker: Record<string, unknown>[] };
 
-/** The review of Chrome with its sites read: the flow up to the first
- * `domains-loaded`. */
-function reviewState(core: CoreClient): PickerState {
+/** What the Keyvault daemon says: `picks` is its `password_domains` feature. */
+const daemon = (picks: boolean): PickerEvent => ({ type: "vault-items", count: 0, newestMs: 0, nowMs: 0, selected: [], passwordIds: [], passwords: [], passwordPicks: picks });
+
+/** The review of Chrome with its sites read (the flow up to the first
+ * `domains-loaded`), on a daemon with or without the per-site choice. */
+function reviewState(core: CoreClient, picks = true): PickerState {
+  return pickerReduce(core, sitesRead(core), daemon(picks));
+}
+
+function sitesRead(core: CoreClient): PickerState {
   let s = core.call<PickerState>("flow.initial", { spaceName: flow.spaceName });
   for (const e of flow.picker) {
     const ev = { ...e } as Record<string, unknown>;
@@ -95,6 +102,7 @@ describe.skipIf(!wasmBuilt)("Teleport review, saved passwords", () => {
         { id: "p1", site: "github.com", username: "octocat" },
         { id: "p2", site: "google.com", username: "ada@example.test" },
       ],
+      passwordPicks: true,
     });
     s = pickerReduce(core, s, { type: "send-from", source: "vault" });
     s = pickerReduce(core, s, { type: "toggle-passwords", value: true });
@@ -104,5 +112,20 @@ describe.skipIf(!wasmBuilt)("Teleport review, saved passwords", () => {
     fireEvent.click(box("p2"));
     expect(consentOf()).toMatchObject({ includePasswords: true, fromVault: ["c1", "p1"] });
     expect(screen.getByText("Also send 1 saved password")).toBeTruthy();
+  });
+
+  it("offers no picker on a Keyvault daemon that would not keep the choice", async () => {
+    const core = await testCore();
+    const sent: PickerEvent[] = [];
+    render(<Review core={core} start={reviewState(core, false)} sent={sent} />);
+    fireEvent.click(document.querySelector("[data-review-passwords]")!);
+    // The box as before: the passwords of the sites kept signed in, nothing to pick.
+    expect(screen.getByText("Also send 2 saved passwords")).toBeTruthy();
+    expect(document.querySelector("[data-review-password]")).toBeNull();
+    expect(document.querySelector("[data-review-passwords-summary]")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Search saved passwords" })).toBeNull();
+    const c = consentOf();
+    expect(c.includePasswords).toBe(true);
+    expect(c.passwordDomains).toBeUndefined();
   });
 });

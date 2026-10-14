@@ -2266,6 +2266,9 @@ pub struct AppVaultSource {
     /// the review to list.
     #[uniffi(default = [])]
     pub passwords: Vec<AppVaultPassword>,
+    /// The Keyvault daemon enforces a choice of passwords by site.
+    #[uniffi(default = false)]
+    pub password_picks: bool,
 }
 
 /// One saved password of the Keyvault, as a review lists it: its site and
@@ -2802,6 +2805,9 @@ pub enum AppPickerEvent {
         /// value).
         #[uniffi(default = [])]
         passwords: Vec<AppVaultPassword>,
+        /// The Keyvault daemon enforces a choice of passwords by site.
+        #[uniffi(default = false)]
+        password_picks: bool,
     },
     /// Tick or untick "Also send saved passwords".
     TogglePasswords {
@@ -4295,6 +4301,10 @@ pub struct KvStatus {
     pub skip_unlock_prompt: Option<bool>,
     /// An earlier preview's vault was found and set aside.
     pub reset_notice: Option<String>,
+    /// What the daemon supports beyond the original protocol
+    /// (`password_domains`); empty from an older one.
+    #[uniffi(default = [])]
+    pub features: Vec<String>,
 }
 
 /// The audit chain check.
@@ -4893,6 +4903,8 @@ pub struct KvVaultSource {
     pub password_ids: Vec<String>,
     /// The same passwords with their site and username (never a value).
     pub passwords: Vec<AppVaultPassword>,
+    /// The daemon enforces a choice of passwords by site.
+    pub password_picks: bool,
 }
 
 /// A sidebar category.

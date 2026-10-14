@@ -605,6 +605,10 @@ pub enum PickerEvent {
         /// value), for the review to list.
         #[serde(default)]
         passwords: Vec<VaultPassword>,
+        /// The Keyvault daemon enforces a choice of passwords by site
+        /// (`password_domains` in its status); off for an older one.
+        #[serde(default)]
+        password_picks: bool,
     },
     /// Tick or untick "Also send saved passwords".
     TogglePasswords {
@@ -806,6 +810,8 @@ pub fn can_plan(s: &PickerState) -> bool {
 pub fn passwords_offered(s: &PickerState) -> bool {
     match s.choice.source {
         SendSource::Vault => !s.choice.vault.password_ids.is_empty(),
+        // Without the daemon's support, as before: the chosen sites'.
+        SendSource::Live if !s.choice.vault.password_picks => password_count(s) > 0,
         SendSource::Live => s.choice.domains.iter().any(|d| d.passwords > 0),
     }
 }
@@ -813,7 +819,7 @@ pub fn passwords_offered(s: &PickerState) -> bool {
 /// The saved password choice in effect: the one made, else the default the
 /// first tick picks (`(sites, saved ids)`).
 fn password_picks(c: &ReviewChoice) -> (Vec<String>, Vec<String>) {
-    if c.passwords_picked {
+    if c.passwords_picked && c.vault.password_picks {
         (c.password_domains.clone(), c.password_items.clone())
     } else {
         review::default_passwords(c)
@@ -905,15 +911,19 @@ pub fn consent(s: &PickerState) -> Consent {
             ids
         }),
         include_passwords: sends_passwords(s),
-        password_domains: (!vault && sends_passwords(s)).then(|| {
-            let (domains, _) = password_picks(&s.choice);
-            s.choice
-                .domains
-                .iter()
-                .filter(|d| d.passwords > 0 && domains.contains(&d.domain))
-                .map(|d| d.domain.clone())
-                .collect()
-        }),
+        // Only to a daemon that enforces it: an older one reads the chosen
+        // sites' passwords, which is what the review then offered.
+        password_domains: (!vault && sends_passwords(s) && s.choice.vault.password_picks).then(
+            || {
+                let (domains, _) = password_picks(&s.choice);
+                s.choice
+                    .domains
+                    .iter()
+                    .filter(|d| d.passwords > 0 && domains.contains(&d.domain))
+                    .map(|d| d.domain.clone())
+                    .collect()
+            },
+        ),
     }
 }
 
@@ -1226,6 +1236,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
             selected,
             password_ids,
             passwords,
+            password_picks,
         } => {
             if s.step == Step::Consent {
                 // The saved passwords picked stay picked while they exist;
@@ -1240,6 +1251,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.choice.vault = VaultSource {
                     password_ids: password_ids.clone(),
                     passwords: passwords.clone(),
+                    password_picks: *password_picks,
                     available: *count > 0,
                     items: *count,
                     saved: if *newest_ms > 0 {
@@ -2071,6 +2083,7 @@ mod tests {
                 selected: vec!["a".into(), "b".into()],
                 password_ids: vec![],
                 passwords: vec![],
+                password_picks: false,
             },
         );
         let rv = review(&s).unwrap();
@@ -2130,6 +2143,7 @@ mod tests {
                 selected: vec![],
                 password_ids: vec![],
                 passwords: vec![],
+                password_picks: false,
             },
         );
         assert_eq!(review(&gone).unwrap().source, SendSource::Live);
@@ -2159,6 +2173,7 @@ mod tests {
                 selected: vec!["a".into(), "b".into()],
                 password_ids: vec!["p1".into(), "p2".into(), "p3".into()],
                 passwords: vec![],
+                password_picks: false,
             },
         );
         let s = reduce(
@@ -2218,6 +2233,8 @@ mod tests {
                 remembered: None,
             },
         );
+        // The Keyvault daemon enforces a choice of passwords by site.
+        let s = daemon(&s, true);
         let rv = review(&s).unwrap();
         assert!(rv.offers_passwords && !rv.include_passwords);
         assert_eq!(rv.passwords_label, "Also send 2 saved passwords");
@@ -2325,6 +2342,7 @@ mod tests {
                         username: "".into(),
                     },
                 ],
+                password_picks: true,
             },
         );
         let v = reduce(
@@ -2358,5 +2376,108 @@ mod tests {
         // No row carries a value: only the site, username and counts exist.
         let json = serde_json::to_string(&review(&one).unwrap().passwords).unwrap();
         assert!(!json.contains("password\":"), "{json}");
+    }
+
+    /// What the Keyvault daemon says it supports: `picks` is the
+    /// `password_domains` feature (no saved items).
+    fn daemon(s: &PickerState, picks: bool) -> PickerState {
+        reduce(
+            s,
+            &PickerEvent::VaultItems {
+                count: 0,
+                newest_ms: 0,
+                now_ms: 0,
+                selected: vec![],
+                password_ids: vec![],
+                passwords: vec![],
+                password_picks: picks,
+            },
+        )
+    }
+
+    /// A Keyvault daemon that predates the per-site choice of passwords
+    /// would ignore it and read the passwords of every chosen site. With
+    /// one, the review offers the passwords as before (those of the sites
+    /// kept signed in, or every saved one) and lists none to pick, so it
+    /// never shows a choice that would not be kept; the consent carries no
+    /// `passwordDomains`.
+    #[test]
+    fn an_older_keyvault_daemon_gets_no_password_picker() {
+        use crate::keyvault::wire::KvDomainCount;
+        let mut inv = inventory();
+        inv.domains[0].passwords = 2; // github.com, a sign-in site
+        inv.domains.push(KvDomainCount {
+            domain: "bank.example".into(),
+            passwords: 1,
+            ..Default::default()
+        });
+        let loaded = reduce(
+            &review_state(),
+            &PickerEvent::DomainsLoaded {
+                inventory: inv,
+                remembered: None,
+            },
+        );
+        for s in [loaded.clone(), daemon(&loaded, false)] {
+            let rv = review(&s).unwrap();
+            assert!(rv.offers_passwords);
+            assert_eq!(rv.passwords_label, "Also send 2 saved passwords");
+            let on = reduce(&s, &PickerEvent::TogglePasswords { value: true });
+            let rv = review(&on).unwrap();
+            assert!(rv.include_passwords && rv.passwords.is_empty(), "no picker");
+            // Picking does nothing: the chosen sites' passwords go, as before.
+            let tried = reduce(
+                &on,
+                &PickerEvent::TogglePassword {
+                    key: "bank.example".into(),
+                },
+            );
+            let tried = reduce(&tried, &PickerEvent::SelectShownPasswords { value: false });
+            let c = consent(&tried);
+            assert!(c.include_passwords);
+            assert_eq!(
+                c.password_domains, None,
+                "never sent to a daemon that ignores it"
+            );
+            assert_eq!(
+                review(&tried).unwrap().passwords_label,
+                "Also send 2 saved passwords"
+            );
+            // Dropping the only site with passwords takes the offer away.
+            let gone = reduce(
+                &on,
+                &PickerEvent::ToggleDomain {
+                    domain: "github.com".into(),
+                },
+            );
+            assert!(!review(&gone).unwrap().offers_passwords);
+            assert!(!consent(&gone).include_passwords);
+        }
+        // From the Keyvault: every saved password, as before.
+        let v = reduce(
+            &loaded,
+            &PickerEvent::VaultItems {
+                count: 1,
+                newest_ms: 1,
+                now_ms: 1,
+                selected: vec!["a".into()],
+                password_ids: vec!["p1".into(), "p2".into()],
+                passwords: vec![],
+                password_picks: false,
+            },
+        );
+        let v = reduce(
+            &v,
+            &PickerEvent::SendFrom {
+                source: SendSource::Vault,
+            },
+        );
+        let v = reduce(&v, &PickerEvent::TogglePasswords { value: true });
+        let v = reduce(&v, &PickerEvent::TogglePassword { key: "p2".into() });
+        assert!(review(&v).unwrap().passwords.is_empty());
+        assert_eq!(
+            consent(&v).from_vault,
+            Some(vec!["a".to_string(), "p1".to_string(), "p2".to_string()])
+        );
     }
 }

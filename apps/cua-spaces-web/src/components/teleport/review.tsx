@@ -95,7 +95,8 @@ export function TeleportReview({
               </span>
             ) : null}
           </label>
-          {r.includePasswords ? <Passwords review={r} teleport={teleport} /> : null}
+          {/* The picker only where the Keyvault keeps the choice (the core lists rows then). */}
+          {r.includePasswords && r.passwordSummary ? <Passwords review={r} teleport={teleport} /> : null}
         </Group>
       ) : null}
 

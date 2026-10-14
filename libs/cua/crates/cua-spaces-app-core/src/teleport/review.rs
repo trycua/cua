@@ -135,6 +135,13 @@ pub struct VaultSource {
     /// the review to list.
     #[serde(default)]
     pub passwords: Vec<VaultPassword>,
+    /// The Keyvault daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status). Without it the review offers
+    /// the passwords as before (those of the chosen sites, or every saved
+    /// one) and lists none to pick: it never shows a choice the daemon
+    /// would not keep.
+    #[serde(default)]
+    pub password_picks: bool,
 }
 
 /// One saved password of the Keyvault, as a review lists it: its site and
@@ -362,6 +369,7 @@ fn vault_passwords(c: &ReviewChoice) -> Vec<VaultPassword> {
 /// The passwords the first tick picks: from the Keyvault, every saved one;
 /// reading the app, those of the sites chosen to keep you signed in.
 pub fn default_passwords(c: &ReviewChoice) -> (Vec<String>, Vec<String>) {
+    // Without the daemon's support this is also what is sent, unchanged.
     let domains = password_sites(c)
         .filter(|d| c.selected_domains.contains(&d.domain))
         .map(|d| d.domain.clone())
@@ -373,6 +381,9 @@ pub fn default_passwords(c: &ReviewChoice) -> (Vec<String>, Vec<String>) {
 /// sites with counts when reading the app, else each saved password with
 /// its site and username.
 pub fn password_rows(c: &ReviewChoice) -> Vec<ReviewPassword> {
+    if !c.vault.password_picks {
+        return vec![];
+    }
     let words: Vec<String> = c
         .password_query
         .split_whitespace()
@@ -414,6 +425,10 @@ pub fn password_rows(c: &ReviewChoice) -> Vec<ReviewPassword> {
 
 /// "2 of 5 sites" (reading the app) or "2 of 5 passwords" (saved).
 pub fn password_summary(c: &ReviewChoice) -> String {
+    // No choice to sum up without the daemon's support.
+    if !c.vault.password_picks {
+        return String::new();
+    }
     let (picked, all, what) = match c.source {
         SendSource::Live => (
             password_sites(c)
@@ -440,6 +455,9 @@ pub fn password_summary(c: &ReviewChoice) -> String {
 
 /// Picks or drops one saved password choice ([`ReviewPassword::key`]).
 pub fn toggle_password(c: &mut ReviewChoice, key: &str) {
+    if !c.vault.password_picks {
+        return;
+    }
     if !password_rows(&ReviewChoice {
         password_query: String::new(),
         ..c.clone()
@@ -463,6 +481,9 @@ pub fn toggle_password(c: &mut ReviewChoice, key: &str) {
 
 /// Picks or drops every saved password choice the search shows.
 pub fn set_shown_passwords(c: &mut ReviewChoice, value: bool) {
+    if !c.vault.password_picks {
+        return;
+    }
     let shown: Vec<String> = password_rows(c).into_iter().map(|r| r.key).collect();
     let list = match c.source {
         SendSource::Live => &mut c.password_domains,

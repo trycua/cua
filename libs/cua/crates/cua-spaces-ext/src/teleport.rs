@@ -784,16 +784,29 @@ impl SpaceTeleport for Space {
                 stage(cua_keyvault::broker::TeleportStage::Importing);
                 out
             }
-            None => client
-                .import_and_teleport_launching(
-                    spec,
-                    self.id().to_string(),
-                    options.save_to_keyvault,
-                    options.launch_after,
-                    stage,
-                )
-                .await
-                .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?,
+            None => {
+                // A narrower choice of passwords goes only to a daemon that
+                // enforces it: an older one would read the passwords of
+                // every chosen site instead.
+                if spec.password_domains.is_some() {
+                    let status = client
+                        .status()
+                        .await
+                        .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                    password_domains_enforced(&status)
+                        .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                }
+                client
+                    .import_and_teleport_launching(
+                        spec,
+                        self.id().to_string(),
+                        options.save_to_keyvault,
+                        options.launch_after,
+                        stage,
+                    )
+                    .await
+                    .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?
+            }
         };
         let delivery = outcome.deliveries.first();
         Ok(TeleportReceipt {
@@ -807,6 +820,28 @@ impl SpaceTeleport for Space {
             skipped: delivery.map(|d| d.skipped.clone()).unwrap_or_default(),
             launched: delivery.is_some_and(|d| d.launched),
         })
+    }
+}
+
+/// Whether the daemon reads only the saved passwords of the sites picked
+/// for them ([`cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS`]). One that
+/// predates it would ignore the choice and send the passwords of every
+/// chosen site, so a teleport with a narrower choice is refused instead.
+pub fn password_domains_enforced(
+    status: &cua_keyvault::broker::Status,
+) -> std::result::Result<(), String> {
+    if status
+        .features
+        .iter()
+        .any(|f| f == cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "the Cua Keyvault (version {}) cannot send the passwords of only the sites you picked; \
+             quit and reopen Cua to update it, or send the passwords of the chosen sites",
+            status.version
+        ))
     }
 }
 
@@ -1042,6 +1077,28 @@ async fn teleport_app_broker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An older daemon's status has no `features`: a narrower choice of
+    /// passwords is refused, never sent for it to widen (CUA-1641).
+    #[test]
+    fn a_daemon_that_predates_password_domains_is_refused() {
+        let old: cua_keyvault::broker::Status = serde_json::from_value(serde_json::json!({
+            "version": "0.8.0", "initialized": true, "unlocked": true, "disabled": false,
+            "caller_first_party": true, "caller_display": "Cua", "items": 3, "pending": 0,
+        }))
+        .unwrap();
+        assert!(old.features.is_empty());
+        let why = password_domains_enforced(&old).unwrap_err();
+        assert!(
+            why.contains("0.8.0") && why.contains("only the sites you picked"),
+            "{why}"
+        );
+        let new = cua_keyvault::broker::Status {
+            features: vec![cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS.into()],
+            ..old
+        };
+        assert!(password_domains_enforced(&new).is_ok());
+    }
 
     #[test]
     fn catalog_lists_every_provider_with_names_and_aliases() {

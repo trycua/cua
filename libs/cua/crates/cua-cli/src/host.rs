@@ -102,8 +102,7 @@ pub enum HostCmd {
   cua host pair --list
   cua host pair --revoke pc_0123456789abcdef")]
     Pair {
-        /// Add the machine for this team (its id). Experimental: needs
-        /// CUA_EXPERIMENTAL_TEAMS=1.
+        /// Add the machine for this team (its id).
         #[arg(long)]
         team: Option<String>,
         /// Name the machine gets (default: its own host name).

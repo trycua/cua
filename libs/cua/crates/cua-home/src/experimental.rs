@@ -1,18 +1,18 @@
-//! Opt-in gates for features that are not customer-facing yet.
+//! Feature gates.
 //!
 //! Teams (`cua team`, sharing with `team:<id>`, `cua host pair --team`) are
-//! a stopgap stored in the relay until Teams move to the identity provider's
-//! organizations and billing entitlements. They stay off unless
-//! `CUA_EXPERIMENTAL_TEAMS` is set (to anything but `0`, `false` or empty),
-//! for internal and staging use.
+//! on by default. Who may use them is decided by the service: the Spaces API
+//! (org membership and the Stripe Teams entitlement) and the relay refuse
+//! anyone who is not entitled. `CUA_EXPERIMENTAL_TEAMS=0` (or `false`,
+//! `off`, `no`) is a local kill switch that hides and refuses Teams.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-/// Environment variable that turns Teams on.
+/// Environment variable that is the kill switch for Teams (`0` turns them off).
 pub const TEAMS_ENV: &str = "CUA_EXPERIMENTAL_TEAMS";
 
 /// What a Teams call says while Teams are off.
-pub const TEAMS_UNAVAILABLE: &str = "Teams isn't available yet.";
+pub const TEAMS_UNAVAILABLE: &str = "Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0).";
 
 /// 0: follow the environment; 1: off; 2: on.
 static TEAMS_OVERRIDE: AtomicU8 = AtomicU8::new(0);
@@ -39,11 +39,17 @@ pub fn set_teams_enabled(on: Option<bool>) {
     TEAMS_OVERRIDE.store(v, Ordering::Relaxed);
 }
 
-/// Whether a flag value turns its feature on.
+/// Whether a flag value leaves its feature on: unset or empty is on; `0`,
+/// `false`, `off` and `no` are off.
 pub fn flag_on(value: Option<&str>) -> bool {
     match value.map(str::trim) {
-        None | Some("") | Some("0") => false,
-        Some(v) => !v.eq_ignore_ascii_case("false"),
+        None | Some("") => true,
+        Some(v) => {
+            !(v == "0"
+                || v.eq_ignore_ascii_case("false")
+                || v.eq_ignore_ascii_case("off")
+                || v.eq_ignore_ascii_case("no"))
+        }
     }
 }
 
@@ -52,18 +58,25 @@ mod tests {
     use super::flag_on;
 
     #[test]
-    fn only_a_set_non_false_value_turns_a_flag_on() {
+    fn a_flag_is_on_unless_it_is_set_to_an_off_value() {
         for off in [
-            None,
-            Some(""),
-            Some(" "),
             Some("0"),
+            Some(" 0 "),
             Some("false"),
             Some("FALSE"),
+            Some("off"),
+            Some("no"),
         ] {
             assert!(!flag_on(off), "{off:?}");
         }
-        for on in [Some("1"), Some("true"), Some("yes")] {
+        for on in [
+            None,
+            Some(""),
+            Some(" "),
+            Some("1"),
+            Some("true"),
+            Some("yes"),
+        ] {
             assert!(flag_on(on), "{on:?}");
         }
     }

@@ -121,14 +121,16 @@ write_failure_record() {
     > "${failures_file}"
 }
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=macos
+
 run_test() {
   local name="$1"; shift
   local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${log_name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${log_name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     note_lane_failure "${name}"
   fi

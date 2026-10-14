@@ -1,9 +1,9 @@
 //! Teams on the relay: a named group of cua.ai accounts with roles
 //! (`owner`, `admin`, `member`) that shares machines with every member.
 //! Owners and admins invite (by email or link), remove members, add
-//! machines they own, approve member devices (a member device opens team
-//! machines only once approved) and read the team's audit log. macOS
-//! Spaces cannot be team machines (one user per macOS copy).
+//! machines they own (Mac, Linux or Windows), approve member devices (a
+//! member device opens team machines only once approved) and read the
+//! team's audit log.
 //!
 //! [`RelayClient`] has the raw calls (account token, from an enrolled
 //! device's session); [`DeviceAuth`] wraps them with this device's session.

@@ -1,8 +1,7 @@
 //! `cua team …`: teams on the relay. A team shares machines with every
 //! member (and their agents); owners and admins invite by email or link,
-//! remove members, add machines they own, approve each member device
-//! before it opens team machines, and read the team's audit log. macOS
-//! Spaces cannot be team machines (one user per macOS copy).
+//! remove members, add machines they own (Mac, Linux or Windows), approve each member
+//! device before it opens team machines, and read the team's audit log.
 //!
 //! Adding a Space is `cua team add-machine <team> <space>`, the same as
 //! `cua spaces share <space> team:<id>` (it attaches the Space to the relay
@@ -131,7 +130,7 @@ pub enum TeamCmd {
         team: String,
     },
     /// Make a Space (or a machine you host) a team machine: every member
-    /// and their agents see it and can open it. macOS Spaces cannot.
+    /// and their agents see it and can open it. Macs, Linux and Windows machines all can.
     #[command(after_help = "Examples:
   cua team add-machine AIGIS local:build-box
   cua team add-machine AIGIS relay:0123abcd4567ef89 --yes")]

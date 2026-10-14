@@ -51,12 +51,6 @@ fn isolated_driver_host(
                 name: name.into(),
                 value: value.to_string_lossy().into_owned(),
             })
-            // Stay off the developer's accessibility bus: no session-status
-            // write and no AT-SPI listener.
-            .chain([EmbeddedEnvironmentVariable {
-                name: "NO_AT_BRIDGE".into(),
-                value: "1".into(),
-            }])
             .collect(),
         inherit_stderr: true,
         // No overlay window on the developer's display.

@@ -1114,6 +1114,11 @@ jobs:
         with:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
+      # The bridge tests import the web UI's sources (react), so its
+      # dependencies are installed here; only dist/ comes from electron-web.
+      - name: Install the web UI dependencies
+        working-directory: apps/cua-spaces-web
+        run: pnpm install --ignore-workspace --frozen-lockfile
       # Both architectures are built in parallel by electron-native-mac (or
       # restored from the cache); the notch helper is quick.
       - name: Install dependencies and build the notch helper

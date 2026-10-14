@@ -14,10 +14,11 @@ client = TrainClient.from_key(
     client_secret="...",
 )
 
-# Control plane — claim a VM
+# Control plane: claim a VM
 http = client.get_async_httpx_client()
 await http.post("/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/my-pool/osgymsandboxclaims", json={...})
 
-# Data plane — exec in the VM
-await http.post("/api/svc/my-pool/my-sandbox-server/execute", json={"command": "echo hi"})
+# Data plane: reach a service the sandbox publishes
+# (/api/svc/<namespace>/<sandbox>-<service>/<path>)
+await http.get("/api/svc/my-pool/my-sandbox-web/health")
 ```

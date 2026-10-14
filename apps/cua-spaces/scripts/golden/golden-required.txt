@@ -1,0 +1,58 @@
+# golden-required.txt — what a published Cua Spaces golden MUST contain.
+#
+# This is the contract between the image and the app. verify-golden.sh runs as
+# the final build step (after sanitize) and fails the build if any line here is
+# missing, so a thinner image can never be published by accident — which is
+# exactly what a second, parallel build script used to do.
+#
+# Format: one guest path per line. `~` is the golden user's home. Blank lines
+# and `#` comments are ignored. A trailing `/` is only cosmetic; existence is
+# tested with `-e`, so directories and files are both fine.
+#
+# Adding a provisioning step to build-golden.sh WITHOUT adding what it produces
+# here is allowed for optional extras, but anything a Space needs at run time
+# belongs here. check-golden-coverage.sh additionally enforces that every file
+# build-golden.sh installs into ~/.cua/ is listed.
+
+# --- the agent stack (install-agent-stack.sh) -------------------------------
+# cua-spacesd (:3211) is the one in-sandbox daemon; it replaced
+# computer-server, rcdpd, rcdp-handoff and rcdp-socks.
+/Applications/CuaDriverLocal.app
+/Applications/Cua Spacesd.app
+/Applications/Cua Spacesd.app/Contents/MacOS/cua-spacesd
+~/.cua-server/venv/bin/python
+~/.cua-server/start_spacesd.sh
+~/Library/LaunchAgents/com.trycua.cua-driver-local.plist
+~/Library/LaunchAgents/com.trycua.spacesd.plist
+
+# --- applications a Space is expected to drive or teleport into -------------
+# Chrome is a teleport target, not a demo prop: the spacesd's Chrome import relaunches
+# this bundle in the destination.
+/Applications/Google Chrome.app
+/Applications/Unity Hub.app
+/Applications/Unity/Hub/Editor
+/Applications/Blender.app
+
+# --- Unity CLI (the image's Unity MCP server) + its env ---------------------
+/usr/local/bin/unity
+~/.cua/unity-cli.env
+# Python 3.10+ on the GUI PATH, which MCP for Unity's detector shells out to
+# (seed-python-for-unity-mcp.sh links the uv-managed interpreter here).
+/usr/local/bin/python3
+/usr/local/bin/uv
+
+# --- skills (install-skills.sh) ---------------------------------------------
+~/.cua/demo-kit/get-skills-mcp/server.py
+~/.cua/demo-kit/get-skills-mcp/skills
+
+# --- the ~/.cua payload (per-boot prep, agent launcher, MCP shims) ----------
+~/.cua/prepare-space.sh
+~/.cua/write-agent-mcp.sh
+~/.cua/run-agent.sh
+~/.cua/seed-tcc.sh
+~/.cua/unity-hub-markers.sh
+~/.cua/permission-approver.py
+~/.cua/blender-mcp-start.py
+~/.cua/mcp-lazy-app.py
+~/.cua/sanitize-golden.sh
+~/.cua/verify-golden.sh

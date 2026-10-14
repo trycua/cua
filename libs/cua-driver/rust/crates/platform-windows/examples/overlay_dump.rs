@@ -1,6 +1,8 @@
 //! Capture the daemon's overlay window content directly via PrintWindow.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

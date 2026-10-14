@@ -34,6 +34,27 @@ test(
     assert.equal(embedded.EmbeddedCuaDriverHost, root.EmbeddedCuaDriverHost)
     assert.equal(embedded.EmbeddedDriverHostOptions, root.EmbeddedDriverHostOptions)
     assert.equal(embedded.EmbeddedPermissionMode, root.EmbeddedPermissionMode)
+
+    const requiredOptions = {
+      binaryPath: "/example/cua-driver",
+      hostBundleId: "com.example.host",
+      approveSessionPolicy: false,
+      dangerouslyBypassApprovals: false,
+      environment: [],
+      inheritStderr: false,
+    }
+    assert.equal(
+      embedded.EmbeddedDriverHostOptions.new(requiredOptions).noOverlay,
+      false,
+    )
+    assert.equal(
+      embedded.EmbeddedDriverHostOptions.new({
+        ...requiredOptions,
+        noOverlay: true,
+      }).noOverlay,
+      true,
+    )
+
     assert.throws(
       () => new embedded.EmbeddedCuaDriverHost("", "com.example.host"),
       error => error?.inner?.reason === "binary_path must not be empty",

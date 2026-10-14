@@ -1,0 +1,587 @@
+{
+  "flow": "devices",
+  "frames": [
+    {
+      "page": "signed in, not enrolled, grace period",
+      "view": {
+        "activity": [],
+        "approvals": [],
+        "banner": "warning: Enroll this device within 5 days to keep reaching your machines. [Enroll…]",
+        "enrolled": false,
+        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Machines Confirm",
+        "recent": [],
+        "rows": [
+          "Studio | Linux · Enrolled · re-verify in 12 days | seen 1799990000 | "
+        ],
+        "thisDevice": "grace: Needs enrollment · grace ends @1800432000 name=- [Enroll…]",
+        "unconfirmedMachines": []
+      }
+    },
+    {
+      "page": "grace over",
+      "view": {
+        "activity": [],
+        "approvals": [],
+        "banner": "critical: Enroll this device to reach your machines. [Enroll…]",
+        "enrolled": false,
+        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Machines Confirm",
+        "recent": [],
+        "rows": [],
+        "thisDevice": "needs-enrollment: Needs enrollment @null name=- [Enroll…]",
+        "unconfirmedMachines": []
+      }
+    },
+    {
+      "page": "waiting for approval with a code",
+      "view": {
+        "activity": [],
+        "approvals": [],
+        "banner": "warning: Sign in again to enroll this device, or approve it from an enrolled device with the code K7QX-M2RP. [Enroll…]",
+        "enrolled": false,
+        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Machines Confirm",
+        "recent": [],
+        "rows": [
+          "MacBook Pro (this device) | macOS · Waiting for approval | seen null |  | current",
+          "Studio | Linux · Enrolled · re-verify in 12 days | seen null | "
+        ],
+        "thisDevice": "waiting: Waiting for approval @null name=MacBook Pro [Enroll…]",
+        "unconfirmedMachines": []
+      }
+    },
+    {
+      "page": "enrolled, a new device and an expired one ask, access log",
+      "view": {
+        "activity": [
+          "1799990500 Lost phone was revoked from MacBook Pro",
+          "1799990400 An unenrolled device opened build-box (notable)",
+          "1799990300 Work laptop asked to join",
+          "1799990200 bob@example.com opened studio-mac (notable)",
+          "1799990100 MacBook Pro opened studio-mac",
+          "1799990000 MacBook Pro was approved from dev_a"
+        ],
+        "approvals": [
+          "dev_p: Let “Work laptop” list and open your machines? Only approve a device you just signed in on. | Approve “Work laptop”? / A device signed in to your Cua account and asks to reach your machines.",
+          "dev_o (expired): Re-verify “Old laptop” for another 30 days? | Re-verify “Old laptop”? / It needs one approval to keep reaching your machines."
+        ],
+        "banner": null,
+        "enrolled": true,
+        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Machines Confirm",
+        "recent": [
+          "1799990400 An unenrolled device opened build-box (notable)",
+          "1799990200 bob@example.com opened studio-mac (notable)",
+          "1799990100 MacBook Pro opened studio-mac"
+        ],
+        "rows": [
+          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This device will no longer list or reach your machines until you enroll it again.",
+          "Lost phone | iOS · Revoked | seen null | ",
+          "Old laptop | Linux · Re-verification due | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer list or reach your machines. To use it again, enroll it again.",
+          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer list or reach your machines. To use it again, enroll it again."
+        ],
+        "thisDevice": "enrolled: Enrolled until @1802592000 name=MacBook Pro [-]",
+        "unconfirmedMachines": [
+          "build-box: Confirm “build-box”? / build-box registered to your account without proof it was you: an enrolled device's signature or a sign-in with a second factor. Confirm it only if you recognize it."
+        ]
+      }
+    },
+    {
+      "page": "re-verification in two days",
+      "view": {
+        "activity": [],
+        "approvals": [],
+        "banner": "warning: Re-verify this device within 2 days: sign in again, or approve it from another enrolled device. [-]",
+        "enrolled": true,
+        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Machines Confirm",
+        "recent": [],
+        "rows": [
+          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This device will no longer list or reach your machines until you enroll it again."
+        ],
+        "thisDevice": "enrolled: Enrolled until @1800172800 name=MacBook Pro [-]",
+        "unconfirmedMachines": []
+      }
+    },
+    {
+      "page": "enrolled, a new device and an expired one ask (again, for the sheets)",
+      "view": {
+        "activity": [],
+        "approvals": [
+          "dev_p: Let “Work laptop” list and open your machines? Only approve a device you just signed in on. | Approve “Work laptop”? / A device signed in to your Cua account and asks to reach your machines.",
+          "dev_o (expired): Re-verify “Old laptop” for another 30 days? | Re-verify “Old laptop”? / It needs one approval to keep reaching your machines."
+        ],
+        "banner": null,
+        "enrolled": true,
+        "labels": "Devices / This Device / Your Devices / Recent Access (No access yet) / Last seen / Approve… Deny Rename… Revoke… / Rename Device Rename Cancel / New Machines Confirm",
+        "recent": [],
+        "rows": [
+          "MacBook Pro (this device) | macOS · Enrolled · re-verify in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This device will no longer list or reach your machines until you enroll it again.",
+          "Old laptop | Linux · Re-verification due | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer list or reach your machines. To use it again, enroll it again.",
+          "Work laptop | Windows · Waiting for approval | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer list or reach your machines. To use it again, enroll it again."
+        ],
+        "thisDevice": "enrolled: Enrolled until @1802592000 name=MacBook Pro [-]",
+        "unconfirmedMachines": []
+      }
+    },
+    {
+      "action": "open",
+      "enroll": "sign in again, another device is enrolled",
+      "view": {
+        "busy": false,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [
+          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
+          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+        ],
+        "status": null,
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "approved",
+      "enroll": "sign in again, another device is enrolled",
+      "phase": "choose",
+      "view": {
+        "busy": false,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [
+          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
+          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+        ],
+        "status": null,
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "choose",
+      "enroll": "sign in again, another device is enrolled",
+      "phase": "signing-in",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Finish signing in in your browser…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "signed-in",
+      "enroll": "sign in again, another device is enrolled",
+      "phase": "registering",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Registering this device…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "registered",
+      "enroll": "sign in again, another device is enrolled",
+      "phase": "waiting",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": "K7QX-M2RP",
+        "codeHelp": "On an enrolled device, approve it in Cua Spaces or run `cua devices approve K7QX-M2RP`. The code expires in 10 minutes.",
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Waiting for approval…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "approved",
+      "enroll": "sign in again, another device is enrolled",
+      "phase": "enrolled",
+      "view": {
+        "busy": false,
+        "buttons": "- / Done",
+        "code": null,
+        "codeHelp": null,
+        "done": true,
+        "error": null,
+        "options": [],
+        "status": "This device is enrolled.",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "open",
+      "enroll": "sign in again, first device",
+      "view": {
+        "busy": false,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [
+          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
+          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+        ],
+        "status": null,
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "choose",
+      "enroll": "sign in again, first device",
+      "phase": "signing-in",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Finish signing in in your browser…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "signed-in",
+      "enroll": "sign in again, first device",
+      "phase": "registering",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Registering this device…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "registered",
+      "enroll": "sign in again, first device",
+      "phase": "enrolled",
+      "view": {
+        "busy": false,
+        "buttons": "- / Done",
+        "code": null,
+        "codeHelp": null,
+        "done": true,
+        "error": null,
+        "options": [],
+        "status": "This device is enrolled.",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "open",
+      "enroll": "approve from another device, relay fails",
+      "view": {
+        "busy": false,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [
+          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
+          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+        ],
+        "status": null,
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "choose",
+      "enroll": "approve from another device, relay fails",
+      "phase": "registering",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Registering this device…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "failed",
+      "enroll": "approve from another device, relay fails",
+      "phase": "failed",
+      "view": {
+        "busy": false,
+        "buttons": "Back / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": "the relay is unreachable",
+        "options": [],
+        "status": null,
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "back",
+      "enroll": "approve from another device, relay fails",
+      "phase": "choose",
+      "view": {
+        "busy": false,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [
+          "sign-in: Sign in again / A fresh sign-in enrolls this device right away.",
+          "approve: Approve from another device / Show a one-time code to approve from an enrolled device."
+        ],
+        "status": null,
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "choose",
+      "enroll": "approve from another device, relay fails",
+      "phase": "registering",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": null,
+        "codeHelp": null,
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Registering this device…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "registered",
+      "enroll": "approve from another device, relay fails",
+      "phase": "waiting",
+      "view": {
+        "busy": true,
+        "buttons": "- / Cancel",
+        "code": "Z9WY-4TPN",
+        "codeHelp": "On an enrolled device, approve it in Cua Spaces or run `cua devices approve Z9WY-4TPN`. The code expires in 10 minutes.",
+        "done": false,
+        "error": null,
+        "options": [],
+        "status": "Waiting for approval…",
+        "title": "Enroll This Device / Your machines can be reached only from enrolled devices."
+      }
+    },
+    {
+      "action": "open",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = ",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": null,
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "submit",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = ",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": null,
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "set-code",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = K7QX",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": null,
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "set-code",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": true,
+        "code": "Code [XXXX-XXXX] = K7QX-M2RP",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=K7QX-M2RP device=-",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "submit",
+      "approve": "dev_p",
+      "view": {
+        "busy": true,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = K7QX-M2RP",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=K7QX-M2RP device=-",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "set-code",
+      "approve": "dev_p",
+      "view": {
+        "busy": true,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = K7QX-M2RP",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=K7QX-M2RP device=-",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "failed",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": true,
+        "code": "Code [XXXX-XXXX] = K7QX-M2RP",
+        "error": "authentication was cancelled",
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=K7QX-M2RP device=-",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "set-code",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": true,
+        "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=Z9WY-4TPN device=-",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "submit",
+      "approve": "dev_p",
+      "view": {
+        "busy": true,
+        "buttons": "Approve / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
+        "error": null,
+        "message": "Enter the code Work laptop shows to let it list and open your machines. Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=Z9WY-4TPN device=-",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "failed",
+      "approve": "dev_p",
+      "view": {
+        "busy": false,
+        "buttons": "Approve by ID / Deny (revokes)",
+        "canApprove": true,
+        "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
+        "error": "The code expired.",
+        "message": "The code expired. Approve “Work laptop” by ID instead? Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=- device=dev_p",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "submit",
+      "approve": "dev_p",
+      "view": {
+        "busy": true,
+        "buttons": "Approve by ID / Deny (revokes)",
+        "canApprove": false,
+        "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
+        "error": null,
+        "message": "The code expired. Approve “Work laptop” by ID instead? Only approve a device you just signed in on.",
+        "presence": "approve “Work laptop” for your Cua account",
+        "request": "code=- device=dev_p",
+        "title": "Approve “Work laptop”?"
+      }
+    },
+    {
+      "action": "open",
+      "approve": "dev_o",
+      "view": {
+        "busy": false,
+        "buttons": "Approve / Not Now",
+        "canApprove": true,
+        "code": null,
+        "error": null,
+        "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
+        "presence": "approve “Old laptop” for your Cua account",
+        "request": "code=- device=dev_o",
+        "title": "Re-verify “Old laptop”?"
+      }
+    },
+    {
+      "action": "submit",
+      "approve": "dev_o",
+      "view": {
+        "busy": true,
+        "buttons": "Approve / Not Now",
+        "canApprove": false,
+        "code": null,
+        "error": null,
+        "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
+        "presence": "approve “Old laptop” for your Cua account",
+        "request": "code=- device=dev_o",
+        "title": "Re-verify “Old laptop”?"
+      }
+    }
+  ]
+}

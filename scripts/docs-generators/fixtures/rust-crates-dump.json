@@ -1,0 +1,151 @@
+{
+  "tool": "cua-rustdoc-json",
+  "toolchain": "nightly-2026-09-20",
+  "format_version": 61,
+  "crates": [
+    {
+      "name": "cua-sdk",
+      "lib": "cua_sdk",
+      "docs": "The cua SDK crate.",
+      "items": [
+        {
+          "path": "cua_sdk::Cua",
+          "module": "cua_sdk",
+          "docs": "The cua SDK.\n\n# Examples\n\n```no_run\n# use cua_sdk::Cua;\nlet cua = Cua::embedded(Default::default())?;\n```",
+          "signature": "pub struct Cua { /* private fields */ }",
+          "kind": "struct",
+          "name": "Cua",
+          "source": "src/native/cua.rs",
+          "methods": [
+            {
+              "name": "connect",
+              "signature": "pub fn connect(address: Option<String>) -> Result<Arc<Self>>",
+              "docs": "Connects to [`Cua`] via <https://cua.ai>."
+            }
+          ],
+          "traits": [
+            "Debug",
+            "StructuralPartialEq"
+          ]
+        },
+        {
+          "path": "cua_sdk::Sandbox",
+          "module": "cua_sdk",
+          "docs": "A sandbox handle, see [the guide][`Cua`].\n\n[`Cua`]: crate::Cua",
+          "signature": "pub struct Sandbox { /* private fields */ }",
+          "kind": "struct",
+          "name": "Sandbox",
+          "source": "src/native/sandbox.rs"
+        },
+        {
+          "path": "cua_sdk::OldClient",
+          "module": "cua_sdk",
+          "docs": "Old name for `Vec<u8>` {x}.",
+          "signature": "pub type OldClient = SpacesdClient;",
+          "kind": "type",
+          "name": "OldClient",
+          "source": "src/lib.rs",
+          "deprecated": "deprecated since 0.2.0: renamed to SpacesdClient"
+        },
+        {
+          "path": "cua_sdk::Stray",
+          "module": "cua_sdk",
+          "docs": "",
+          "signature": "pub enum Stray",
+          "kind": "enum",
+          "name": "Stray",
+          "source": "src/unknown.rs",
+          "variants": [
+            {
+              "name": "A",
+              "signature": "A(String)",
+              "docs": "An `A`."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cua-spacesd-client",
+      "lib": "cua_spacesd_client",
+      "docs": "",
+      "items": [
+        {
+          "path": "cua_spacesd_client::SpacesdClient",
+          "module": "cua_spacesd_client",
+          "docs": "",
+          "signature": "pub struct SpacesdClient",
+          "kind": "struct",
+          "name": "SpacesdClient",
+          "source": "src/client.rs"
+        }
+      ]
+    },
+    {
+      "name": "cua-fleet",
+      "lib": "cua_fleet",
+      "docs": "",
+      "items": [
+        {
+          "path": "cua_fleet::Fleet",
+          "module": "cua_fleet",
+          "docs": "",
+          "signature": "pub struct Fleet",
+          "kind": "struct",
+          "name": "Fleet",
+          "source": "src/lib.rs"
+        }
+      ]
+    },
+    {
+      "name": "cua-sandbox-core",
+      "lib": "cua_sandbox_core",
+      "docs": "",
+      "items": [
+        {
+          "path": "cua_sandbox_core::Sandbox",
+          "module": "cua_sandbox_core",
+          "docs": "",
+          "signature": "pub struct Sandbox",
+          "kind": "struct",
+          "name": "Sandbox",
+          "source": "src/sandbox.rs"
+        }
+      ]
+    },
+    {
+      "name": "cua-spaces",
+      "lib": "cua_spaces",
+      "docs": "",
+      "items": [
+        {
+          "path": "cua_spaces::Spaces",
+          "module": "cua_spaces",
+          "docs": "",
+          "signature": "pub struct Spaces",
+          "kind": "struct",
+          "name": "Spaces",
+          "source": "src/spaces.rs"
+        },
+        {
+          "path": "cua_spaces::client::model::Space",
+          "module": "cua_spaces::client::model",
+          "docs": "",
+          "signature": "pub struct Space",
+          "kind": "struct",
+          "name": "Space",
+          "source": "src/client/model.rs"
+        },
+        {
+          "path": "cua_spaces::mcp",
+          "module": "cua_spaces",
+          "docs": "The MCP server.",
+          "signature": "pub mod mcp",
+          "kind": "module",
+          "name": "mcp",
+          "source": "src/mcp/mod.rs"
+        }
+      ]
+    }
+  ]
+}

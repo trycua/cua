@@ -172,14 +172,6 @@ mod tests {
     }
 
     #[test]
-    fn standard_socket_address_is_unix_path() {
-        // Pure formatting check — the discovery itself is environment-dependent.
-        let uid = current_uid();
-        let socket = format!("/run/user/{uid}/bus");
-        assert!(format!("unix:path={socket}").starts_with("unix:path=/run/user/"));
-    }
-
-    #[test]
     fn parses_dbus_address_from_environ_blob() {
         // Realistic NUL-separated /proc/<pid>/environ.
         let environ = b"PATH=/usr/bin\0DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus\0HOME=/home/cua\0";

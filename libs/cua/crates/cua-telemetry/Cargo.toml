@@ -1,0 +1,30 @@
+[package]
+name = "cua-telemetry"
+description = "Anonymous, content-free product telemetry shared by the cua SDK, the `cua` CLI, `cua daemon`, cua-spacesd, the Spaces app and cua-driver: one schema, one install id, one set of switches."
+version.workspace = true
+edition.workspace = true
+# Not the libs/cua workspace's 1.97: cua-driver links this crate, and the
+# driver's Nix package builds with nixpkgs stable's rustc (1.95 in 26.05).
+rust-version = "1.95"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["http"]
+# The PostHog sender. Without it events are built, validated and logged
+# locally (`show-last`) but never leave the machine.
+http = ["dep:ureq"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+toml_edit = "0.25"
+ureq = { version = "3", optional = true, default-features = false, features = ["rustls", "json"] }
+
+[dev-dependencies]
+tempfile.workspace = true

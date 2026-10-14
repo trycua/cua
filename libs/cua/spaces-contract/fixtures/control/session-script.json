@@ -1,0 +1,327 @@
+{
+  "responses": {
+    "agent_capabilities": [
+      {
+        "content": [
+          {
+            "text": "{\"statuses\": [\"running\", \"awaiting_input\", \"idle\", \"finished\", \"failed\", \"crashed\", \"unknown\"], \"harnesses\": [{\"name\": \"claude-code\"}, {\"name\": \"codex\"}, {\"name\": \"cursor\"}, {\"agent\": \"aider\"}], \"status_classifier\": \"scrollback-regex\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "agent_list": [
+      {
+        "content": [
+          {
+            "text": "{\"runs\": [{\"run_id\": \"run-84a8dc1f\", \"agent\": \"claude-code\", \"status\": \"running\", \"accepts_message\": false, \"summary\": \"summarise the repository\\n\\n<!--cua-spaces-meta:bot=openkoala;cua.schedule=nightly-->\"}, {\"run_id\": \"run-0f2b7c33\", \"agent\": \"codex\", \"status\": \"finished\", \"accepts_message\": false, \"exit_code\": 0, \"summary\": \"run the tests\"}, {\"run_id\": \"\", \"status\": \"running\"}]}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "agent_message": [
+      {
+        "content": [
+          {
+            "text": "{\"delivered\": false, \"run_id\": \"run-84a8dc1f\", \"status\": \"running\", \"reason\": \"a turn is already in flight\"}",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "content": [
+          {
+            "text": "{\"delivered\": true, \"run_id\": \"run-84a8dc1f\", \"note\": \"queued to the pty\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "agent_start": [
+      {
+        "content": [
+          {
+            "text": "{\"run_id\": \"run-84a8dc1f\", \"agent\": \"claude-code\", \"capabilities\": {\"turn_model\": \"interactive\", \"accepts_followups\": true}, \"notes\": [\"window suppressed by show=false\"]}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "agent_status": [
+      {
+        "content": [
+          {
+            "text": "{\"run_id\": \"run-84a8dc1f\", \"agent\": \"claude-code\", \"status\": \"running\", \"reason\": \"reading the repository\", \"accepts_message\": false, \"created_at\": 1758300000.25, \"summary\": \"summarise the repository\\n\\n<!--cua-spaces-meta:bot=openkoala;cua.schedule=nightly-->\", \"output_tail\": \"opening src/lib.rs\\nreading 42 files\\n\"}",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "content": [
+          {
+            "text": "{\"run_id\": \"run-84a8dc1f\", \"status\": \"idle\", \"accepts_message\": true, \"reason\": \"waiting for input\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "agent_stop": [
+      {
+        "content": [
+          {
+            "text": "{\"stopped\": true, \"alive\": false, \"reason\": \"SIGTERM delivered; pid 4211 is gone\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "call_tool": [
+      {
+        "content": [
+          {
+            "text": "[{\"type\": \"text\", \"text\": \"captured 2560x1440\"}, {\"type\": \"image\", \"data\": \"aGVsbG8=\", \"mimeType\": \"image/png\"}, {\"type\": \"resource\", \"uri\": \"file:///tmp/x\"}]",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "create_space": [
+      {
+        "content": [
+          {
+            "text": "{\"id\": \"local:cua-space-scratch\", \"phase\": \"running\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "delete_space": [
+      {
+        "content": [
+          {
+            "text": "error: the conformance script refuses to delete a Space",
+            "type": "text"
+          }
+        ],
+        "isError": true
+      }
+    ],
+    "download": [
+      {
+        "content": [
+          {
+            "text": "{\"dest\": \"/Users/operator/Downloads/cua-spaces/report.pdf\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "hide_space_pip": [
+      {
+        "content": [
+          {
+            "text": "{}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "hotspot_start": [
+      {
+        "content": [
+          {
+            "text": "{\"sharing\": true, \"space_id\": \"local:cua-space-fixture01\", \"status\": \"sharing en0 with the Space\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "hotspot_status": [
+      {
+        "content": [
+          {
+            "text": "{\"active\": true, \"space\": \"local:cua-space-fixture01\", \"status\": \"sharing en0 with the Space\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "hotspot_stop": [
+      {
+        "content": [
+          {
+            "text": "{\"sharing\": false, \"status\": \"sharing stopped\"}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "list_space_windows": [
+      {
+        "content": [
+          {
+            "text": "{\"windows\": [{\"window\": \"target-172aad9a\", \"app_name\": \"Blender\", \"title\": \"untitled.blend\", \"geometry\": {\"width_px\": 2560, \"height_px\": 1440, \"scale_factor\": 2.0}, \"visible\": true, \"pid\": 4211}, {\"window_id\": \"target-58bb01c2\", \"app\": \"Cua Driver Local\", \"title\": \"\", \"geometry\": {\"width_px\": 1280, \"height_px\": 800, \"scale_factor\": 1.0}, \"visible\": false, \"owner_pid\": 902}, {\"id\": \"\", \"app_name\": \"ghost\"}]}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "list_spaces": [
+      {
+        "content": [
+          {
+            "text": "{\"spaces\": [{\"id\": \"local:cua-space-fixture01\", \"provider\": \"local\", \"phase\": \"running\", \"os\": \"macos\", \"ip\": \"192.168.64.7\"}, {\"id\": \"fleet:cua-spaces-demo:claim-77\", \"provider\": \"fleet\", \"phase\": \"Bound\", \"os\": \"linux\", \"ip\": \"10.1.2.3\"}, {\"id\": \"local:cua-space-scratch\", \"provider\": \"local\", \"phase\": \"running\", \"os\": \"macos\"}]}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "list_tools": [
+      {
+        "content": [
+          {
+            "text": "{\"service\": \"cua-driver\", \"services\": [\"cua-driver\", \"unity\", \"blender\"], \"instructions\": \"Drive the Space's desktop.\", \"warning\": null, \"tools\": [{\"name\": \"screenshot\", \"description\": \"Capture the primary display.\", \"inputSchema\": {\"type\": \"object\"}}, {\"name\": \"left_click\", \"description\": \"Click at a point.\"}, {\"name\": \"\", \"description\": \"dropped: no name\"}]}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "open_space_viewer": [
+      {
+        "content": [
+          {
+            "text": "{}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "show_space_pip": [
+      {
+        "content": [
+          {
+            "text": "{}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "space_bash": [
+      {
+        "content": [
+          {
+            "text": "{\"stdout\": \"\"}",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "content": [
+          {
+            "text": "{\"stdout\": \"Darwin\\n\"}",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "content": [
+          {
+            "text": "error: command exited 1",
+            "type": "text"
+          }
+        ],
+        "isError": true
+      }
+    ],
+    "space_write": [
+      {
+        "content": [
+          {
+            "text": "{}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "stream_endpoint": [
+      {
+        "content": [
+          {
+            "text": "{\"ws\": \"ws://192.168.64.7:8765/ws?token=boot-7f3a91&v=1\", \"driver_port\": 8801}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "stream_space_window": [
+      {
+        "content": [
+          {
+            "text": "{}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "teleport_app": [
+      {
+        "content": [
+          {
+            "text": "{\"method\": \"teleport\", \"ok\": true}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "teleport_manifest": [
+      {
+        "content": [
+          {
+            "text": "{\"provider_id\": \"claude-code\", \"app_display_name\": \"Claude Code\", \"scope\": \"full_profile\", \"total_est_bytes\": 935980082, \"items\": [{\"rel_path\": \"claude/.credentials.json\", \"label\": \"Logged-in session\", \"est_bytes\": 1024, \"sensitive\": true, \"default_checked\": true, \"note\": \"Carries an OAuth token.\"}, {\"rel_path\": \"claude/settings.json\", \"label\": \"Settings\", \"est_bytes\": 4096, \"sensitive\": false, \"default_checked\": true}, {\"rel_path\": \"claude/projects/\", \"label\": \"Conversation transcripts\", \"est_bytes\": 935974962, \"sensitive\": true, \"default_checked\": false, \"count\": 14, \"count_noun\": \"projects\"}, {\"label\": \"unreadable row with no path\"}], \"notes\": [\"The logged-in session carries an OAuth token.\", \"Transcripts are unchecked by default.\"]}",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "upload": [
+      {
+        "content": [
+          {
+            "text": "{}",
+            "type": "text"
+          }
+        ]
+      }
+    ]
+  },
+  "script": "cua.control.script/1",
+  "tools": [
+    "agent_capabilities",
+    "agent_list",
+    "agent_message",
+    "agent_start",
+    "agent_status",
+    "agent_stop",
+    "call_tool",
+    "create_space",
+    "delete_space",
+    "download",
+    "hide_space_pip",
+    "hotspot_start",
+    "hotspot_status",
+    "hotspot_stop",
+    "list_space_windows",
+    "list_spaces",
+    "list_tools",
+    "open_space_viewer",
+    "show_space_pip",
+    "space_bash",
+    "space_write",
+    "stream_endpoint",
+    "stream_space_window",
+    "teleport_app",
+    "teleport_manifest",
+    "upload"
+  ]
+}

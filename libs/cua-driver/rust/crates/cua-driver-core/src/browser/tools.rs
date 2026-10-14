@@ -14,15 +14,13 @@ use crate::protocol::{Content, ToolResult};
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
-use super::approval::MCP_HOST_APPROVAL_ARG;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{
-    BrowserVisualActionKind, PrepareAuthorization, PrepareProfile, PrepareRequest, PrepareStrategy,
-};
+use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
 use super::types::BindingQuality;
 
@@ -63,6 +61,30 @@ fn require_explicit_session(args: &Value) -> Result<String, ToolResult> {
     Ok(sid)
 }
 
+/// `delivery_mode` of a trusted page mutation: `background` (default)
+/// refuses trusted input that would activate the browser window on platforms
+/// where the trusted route cannot stay in the background; `foreground`
+/// accepts that activation. Returns true for `foreground`.
+pub(crate) fn parse_delivery_mode(args: &Value) -> Result<bool, String> {
+    match args.get("delivery_mode").and_then(Value::as_str) {
+        None => Ok(false),
+        Some(mode) if mode.eq_ignore_ascii_case("background") => Ok(false),
+        Some(mode) if mode.eq_ignore_ascii_case("foreground") => Ok(true),
+        Some(other) => Err(format!(
+            "delivery_mode must be \"background\" or \"foreground\", got {other:?}"
+        )),
+    }
+}
+
+fn schema_delivery_mode() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["background", "foreground"],
+        "default": "background",
+        "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
+    })
+}
+
 fn schema_target_id() -> Value {
     json!({
         "type": "string",
@@ -84,13 +106,6 @@ fn schema_ref() -> Value {
         "description": "Page element ref in the p<snapshot>:<index> namespace from \
             get_browser_state. Refs are invalidated by navigation and by newer \
             snapshots of the same tab."
-    })
-}
-
-fn schema_session() -> Value {
-    json!({
-        "type": "string",
-        "description": "Stable caller-declared session id. Browser targets, tabs, and refs are scoped to this session."
     })
 }
 
@@ -260,9 +275,11 @@ impl GetBrowserStateTool {
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
                 semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                opaque continuation. Never performs setup: a browser that is not \
+                attached yet refuses with browser_consent_required or \
+                browser_requires_setup, and detail.next_call names the browser_prepare call \
+                that attaches it. Use this route for any web page in Chrome, Edge or Brave; \
+                desktop pointer tools move the user's pointer."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -569,6 +586,8 @@ impl Tool for GetBrowserStateTool {
                     "target_id": target_id,
                     "binding_quality": quality,
                     "binding_route": binding_route,
+                    "endpoint_transport": record.endpoint_transport,
+                    "endpoint_access_class": record.endpoint_access_class,
                     "mutation_allowed": record.quality == BindingQuality::Exact,
                     "native_title": record.native_title,
                     "tabs": tabs,
@@ -590,11 +609,21 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser \
-                pid. Existing endpoints are detected without side effects. Acting setup \
-                for an isolated profile requires host approval or a short-lived setup \
-                token plus allow_launch=true. It launches a separate browser and never \
-                copies, modifies, or terminates the requested user profile. Existing-profile \
+            description: "Attach the browser tools to a browser. For a page in the user's \
+                running Chrome, Edge or Brave, call it once with pid, window_id, session and \
+                strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with \
+                browser_consent_required or browser_requires_setup; then call \
+                get_browser_state again and act with browser_click, browser_type or \
+                browser_pointer. It attaches, or refuses with nothing changed and says why. \
+                Explicitly prepare an owned DevTools endpoint for a browser. \
+                pid is required for an existing process or existing-profile attachment, \
+                and optional only for allow_launch=true with an isolated profile. Existing \
+                endpoints are detected without side effects. Acting setup \
+                for an isolated profile follows the runtime permission mode and optional \
+                capability manifest. It requires allow_launch=true, launches a separate browser, and never \
+                copies, modifies, or terminates the requested user profile. Without pid, only a \
+                platform-attested system Chrome/Edge installation (or a root-owned package \
+                payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile \
                 attachment is explicit and follows the runtime's immutable permission mode: \
                 standard requires an explicit --grant existing-profile launch grant or an \
                 embedding authorization host, bounded requires a launch-approved exact resource \
@@ -604,23 +633,29 @@ impl BrowserPrepareTool {
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
-                ambiguity is refused."
+                ambiguity is refused. Where attaching would bring the browser in front of \
+                the user's app (macOS Chrome shows its own remote-debugging prompt in front \
+                whenever the driver opens a new browser connection; sessions for the same \
+                browser share one approved connection, kept for up to 30 minutes idle and \
+                8 hours in total, so later sessions do not prompt again), existing-profile \
+                attachment refuses with \
+                background_unavailable unless delivery_mode is \"foreground\" (the app that \
+                was in front is brought back afterwards) or the browser window is on another \
+                Space than the user's, where it attaches in the background while the driver \
+                reverts the browser's own brief activations."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare." },
+                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true." },
                     "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
-                    "approval_token": {
-                        "type": "string",
-                        "description": "Legacy single-use setup token. Existing-profile use is disabled unless a trusted launcher explicitly enables the same-user-writable compatibility path."
-                    },
                     "allow_launch": {
                         "type": "boolean",
                         "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
                     },
                     "profile": {
                         "type": "object",
+                        "description": "Driver-owned isolated Chromium profile to launch with allow_launch=true. mode=isolated_new creates a fresh throwaway profile; mode=isolated_named reuses the named driver-owned profile. Never an existing user profile.",
                         "properties": {
                             "mode": { "type": "string", "enum": ["isolated_new", "isolated_named"] },
                             "name": { "type": "string", "description": "Required only for isolated_named; 1-64 path-safe ASCII characters." }
@@ -630,15 +665,25 @@ impl BrowserPrepareTool {
                     },
                     "strategy": {
                         "type": "object",
+                        "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
                         "properties": {
                             "kind": { "type": "string", "enum": ["existing_profile"] }
                         },
                         "required": ["kind"],
                         "additionalProperties": false
                     },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "default": "background",
+                        "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
+                    },
                     "session": schema_session(),
                 },
-                "required": ["pid"],
+                // Keep the top-level input schema a plain object. Bedrock rejects
+                // anyOf/oneOf/allOf at this level, so the conditional pid/profile
+                // contract is described above and enforced by invoke instead.
+                "required": [],
                 "additionalProperties": true
             }),
             read_only: false,
@@ -657,10 +702,6 @@ impl Tool for BrowserPrepareTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.require_i64("pid") {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
         let session = match require_explicit_session(&args) {
             Ok(session) => session,
             Err(error) => return error,
@@ -680,32 +721,41 @@ impl Tool for BrowserPrepareTool {
                 Ok(strategy) => Some(strategy),
                 Err(error) => {
                     return ToolResult::error(format!(
-                        "invalid browser preparation strategy: {error}"
+                        "invalid browser preparation strategy ({error}). Pass an object: \
+                         \"strategy\": {{\"kind\": \"existing_profile\"}}, with pid and \
+                         window_id from list_windows."
                     ))
                 }
             },
         };
-        let approval_token = args.opt_str("approval_token");
-        let authorization = if strategy == Some(PrepareStrategy::ExistingProfile) {
-            approval_token.map(PrepareAuthorization::ApprovalArtifact)
-        } else if args
-            .get(MCP_HOST_APPROVAL_ARG)
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            Some(PrepareAuthorization::McpHost)
-        } else {
-            approval_token.map(PrepareAuthorization::ApprovalArtifact)
+        let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let foreground = match parse_delivery_mode(&args) {
+            Ok(foreground) => foreground,
+            Err(error) => return ToolResult::error(error),
         };
+        let pid = match args.get("pid") {
+            None => None,
+            Some(_) => match args.require_i64("pid") {
+                Ok(pid) => Some(pid),
+                Err(error) => return error,
+            },
+        };
+        let pid_optional = strategy.is_none() && profile.is_some() && allow_launch;
+        if pid.is_none() && !pid_optional {
+            return match args.require_i64("pid") {
+                Ok(_) => unreachable!("pid was already parsed"),
+                Err(error) => error,
+            };
+        }
         let request = PrepareRequest {
             pid,
             window_id: args.opt_u64("window_id"),
             session,
             transport_session: args.opt_str("_transport_session_id"),
-            authorization,
             strategy,
             profile,
-            allow_launch: args.opt_bool("allow_launch").unwrap_or(false),
+            allow_launch,
+            foreground,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -730,6 +780,24 @@ impl Tool for BrowserPrepareTool {
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))
+            }
+            Err(refusal) if refusal.code == BrowserRefusalCode::BackgroundUnavailable => {
+                let reason = refusal
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.get("limitation"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("attaching would bring the browser to the front")
+                    .to_owned();
+                crate::delivery::background_unavailable_result(
+                    format!("browser_prepare refused: {}", refusal.message),
+                    refusal.code.as_str(),
+                    reason,
+                    json!({
+                        "status": "refused",
+                        "refusal": refusal,
+                    }),
+                )
             }
             Err(refusal) => refusal.to_tool_result(),
         }
@@ -885,9 +953,12 @@ impl BrowserClickTool {
             description: "Click a page element (by ref) or viewport coordinates in an \
                 exactly-bound tab. Default route is trusted hardware-like input \
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
-                preserve standalone-browser background posture. \
-                input_route=\"dom_event\" (synthetic \
-                el.click(), ref required) is used only when explicitly requested; \
+                preserve standalone-browser background posture unless \
+                delivery_mode=\"foreground\" accepts that the browser window may \
+                activate (including Linux Chromium configurations whose trusted route cannot stay in the background; \
+                for example a browser inside a sandbox). \
+                input_route=\"dom_event\" (synthetic pointer and mouse \
+                down/up/click sequence at the element's center, ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
                 controls may ignore synthetic events. \
                 Refused for heuristic bindings."
@@ -901,6 +972,7 @@ impl BrowserClickTool {
                     "ref": schema_ref(),
                     "x": { "type": "number", "description": "Viewport x (CSS px) — alternative to ref." },
                     "y": { "type": "number", "description": "Viewport y (CSS px) — alternative to ref." },
+                    "delivery_mode": schema_delivery_mode(),
                     "input_route": {
                         "type": "string",
                         "enum": ["trusted", "dom_event"],
@@ -984,6 +1056,10 @@ impl Tool for BrowserClickTool {
         if route == "dom_event" && ext_ref.is_none() {
             return ToolResult::error("input_route=dom_event requires a ref");
         }
+        let foreground = match parse_delivery_mode(&args) {
+            Ok(f) => f,
+            Err(e) => return ToolResult::error(e),
+        };
 
         // Resolve the ref BEFORE revalidation? No — revalidate first so a
         // stale binding refuses before we touch the page at all.
@@ -1003,7 +1079,7 @@ impl Tool for BrowserClickTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        if route == "trusted" && validated.record.cdp_window_id.is_some() {
+        if route == "trusted" && !foreground && validated.record.cdp_window_id.is_some() {
             if let Some(limitation) = self
                 .engine
                 .platform
@@ -1012,7 +1088,7 @@ impl Tool for BrowserClickTool {
                 return BrowserRefusal::new(
                     BrowserRefusalCode::BrowserInputTrustUnavailable,
                     format!(
-                        "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click"
+                        "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click, or delivery_mode=\"foreground\" to accept that the browser window may activate"
                     ),
                 )
                 .with_detail(json!({
@@ -1020,6 +1096,7 @@ impl Tool for BrowserClickTool {
                     "limitation": limitation,
                     "alternative_route": "dom_event",
                     "alternative_requires_ref": true,
+                    "alternative_delivery_mode": "foreground",
                     "trusted_delivery_attempted": false,
                 }))
                 .to_tool_result();
@@ -1141,7 +1218,7 @@ impl Tool for BrowserClickTool {
                     "Runtime.callFunctionOn",
                     json!({
                         "objectId": object_id,
-                        "functionDeclaration": "function() { this.click(); }",
+                        "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
                     }),
                 )
                 .await
@@ -1294,6 +1371,7 @@ impl Tool for BrowserClickTool {
         ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}")).with_structured(json!({
             "status": "ok",
             "route": "trusted",
+            "delivery_mode": if foreground { "foreground" } else { "background" },
             "target_id": target_id,
             "tab_id": tab_id,
             "ref": ext_ref,
@@ -1318,6 +1396,47 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let ys = [nums[1], nums[3], nums[5], nums[7]];
     Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
+
+/// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
+///
+/// `HTMLElement.click()` fires only a bare `click` with no coordinates, so
+/// apps that open rows or menus from `pointerdown`/`mousedown`/`pointerup`
+/// (common in React tables and grids) ignore it. This dispatches the sequence
+/// a real primary-button mouse click produces, at the element's center and on
+/// the hit-tested descendant there: hover, move, down, focus, up, click. Like
+/// a real click, `preventDefault()` on `pointerdown` suppresses the
+/// compatibility mouse events, and on `mousedown` suppresses the focus move.
+/// The events stay untrusted (`isTrusted === false`).
+const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
+    const el = this; \
+    const doc = el.ownerDocument; \
+    const view = doc.defaultView; \
+    const r = el.getBoundingClientRect(); \
+    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
+    const root = el.getRootNode(); \
+    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+    const target = (hit && el.contains(hit)) ? hit : el; \
+    const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
+    const base = { bubbles: true, cancelable: true, composed: true, view, \
+        clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
+    const P = (type, buttons, extra) => target.dispatchEvent(new view.PointerEvent(type, \
+        { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
+          width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
+    const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
+        { ...base, buttons, detail: 0, ...extra })); \
+    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
+    P('pointermove', 0); M('mousemove', 0); \
+    const compat = P('pointerdown', 1); \
+    if (compat && M('mousedown', 1, { detail: 1 })) { \
+        const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
+        if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
+    } \
+    P('pointerup', 0); \
+    if (compat) M('mouseup', 0, { detail: 1 }); \
+    M('click', 0, { detail: 1 }); \
+    return true; \
+}";
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 
@@ -2082,7 +2201,7 @@ impl BrowserDialogTool {
                         "target_id": schema_target_id(),
                         "tab_id": schema_tab_id(),
                         "session": schema_session(),
-                        "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"] },
+                        "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"], "description": "inspect returns the current dialog and its dialog_id; accept or dismiss resolves that exact dialog." },
                         "dialog_id": { "type": "string", "description": "Opaque current dialog generation returned by action=inspect." },
                         "prompt_text": { "type": "string", "description": "Sensitive response text, valid only when accepting a prompt dialog." },
                         "delivery_mode": {
@@ -2299,6 +2418,7 @@ impl BrowserSetInputFilesTool {
                         "ref": schema_ref(),
                         "files": {
                             "type": "array", "minItems": 1, "maxItems": 32,
+                            "description": "Absolute paths of 1 to 32 local regular files to assign to the input.",
                             "items": { "type": "string", "description": "Absolute path to one local regular file." }
                         }
                     },
@@ -2500,6 +2620,7 @@ mod tests {
                     product_kind: BrowserProduct::GoogleChrome,
                     product: Some("MockChrome".into()),
                     channel: Some("stable".into()),
+                    process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: true,
                 },
                 3 => BrowserClassification {
@@ -2508,6 +2629,7 @@ mod tests {
                     product_kind: BrowserProduct::Safari,
                     product: Some("MockSafari".into()),
                     channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: false,
                 },
                 4 => BrowserClassification {
@@ -2516,6 +2638,7 @@ mod tests {
                     product_kind: BrowserProduct::Firefox,
                     product: Some("MockFirefox".into()),
                     channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::StandaloneConsumer,
                     supports_cdp: false,
                 },
                 _ => BrowserClassification {
@@ -2524,6 +2647,7 @@ mod tests {
                     product_kind: BrowserProduct::Other,
                     product: None,
                     channel: None,
+                    process_role: crate::browser::types::BrowserProcessRole::Unknown,
                     supports_cdp: false,
                 },
             })
@@ -2623,7 +2747,7 @@ mod tests {
             .expect("browser_prepare properties");
         assert!(!prepare_properties.contains_key("consent"));
         assert!(!prepare_properties.contains_key("allow_restart"));
-        assert!(!prepare_properties.contains_key(MCP_HOST_APPROVAL_ARG));
+        assert!(!prepare_properties.contains_key("approval_token"));
 
         let dialog = BrowserDialogTool::new(e.clone());
         assert_eq!(
@@ -2821,18 +2945,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_endpoint_refuses_requires_setup_without_preparing() {
+    async fn standalone_consumer_refuses_existing_profile_approval_without_preparing() {
         let tool = GetBrowserStateTool::new(engine());
         let result = tool
             .invoke(json!({ "pid": 1, "window_id": 7, "_session_id": "run-1" }))
             .await;
         let s = structured(&result);
         assert_eq!(s["status"], "refused");
-        assert_eq!(s["refusal"]["code"], "browser_requires_setup");
+        assert_eq!(s["refusal"]["code"], "browser_consent_required");
+        assert_eq!(
+            s["refusal"]["detail"]["reason"],
+            "consumer_profile_endpoint_requires_grant"
+        );
+        assert_eq!(s["refusal"]["detail"]["next_action"], "browser_prepare");
     }
 
     #[tokio::test]
-    async fn prepare_requires_non_forgeable_approval_for_acting_setup() {
+    async fn isolated_prepare_uses_runtime_authorization_without_a_token() {
         let tool = BrowserPrepareTool::new(engine());
         let result = tool
             .invoke(json!({
@@ -2844,47 +2973,88 @@ mod tests {
             .await;
         assert_eq!(
             structured(&result)["refusal"]["code"],
-            "browser_consent_required"
+            "browser_route_unavailable"
         );
     }
 
     #[tokio::test]
-    async fn ordinary_mcp_marker_never_approves_an_existing_profile() {
+    async fn isolated_launch_accepts_omitted_pid() {
+        let tool = BrowserPrepareTool::new(engine());
+        let result = tool
+            .invoke(json!({
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-isolated-run"
+            }))
+            .await;
+        assert_eq!(
+            structured(&result)["refusal"]["code"],
+            "browser_route_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn pid_remains_required_without_a_complete_isolated_launch_request() {
+        let tool = BrowserPrepareTool::new(engine());
+        for request in [
+            json!({
+                "allow_launch": true,
+                "session": "pid-free-without-profile"
+            }),
+            json!({
+                "profile": { "mode": "isolated_new" },
+                "session": "pid-free-without-allow-launch"
+            }),
+            json!({
+                "window_id": 7,
+                "strategy": { "kind": "existing_profile" },
+                "session": "existing-profile-without-pid"
+            }),
+            json!({
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "strategy": { "kind": "existing_profile" },
+                "session": "conflicting-strategy-without-pid"
+            }),
+        ] {
+            let result = tool.invoke(request).await;
+            assert_eq!(result.is_error, Some(true));
+            let body = serde_json::to_string(&result.content).expect("serialize tool error");
+            assert!(
+                body.contains("Missing required integer field: pid"),
+                "{body}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_profile_requires_runtime_authorization() {
         let tool = BrowserPrepareTool::new(engine());
         let result = tool
             .invoke(json!({
                 "pid": 1,
                 "window_id": 7,
                 "strategy": { "kind": "existing_profile" },
-                "session": "existing-profile-run",
-                MCP_HOST_APPROVAL_ARG: true
+                "session": "existing-profile-run"
             }))
             .await;
         let structured = structured(&result);
         assert_eq!(structured["refusal"]["code"], "browser_consent_required");
-        assert!(structured["refusal"]["detail"]["approval_request_id"]
-            .as_str()
-            .is_some());
+        assert_eq!(
+            structured["refusal"]["detail"]["authorization_required"],
+            true
+        );
     }
 
     #[tokio::test]
     async fn existing_strategy_conflicts_fail_before_platform_setup() {
         let tool = BrowserPrepareTool::new(engine());
-        let token = crate::browser::approval::mint_existing_profile_approval(
-            crate::browser::approval::ExistingProfileApprovalScope {
-                pid: 1,
-                window_id: 7,
-                session: "existing-conflict".to_owned(),
-            },
-        )
-        .unwrap();
         let result = tool
             .invoke(json!({
                 "pid": 1,
                 "window_id": 7,
                 "strategy": { "kind": "existing_profile" },
                 "profile": { "mode": "isolated_new" },
-                "approval_token": token,
                 "session": "existing-conflict"
             }))
             .await;
@@ -2974,8 +3144,11 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
+                endpoint_access_class:
+                    crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
-                grant_transport_session: None,
+                transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(1),
@@ -3032,8 +3205,11 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
+                endpoint_access_class:
+                    crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
-                grant_transport_session: None,
+                transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(999),
@@ -3075,8 +3251,11 @@ mod tests {
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
+                endpoint_transport: crate::browser::types::EndpointTransport::LegacyJsonVersion,
+                endpoint_access_class:
+                    crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
-                grant_transport_session: None,
+                transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
                     start_time: Some(1),

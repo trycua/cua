@@ -1,0 +1,106 @@
+---
+title: 'Perception extension'
+description: 'How the optional cua-perception extension turns one screenshot into regions an agent can act on, and how Cua Driver binds every resulting action to that exact screenshot.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The perception extension lets an agent act on what it can see in a window when
+the application exposes no usable target. It turns one screenshot into
+labelled regions (text, icons, controls), and Cua Driver acts on exactly the
+region the agent chose, bound to the screenshot it came from.
+
+It is optional and runs entirely on the local machine. Cua Driver works without
+it: the accessibility tree and typed browser state remain the first choice for
+finding a target.
+
+## When it helps
+
+Many interfaces hide their targets. Canvas apps, custom-drawn views, games,
+remote desktops, and some web pages have no useful accessibility tree or page
+structure, so an agent has nothing to address by role or label. The extension
+gives those surfaces a structure without sending screenshots to a remote model.
+
+Every [`get_window_state`](/cua-driver/concepts/how-cua-driver-works#observe-tree-and-pixels-together) call
+already returns the accessibility tree and a screenshot together. The extension
+adds one step on top of that observation: it parses the screenshot into
+regions. It does not replace the tree, and it never captures on its own.
+
+## The loop
+
+1. **Capture.** `get_window_state` captures the exact window and returns a
+   `capture_id` with the screenshot.
+2. **Parse.** `parse_visual_regions` turns that screenshot into typed regions
+   with bounds and, for text, the recognized words.
+3. **Choose.** The agent, or an external chooser such as a decision model,
+   selects one region.
+4. **Act.** Cua Driver clicks the region using the same `capture_id`, trying
+   background delivery first.
+5. **Reobserve.** The agent takes a fresh capture to confirm the result before
+   the next step.
+
+Without the extension installed, `parse_visual_regions` returns
+`not_installed`, and agents continue with the accessibility tree or page
+structure. Nothing is downloaded automatically.
+
+## Every action is bound to one screenshot
+
+A region only means something on the screen it was found on. Cua Driver
+therefore ties each perception-based action to its capture:
+
+| Situation | Result |
+| --- | --- |
+| The click carries the `capture_id` of the screenshot the region came from | Delivered |
+| The same capture is reused for another action | Refused with `capture_not_found` |
+| The capture is older than 60 seconds | Refused with `capture_expired` |
+
+Agents receive region bounds and text, never screenshot bytes, and Cua Driver
+keeps the authority to capture and to act. A stale or reused screen is refused
+instead of guessed at.
+
+## What the extension contains
+
+Each release packs local models and a CPU runtime, so parsing needs no GPU and
+no network access.
+
+| Component | Role | License |
+| --- | --- | --- |
+| OmniParser icon detector | Finds icons and controls | AGPL-3.0-only |
+| PP-OCR detector and recognizer | Finds and reads on-screen text | Apache-2.0 |
+| ONNX Runtime (CPU) | Runs the models locally | Shipped with its own notices |
+
+Releases are published as `cua-perception-v<version>` GitHub releases for macOS
+arm64, Linux x64, and Windows x64. Each target has a signed catalog, the
+archive, an SBOM, provenance, a runtime contract, and an install check, plus
+one `SHA256SUMS`. Cua Driver verifies the signed catalog before it installs
+anything, and a verified install reports `publisher-verified`.
+
+<Callout type="warning" title="License precautions">
+  The extension is not MIT licensed. Its OmniParser icon detector is AGPL-3.0-only, and Cua does
+  not relicense it. Installing the extension does not change Cua Driver's MIT license, but
+  redistributing the extension, or offering it to users over a network (for example, inside a
+  hosted product), can require you to provide the AGPL corresponding source. If your organization
+  does not accept AGPL components, skip the extension: Cua Driver keeps working, and
+  `parse_visual_regions` returns `not_installed`. This is not legal advice. See the [third-party
+  notices and
+  precautions](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/perception-third-party-notices.md#before-you-install-redistribute-or-host-the-extension).
+</Callout>
+
+## Install is always explicit
+
+Capture, parsing, Cua Driver startup, and update checks never install the
+extension. You inspect a catalog first and then install, check, update, or
+remove the extension with `cua-driver extension` commands. A running Driver
+picks up an install or removal without a restart.
+
+## Performance
+
+Parsing runs on the CPU. Measured per screenshot on the canonical harnesses:
+about 2–2.5 seconds on macOS, 3.5–4 seconds on Linux, and 8–9 seconds on
+Windows. Prefer accessibility or page targets when they exist, and reserve
+perception for surfaces that expose nothing addressable.
+
+## Related pages
+
+- [Parse visual regions](/cua-driver/guides/visual-regions): install the extension, run the loop step by step, and let a decision model such as jev-use choose among regions.
+- [How Cua Driver works](/cua-driver/concepts/how-cua-driver-works): how observation, action rungs, and delivery fit together.

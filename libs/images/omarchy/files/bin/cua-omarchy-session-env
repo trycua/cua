@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Run by Hyprland at start (files/cua.lua). Publishes the Omarchy session's
+# environment to /run/cua-desktop/desktop.env, which cua-spacesd
+# (start-spacesd.sh) and the fixtures (cua-fixtures) source. cua-desktop-env.path
+# restarts cua-spacesd when it changes, so a new Hyprland instance is picked up.
+set -euo pipefail
+DIR="${CUA_DESKTOP_RUNTIME_DIR:-/run/cua-desktop}"
+[ -d "$DIR" ] && [ -w "$DIR" ] || { echo "cua-omarchy-session-env: $DIR is not writable" >&2; exit 1; }
+tmp="$(mktemp "$DIR/.desktop.env.XXXXXX")"
+{
+    echo "# Written by cua-omarchy-session-env for Hyprland $HYPRLAND_INSTANCE_SIGNATURE"
+    for var in WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS \
+               DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE OMARCHY_PATH; do
+        [ -n "${!var:-}" ] && printf '%s=%q\n' "$var" "${!var}"
+    done
+    echo "CUA_DRIVER_RS_ENABLE_WAYLAND=1"
+    echo "GDK_BACKEND=wayland"
+    printf 'PULSE_SERVER=%q\n' "unix:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
+} >"$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" "$DIR/desktop.env"

@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "repo": "ghcr.io/trycua/macos",
+  "arches": [
+    "arm64"
+  ],
+  "tiers": {
+    "slim": {
+      "series": "26-slim",
+      "tag": "26-slim-{stamp}"
+    },
+    "full": {
+      "series": "26",
+      "tag": "26-{stamp}"
+    },
+    "xcode": {
+      "series": "26-xcode",
+      "tag": "26-xcode-{xcode_version}-{stamp}"
+    }
+  },
+  "vars": {
+    "prefix": "cua-e2e-macos-{stamp}",
+    "base_vm": "",
+    "record_ledger": "false",
+    "xcode_version": "26.6"
+  },
+  "steps": [
+    {
+      "id": "build/arm64",
+      "phase": "build",
+      "requires": [
+        "macos",
+        "accel-arm64"
+      ],
+      "description": "clone the tier below (slim: base_vm, else the versions.env base pull) into {prefix}-{tier}, install, reboot, strict doctor + ax probe, sanitize (build.sh)",
+      "run": [
+        "{dir}/release-tier.sh",
+        "build",
+        "--tier",
+        "{tier}",
+        "--prefix",
+        "{prefix}",
+        "--out",
+        "{out}",
+        "--base-vm",
+        "{base_vm}",
+        "--stamp",
+        "{stamp}"
+      ],
+      "produces": [
+        "{out}/doctor/report.json",
+        "{out}/doctor/lane.json"
+      ]
+    },
+    {
+      "id": "doctor/arm64/lume",
+      "phase": "gate",
+      "description": "the build's cua-spacesd doctor --strict and ax probe verdict, into the evidence",
+      "run": [
+        "{dir}/release-tier.sh",
+        "gate",
+        "--out",
+        "{out}",
+        "--evidence",
+        "{evidence}"
+      ],
+      "produces": [
+        "{evidence}/doctor/arm64-lume/report.json"
+      ]
+    },
+    {
+      "id": "input/arm64/lume",
+      "phase": "gate",
+      "requires": [
+        "macos",
+        "accel-arm64"
+      ],
+      "description": "live input on a clone of the built VM: a Dock click on a whole-display stream is delivered and changes the screen (cua-spaces-ext e2e_macos_input)",
+      "run": [
+        "{dir}/live-input-gate.sh",
+        "--vm",
+        "{prefix}-{tier}",
+        "--out",
+        "{evidence}/input/arm64-lume"
+      ],
+      "produces": [
+        "{evidence}/input/arm64-lume/input.json"
+      ]
+    },
+    {
+      "id": "push/arm64",
+      "phase": "push",
+      "requires": [
+        "macos"
+      ],
+      "description": "lume push {prefix}-{tier} as the immutable <pin>-raw",
+      "run": [
+        "{dir}/release-tier.sh",
+        "push",
+        "--tier",
+        "{tier}",
+        "--prefix",
+        "{prefix}",
+        "--stamp",
+        "{stamp}",
+        "--pin",
+        "{tag}",
+        "--evidence",
+        "{evidence}"
+      ],
+      "produces": [
+        "{evidence}/raw.json"
+      ]
+    },
+    {
+      "id": "publish/arm64",
+      "phase": "publish",
+      "description": "the annotated pin (tier, content key) over the raw push",
+      "run": [
+        "{dir}/release-tier.sh",
+        "publish",
+        "--tier",
+        "{tier}",
+        "--stamp",
+        "{stamp}",
+        "--pin",
+        "{tag}",
+        "--evidence",
+        "{evidence}"
+      ],
+      "produces": [
+        "{evidence}/pushed.json"
+      ]
+    },
+    {
+      "id": "attest",
+      "phase": "publish",
+      "description": "attach the doctor report to the pin; record_ledger=true also records it on the image-doctor-ledger branch",
+      "env": {
+        "ATTEST_DIR": "{evidence}"
+      },
+      "run": [
+        "{root}/scripts/images/attest-doctor-reports.sh",
+        "attest",
+        "{run_url}",
+        "{record_ledger}"
+      ],
+      "produces": [
+        "{evidence}/attested.json"
+      ]
+    },
+    {
+      "id": "verify/arm64/pin",
+      "phase": "verify",
+      "description": "the pin holds the pushed digest, its annotations and the raw push's layers, with a passing doctor report attached",
+      "run": [
+        "{dir}/release-tier.sh",
+        "verify",
+        "--tier",
+        "{tier}",
+        "--evidence",
+        "{evidence}"
+      ]
+    },
+    {
+      "id": "verify/arm64/lume-pulled",
+      "phase": "verify",
+      "requires": [
+        "macos",
+        "accel-arm64",
+        "pull-verify"
+      ],
+      "required": false,
+      "description": "the strict doctor again in a fresh VM pulled from the pin (a full image download; --assume pull-verify)",
+      "run": [
+        "bash",
+        "-c",
+        "exec \"$0/scripts/images/image-doctor-lume.sh\" --image \"$1:$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[\"tag\"])' \"$2/pushed.json\")\" --strict --out \"$2/verify/arm64-lume-pulled\"",
+        "{root}",
+        "{repo}",
+        "{evidence}"
+      ]
+    },
+    {
+      "id": "promote",
+      "phase": "promote",
+      "description": "move the tier's floating tags to the pin (check-tag-safety.sh --moving)",
+      "run": [
+        "{dir}/release-tier.sh",
+        "promote",
+        "--tier",
+        "{tier}",
+        "--evidence",
+        "{evidence}"
+      ]
+    },
+    {
+      "id": "catalog",
+      "phase": "promote",
+      "description": "move the catalog digests of the promoted tags and record their sizes (commit libs/images/sandbox-images.json)",
+      "run": [
+        "python3",
+        "{root}/scripts/images/record-image-sizes.py",
+        "--refresh-digest",
+        "--ref",
+        "{repo}:{series}"
+      ]
+    }
+  ]
+}

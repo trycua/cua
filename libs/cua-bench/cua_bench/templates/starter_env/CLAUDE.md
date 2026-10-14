@@ -19,7 +19,7 @@ Create custom HTML/CSS/JS interfaces that work across all platforms. This is the
 
 - Building custom games, tools, or interfaces
 - Creating simulated versions of real apps (e.g., "a calculator app", "a color picker")
-- You want cross-platform compatibility (simulated, Docker, QEMU)
+- You want the same task on Linux containers and VMs
 - You want to support lightweight, fast iteration
 
 **Example:** Calculator app, Minesweeper game, form-filling task, simulated email client
@@ -39,7 +39,7 @@ Use real applications (Firefox, LibreOffice, etc.) on actual operating systems v
 **When asked "make a task using Firefox":** (or any other task involving a 'real app')
 Ask the user to clarify:
 
-1. Do you want a **simulated clone** using Universal GUI? (faster, recommended)
+1. Do you want a **clone** built with Universal GUI? (faster, recommended)
 2. Do you want a task using **real Firefox** on a native OS? (requires Docker/QEMU)
 
 ## Task Structure
@@ -59,9 +59,9 @@ def load():
             description='Click the "Submit" button.',
             metadata={"button_text": "Submit"},
             computer={
-                "provider": "native",  # or "simulated" for lightweight preview
+                "provider": "native",
                 "setup_config": {
-                    "os_type": "linux",  # linux, windows (native) or win11, macos (simulated)
+                    "os_type": "linux",  # linux (container or VM), windows or macos (VM)
                     "width": 1024,
                     "height": 768
                 }
@@ -73,10 +73,11 @@ def load():
 
 **Provider types:**
 
-- `"native"`: Real OS environments via Docker/QEMU
-  - OS types: `"linux"`, `"windows"`
-- `"simulated"`: Lightweight browser-based desktop (no Docker needed)
-  - Themes: `"win11"`, `"macos"`
+- `"native"` (the only provider since cua-bench 0.3): a real OS in a sandbox.
+  Linux runs as a gVisor container by default (`--kind vm` for QEMU);
+  Windows and macOS run as VMs.
+- Universal GUI pages open with `session.launch_window(html=...)`, which needs
+  bench-ui (pywebview) in the image.
 
 ### 2. Setup Task
 
@@ -138,7 +139,7 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 
 ## Universal GUI (Your Default Tool)
 
-Universal GUI is an Electron-like API for packaging custom HTML/CSS/JS interfaces with your tasks.
+Universal GUI is an API for packaging custom HTML/CSS/JS interfaces as desktop windows with your tasks.
 
 ### Basic Structure
 
@@ -352,8 +353,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 
 **Important limitations:**
 
-- `session.run_command()` only works with native provider (not simulated)
-- Requires Docker/QEMU setup
+- Runs in a sandbox (a local container by default, `--on cloud` for Fleet)
 - Slower than Universal GUI
 - Less deterministic than custom GUIs
 
@@ -412,9 +412,9 @@ def load():
             description=f'Select the {color} color from the palette.',
             metadata={"target_color": color},
             computer={
-                "provider": "simulated",
+                "provider": "native",
                 "setup_config": {
-                    "os_type": "win11",
+                    "os_type": "linux",
                     "width": 512,
                     "height": 512
                 }

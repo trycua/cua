@@ -1,0 +1,156 @@
+---
+title: Adapter benchmarks
+description: 'Run established benchmarks through Cua Bench adapters: OSWorld-Verified, MiniWoB++, WebVoyager, Online-Mind2Web, WebGym and the grounding sets, locally or in the cloud.'
+---
+
+Cua Bench's own tasksets come from the [registry](/cua-bench/guides/benchmarks).
+This page covers established benchmarks from other suites, which run through
+adapters in `libs/cua-bench/tasks/` against converted benchmark images.
+
+Every adapter runs with one command: `cb run dataset <tasks> --agent <agent> --model <model>`.
+Converted images come in two variants, a container (`<ver>`) and a VM disk
+(`<ver>-disk`): `--kind container|vm` picks one.
+Both run cua-spacesd, and every result records `image_ref`, `image_variant`,
+`image_digest` and `arch`.
+
+## Desktop (1)
+
+| Benchmark | What | Tasks | Image |
+| --- | --- | --: | --- |
+| [OSWorld-Verified](#osworld-verified) | Ubuntu desktop apps, real evaluators | 369 | `bench-osworld:verified` |
+
+## Browser (4)
+
+| Benchmark | What | Tasks | Image |
+| --- | --- | --: | --- |
+| [MiniWoB++](https://github.com/Farama-Foundation/miniwob-plusplus) | Synthetic web widgets, offline | 130 | [`bench-web:1.0`](#bench-web) |
+| [WebVoyager](https://github.com/MinorJerry/WebVoyager) | Live sites, LLM judge | 643 | [`bench-web:1.0`](#bench-web) |
+| [Online-Mind2Web](https://github.com/OSU-NLP-Group/Online-Mind2Web) | Live sites, WebJudge | 300 | [`bench-web:1.0`](#bench-web) |
+| [WebGym](https://github.com/microsoft/webgym) | Live-web test split | 1,167 | [`bench-web:1.0`](#bench-web) |
+
+## Grounding (2)
+
+| Benchmark | What | Items | Image |
+| --- | --- | --: | --- |
+| [OSWorld-G](https://github.com/xlang-ai/OSWorld-G) | Click the described element | 564 | none |
+| [ScreenSpot-Pro](https://huggingface.co/datasets/likaixin/ScreenSpot-Pro) | High-resolution professional app screenshots | ~1,581 | none |
+
+Images live under `ghcr.io/trycua/`. How they are built:
+[Convert benchmark images](/cua-bench/guides/convert-benchmark-images).
+
+## OSWorld-Verified
+
+The upstream Ubuntu 22.04 disk
+([xlang-ai/OSWorld](https://github.com/xlang-ai/OSWorld), Apache-2.0) with
+cua-spacesd added.
+
+| | |
+| --- | --- |
+| Image | `ghcr.io/trycua/bench-osworld:verified`, `:verified-disk` |
+| Arch | amd64 |
+| Server | OSWorld control server on `5000` (setup and evaluation) |
+| Needs | outbound network in the guest; KVM for local VMs; `cua-bench[osworld]` |
+
+```bash skip="placeholder"
+pip install "cua-bench[osworld]"
+cb run dataset libs/cua-bench/tasks/osworld --agent <agent> --model <model> --kind vm
+cb run dataset libs/cua-bench/tasks/osworld --agent <agent> --model <model> --kind container
+```
+
+OSWorld's `SetupController` and evaluators run on your machine against the
+guest's server. `CUA_BENCH_OSWORLD_SPLIT` picks the list (`test_all`,
+`test_small`, `test_nogdrive`, `parity`).
+
+- The container variant has no systemd: 13 tasks that need systemd, logind,
+  GNOME settings daemons or audio are marked `container_fidelity: "degraded"`.
+  Run those with `--kind vm`.
+- The image bundles Google Chrome and VS Code under their own terms. You can
+  also build it yourself with the pipeline.
+- The 8 Google Drive tasks need OSWorld's OAuth setup (upstream `SETUP_GUIDELINE.md`).
+
+### Your own OSWorld disk with a Cua Driver MCP service
+
+To keep the upstream disk as is and add only a `cua-driver mcp` service
+(Streamable HTTP on `3000/mcp`), use the recipe in
+[`samples/python/osworld-image`](https://github.com/trycua/cua/tree/main/samples/python/osworld-image).
+It edits an overlay with `virt-customize` (no guest network, `base.qcow2`
+untouched) and packages `disk.img` as a containerDisk. This disk has no
+cua-spacesd; the SDK's OSWorld adapter (`agent_type="osworld"`) talks to the
+control server on `5000` instead.
+
+```bash skip="placeholder"
+docker build -t osworld-guestfs:local osworld-image/guestfs
+docker run --rm --device /dev/kvm -v "$PWD:/work" osworld-guestfs:local \
+  bash /work/osworld-image/build-osworld-cua.sh           # -> disk.img
+export OSWORLD_IMAGE="<registry>/<repo>@sha256:<digest>"  # after pushing the containerDisk
+uv run samples/python/3_osworld_fleet.py                  # OSWORLD_LOCAL=1 boots it under QEMU
+```
+
+- Wrap OSWorld setup and evaluation in timeouts: its controller has none.
+- Downscale the 1920x1080 screenshot to about 1280 px for the model and scale
+  clicks back.
+- Local VM guests have outbound network by default (`network="none"` turns it off).
+- A cloud sandbox that never becomes ready: the probe is TCP on `5000`, so the
+  image is still pulling or the guest has no DHCP lease. `cua fleet pools ls`
+  shows its capacity.
+
+## bench-web
+
+`ghcr.io/trycua/bench-web:1.0` and `:1.0-disk` (public, amd64 and arm64):
+a Linux desktop with Chromium and a DevTools controller (`bench-web-ctl` on
+`7000`) serving the browser benchmarks. It also ships bench-ui (pywebview), so
+it is the desktop image for the registry's
+[desktop tasksets](/cua-bench/guides/benchmarks).
+
+### MiniWoB++
+
+MIT. Needs nothing; scored by the page's own reward. Select with `CUA_BENCH_MINIWOB_TASKS` and `CUA_BENCH_MINIWOB_SEEDS`.
+
+```bash skip="placeholder"
+cb run dataset libs/cua-bench/tasks/miniwob --agent <agent> --model <model>
+CUA_BENCH_MINIWOB_TASKS=click-button,enter-text cb run dataset libs/cua-bench/tasks/miniwob --oracle --kind vm
+```
+
+### WebVoyager
+
+Apache-2.0. Needs guest network and `OPENAI_API_KEY`; scored by WebVoyager `auto_eval` over the final screenshot and answer. Select with `CUA_BENCH_WEBVOYAGER_SITES`.
+
+```bash skip="placeholder"
+CUA_BENCH_WEBVOYAGER_SITES=Allrecipes,ArXiv cb run dataset libs/cua-bench/tasks/webvoyager \
+  --agent <agent> --model <model> --max-variants 10
+```
+
+### Online-Mind2Web
+
+MIT, data CC-BY-4.0. Needs guest network, `OPENAI_API_KEY`, the [gated task list](https://huggingface.co/datasets/osunlp/Online-Mind2Web) and `hf auth login`; scored by WebJudge. Select with `CUA_BENCH_OM2W_LEVEL` (`easy`, `medium`, `hard`).
+
+```bash skip="placeholder"
+CUA_BENCH_OM2W_LEVEL=easy cb run dataset libs/cua-bench/tasks/online_mind2web \
+  --agent <agent> --model <model> --max-variants 10
+```
+
+### WebGym
+
+MIT, data CDLA-Permissive-2.0. Needs guest network and `OPENAI_API_KEY`; scored by an LLM judge. Select with `--max-variants`.
+
+```bash skip="placeholder"
+cb run dataset libs/cua-bench/tasks/webgym --agent <agent> --model <model> --kind vm
+```
+
+`--oracle` runs scripted solutions where a set has them; `--noop` scores an
+untouched page.
+
+## Screenshot-only sets
+
+These score grounding on screenshots; no sandbox starts. Images are fetched
+once, checked against pinned hashes and cached.
+
+- OSWorld-G (Apache-2.0): the first click must land in the target box or
+  polygon; refusal items score only when the agent reports the task infeasible.
+- ScreenSpot-Pro (MIT): one point action per item, from pro apps on Windows,
+  macOS and Linux; fetched per item, so a subset never downloads the 3.3 GB set.
+
+```bash skip="placeholder"
+cb run dataset libs/cua-bench/tasks/osworld_g --agent <agent> --model <model>
+CUA_BENCH_SSPRO_APPS=excel_macos cb run dataset libs/cua-bench/tasks/screenspot_pro --oracle
+```

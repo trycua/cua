@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::host_state::{apply_env, IsolatedStateRoot};
 use crate::reaper::{spawn_in_job, ChildReaper};
 
 #[cfg(not(unix))]
@@ -17,9 +18,25 @@ pub(crate) struct TestDaemon {
     pub(crate) pid: u32,
     #[cfg(unix)]
     _socket_dir: tempfile::TempDir,
+    /// Per-user state root shared by the daemon and its transport clients.
+    /// `None` only when the caller opted into host state.
+    state_root: Option<IsolatedStateRoot>,
 }
 
 impl TestDaemon {
+    /// Give a transport client (stdio proxy, one-shot CLI call) the same
+    /// per-user state root as the daemon it talks to.
+    pub(crate) fn apply_state_root(&self, command: &mut Command) {
+        if let Some(root) = &self.state_root {
+            root.apply(command);
+        }
+    }
+
+    /// Root of the isolated per-user state, when the daemon has one.
+    pub(crate) fn state_root(&self) -> Option<&Path> {
+        self.state_root.as_ref().map(IsolatedStateRoot::path)
+    }
+
     pub(crate) fn spawn(
         binary: &Path,
         reaper: &mut ChildReaper,
@@ -83,9 +100,13 @@ impl TestDaemon {
         if !overlay_enabled {
             command.arg("--no-overlay");
         }
-        for (key, value) in env {
-            command.env(key, value);
+        // Never let a test-owned daemon read the developer's installed-product
+        // state (Computer History admission, config, extensions, ...).
+        let state_root = IsolatedStateRoot::for_env(env);
+        if state_root.is_none() && !crate::host_state::shares_host_state(env) {
+            return None;
         }
+        apply_env(&mut command, state_root.as_ref(), env);
         // Spawn directly so the `Child` stays reachable for `try_wait` below;
         // the reaper adopts it on every exit path. Without the handle, a daemon
         // that dies during startup is indistinguishable from one that is merely
@@ -117,6 +138,7 @@ impl TestDaemon {
                     pid,
                     #[cfg(unix)]
                     _socket_dir: socket_dir,
+                    state_root,
                 });
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -151,8 +173,9 @@ const READINESS_WINDOW: Duration = Duration::from_secs(10);
 /// connection but never answers blocks forever. The outer deadline is only
 /// consulted *between* attempts, so without an independent per-attempt bound
 /// one stalled connection consumes the entire readiness window and the failure
-/// surfaces as a bare "did not become ready" (#2480).
-#[cfg(target_os = "windows")]
+/// surfaces as a bare "did not become ready" (#2480). Unix sockets use the
+/// same bound as their read/write timeout.
+#[cfg(any(unix, target_os = "windows"))]
 const PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How far a single readiness probe progressed.
@@ -194,12 +217,57 @@ impl ProbeOutcome {
     }
 }
 
+/// One request/response exchange of the daemon protocol over an open stream.
+///
+/// Every transport runs the same exchange instead of treating "connectable" as
+/// ready. A finite CLI command is wrapped by the telemetry completion observer,
+/// which makes it an unnecessarily heavy and timing-sensitive readiness probe
+/// on hosted runners. Completing `list` also proves that the server has
+/// progressed past socket creation and can service the connection.
+#[cfg(any(unix, target_os = "windows"))]
+fn probe_protocol<S: std::io::Read + std::io::Write>(mut stream: S) -> ProbeOutcome {
+    use std::io::{BufRead, BufReader};
+
+    if stream
+        .write_all(b"{\"method\":\"list\"}\n")
+        .and_then(|()| stream.flush())
+        .is_err()
+    {
+        return ProbeOutcome::WriteFailed;
+    }
+    let mut response = String::new();
+    match BufReader::new(stream).read_line(&mut response) {
+        Ok(read) if read > 0 => {}
+        _ => return ProbeOutcome::NoResponse,
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
+        return ProbeOutcome::MalformedResponse;
+    };
+    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        ProbeOutcome::Ready
+    } else {
+        ProbeOutcome::NotOk
+    }
+}
+
 #[cfg(unix)]
 fn daemon_is_listening(_binary: &Path, socket: &str) -> ProbeOutcome {
-    match std::os::unix::net::UnixStream::connect(socket) {
-        Ok(_) => ProbeOutcome::Ready,
-        Err(_) => ProbeOutcome::PipeUnavailable,
+    probe_socket_with_timeout(socket, PROBE_ATTEMPT_TIMEOUT)
+}
+
+/// Unix sockets carry native read/write timeouts, so the per-attempt bound
+/// needs no worker thread.
+#[cfg(unix)]
+fn probe_socket_with_timeout(socket: &str, timeout: Duration) -> ProbeOutcome {
+    let Ok(stream) = std::os::unix::net::UnixStream::connect(socket) else {
+        return ProbeOutcome::PipeUnavailable;
+    };
+    if stream.set_read_timeout(Some(timeout)).is_err()
+        || stream.set_write_timeout(Some(timeout)).is_err()
+    {
+        return ProbeOutcome::WriteFailed;
     }
+    probe_protocol(stream)
 }
 
 /// Run one named-pipe probe under an independent timeout.
@@ -234,13 +302,6 @@ fn probe_pipe_with_timeout(socket: &str, timeout: Duration) -> ProbeOutcome {
 
 #[cfg(target_os = "windows")]
 fn probe_pipe_once(socket: &str) -> ProbeOutcome {
-    use std::io::{BufRead, BufReader, Write};
-
-    // Exercise the real named-pipe protocol instead of spawning `status`.
-    // A finite CLI command is wrapped by the telemetry completion observer,
-    // which makes it an unnecessarily heavy and timing-sensitive readiness
-    // probe on hosted Windows runners. Completing `list` also proves that the
-    // server has progressed past pipe creation and can service the connection.
     let Ok(pipe) = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -248,29 +309,7 @@ fn probe_pipe_once(socket: &str) -> ProbeOutcome {
     else {
         return ProbeOutcome::PipeUnavailable;
     };
-    let Ok(mut writer) = pipe.try_clone() else {
-        return ProbeOutcome::WriteFailed;
-    };
-    if writer
-        .write_all(b"{\"method\":\"list\"}\n")
-        .and_then(|()| writer.flush())
-        .is_err()
-    {
-        return ProbeOutcome::WriteFailed;
-    }
-
-    let mut response = String::new();
-    if BufReader::new(pipe).read_line(&mut response).is_err() {
-        return ProbeOutcome::NoResponse;
-    }
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
-        return ProbeOutcome::MalformedResponse;
-    };
-    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        ProbeOutcome::Ready
-    } else {
-        ProbeOutcome::NotOk
-    }
+    probe_protocol(pipe)
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
@@ -367,13 +406,100 @@ mod readiness_probe_tests {
 
     /// The per-attempt bound must leave room for several attempts inside the
     /// window; if one attempt could span it, the flake in #2480 returns.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(unix, target_os = "windows"))]
     #[test]
     fn attempt_bound_permits_multiple_attempts_per_window() {
         assert!(
             PROBE_ATTEMPT_TIMEOUT * 4 <= READINESS_WINDOW,
             "one stalled attempt must not consume the readiness window"
         );
+    }
+
+    /// A Unix socket server that accepts one connection, reads the request and
+    /// replies with `response`, or stalls until released when it is `None`.
+    #[cfg(unix)]
+    fn unix_server(
+        response: Option<&'static [u8]>,
+    ) -> (
+        tempfile::TempDir,
+        String,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{BufRead, BufReader, Write};
+
+        let dir = tempfile::Builder::new()
+            .prefix("cua-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = dir.path().join("p.sock").display().to_string();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert_eq!(request, "{\"method\":\"list\"}\n");
+            match response {
+                Some(response) => {
+                    stream.write_all(response).unwrap();
+                    stream.flush().unwrap();
+                }
+                None => {
+                    let _ = release_rx.recv_timeout(Duration::from_secs(5));
+                }
+            }
+        });
+        (dir, socket, release_tx, handle)
+    }
+
+    /// Connectable is not ready: the Unix probe runs the same exchange as the
+    /// Windows pipe probe and reports how far the daemon got.
+    #[cfg(unix)]
+    #[test]
+    fn unix_probe_reports_each_protocol_outcome() {
+        let missing = tempfile::Builder::new()
+            .prefix("cua-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let missing = missing.path().join("none.sock").display().to_string();
+        assert_eq!(
+            probe_socket_with_timeout(&missing, Duration::from_secs(2)),
+            ProbeOutcome::PipeUnavailable
+        );
+        for (response, expected) in [
+            (&b"{\"ok\":true}\n"[..], ProbeOutcome::Ready),
+            (&b"{\"ok\":false}\n"[..], ProbeOutcome::NotOk),
+            (&b"not json\n"[..], ProbeOutcome::MalformedResponse),
+        ] {
+            let (_dir, socket, _release, server) = unix_server(Some(response));
+            assert_eq!(
+                probe_socket_with_timeout(&socket, Duration::from_secs(2)),
+                expected
+            );
+            server.join().unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stalled_unix_socket_attempt_is_bounded() {
+        let (_dir, socket, release, server) = unix_server(None);
+        let attempt_timeout = Duration::from_millis(250);
+        let started = Instant::now();
+        assert_eq!(
+            probe_socket_with_timeout(&socket, attempt_timeout),
+            ProbeOutcome::NoResponse
+        );
+        assert!(
+            started.elapsed() < attempt_timeout * 4,
+            "stalled probe exceeded its attempt bound by too much: {:?}",
+            started.elapsed()
+        );
+        release.send(()).unwrap();
+        server.join().unwrap();
     }
 
     #[cfg(target_os = "windows")]

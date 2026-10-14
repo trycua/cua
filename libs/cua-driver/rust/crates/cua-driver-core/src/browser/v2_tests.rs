@@ -32,9 +32,9 @@ use super::tools::{
     BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 
 // ── Scripted Chromium fixture ────────────────────────────────────────────────
@@ -43,7 +43,10 @@ use super::types::{
 /// test body. Tests flip loaders/capabilities mid-run to simulate
 /// navigations, frame removal, and capability regression.
 #[derive(Debug)]
-struct FixtureState {
+pub(super) struct FixtureState {
+    pub(super) endpoint_responses:
+        std::collections::VecDeque<Result<Option<OwnedEndpoint>, BrowserRefusal>>,
+    pub(super) endpoint_discovery_count: usize,
     oopif_supported: bool,
     oopif_present: bool,
     emit_rogue_attach: bool,
@@ -63,6 +66,14 @@ struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    /// Extra page targets Chromium reports but cannot map to any browser
+    /// window (`Browser.getWindowForTarget` → `-32000 Browser window not
+    /// found`): an extension side panel, an offscreen document.
+    windowless_targets: Vec<Value>,
+    /// Drop the primary tab target T1 from `Target.getTargets`.
+    omit_primary_target: bool,
+    /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
+    primary_window_error: Option<(i64, String)>,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -70,10 +81,15 @@ struct FixtureState {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
+            endpoint_responses: Default::default(),
+            endpoint_discovery_count: 0,
             oopif_supported: true,
             oopif_present: true,
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
+            windowless_targets: Vec::new(),
+            omit_primary_target: false,
+            primary_window_error: None,
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -424,16 +440,43 @@ fn fixture_handler(state: SharedState) -> MockHandler {
         let is_oopif = sess.starts_with("oopif-sess-");
 
         match call.method.as_str() {
-            "Target.getTargets" => MockReply::ok(json!({
-                "targetInfos": [{
+            "Target.getTargets" => {
+                let mut infos: Vec<Value> = Vec::new();
+                if !st.omit_primary_target {
+                    infos.push(json!({
+                        "targetId": "T1",
+                        "type": "page",
+                        "title": "Fixture",
+                        "url": "https://fixture.test/",
+                        "attached": false,
+                    }));
+                }
+                infos.extend(st.windowless_targets.iter().cloned());
+                MockReply::ok(json!({ "targetInfos": infos }))
+            }
+            "Target.getTargetInfo" => MockReply::ok(json!({
+                "targetInfo": {
                     "targetId": "T1",
                     "type": "page",
-                    "title": "Fixture",
+                    "title": "Fixture after navigation",
                     "url": "https://fixture.test/",
-                    "attached": false,
-                }]
+                    "attached": true,
+                }
             })),
-            "Browser.getWindowForTarget" => MockReply::ok(json!({ "windowId": 11 })),
+            "Browser.getWindowForTarget" => {
+                let target_id = call.params["targetId"].as_str().unwrap_or("");
+                let windowless = st
+                    .windowless_targets
+                    .iter()
+                    .any(|t| t["targetId"].as_str() == Some(target_id));
+                if windowless {
+                    MockReply::err(-32000, "Browser window not found")
+                } else if let Some((code, message)) = st.primary_window_error.clone() {
+                    MockReply::err(code, &message)
+                } else {
+                    MockReply::ok(json!({ "windowId": 11 }))
+                }
+            }
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
             })),
@@ -660,13 +703,31 @@ fn fixture_handler(state: SharedState) -> MockHandler {
 /// Platform adapter pointing at the fixture endpoint: pid 1 is a
 /// Chromium browser owning native window 7 at (0,0,800,600).
 struct FixturePlatform {
+    endpoint_state: Option<SharedState>,
     ws_url: String,
     trusted_input_limited: bool,
     managed_endpoint_visible: bool,
+    process_role: BrowserProcessRole,
+    managed_discovery_invoked: Arc<AtomicBool>,
     existing_endpoint_visible: Arc<AtomicBool>,
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    focus: Arc<FixtureFocus>,
+}
+
+/// Foreground model for existing-profile attachment: whether attaching
+/// brings the browser forward on this "platform", which pid is in front,
+/// and which restores core asked for.
+#[derive(Default)]
+struct FixtureFocus {
+    attach_activates_browser: bool,
+    frontmost: StdMutex<Option<i64>>,
+    restores: StdMutex<Vec<(i64, i64)>>,
+    /// The browser window is on another Space than the user's: the platform
+    /// can guard a background attach.
+    browser_off_space: bool,
+    guards: StdMutex<Vec<(i64, u64)>>,
 }
 
 #[async_trait]
@@ -676,6 +737,41 @@ impl BrowserPlatform for FixturePlatform {
             .then_some("fixture trusted input raises the standalone window")
     }
 
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        self.focus
+            .attach_activates_browser
+            .then_some("fixture browser comes to the front to show its consent prompt")
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        *self.focus.frontmost.lock().unwrap()
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        if !self.focus.browser_off_space {
+            return None;
+        }
+        self.focus
+            .guards
+            .lock()
+            .unwrap()
+            .push((browser_pid, window_id));
+        Some(Box::new(()))
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        self.focus
+            .restores
+            .lock()
+            .unwrap()
+            .push((previous_pid, browser_pid));
+        true
+    }
+
     async fn classify_browser(&self, _pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         Ok(BrowserClassification {
             is_browser: true,
@@ -683,6 +779,9 @@ impl BrowserPlatform for FixturePlatform {
             product_kind: BrowserProduct::GoogleChrome,
             product: Some("MockChrome".into()),
             channel: Some("stable".into()),
+            // The mock endpoint is an explicit in-process harness, not a
+            // personal standalone browser profile.
+            process_role: self.process_role,
             supports_cdp: true,
         })
     }
@@ -718,6 +817,17 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.managed_discovery_invoked.store(true, Ordering::SeqCst);
+        if let Some(state) = &self.endpoint_state {
+            let mut state = state.lock().unwrap();
+            state.endpoint_discovery_count += 1;
+            if state.endpoint_responses.len() > 1 {
+                return state.endpoint_responses.pop_front().unwrap();
+            }
+            if let Some(response) = state.endpoint_responses.front() {
+                return response.clone();
+            }
+        }
         if !self.managed_endpoint_visible {
             return Ok(None);
         }
@@ -734,6 +844,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -754,6 +865,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -779,6 +891,7 @@ impl BrowserPlatform for FixturePlatform {
             endpoint: Some(OwnedEndpoint {
                 ws_url: self.ws_url.clone(),
                 http_port: None,
+                transport: EndpointTransport::DevToolsActivePort,
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: 1,
@@ -844,11 +957,11 @@ impl BrowserPlatform for FixturePlatform {
 
 // ── Scaffolding ──────────────────────────────────────────────────────────────
 
-struct Fixture {
-    state: SharedState,
+pub(super) struct Fixture {
+    pub(super) state: SharedState,
     // Kept alive for the test's duration; dropping it kills the endpoint.
     _server: MockCdpServer,
-    engine: Arc<BrowserEngine>,
+    pub(super) engine: Arc<BrowserEngine>,
     setup_invoked: Arc<AtomicBool>,
 }
 
@@ -866,13 +979,17 @@ async fn fixture_with_platform(
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        endpoint_state: Some(state.clone()),
         ws_url: server.ws_url(),
         trusted_input_limited,
         managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::EmbeddedApplication,
+        managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus: Default::default(),
     }));
     Fixture {
         state,
@@ -882,29 +999,8 @@ async fn fixture_with_platform(
     }
 }
 
-async fn fixture() -> Fixture {
+pub(super) async fn fixture() -> Fixture {
     fixture_with(|_| {}).await
-}
-
-async fn existing_profile_only_fixture() -> Fixture {
-    let state = Arc::new(StdMutex::new(FixtureState::default()));
-    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
-    let setup_invoked = Arc::new(AtomicBool::new(false));
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: server.ws_url(),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
-        setup_invoked: setup_invoked.clone(),
-        setup_aborted: Arc::new(AtomicBool::new(false)),
-        stall_consent: false,
-    }));
-    Fixture {
-        state,
-        _server: server,
-        engine,
-        setup_invoked,
-    }
 }
 
 struct FixtureProtectedProvider {
@@ -938,13 +1034,17 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
     });
     let engine = BrowserEngine::new_with_protected_consent_provider(
         Arc::new(FixturePlatform {
+            endpoint_state: None,
             ws_url: server.ws_url(),
             trusted_input_limited: false,
             managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
             existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(provider.clone()),
     );
@@ -963,15 +1063,24 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: server.ws_url(),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
-        setup_invoked: setup_invoked.clone(),
-        setup_aborted: Arc::new(AtomicBool::new(false)),
-        stall_consent: false,
-    }));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
     (
         Fixture {
             state,
@@ -980,6 +1089,59 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
         },
         setup_invoked,
+    )
+}
+
+/// Existing-profile setup fixture whose platform brings the browser forward
+/// on attach, with `frontmost` in front when the call starts.
+async fn foreground_attach_fixture(
+    frontmost: i64,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    attach_fixture_with_space(frontmost, false).await
+}
+
+async fn attach_fixture_with_space(
+    frontmost: i64,
+    browser_off_space: bool,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let focus = Arc::new(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(frontmost)),
+        restores: StdMutex::new(Vec::new()),
+        browser_off_space,
+        guards: StdMutex::new(Vec::new()),
+    });
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: focus.clone(),
+        }),
+        Some(provider.clone()),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked,
+        },
+        focus,
+        provider,
     )
 }
 
@@ -1006,26 +1168,79 @@ async fn bind(f: &Fixture) -> (String, String) {
 }
 
 #[tokio::test]
+async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discovery() {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state)).await;
+    let managed_discovery_invoked = Arc::new(AtomicBool::new(false));
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        endpoint_state: None,
+        ws_url: server.ws_url(),
+        trusted_input_limited: false,
+        managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::StandaloneConsumer,
+        managed_discovery_invoked: managed_discovery_invoked.clone(),
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+        focus: Default::default(),
+    }));
+
+    let result = GetBrowserStateTool::new(engine)
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused");
+    assert_eq!(refusal["refusal"]["code"], "browser_consent_required");
+    assert_eq!(
+        refusal["refusal"]["detail"]["reason"],
+        "consumer_profile_endpoint_requires_grant"
+    );
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_action"],
+        "browser_prepare"
+    );
+    // The refusal names the exact call that attaches, so an agent does not
+    // read it as a request for the user's approval (Bench v2 PR-02).
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_call"],
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": 1,
+                "window_id": 7,
+                "session": SESSION,
+                "strategy": { "kind": "existing_profile" },
+            },
+        })
+    );
+    let message = refusal["refusal"]["message"].as_str().unwrap();
+    assert!(message.contains("not attached to this browser window yet"));
+    assert!(message.contains("Call browser_prepare"));
+    assert!(!message.contains("approval before"));
+    assert!(
+        !managed_discovery_invoked.load(Ordering::SeqCst),
+        "read-only bind must not inspect a consent-gated endpoint"
+    );
+    assert!(
+        !setup_invoked.load(Ordering::SeqCst),
+        "read-only bind must never invoke browser setup UI"
+    );
+}
+
+#[tokio::test]
 async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     // Match Chrome's per-instance toggle: the endpoint is discoverable only
     // through the approved existing-profile route, never as driver-managed.
-    let f = existing_profile_only_fixture().await;
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
+    let (f, provider) = protected_existing_profile_fixture().await;
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
             "_transport_session_id": "transport-v2-attach",
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }))
         .await;
     let prepared = structured(&prepare);
@@ -1034,6 +1249,7 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     assert_eq!(prepared["attachment"]["kind"], "existing_profile");
     assert_eq!(prepared["attachment"]["capabilities_invalidated"], true);
     assert_eq!(prepared["side_effects"]["displayed_consent_prompt"], false);
+    assert!(provider.consent_seen.load(Ordering::SeqCst));
     assert!(!f.setup_invoked.load(Ordering::SeqCst));
 
     let state = GetBrowserStateTool::new(f.engine.clone())
@@ -1046,6 +1262,176 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() {
+    const TRANSPORT: &str = "transport-v2-method-policy";
+    let (f, _) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT
+        }))
+        .await;
+    let bound = structured(&state);
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let input = ref_of(&snap, "main", "Shadow Input");
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": button,
+            "input_route": "dom_event",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    let typed = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": input,
+            "text": "policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&typed)["status"], "ok", "{}", structured(&typed));
+    let navigated = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&navigated)["status"],
+        "ok",
+        "{}",
+        structured(&navigated)
+    );
+
+    let forbidden = [
+        "Runtime.enable",
+        "Target.setDiscoverTargets",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Network.enable",
+        "Fetch.enable",
+        "Emulation.setUserAgentOverride",
+        "Emulation.setDeviceMetricsOverride",
+        "Emulation.setTimezoneOverride",
+    ];
+    let calls = f.state.lock().unwrap().calls.clone();
+    for method in forbidden {
+        assert!(
+            calls.iter().all(|(_, observed, _)| observed != method),
+            "existing-profile operation emitted forbidden CDP method {method}: {calls:?}"
+        );
+    }
+
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn existing_profile_sessions_share_one_browser_connection_across_session_ends() {
+    // Chrome asks the person to approve every new browser-level WebSocket.
+    // Sessions for the same browser instance must therefore multiplex over
+    // the one approved socket, survive each other's session end, and let a
+    // later session reuse the parked socket without a new browser prompt.
+    let (f, _provider) = protected_existing_profile_fixture().await;
+    let prepare = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let prepared = BrowserPrepareTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport,
+                    "strategy": { "kind": "existing_profile" }
+                }))
+                .await;
+            structured(&prepared).clone()
+        }
+    };
+    let state = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let state = GetBrowserStateTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport
+                }))
+                .await;
+            structured(&state).clone()
+        }
+    };
+
+    let a = prepare("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a["status"], "ok", "{a}");
+    let after_first_attach = f._server.accepted_connections();
+    assert!(after_first_attach >= 1);
+
+    let b = prepare("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b["status"], "ok", "{b}");
+    assert_eq!(b["side_effects"]["displayed_consent_prompt"], false);
+    let a_state = state("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a_state["status"], "ok", "{a_state}");
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+    assert_eq!(
+        f._server.accepted_connections(),
+        after_first_attach,
+        "a second session must not open another browser-level socket"
+    );
+
+    // Ending A must neither close nor invalidate B's use of the socket.
+    crate::session::fire_session_end("shared-transport-a");
+    tokio::task::yield_now().await;
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+
+    // After every session ended, the next approved session reuses the
+    // parked socket instead of dialing (which would prompt again).
+    crate::session::fire_session_end("shared-transport-b");
+    tokio::task::yield_now().await;
+    let c = prepare("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c["status"], "ok", "{c}");
+    let c_state = state("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c_state["status"], "ok", "{c_state}");
+    assert_eq!(f._server.accepted_connections(), after_first_attach);
+    crate::session::fire_session_end("shared-transport-c");
 }
 
 #[tokio::test]
@@ -1087,21 +1473,12 @@ async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_gra
 #[tokio::test]
 async fn approved_existing_profile_setup_reports_exact_side_effects() {
     let (f, setup_invoked) = existing_profile_setup_fixture().await;
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }))
         .await;
     let prepared = structured(&prepare);
@@ -1127,6 +1504,150 @@ async fn approved_existing_profile_setup_reports_exact_side_effects() {
 }
 
 #[tokio::test]
+async fn background_existing_profile_attach_refuses_before_any_visible_effect() {
+    // pid 99 (the user's app) is in front; attaching would bring pid 1 forward.
+    let (f, focus, provider) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(refused["escalation"]["recommended"], "foreground");
+    assert_eq!(refused["status"], "refused");
+    assert_eq!(refused["refusal"]["code"], "background_unavailable");
+    assert_eq!(refused["refusal"]["detail"]["frontmost_pid"], 99);
+    assert_eq!(refused["refusal"]["detail"]["visible_effects"], false);
+    assert!(
+        !f.setup_invoked.load(Ordering::SeqCst),
+        "a background refusal must not open the setup page"
+    );
+    assert!(
+        !provider.consent_seen.load(Ordering::SeqCst),
+        "a background refusal must not ask for consent"
+    );
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off_space() {
+    // pid 99 (the user's app) is in front on its Space; the browser window is
+    // on another Space, so the platform guards a background attach.
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["action"], "attached_existing_profile");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(*focus.guards.lock().unwrap(), vec![(1, 7)]);
+    // The user's app is brought back if the browser is left in front.
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_on_the_users_space_still_refuses() {
+    let (f, focus, _) = attach_fixture_with_space(99, false).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(
+        refused["refusal"]["detail"]["background_attach_requires"],
+        "browser_window_on_another_space"
+    );
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_does_not_use_the_background_guard() {
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front() {
+    let (f, focus, _) = foreground_attach_fixture(1).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], false);
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_brings_the_previous_app_back() {
+    let (f, focus, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+}
+
+#[tokio::test]
+async fn existing_profile_attach_rejects_an_unknown_delivery_mode() {
+    let (f, _, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "auto",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
 async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1134,31 +1655,31 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
         let (_stream, _) = listener.accept().await.unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     });
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: format!("ws://{address}/devtools/browser"),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
-        setup_invoked: Arc::new(AtomicBool::new(false)),
-        setup_aborted: Arc::new(AtomicBool::new(false)),
-        stall_consent: false,
-    }));
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: format!("ws://{address}/devtools/browser"),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
     let prepared = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         BrowserPrepareTool::new(engine).invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         })),
     )
     .await
@@ -1180,31 +1701,31 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     });
     let setup_aborted = Arc::new(AtomicBool::new(false));
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: format!("ws://{address}/devtools/browser"),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
-        setup_invoked: Arc::new(AtomicBool::new(false)),
-        setup_aborted: setup_aborted.clone(),
-        stall_consent: true,
-    }));
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: format!("ws://{address}/devtools/browser"),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: setup_aborted.clone(),
+            stall_consent: true,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
     let cancelled = tokio::time::timeout(
         std::time::Duration::from_millis(750),
         BrowserPrepareTool::new(engine).invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         })),
     )
     .await;
@@ -1326,6 +1847,16 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
         !labels.iter().any(|l| l.contains("role=button")),
         "user-agent shadow content leaked: {snap}"
     );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refreshes_bind_time_title_from_main_document() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture inbox", "{snap}");
 }
 
 #[tokio::test]
@@ -1522,6 +2053,7 @@ async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_conten
     let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
     assert_eq!(continued["status"], "ok", "{continued}");
     assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert_eq!(continued["page"]["title"], "Fixture inbox", "{continued}");
     assert!(
         continued["refs"]
             .as_array()
@@ -1868,6 +2400,136 @@ async fn rogue_attach_announcements_are_contained() {
     );
 }
 
+#[tokio::test]
+async fn stale_profile_path_redials_only_the_exact_endpoint() {
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+    let f = fixture().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut server = tokio::spawn(async move {
+        let mut paths = Vec::new();
+        for _ in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let result =
+                tokio_tungstenite::accept_hdr_async(stream, |request: &Request, _: Response| {
+                    paths.push(request.uri().path().to_owned());
+                    Err(tokio_tungstenite::tungstenite::http::Response::builder()
+                        .status(404)
+                        .body(Some("stale browser path".to_owned()))
+                        .unwrap())
+                })
+                .await;
+            assert!(result.is_err());
+        }
+        paths
+    });
+    f.state
+        .lock()
+        .unwrap()
+        .endpoint_responses
+        .push_back(Ok(Some(OwnedEndpoint {
+            ws_url: format!("ws://127.0.0.1:{port}/devtools/browser/stale"),
+            http_port: Some(port),
+            transport: EndpointTransport::DevToolsActivePort,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+                owner_pid: 1,
+                listener_pid: None,
+                detail: None,
+            },
+        })));
+    let exchange = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let result = GetBrowserStateTool::new(f.engine.clone())
+            .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+            .await;
+        (result, (&mut server).await.unwrap())
+    })
+    .await;
+    server.abort();
+    let (result, paths) = exchange.expect("both exact-path attempts must finish");
+    assert_eq!(
+        structured(&result)["refusal"]["code"],
+        "browser_route_unavailable"
+    );
+    assert_eq!(paths, ["/devtools/browser/stale"; 2]);
+    assert!(f.state.lock().unwrap().calls.is_empty());
+}
+
+#[tokio::test]
+async fn owned_endpoint_transitions_refuse_before_dispatch() {
+    use super::refusal::BrowserRefusalCode;
+    for initial in [
+        EndpointTransport::LegacyJsonVersion,
+        EndpointTransport::DevToolsActivePort,
+    ] {
+        for change in ["transport", "url", "missing", "malformed", "unreadable"] {
+            let f = fixture().await;
+            let endpoint = OwnedEndpoint {
+                ws_url: f._server.ws_url(),
+                http_port: None,
+                transport: initial,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: 1,
+                    listener_pid: None,
+                    detail: None,
+                },
+            };
+            f.state
+                .lock()
+                .unwrap()
+                .endpoint_responses
+                .push_back(Ok(Some(endpoint.clone())));
+            let (target, tab) = bind(&f).await;
+            let snapshot = snapshot(&f, &target, &tab).await;
+            let reference = ref_of(&snapshot, "main", "main-btn");
+            let mut changed = endpoint;
+            let (response, code) = match change {
+                "transport" => {
+                    changed.transport = if initial == EndpointTransport::LegacyJsonVersion {
+                        EndpointTransport::DevToolsActivePort
+                    } else {
+                        EndpointTransport::LegacyJsonVersion
+                    };
+                    (Ok(Some(changed)), "browser_binding_stale")
+                }
+                "url" => {
+                    changed.ws_url.push_str("-changed");
+                    (Ok(Some(changed)), "browser_binding_stale")
+                }
+                "missing" => (Ok(None), "browser_requires_setup"),
+                "malformed" => (
+                    Err(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                        "malformed profile",
+                    )),
+                    "browser_endpoint_owner_mismatch",
+                ),
+                _ => (
+                    Err(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "unreadable profile",
+                    )),
+                    "browser_route_unavailable",
+                ),
+            };
+            f.state.lock().unwrap().endpoint_responses = [response].into();
+            let result = BrowserClickTool::new(f.engine.clone())
+                .invoke(json!({
+                    "target_id": target, "tab_id": tab, "ref": reference, "session": SESSION
+                }))
+                .await;
+            assert_eq!(
+                structured(&result)["refusal"]["code"],
+                code,
+                "{initial:?} {change}: {}",
+                structured(&result)
+            );
+            assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+        }
+    }
+}
+
 // ── Mutation routing + frame identity revalidation ──────────────────────────
 
 #[tokio::test]
@@ -1979,6 +2641,58 @@ async fn click_validates_same_process_iframe_loader_and_uses_the_tab_session() {
 }
 
 #[tokio::test]
+async fn semantic_snapshot_reports_the_live_page_title() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture after navigation", "{snap}");
+}
+
+#[tokio::test]
+async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let bad = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "delivery_mode": "sideways", "session": SESSION
+        }))
+        .await;
+    assert!(
+        bad.is_error.unwrap_or(false),
+        "an unknown delivery_mode is refused"
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let refused = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["detail"]["alternative_delivery_mode"],
+        "foreground"
+    );
+
+    let foreground = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "delivery_mode": "foreground", "session": SESSION
+        }))
+        .await;
+    let s = structured(&foreground);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["route"], "trusted");
+    assert_eq!(s["delivery_mode"], "foreground");
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert_eq!(mouse.len(), 2, "press and release: {mouse:?}");
+}
+
+#[tokio::test]
 async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable() {
     let f = fixture_with_platform(|_| {}, true).await;
     let (target, tab) = bind(&f).await;
@@ -2039,7 +2753,38 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         "{public}"
     );
     assert!(public.get("status").is_none(), "{public}");
-    assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+    let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
+    let click_sequence = dispatches
+        .iter()
+        .filter_map(|(_, params)| params["functionDeclaration"].as_str())
+        .find(|declaration| declaration.contains("'pointerdown'"))
+        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+    // Apps that open rows from pointer/mouse down+up ignore a bare click(),
+    // so the synthetic route must replay the whole primary-button sequence
+    // at the element's center, in order.
+    let order = [
+        "'pointermove'",
+        "'pointerdown'",
+        "'mousedown'",
+        "'pointerup'",
+        "'mouseup'",
+        "'click'",
+    ];
+    let positions: Vec<usize> = order
+        .iter()
+        .map(|event| {
+            click_sequence
+                .find(event)
+                .unwrap_or_else(|| panic!("missing {event}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "{click_sequence}"
+    );
+    assert!(click_sequence.contains("clientX: x"), "{click_sequence}");
+    assert!(!click_sequence.contains("this.click()"), "{click_sequence}");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
@@ -2290,4 +3035,106 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     }));
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+// ---- window-less page targets (trycua/cua#3540) ------------------------------------------
+//
+// Chromium exposes page targets that live in no browser window — an extension
+// side panel, an offscreen document — and answers `Browser.getWindowForTarget`
+// for them with `-32000 Browser window not found`. Such a target can never be
+// the tab of the requested native window, so candidate enumeration skips it;
+// every other error keeps failing the whole proof.
+
+fn side_panel_target() -> Value {
+    json!({
+        "targetId": "T_SIDEPANEL",
+        "type": "page",
+        "title": "Claude",
+        "url": "chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/sidepanel.html?tabId=42",
+        "attached": false,
+    })
+}
+
+async fn bind_result(f: &Fixture) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    structured(&result).clone()
+}
+
+#[tokio::test]
+async fn windowless_side_panel_target_is_skipped_and_bind_stays_exact() {
+    let f = fixture_with(|st| st.windowless_targets.push(side_panel_target())).await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "bind must succeed: {s}");
+    assert_eq!(s["binding_quality"], "exact");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(
+        tabs.len(),
+        1,
+        "the side panel is not a tab of the bound window: {s}"
+    );
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
+    // The window-less target was asked for its window (and skipped), never attached to.
+    let st = f.state.lock().unwrap();
+    assert!(st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Browser.getWindowForTarget" && p["targetId"] == "T_SIDEPANEL" }));
+    assert!(!st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL" }));
+}
+
+#[tokio::test]
+async fn only_windowless_targets_refuse_wrong_target_never_route_unavailable() {
+    let f = fixture_with(|st| {
+        st.omit_primary_target = true;
+        st.windowless_targets.push(side_panel_target());
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_wrong_target_refused",
+        "no windowed candidate → refuse rather than guess, and never a route failure: {s}"
+    );
+}
+
+#[tokio::test]
+async fn other_window_lookup_errors_still_fail_the_whole_proof() {
+    let f = fixture_with(|st| {
+        st.primary_window_error = Some((-32000, "Target closed".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_route_unavailable", "{s}");
+    assert!(
+        s["refusal"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Browser.getWindowForTarget failed while proving the native window"),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn method_unsupported_keeps_the_electron_none_path() {
+    // Electron omits the Browser domain method entirely: the candidate keeps a
+    // None geometry and binds through the single-page, single-native-window
+    // cardinality proof; the window-less skip must not drop it.
+    let f = fixture_with(|st| {
+        st.primary_window_error =
+            Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_quality"], "exact", "{s}");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(tabs.len(), 1, "{s}");
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
 }

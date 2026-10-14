@@ -5,6 +5,7 @@ package keycloak
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -59,6 +60,29 @@ func (a *Admin) token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("admin login: %w", err)
 	}
 	return t.AccessToken, nil
+}
+
+func (a *Admin) UserCreatedAt(ctx context.Context, subject string) (createdAt time.Time, err error) {
+	ctx, span := adminTracer().Start(ctx, "keycloak.get_user_created_at", trace.WithAttributes(
+		attribute.String("keycloak.realm", a.realm),
+	))
+	defer span.End()
+
+	start := time.Now()
+	defer func() { metrics.RecordKeycloakRequest("GetUserByID", time.Since(start), err) }()
+
+	tok, err := a.token(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	user, err := a.client.GetUserByID(ctx, tok, a.realm, subject)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get user by ID: %w", err)
+	}
+	if user.CreatedTimestamp == nil {
+		return time.Time{}, fmt.Errorf("user created timestamp is missing")
+	}
+	return time.UnixMilli(*user.CreatedTimestamp).UTC(), nil
 }
 
 type KeyClient struct {
@@ -173,7 +197,8 @@ func (a *Admin) ListKeyClients(ctx context.Context, ownerSub string) ([]KeyClien
 		clients, listErr := a.client.GetClients(ctx, tok, a.realm, params)
 		if listErr != nil {
 			err = fmt.Errorf("list clients: %w", listErr)
-			return nil, err
+			return nil, errors.Join(err, listErr)
+
 		}
 		for _, c := range clients {
 			attrs := derefMap(c.Attributes)
@@ -240,9 +265,10 @@ type UserKeyClient struct {
 }
 
 // CreateUserKeyClient creates a confidential service-account client whose
-// access tokens carry hardcoded `user_sub` and `user_groups` claims.
+// access tokens carry hardcoded owner identity claims. Verified email evidence
+// is copied only when it was present on the authenticated creation request.
 // Returns the client_id, freshly generated client_secret, and token URL.
-func (a *Admin) CreateUserKeyClient(ctx context.Context, name, ownerSub string, scope []string) (clientID, clientSecret, tokenURL string, err error) {
+func (a *Admin) CreateUserKeyClient(ctx context.Context, name, ownerSub, ownerEmail string, ownerEmailVerified bool, scope []string) (clientID, clientSecret, tokenURL string, err error) {
 	ctx, span := adminTracer().Start(ctx, "keycloak.create_user_key_client", trace.WithAttributes(
 		attribute.String("keycloak.key_type", "user"),
 		attribute.String("key.name", name),
@@ -267,6 +293,36 @@ func (a *Admin) CreateUserKeyClient(ctx context.Context, name, ownerSub string, 
 
 	scopeStr := strings.Join(scope, ",")
 
+	protocolMappers := []gocloak.ProtocolMapperRepresentation{
+		{
+			Name:           gocloak.StringP("user_sub"),
+			Protocol:       gocloak.StringP("openid-connect"),
+			ProtocolMapper: gocloak.StringP("oidc-hardcoded-claim-mapper"),
+			Config: &map[string]string{
+				"claim.name":           "user_sub",
+				"claim.value":          ownerSub,
+				"jsonType.label":       "String",
+				"access.token.claim":   "true",
+				"id.token.claim":       "false",
+				"userinfo.token.claim": "false",
+			},
+		},
+		{
+			Name:           gocloak.StringP("user_groups"),
+			Protocol:       gocloak.StringP("openid-connect"),
+			ProtocolMapper: gocloak.StringP("oidc-hardcoded-claim-mapper"),
+			Config: &map[string]string{
+				"claim.name":           "user_groups",
+				"claim.value":          identity.ImpersonateGroup(ctx, ownerSub),
+				"jsonType.label":       "String",
+				"access.token.claim":   "true",
+				"id.token.claim":       "false",
+				"userinfo.token.claim": "false",
+			},
+		},
+	}
+	protocolMappers = append(protocolMappers, verifiedUserIdentityMappers(ownerEmail, ownerEmailVerified)...)
+
 	c := gocloak.Client{
 		ClientID:                  gocloak.StringP(clientID),
 		Name:                      gocloak.StringP(name),
@@ -284,34 +340,7 @@ func (a *Admin) CreateUserKeyClient(ctx context.Context, name, ownerSub string, 
 			"key_type":   "user",
 			"scope":      scopeStr,
 		},
-		ProtocolMappers: &[]gocloak.ProtocolMapperRepresentation{
-			{
-				Name:           gocloak.StringP("user_sub"),
-				Protocol:       gocloak.StringP("openid-connect"),
-				ProtocolMapper: gocloak.StringP("oidc-hardcoded-claim-mapper"),
-				Config: &map[string]string{
-					"claim.name":           "user_sub",
-					"claim.value":          ownerSub,
-					"jsonType.label":       "String",
-					"access.token.claim":   "true",
-					"id.token.claim":       "false",
-					"userinfo.token.claim": "false",
-				},
-			},
-			{
-				Name:           gocloak.StringP("user_groups"),
-				Protocol:       gocloak.StringP("openid-connect"),
-				ProtocolMapper: gocloak.StringP("oidc-hardcoded-claim-mapper"),
-				Config: &map[string]string{
-					"claim.name":           "user_groups",
-					"claim.value":          identity.ImpersonateGroup(ctx, ownerSub),
-					"jsonType.label":       "String",
-					"access.token.claim":   "true",
-					"id.token.claim":       "false",
-					"userinfo.token.claim": "false",
-				},
-			},
-		},
+		ProtocolMappers: &protocolMappers,
 	}
 
 	kcUUID, err := a.client.CreateClient(ctx, tok, a.realm, c)
@@ -330,6 +359,41 @@ func (a *Admin) CreateUserKeyClient(ctx context.Context, name, ownerSub string, 
 
 	tokenURL = a.tokenURL()
 	return clientID, *cs.Value, tokenURL, nil
+}
+
+func verifiedUserIdentityMappers(email string, verified bool) []gocloak.ProtocolMapperRepresentation {
+	email = strings.TrimSpace(email)
+	if !verified || email == "" {
+		return nil
+	}
+	return []gocloak.ProtocolMapperRepresentation{
+		{
+			Name:           gocloak.StringP("user_email"),
+			Protocol:       gocloak.StringP("openid-connect"),
+			ProtocolMapper: gocloak.StringP("oidc-hardcoded-claim-mapper"),
+			Config: &map[string]string{
+				"claim.name":           "user_email",
+				"claim.value":          email,
+				"jsonType.label":       "String",
+				"access.token.claim":   "true",
+				"id.token.claim":       "false",
+				"userinfo.token.claim": "false",
+			},
+		},
+		{
+			Name:           gocloak.StringP("user_email_verified"),
+			Protocol:       gocloak.StringP("openid-connect"),
+			ProtocolMapper: gocloak.StringP("oidc-hardcoded-claim-mapper"),
+			Config: &map[string]string{
+				"claim.name":           "user_email_verified",
+				"claim.value":          "true",
+				"jsonType.label":       "boolean",
+				"access.token.claim":   "true",
+				"id.token.claim":       "false",
+				"userinfo.token.claim": "false",
+			},
+		},
+	}
 }
 
 // ListUserKeyClients returns every user-key client owned by ownerSub.
@@ -359,7 +423,8 @@ func (a *Admin) ListUserKeyClients(ctx context.Context, ownerSub string) ([]User
 		clients, listErr := a.client.GetClients(ctx, tok, a.realm, params)
 		if listErr != nil {
 			err = fmt.Errorf("list clients: %w", listErr)
-			return nil, err
+			return nil, errors.Join(err, listErr)
+
 		}
 		for _, c := range clients {
 			attrs := derefMap(c.Attributes)

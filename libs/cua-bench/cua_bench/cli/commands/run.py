@@ -1,41 +1,31 @@
-"""Run command - Run tasks with agent evaluation.
-
-The run command executes tasks and provides monitoring capabilities.
+"""``cb run``: run tasks locally or in the cloud, and inspect runs.
 
 Usage:
-    cb run task <path>                  # Execute single task (2-container)
-    cb run dataset <path>               # Execute dataset (parallel 2-container)
-    cb run list                         # List all runs
-    cb run info <id>                    # Show run details
-    cb run watch <id>                   # Live updates
-    cb run stop <id>                    # Cancel run
-    cb run logs <id>                    # Combined logs
+    cb run <task|dataset> [--on local|cloud] [--kind container|vm] [--runtime <engine>] ...
+    cb run task <path>          # one task (one variant, --variant-id)
+    cb run dataset <path|name>  # every task and variant, in parallel
+    cb run list | info <id> | watch <id> | logs <id> | stop <id>
+
+Both targets use the same runner: each variant gets a cua-sandbox sandbox
+(local gVisor container / QEMU / Lume, or a claim on a managed Fleet pool),
+the task's setup, the oracle or agent, and evaluate() run in this process,
+and results land in ``$XDG_DATA_HOME/cua-bench/runs/<run id>/``.
 """
 
+from __future__ import annotations
+
 import asyncio
+import fnmatch
+import json
 import os
-import re
 import signal
 import subprocess
 import sys
 import time
-from collections import defaultdict
+import uuid
+from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Optional
-
-from cua_bench.runner.docker_utils import allocate_ports, generate_task_id
-
-# Telemetry imports (optional)
-try:
-    from cua_bench.telemetry import (
-        track_batch_job_started,
-        track_batch_task_completed,
-        track_task_execution_failed,
-    )
-
-    _telemetry_available = True
-except ImportError:
-    _telemetry_available = False
+from typing import Any, Optional
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -45,2164 +35,958 @@ YELLOW = "\033[33m"
 RED = "\033[91m"
 GREY = "\033[90m"
 
+FINAL = ("completed", "failed", "cancelled", "stopped")
+
 
 def _get_runs_dir() -> Path:
-    """Get the default runs output directory (XDG compliant)."""
+    """Default runs output directory (XDG compliant)."""
     xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
     return Path(xdg_data) / "cua-bench" / "runs"
 
 
 def _get_run_output_dir(run_id: str) -> Path:
-    """Get output directory for a specific run."""
     return _get_runs_dir() / run_id
 
 
+def generate_run_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+
 # =============================================================================
-# Run Subcommands
+# Target flags (shared by run task / run dataset / interact)
 # =============================================================================
 
 
-def cmd_list(args) -> int:
-    """List all runs with aggregated statistics."""
-    return asyncio.run(_cmd_list_async(args))
+def add_target_args(parser) -> None:
+    """``--on``, ``--kind``, ``--runtime``, image and resource flags."""
+    import argparse
+
+    from cua_bench.targets import LEGACY_PLATFORMS, ON_CHOICES
+
+    group = parser.add_argument_group("execution target")
+    group.add_argument(
+        "--on",
+        choices=list(ON_CHOICES),
+        default=None,
+        help="Where sandboxes run: local (this machine), cloud, your own cloud account "
+        "(aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a "
+        "contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). "
+        "Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+    )
+    group.add_argument(
+        "--kind",
+        choices=["auto", "container", "vm"],
+        default=None,
+        help="What kind of sandbox: container or vm. Default auto: Linux as a container "
+        "unless the task or image says VM; Windows, macOS and Android are VM-only. "
+        "Default: CUA_DEFAULT_KIND, else `cua config set default.kind`",
+    )
+    group.add_argument(
+        "--runtime",
+        choices=["auto", "gvisor", "runc", "qemu", "lume", "kubevirt"],
+        default=None,
+        help="Which engine: gvisor or runc (local containers), qemu or lume (local VMs), "
+        "gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the "
+        "SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+    )
+    group.add_argument(
+        "--image",
+        help="Image for every task (overrides the task's setup_config.image): an OS alias "
+        "(linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, "
+        "or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+    )
+    group.add_argument("--cpu", type=int, help="vCPUs per sandbox")
+    group.add_argument("--memory", help="Memory per sandbox (e.g. 4096, 4G)")
+    group.add_argument(
+        "--warm",
+        action="store_true",
+        help="cloud: keep one replica ready when the managed pool is first created",
+    )
+    group.add_argument(
+        "--claim-ttl",
+        dest="claim_ttl",
+        help="cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
+    )
+    # cua-bench 0.2.11 flags, deprecated (a notice names the new flags).
+    group.add_argument(
+        "--platform",
+        dest="platform",
+        choices=list(LEGACY_PLATFORMS),
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    group.add_argument(
+        "--provider-type",
+        dest="provider_type",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
 
 
-async def _cmd_list_async(args) -> int:
-    """Execute the runs list command asynchronously."""
-    from cua_bench.sessions import list_sessions
-    from cua_bench.sessions.providers.docker import DockerProvider
+def _check_provider_type(value) -> None:
+    """``--provider-type`` (0.2.11): ``native`` is the only provider now (a
+    deprecated no-op); ``simulated`` was removed."""
+    if value is None:
+        return
+    import warnings
 
-    sessions = list_sessions()
-    verbose = getattr(args, "verbose", False)
+    from cua_bench.targets import TargetError
 
-    if not sessions:
-        print(f"{GREY}No runs found.{RESET}")
-        print(f"\n{GREY}Start a run with:{RESET}")
-        print("  cb run <task>")
-        return 0
+    word = str(value).strip().lower()
+    if word in ("native", "computer"):
+        message = "--provider-type is deprecated and has no effect: every task runs natively"
+        warnings.warn(message, DeprecationWarning, stacklevel=3)
+        print(f"warning: {message}", file=sys.stderr)
+        return
+    if word in ("simulated", "webtop"):
+        raise TargetError(
+            f"--provider-type {word}: the simulated provider was removed in cua-bench 0.3; "
+            "tasks run in a real sandbox (drop --provider-type)"
+        )
+    raise TargetError(f"--provider-type {value!r} is not supported (deprecated; drop it)")
 
-    docker_provider = DockerProvider()
 
-    # Group sessions by run_id
-    runs = defaultdict(list)
-    for session in sessions:
-        run_id = session.get("run_id", "-")
-        runs[run_id].append(session)
+def target_from_args(args):
+    from cua_bench.targets import resolve_target
 
-    run_rows = []
+    _check_provider_type(getattr(args, "provider_type", None))
+    return resolve_target(
+        getattr(args, "on", None),
+        getattr(args, "kind", None),
+        runtime=getattr(args, "runtime", None),
+        platform=getattr(args, "platform", None),
+        image=getattr(args, "image", None),
+        cpu=getattr(args, "cpu", None),
+        memory=getattr(args, "memory", None),
+        concurrency=getattr(args, "max_parallel", None) or 1,
+        warm=getattr(args, "warm", False),
+        claim_ttl=getattr(args, "claim_ttl", None),
+    )
 
-    for run_id, run_sessions in runs.items():
-        if run_id == "-":
-            continue
 
-        agent = run_sessions[0].get("agent") or "-"
-        model = run_sessions[0].get("model") or "-"
+# =============================================================================
+# Console progress
+# =============================================================================
 
-        # Extract dataset from env_path
-        env_path = run_sessions[0].get("env_path", "")
-        if env_path:
-            path_parts = Path(env_path).parts
-            if "datasets" in path_parts:
-                dataset_idx = path_parts.index("datasets")
-                if dataset_idx + 1 < len(path_parts):
-                    dataset = path_parts[dataset_idx + 1]
-                else:
-                    dataset = "-"
-            else:
-                dataset = Path(env_path).parent.name
+
+class ConsoleReporter:
+    """Plan, per-variant status lines and pool scaling notices."""
+
+    WAIT_EVERY_S = 30.0
+
+    def __init__(self, stream=None, log_file: Optional[Path] = None) -> None:
+        self.stream = stream or sys.stdout
+        self.log_file = log_file
+        self._cold_pools: set[str] = set()
+        self._last_wait: dict[str, float] = {}
+        self._color = bool(getattr(self.stream, "isatty", lambda: False)())
+
+    def _c(self, color: str, text: str) -> str:
+        return f"{color}{text}{RESET}" if self._color else text
+
+    def line(self, text: str) -> None:
+        self.stream.write(text + "\n")
+        self.stream.flush()
+        if self.log_file is not None:
+            import re
+
+            try:
+                with open(self.log_file, "a", encoding="utf-8") as handle:
+                    handle.write(re.sub(r"\033\[[0-9;]*m", "", text) + "\n")
+            except OSError:
+                pass
+
+    def plan(self, target, jobs, plans) -> None:
+        sandboxed = sum(1 for job in jobs if job.spec.needs_sandbox)
+        backends = sorted({job.spec.backend(target.on) for job in jobs})
+        self.line(
+            f"{len(jobs)} variant(s) on {self._c(BOLD, target.on)} "
+            f"({', '.join(backends)}), up to {target.concurrency} at a time"
+        )
+        for plan in plans:
+            where = "managed pool" if target.cloud else "local sandboxes"
+            self.line(
+                f"  {plan.spec.image_label}  {plan.tasks} variant(s), {where} "
+                f"max {plan.max_pool_size}"
+            )
+        if target.cloud and sandboxed:
+            self.line(
+                self._c(
+                    GREY,
+                    "  Managed pools autoscale from zero: an idle pool takes about a minute "
+                    "(VMs several) to start its first sandbox, and scales back down after "
+                    "the run.",
+                )
+            )
+
+    def started(self, job, index, total) -> None:
+        what = "acquiring sandbox" if job.spec.needs_sandbox else "no environment (dataset)"
+        self.line(self._c(GREY, f"[{index}/{total}] ▸ {job.name}: {what}"))
+
+    def progress(self, job, event) -> None:
+        if event.stage == "cold_start":
+            key = event.pool or "pool"
+            if key not in self._cold_pools:
+                self._cold_pools.add(key)
+                self.line(
+                    self._c(
+                        YELLOW, f"  pool {key} is scaling up from zero (about 1 min, VMs longer)"
+                    )
+                )
+        elif event.stage == "ready":
+            elapsed = f" ({event.elapsed:.0f}s)" if event.elapsed else ""
+            self.line(self._c(GREY, f"  ▸ {job.name}: sandbox ready{elapsed}"))
+        elif event.stage == "waiting":
+            now = time.monotonic()
+            if now - self._last_wait.get(job.session_id, 0.0) >= self.WAIT_EVERY_S:
+                self._last_wait[job.session_id] = now
+                self.line(self._c(GREY, f"  ▸ {job.name}: {event.message}"))
+        elif event.stage == "pool" and event.message:
+            self.line(self._c(GREY, f"  {event.message}"))
+
+    def finished(self, result, index, total) -> None:
+        reward = "-" if result.reward is None else f"{result.reward:g}"
+        head = f"[{index}/{total}]"
+        name = f"{result.task} v{result.variant}"
+        if result.ok:
+            self.line(
+                self._c(GREEN, f"{head} ✓ {name}") + f" reward={reward} ({result.duration_s:.0f}s)"
+            )
         else:
-            dataset = "-"
+            first = (result.error or result.status).splitlines()[0]
+            self.line(self._c(RED, f"{head} ✗ {name}") + f" {result.status}: {first}")
 
-        # Count statuses
-        status_counts = defaultdict(int)
-        rewards = []
 
-        for session in run_sessions:
-            session_id = session.get("session_id")
-            provider = session.get("provider", "unknown")
+# =============================================================================
+# Building jobs
+# =============================================================================
 
-            status = "unknown"
-            status_info = {}
-            if provider == "docker":
-                try:
-                    status_info = await docker_provider.get_session_status(session_id)
-                    status = status_info.get("status", "unknown")
 
-                    if verbose:
-                        print(f"{GREY}[DEBUG] Session {session_id}:{RESET}")
-                        print(f"{GREY}  Stored session: {session}{RESET}")
-                        print(f"{GREY}  Status info: {status_info}{RESET}")
-                except Exception as e:
-                    status = "error"
-                    if verbose:
-                        print(f"{RED}[DEBUG] Error getting status for {session_id}: {e}{RESET}")
+def _discover_tasks(path: Path) -> list[Path]:
+    if (path / "main.py").exists():
+        return [path]
+    tasks = [d for d in sorted(path.iterdir()) if d.is_dir() and (d / "main.py").exists()]
+    if not tasks and any((d / "task.toml").exists() for d in path.iterdir() if d.is_dir()):
+        raise FileNotFoundError(
+            f"{path} holds Harbor tasks (task.toml); cua-bench runs main.py tasks, and the "
+            "Harbor task adapter is not part of this release"
+        )
+    return tasks
 
-            status_counts[status] += 1
 
-            # Use cached reward if available, otherwise extract from logs
-            if status == "completed":
-                reward = status_info.get("reward")
-                if reward is not None:
-                    # Use cached reward
-                    rewards.append(reward)
-                else:
-                    # Fallback: extract from logs
-                    try:
-                        logs = await docker_provider.get_session_logs(session_id, tail=100)
-                        match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                        if match:
-                            reward_str = match.group(1)
-                            try:
-                                rewards.append(float(reward_str))
-                            except ValueError:
-                                pass
-                    except Exception:
-                        pass
-            elif status == "failed":
-                reward = status_info.get("reward")
-                if reward is not None:
-                    rewards.append(reward)
-                else:
-                    rewards.append(0.0)
+def _task_variants(task_path: Path) -> list[Any]:
+    from cua_bench import make
 
-        # Build status string
-        status_parts = []
-        for status, count in sorted(status_counts.items()):
-            status_parts.append(f"{status}({count})")
-        status_str = " ".join(status_parts)
+    env = make(str(task_path))
+    if env.tasks_config_fn is None:
+        return [None]
+    return list(env.tasks_config_fn()) or [None]
 
-        # Calculate average reward
-        avg_reward_str = f"{sum(rewards) / len(rewards):.3f}" if rewards else "-"
-        avg_reward_val = sum(rewards) / len(rewards) if rewards else 0.0
 
-        run_rows.append(
+def build_jobs(
+    args, run_id: str, output_dir: Path, target, kind: str, variant_resolver=None
+) -> list:
+    """Jobs for ``cb run task`` (one variant) or ``cb run dataset`` (all).
+
+    ``variant_resolver(ref, os_type)`` reads an image's variant index for
+    ``--kind auto`` (default: the SDK resolver, once per image).
+    """
+    from cua_bench.runner import Job
+    from cua_bench.sandboxes import cached_index_runtime
+    from cua_bench.targets import resolve_env_spec
+
+    if variant_resolver is None:
+        variant_resolver = cached_index_runtime()
+
+    from .registry import resolve_dataset
+
+    #: The registry entry's desktop image for tasks that name none.
+    default_image = None
+    if kind == "task":
+        task_path = Path(args.task_path)
+        if not (task_path / "main.py").exists():
+            raise FileNotFoundError(f"Task not found (no main.py): {task_path}")
+        variants = _task_variants(task_path)
+        index = getattr(args, "variant_id", 0) or 0
+        if index >= len(variants):
+            raise ValueError(f"--variant-id {index} out of range ({len(variants)} variants)")
+        selected = [(task_path, index, variants[index])]
+    else:
+        dataset_path = Path(args.dataset_path)
+        if not dataset_path.exists():
+            resolved, default_image = resolve_dataset(args.dataset_path)
+            if not resolved:
+                raise FileNotFoundError(f"Dataset not found: {args.dataset_path}")
+            dataset_path = resolved
+        tasks = _discover_tasks(dataset_path)
+        task_filter = getattr(args, "task_filter", None)
+        if task_filter:
+            patterns = [p.strip() for p in task_filter.split(",")]
+            tasks = [t for t in tasks if any(fnmatch.fnmatch(t.name, p) for p in patterns)]
+        if not tasks:
+            raise FileNotFoundError(f"No tasks found in {dataset_path}")
+        max_variants = getattr(args, "max_variants", None)
+        selected = []
+        for task_path in tasks:
+            variants = _task_variants(task_path)
+            if max_variants:
+                variants = variants[:max_variants]
+            selected += [(task_path, i, cfg) for i, cfg in enumerate(variants)]
+
+    attempts = int(getattr(args, "attempts", 1) or 1)
+    if attempts < 1:
+        raise ValueError("--attempts must be at least 1")
+    if int(getattr(args, "retries", 0) or 0) < 0:
+        raise ValueError("--retries must be 0 or more")
+    jobs = []
+    for task_path, variant, cfg in selected:
+        spec = resolve_env_spec(
+            getattr(cfg, "computer", None),
+            target,
+            variant_resolver=variant_resolver,
+            default_image=default_image,
+        )
+        for attempt in range(attempts):
+            # Attempt 0 keeps the single-attempt layout and ids.
+            suffix = f"_a{attempt}" if attempt else ""
+            name = f"{task_path.name}_v{variant}{suffix}"
+            session_id = f"task-{run_id}-{task_path.name}-v{variant}" + (
+                f"-a{attempt}" if attempt else ""
+            )
+            if kind == "task" and getattr(args, "session_id", None) and not attempt:
+                session_id = args.session_id
+            jobs.append(
+                Job(
+                    task_path=task_path.resolve(),
+                    variant=variant,
+                    spec=spec,
+                    session_id=session_id,
+                    output_dir=output_dir / name,
+                    attempt=attempt,
+                )
+            )
+    from cua_bench.targets import check_requirements
+
+    # Adapters declare what they need (KVM for local VMs, API keys ...):
+    # fail before any sandbox is claimed.
+    check_requirements((job.spec for job in jobs), target)
+    return jobs
+
+
+def agent_options(args):
+    from cua_bench.runner import AgentOptions
+
+    agent_name = getattr(args, "agent", None)
+    import_path = getattr(args, "agent_import_path", None)
+    config_loader = getattr(args, "_config_loader", None)
+    if agent_name and config_loader:
+        entry = config_loader.get_agent_by_name(agent_name)
+        if entry is not None:
+            if entry.is_docker_agent():
+                raise ValueError(
+                    f"agent {agent_name!r} is a Docker image agent; cb run executes agents "
+                    "in-process now. Give it an import_path in .cua/agents.yaml instead."
+                )
+            if entry.import_path:
+                import_path = entry.import_path
+    if getattr(args, "noop", False):
+        if agent_name or import_path or getattr(args, "oracle", False):
+            raise ValueError("--noop runs no solver: drop --agent/--agent-import-path/--oracle")
+        return AgentOptions(oracle=False, dump=True, max_steps=getattr(args, "max_steps", None))
+    oracle = bool(getattr(args, "oracle", False)) or not (agent_name or import_path)
+    return AgentOptions(
+        oracle=oracle,
+        agent=None if oracle else agent_name,
+        agent_import_path=None if oracle else import_path,
+        model=getattr(args, "model", None),
+        max_steps=getattr(args, "max_steps", None),
+    )
+
+
+# =============================================================================
+# cb run task / cb run dataset
+# =============================================================================
+
+
+def _load_dotenv() -> None:
+    from dotenv import load_dotenv
+
+    env_file = Path.cwd() / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+        print(f"{GREY}Loaded environment from: {env_file}{RESET}")
+
+
+def cmd_run_task(args) -> int:
+    return _cmd_execute(args, "task")
+
+
+def cmd_run_dataset(args) -> int:
+    return _cmd_execute(args, "dataset")
+
+
+def _cmd_execute(args, kind: str) -> int:
+    from cua_bench.sandboxes import CloudAuthError, cloud_auth_source
+    from cua_bench.sessions import manager
+    from cua_bench.targets import TargetError
+
+    _load_dotenv()
+    args = _apply_config_defaults_for_task(args)
+
+    if getattr(args, "dev_paths", None):
+        print(
+            f"{GREY}--with is not needed anymore: tasks and agents run in this Python "
+            f"environment (pip install -e the package instead).{RESET}"
+        )
+
+    run_id = getattr(args, "run_id", None) or generate_run_id()
+    output_dir = Path(getattr(args, "output_dir", None) or _get_run_output_dir(run_id))
+
+    try:
+        target = target_from_args(args)
+        opts = agent_options(args)
+        jobs = build_jobs(args, run_id, output_dir, target, kind)
+    except (TargetError, FileNotFoundError, ValueError) as error:
+        print(f"{RED}Error: {error}{RESET}")
+        return 1
+
+    if getattr(args, "dry_run", False):
+        return _print_dry_run(target, jobs)
+
+    auth = None
+    if target.cloud and any(job.spec.needs_sandbox for job in jobs):
+        try:
+            auth = cloud_auth_source()
+        except CloudAuthError as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+
+    agent_display = opts.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for job in jobs:
+        manager.add_session(
             {
+                "session_id": job.session_id,
                 "run_id": run_id,
-                "dataset": dataset,
-                "sessions": str(len(run_sessions)),
-                "agent": agent,
-                "model": model,
-                "status": status_str,
-                "avg_reward": avg_reward_str,
-                "avg_reward_val": avg_reward_val,
+                "location": target.on,
+                "env_path": str(job.task_path),
+                "task_index": job.variant,
+                "kind": job.spec.kind,
+                "runtime": job.spec.runtime,
+                "image_variant": job.spec.image_variant,
+                "backend": job.spec.backend(target.on),
+                "image": job.spec.image_label,
+                "agent": agent_display,
+                "model": getattr(args, "model", None) or "-",
+                "output_dir": str(job.output_dir),
+                "status": "queued",
             }
         )
 
-    if not run_rows:
-        print(f"{GREY}No runs found with run IDs.{RESET}")
-        return 0
+    print(f"\n  {BOLD}Run ID:{RESET}  {run_id}")
+    print(f"  {BOLD}Output:{RESET}  {output_dir}")
+    if auth is not None:
+        print(f"  {BOLD}Auth:{RESET}    {auth}")
 
-    # Add spacing after verbose output
-    if verbose:
-        print()
+    if getattr(args, "detach", False):
+        return _spawn_detached(args, run_id, output_dir, jobs)
 
-    # Calculate column widths
-    max_run_id = max(len(row["run_id"]) for row in run_rows)
-    max_dataset = max(len(row["dataset"]) for row in run_rows)
-    max_sessions = max(len(row["sessions"]) for row in run_rows)
-    max_agent = max(len(row["agent"]) for row in run_rows)
-    max_model = max(len(row["model"]) for row in run_rows)
-    max_status = max(len(row["status"]) for row in run_rows)
-    max_avg_reward = max(len(row["avg_reward"]) for row in run_rows)
-
-    # Ensure minimum widths
-    max_run_id = max(max_run_id, 6)
-    max_dataset = max(max_dataset, 7)
-    max_sessions = max(max_sessions, 8)
-    max_agent = max(max_agent, 5)
-    max_model = max(max_model, 5)
-    max_status = max(max_status, 6)
-    max_avg_reward = max(max_avg_reward, 10)
-
-    # Print table
-    header = f"{BOLD}{'RUN ID':<{max_run_id}}  {'DATASET':<{max_dataset}}  {'SESSIONS':<{max_sessions}}  {'AGENT':<{max_agent}}  {'MODEL':<{max_model}}  {'STATUS':<{max_status}}  {'AVG REWARD':<{max_avg_reward}}{RESET}"
-    print(header)
-    print(
-        "-"
-        * (
-            max_run_id
-            + max_dataset
-            + max_sessions
-            + max_agent
-            + max_model
-            + max_status
-            + max_avg_reward
-            + 12
-        )
-    )
-
-    for row in run_rows:
-        reward_str = row["avg_reward"]
-        if reward_str != "-":
-            reward_val = row["avg_reward_val"]
-            if reward_val >= 0.5:
-                reward_colored = f"{GREEN}{reward_str:<{max_avg_reward}}{RESET}"
-            else:
-                reward_colored = f"{RED}{reward_str:<{max_avg_reward}}{RESET}"
-        else:
-            reward_colored = f"{reward_str:<{max_avg_reward}}"
-
-        print(
-            f"{row['run_id']:<{max_run_id}}  {row['dataset']:<{max_dataset}}  {row['sessions']:<{max_sessions}}  {row['agent']:<{max_agent}}  {row['model']:<{max_model}}  {row['status']:<{max_status}}  {reward_colored}"
-        )
-
-    print()
-    print(f"{GREY}Commands:{RESET}")
-    print(f"  cb run info <run_id>    {GREY}# Show run details{RESET}")
-    print(f"  cb run watch <run_id>   {GREY}# Watch in real-time{RESET}")
-    print(f"  cb trace grid <run_id>  {GREY}# View traces{RESET}")
-
-    return 0
-
-
-def cmd_watch(args) -> int:
-    """Watch a run in real-time with TUI."""
-    return asyncio.run(_cmd_watch_async(args))
-
-
-async def _cmd_watch_async(
-    args, expected_session_count: Optional[int] = None, run_output_dir: Optional[str] = None
-) -> int:
-    """Watch a run in real-time with TUI.
-
-    Args:
-        args: Command arguments with run_id
-        expected_session_count: Expected total sessions (for progress display)
-        run_output_dir: Output directory for this run
-    """
-    from cua_bench.sessions import list_sessions
-    from cua_bench.sessions.providers.docker import DockerProvider
-
+    (output_dir / "run.pid").write_text(str(os.getpid()))
+    reporter = ConsoleReporter(log_file=output_dir / "run.log")
+    taskset = _telemetry_taskset(args, kind)
     try:
-        from rich.console import Console, Group
-        from rich.live import Live
-        from rich.table import Table
-        from rich.text import Text
-    except ImportError:
-        print(f"{RED}Error: 'rich' package required for watch mode.{RESET}")
-        print("Install with: pip install rich")
-        return 1
-
-    run_id = getattr(args, "run_id", None)
-    if not run_id:
-        print(f"{RED}Error: run_id required for watch action{RESET}")
-        return 1
-
-    console = Console()
-    docker_provider = DockerProvider()
-
-    # Compute run_output_dir if not provided
-    if not run_output_dir:
-        sessions = list_sessions()
-        run_sessions = [s for s in sessions if s.get("run_id") == run_id]
-
-        if run_sessions:
-            # Get run output dir from first session's output_dir (go up one level)
-            output_dir = run_sessions[0].get("output_dir", None)
-            if output_dir:
-                session_output = Path(output_dir)
-                # Session output is like: .../runs/<run_id>/<task>_v<variant>
-                # We want: .../runs/<run_id>
-                if session_output.parent.name == run_id:
-                    run_output_dir = str(session_output.parent)
-
-        if not run_output_dir:
-            run_output_dir = str(_get_run_output_dir(run_id))
-
-    stop_requested = False
-    detach_requested = False
-
-    def signal_handler(signum, frame):
-        nonlocal stop_requested, detach_requested
-        if signum == signal.SIGINT:
-            detach_requested = True
-        elif signum == signal.SIGTERM:
-            stop_requested = True
-
-    signal.signal(signal.SIGINT, signal_handler)
-
-    spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    spinner_idx = 0
-
-    def make_layout(
-        sessions_data, agent, model, completed_count, total_count, rewards, failed_sessions
-    ):
-        nonlocal spinner_idx
-
-        progress_pct = (completed_count / total_count * 100) if total_count > 0 else 0
-        filled = int(progress_pct / 5)
-        progress_bar = f"{'█' * filled}{'░' * (20 - filled)}"
-
-        header = Text()
-        header.append(f"{progress_bar} {completed_count}/{total_count}\n", style="bold cyan")
-        header.append(f"Model: {model}\n", style="white")
-        header.append(f"Agent: {agent}\n", style="white")
-        header.append(f"Run ID: {run_id}\n", style="dim")
-        if run_output_dir:
-            header.append(f"Output: {run_output_dir}\n", style="dim")
-            header.append(f"Logs:   {run_output_dir}/run.log\n", style="dim")
-
-        table = Table(
-            show_header=True,
-            header_style="white",
-            expand=True,
-            box=None,
-            show_edge=False,
-            pad_edge=False,
+        results = asyncio.run(
+            _run_batch(
+                target, opts, jobs, reporter, run_id, retries=getattr(args, "retries", 0) or 0
+            )
         )
-        table.add_column("SESSION ID", style="cyan", width=40)
-        table.add_column("ENVIRONMENT", style="white", width=15)
-        table.add_column("VARIANT", style="white", width=7)
-        table.add_column("STATUS", style="white", width=15)
-        table.add_column("REWARD", style="white", width=10)
+    except KeyboardInterrupt:
+        _track_run_completed(taskset, None, len(jobs), "cancelled")
+        print(
+            f"\n{YELLOW}Interrupted: sandboxes released (cloud claims expire on their TTL "
+            f"if a release did not finish).{RESET}"
+        )
+        return 130
+    except BaseException:
+        _track_run_completed(taskset, None, len(jobs), "error")
+        raise
+    finally:
+        try:
+            (output_dir / "run.pid").unlink()
+        except OSError:
+            pass
+    code = _summarize(results, output_dir, kind, args)
+    _track_run_completed(taskset, _aggregate_score(results), len(results), "ok")
+    _results_housekeeping(args, output_dir)
+    return code
 
-        table.add_row("-" * 40, "-" * 15, "-" * 7, "-" * 15, "-" * 10, style="dim")
 
-        for session_data in sessions_data:
-            session_id = session_data["session_id"]
-            environment = session_data["environment"]
-            variant = session_data["variant"]
-            status = session_data["status"]
-            reward = session_data["reward"]
+def _telemetry_taskset(args, kind: str) -> Optional[str]:
+    """The dataset name (or a task's parent directory name) for telemetry;
+    cua_bench.telemetry maps anything not in the bundled registry to "custom"."""
+    if kind == "dataset":
+        return getattr(args, "dataset_path", None)
+    task_path = getattr(args, "task_path", None)
+    return Path(task_path).resolve().parent.name if task_path else None
 
-            if status == "running":
-                status_display = f"{spinner_frames[spinner_idx]} {status}"
-                status_style = "green"
-            elif status == "completed":
-                status_display = f"✓ {status}"
-                status_style = "cyan"
-            elif status == "failed":
-                status_display = f"✗ {status}"
-                status_style = "red"
-            else:
-                status_display = status
-                status_style = "yellow"
 
-            if reward != "-":
-                try:
-                    reward_val = float(reward)
-                    reward_style = "green" if reward_val >= 0.5 else "red"
-                except ValueError:
-                    reward_style = "white"
-            else:
-                reward_style = "dim"
+def _aggregate_score(results) -> Optional[float]:
+    """Mean reward in 0..1 over results that have one, else None."""
+    rewards = [r.reward for r in results if getattr(r, "reward", None) is not None]
+    if not rewards:
+        return None
+    try:
+        return sum(float(x) for x in rewards) / len(rewards)
+    except (TypeError, ValueError):
+        return None
 
-            table.add_row(
-                session_id,
-                environment,
-                variant,
-                Text(status_display, style=status_style),
-                Text(reward, style=reward_style),
+
+def _track_run_completed(taskset, score, task_count, outcome) -> None:
+    try:
+        from cua_bench.telemetry import track_bench_run_completed
+
+        track_bench_run_completed(taskset, score, task_count, outcome)
+    except Exception:
+        pass
+
+
+def _results_housekeeping(args, output_dir: Path) -> None:
+    """Opt-in retention of old runs, then a warning when results grow large.
+
+    Runs are only deleted when retention is configured (flags or the
+    CUA_BENCH_KEEP_RUNS / CUA_BENCH_MAX_AGE_DAYS / CUA_BENCH_MAX_RESULTS_SIZE
+    environment); the run that just finished is never deleted."""
+    from cua_bench import retention
+
+    # Retention applies to the runs directory; with --output-dir, to its
+    # parent only when it holds nothing but runs (the default layout).
+    runs_dir = _get_runs_dir()
+    custom = getattr(args, "output_dir", None)
+    try:
+        policy = retention.Retention.from_env().merged(
+            retention.Retention(
+                keep_runs=getattr(args, "keep_runs", None),
+                max_age_days=getattr(args, "max_age", None),
+                max_bytes=(
+                    retention.parse_size(args.max_results_size)
+                    if getattr(args, "max_results_size", None)
+                    else None
+                ),
             )
-
-        stats_parts = []
-        if completed_count == total_count and total_count > 0:
-            if rewards:
-                from collections import Counter
-
-                avg_reward = sum(rewards) / len(rewards)
-                stats_parts.append("\n✓ All sessions completed!")
-                stats_parts.append(f"Average Reward: {avg_reward:.3f}\n")
-                reward_counts = Counter(rewards)
-                sorted_rewards = sorted(reward_counts.items(), key=lambda x: x[0], reverse=True)[
-                    :10
-                ]
-                stats_parts.append("REWARD  COUNT")
-                stats_parts.append("-" * 13)
-                for reward_val, count in sorted_rewards:
-                    stats_parts.append(f"{reward_val:<6.1f}  {count}")
-            else:
-                stats_parts.append("\n⚠ All sessions completed but no rewards found")
-
-        error_parts = []
-        if failed_sessions:
-            for session_id, logs in failed_sessions.items():
-                error_parts.append("\n" + "=" * 60)
-                error_parts.append(f"{session_id} FAILED")
-                error_parts.append("=" * 60)
-                error_parts.append(logs)
-                error_parts.append("=" * 60 + "\n")
-
-        parts = [header, Text("\n"), table]
-        if stats_parts:
-            parts.append(Text("\n"))
-            for part in stats_parts:
-                parts.append(Text(part))
-        if error_parts:
-            parts.append(Text("\n"))
-            for part in error_parts:
-                parts.append(Text(part))
-
-        return Group(*parts)
-
-    with Live(console=console, refresh_per_second=1) as live:
-        while not stop_requested and not detach_requested:
-            all_sessions = list_sessions()
-            run_sessions = [s for s in all_sessions if s.get("run_id") == run_id]
-
-            if not run_sessions:
-                if expected_session_count and expected_session_count > 0:
-                    waiting_text = Text()
-                    waiting_text.append("Waiting for sessions to be created...\n", style="yellow")
-                    waiting_text.append(
-                        f"Expected: {expected_session_count} sessions\n", style="dim"
-                    )
-                    waiting_text.append(f"Run ID: {run_id}", style="dim")
-                    live.update(waiting_text)
-                    await asyncio.sleep(0.5)
-                    continue
-                else:
-                    console.print(f"[red]No sessions found for run: {run_id}[/red]")
-                    return 1
-
-            agent = run_sessions[0].get("agent", "-")
-            model = run_sessions[0].get("model", "-")
-
-            sessions_data = []
-            completed_count = 0
-            total_count = expected_session_count if expected_session_count else len(run_sessions)
-            rewards = []
-            failed_sessions = {}
-
-            for session in run_sessions:
-                session_id = session.get("session_id", "unknown")
-                if session_id == "unknown":
-                    continue
-
-                # Skip queued sessions (not yet started)
-                if session.get("status") == "queued":
-                    continue
-
-                env_path = session.get("env_path", "unknown")
-                environment = Path(env_path).name if env_path != "unknown" else "unknown"
-                variant = str(session.get("task_index", 0))
-
-                try:
-                    status_info = await docker_provider.get_session_status(session_id)
-                    status = status_info.get("status", "unknown")
-                except Exception:
-                    status = "error"
-
-                if status in ("completed", "failed", "stopped", "deleted"):
-                    completed_count += 1
-
-                reward = "-"
-                if status == "completed":
-                    try:
-                        logs = await docker_provider.get_session_logs(session_id, tail=100)
-                        match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                        if match:
-                            reward = match.group(1)
-                            try:
-                                rewards.append(float(reward))
-                            except ValueError:
-                                pass
-                    except Exception:
-                        pass
-                elif status == "failed":
-                    rewards.append(0.0)
-                    reward = "0.0"
-
-                if status == "failed":
-                    try:
-                        logs = await docker_provider.get_session_logs(session_id, tail=50)
-                        failed_sessions[session_id] = logs
-                    except Exception as e:
-                        failed_sessions[session_id] = f"Could not retrieve logs: {e}"
-
-                sessions_data.append(
-                    {
-                        "session_id": session_id,
-                        "environment": environment,
-                        "variant": variant,
-                        "status": status,
-                        "reward": reward,
-                    }
-                )
-
-            layout = make_layout(
-                sessions_data, agent, model, completed_count, total_count, rewards, failed_sessions
+        )
+    except ValueError as error:
+        print(f"{YELLOW}Retention not applied: {error}{RESET}")
+        policy = retention.Retention()
+    if policy.enabled:
+        if custom:
+            print(
+                f"{GREY}Retention applies to {runs_dir}; results in {output_dir} "
+                f"(--output-dir) are left alone.{RESET}"
             )
-            live.update(layout)
+        else:
+            removed = retention.apply(runs_dir, policy, protect=[output_dir])
+            if removed:
+                print(f"{GREY}Removed {len(removed)} old run(s) (retention).{RESET}")
+    warning = retention.size_warning(Path(custom) if custom else runs_dir)
+    if warning:
+        print(f"{YELLOW}{warning}{RESET}")
 
-            spinner_idx = (spinner_idx + 1) % len(spinner_frames)
 
-            if completed_count == total_count:
-                await asyncio.sleep(2)
-                break
+async def _run_batch(target, opts, jobs, reporter, run_id, retries: int = 0):
+    from cua_bench.runner import BatchRunner
+    from cua_bench.runner.output import routed_stdio
+    from cua_bench.sessions import manager
 
-            await asyncio.sleep(0.5)
+    def on_status(job, status, fields):
+        update = {"status": status, **fields}
+        if status in ("starting", "running"):
+            update["pid"] = os.getpid()
+        manager.update_session(job.session_id, update)
 
-    if detach_requested:
-        console.print("\n[yellow]Detached from run. Sessions continue in background.[/yellow]")
-        console.print(f"[dim]Resume watching with: cb run watch {run_id}[/dim]")
-    elif stop_requested:
-        console.print("\n[red]Stopping all sessions...[/red]")
-    else:
-        # Cleanup child containers
-        console.print("\n[cyan]Cleaning up child containers...[/cyan]")
-        all_sessions = list_sessions()
-        run_sessions = [s for s in all_sessions if s.get("run_id") == run_id]
+    loop = asyncio.get_running_loop()
+    main = asyncio.current_task()
+    try:
+        loop.add_signal_handler(signal.SIGTERM, main.cancel)
+    except (NotImplementedError, RuntimeError):
+        pass
 
-        containers_to_stop = []
-        for session in run_sessions:
-            session_id = session.get("session_id")
-            if not session_id:
-                continue
-            try:
-                status_info = await docker_provider.get_session_status(session_id)
-                status = status_info.get("status", "unknown")
-                if status not in ["running", "unknown"]:
-                    child_containers = session.get("child_containers", [])
-                    for child in child_containers:
-                        container_name = child.get("name")
-                        if container_name:
-                            containers_to_stop.append(container_name)
-            except Exception:
-                pass
+    with routed_stdio() as console:
+        reporter.stream = console
+        runner = BatchRunner(target, opts, reporter=reporter, on_status=on_status, retries=retries)
+        try:
+            return await runner.run(jobs)
+        except asyncio.CancelledError:
+            for job in jobs:
+                session = manager.get_session(job.session_id) or {}
+                if session.get("status") not in FINAL:
+                    manager.update_session(job.session_id, {"status": "cancelled"})
+            raise KeyboardInterrupt from None
 
-        if containers_to_stop:
-            console.print(f"[dim]Stopping {len(containers_to_stop)} child container(s)...[/dim]")
 
-            async def stop_container_safe(container_name):
-                try:
-                    await docker_provider._stop_container(container_name)
-                except Exception:
-                    pass
+def _summarize(results, output_dir: Path, kind: str, args) -> int:
+    from cua_bench.results import pass_at_k
 
-            await asyncio.gather(
-                *[stop_container_safe(name) for name in containers_to_stop], return_exceptions=True
+    ok = [r for r in results if r.ok]
+    failed = [r for r in results if not r.ok]
+    rewards = [r.reward for r in results if r.reward is not None]
+    from cua_bench.runner.batch_runner import RESULT_SCHEMA_VERSION
+
+    targets: Counter = Counter(
+        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref)
+        for r in results
+    )
+    summary = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "total": len(results),
+        "completed": len(ok),
+        "failed": len(failed),
+        "avg_reward": (sum(rewards) / len(rewards)) if rewards else None,
+        "results": [
+            {
+                "task": r.task,
+                "variant": r.variant,
+                "status": r.status,
+                "reward": r.reward,
+                "pool": r.pool,
+                "duration_s": r.duration_s,
+                "error": r.error,
+                "kind": r.kind,
+                "runtime": r.runtime,
+                "image_variant": r.image_variant,
+                "image_digest": r.image_digest,
+                "attempt": r.attempt,
+                "retries": r.retries,
+            }
+            for r in results
+        ],
+        # Harbor-compatible job stats (additive): errored = no reward (the run broke).
+        "n_total_trials": len(results),
+        "stats": {
+            "n_completed": len(ok),
+            "n_errored": sum(1 for r in results if r.reward is None and not r.ok),
+            "n_retries": sum(r.retries for r in results),
+        },
+        "pass_at_k": pass_at_k(results),
+        # Where the variants ran: one row per (on, kind, runtime, variant, image).
+        "targets": [
+            {
+                "on": on,
+                "kind": kind,
+                "runtime": rt,
+                "image_variant": var,
+                "image": img,
+                "count": n,
+            }
+            for (on, kind, rt, var, img), n in sorted(
+                targets.items(), key=lambda kv: str(kv[0])
             )
+        ],
+    }
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    print()
+    avg = "-" if summary["avg_reward"] is None else f"{summary['avg_reward']:.3f}"
+    color = GREEN if not failed else RED
+    print(f"{color}{len(ok)}/{len(results)} completed{RESET}, avg reward {avg}")
+    if summary["pass_at_k"]:
+        ks = ", ".join(f"pass@{k}={v:.3f}" for k, v in summary["pass_at_k"].items())
+        print(f"  {ks}")
+    for r in failed:
+        attempt = f" a{r.attempt}" if r.attempt else ""
+        print(
+            f"  {RED}✗ {r.task} v{r.variant}{attempt}{RESET}: "
+            f"{(r.error or r.status).splitlines()[0]}"
+        )
+        print(f"    {GREY}log: {Path(r.output_dir) / 'run.log'}{RESET}")
+    print(f"Results: {output_dir}")
+    return 0 if not failed else 1
 
-        console.print("[green]✓ Cleanup complete[/green]")
 
+def _print_dry_run(target, jobs) -> int:
+    """``--dry-run``: what each variant would run on, without starting anything."""
+    from cua_bench.targets import plan_claims
+
+    reporter = ConsoleReporter()
+    reporter.plan(
+        target, jobs, plan_claims(((j.session_id, j.spec) for j in jobs), target.concurrency)
+    )
+    where = "Fleet" if target.cloud else "local"
+    for job in jobs:
+        spec = job.spec
+        note = {
+            "cli": "--kind/--runtime",
+            "platform": "--platform",
+            "task": "task",
+            "index": "image index",
+            "default": "default",
+        }
+        source = note.get(spec.kind_source, spec.kind_source)
+        reporter.line(
+            f"  {job.name}: {spec.image_label} -> {spec.kind} ({spec.image_variant}) "
+            f"on {where} via {spec.backend(target.on)} [{source}]"
+        )
+    reporter.line(f"{GREY}Dry run: no sandbox was started.{RESET}")
     return 0
 
 
-def cmd_stop(args) -> int:
-    """Stop a run and all its sessions."""
-    return asyncio.run(_cmd_stop_async(args))
-
-
-async def _cmd_stop_async(args) -> int:
-    """Stop a run asynchronously."""
-    import signal
-
-    from cua_bench.sessions import list_sessions, manager
-    from cua_bench.sessions.providers.docker import DockerProvider
-
-    run_id = getattr(args, "run_id", None)
-    if not run_id:
-        print(f"{RED}Error: run_id required{RESET}")
-        return 1
-
-    # Kill the background orchestrator process first so it can't restart containers
-    pid_file = _get_run_output_dir(run_id) / "run.pid"
-    if pid_file.exists():
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
-            print(f"{CYAN}Sent SIGTERM to orchestrator process (pid {pid}){RESET}")
-            # Give it a moment to clean up, then SIGKILL if still alive
-            await asyncio.sleep(2)
-            try:
-                sigkill = getattr(signal, "SIGKILL", None)
-                if sigkill is not None:
-                    os.kill(pid, sigkill)
-            except ProcessLookupError:
-                pass  # Already exited cleanly
-        except (ValueError, ProcessLookupError):
-            pass  # PID file stale or process already gone
-        finally:
-            pid_file.unlink(missing_ok=True)
-
-    sessions = list_sessions()
-    run_sessions = [s for s in sessions if s.get("run_id") == run_id]
-
-    if not run_sessions:
-        print(f"{YELLOW}No active sessions found for run: {run_id}{RESET}")
-        print(f"\n{GREEN}✓ Run stopped{RESET}")
-        return 0
-
-    print(f"{CYAN}Stopping run: {run_id} ({len(run_sessions)} sessions)...{RESET}")
-
-    docker_provider = DockerProvider()
-
-    for session in run_sessions:
-        session_id = session.get("session_id")
-        if not session_id:
-            continue
-
-        try:
-            await docker_provider.stop_session(session_id)
-            manager.remove_session(session_id)
-            print(f"  {GREEN}✓{RESET} Stopped: {session_id}")
-        except Exception as e:
-            print(f"  {YELLOW}⚠{RESET} Failed to stop {session_id}: {e}")
-
-    print(f"\n{GREEN}✓ Run stopped{RESET}")
+def _spawn_detached(args, run_id: str, output_dir: Path, jobs) -> int:
+    argv = [a for a in getattr(args, "_argv", sys.argv[1:]) if a not in ("--detach", "-d")]
+    cmd = [sys.executable, "-m", "cua_bench.cli.main", *argv, "--run-id", run_id]
+    if not any(a == "--output-dir" or a.startswith("--output-dir=") for a in argv):
+        cmd += ["--output-dir", str(output_dir)]
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "CUA_BENCH_NO_BANNER": "1"}
+    with open(output_dir / "console.log", "w", encoding="utf-8") as log:
+        proc = subprocess.Popen(
+            cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, env=env
+        )
+    (output_dir / "run.pid").write_text(str(proc.pid))
+    print(f"\n{GREEN}✓ Started {len(jobs)} variant(s) in the background (pid {proc.pid}){RESET}")
+    print(f"\n  cb run watch {run_id}   {GREY}# live status{RESET}")
+    print(f"  cb run logs {run_id}    {GREY}# logs{RESET}")
+    print(f"  cb run stop {run_id}    {GREY}# stop and release sandboxes{RESET}")
     return 0
 
 
-def cmd_logs(args) -> int:
-    """View combined logs from a run."""
-    return asyncio.run(_cmd_logs_async(args))
+# =============================================================================
+# Run inspection
+# =============================================================================
 
 
-async def _cmd_logs_async(args) -> int:
-    """View run or session logs asynchronously."""
+def _run_sessions(run_id: str) -> list[dict]:
     from cua_bench.sessions import list_sessions
-    from cua_bench.sessions.providers.docker import DockerProvider
 
-    identifier = getattr(args, "identifier", None)
-    if not identifier:
-        print(f"{RED}Error: identifier (run ID or session ID) required{RESET}")
-        return 1
+    return [s for s in list_sessions() if s.get("run_id") == run_id]
 
-    sessions = list_sessions()
-    docker_provider = DockerProvider()
-    tail = getattr(args, "tail", 50)
 
-    # Check if identifier is a session ID (starts with "task-")
-    if identifier.startswith("task-"):
-        # Show logs for specific session
-        session = next((s for s in sessions if s.get("session_id") == identifier), None)
+def _dataset_of(sessions: list[dict]) -> str:
+    env_path = sessions[0].get("env_path", "") if sessions else ""
+    if not env_path:
+        return "-"
+    parts = Path(env_path).parts
+    if "datasets" in parts and parts.index("datasets") + 1 < len(parts):
+        return parts[parts.index("datasets") + 1]
+    return Path(env_path).parent.name
 
-        if not session:
-            print(f"{RED}Error: Session not found: {identifier}{RESET}")
-            return 1
 
-        print(f"\n{'=' * 60}")
-        print(f"Session: {identifier}")
-        print(f"{'=' * 60}")
+def _rows(sessions: list[dict]) -> list[dict]:
+    from cua_bench.sessions import session_status
 
-        try:
-            logs = await docker_provider.get_session_logs(identifier, tail=tail)
-            print(logs)
-        except Exception as e:
-            print(f"{RED}Error retrieving logs: {e}{RESET}")
-            return 1
-    else:
-        # Treat as run ID - show logs for all sessions in the run
-        run_id = identifier
-        run_sessions = [s for s in sessions if s.get("run_id") == run_id]
+    rows = []
+    for session in sessions:
+        info = session_status(session)
+        rows.append(
+            {
+                "session_id": session.get("session_id", "?"),
+                "environment": Path(session.get("env_path", "?")).name,
+                "variant": str(session.get("task_index", 0)),
+                "on": session.get("location") or session.get("on") or session.get("provider") or "-",
+                "status": info["status"],
+                "reward": info["reward"],
+                "output_dir": session.get("output_dir"),
+            }
+        )
+    return rows
 
-        if not run_sessions:
-            print(f"{RED}Error: No sessions found for run: {run_id}{RESET}")
-            return 1
 
-        for session in run_sessions:
-            session_id = session.get("session_id")
-            if not session_id:
-                continue
+def _fmt_reward(reward: Optional[float]) -> str:
+    return "-" if reward is None else f"{reward:g}"
 
-            print(f"\n{'=' * 60}")
-            print(f"Session: {session_id}")
-            print(f"{'=' * 60}")
 
-            try:
-                logs = await docker_provider.get_session_logs(session_id, tail=tail)
-                print(logs)
-            except Exception as e:
-                print(f"{RED}Error retrieving logs: {e}{RESET}")
+def cmd_list(args) -> int:
+    from cua_bench.sessions import list_sessions
 
+    runs: dict[str, list[dict]] = defaultdict(list)
+    for session in list_sessions():
+        if session.get("run_id"):
+            runs[session["run_id"]].append(session)
+    if not runs:
+        print(f"{GREY}No runs found.{RESET}\n\nStart one with:\n  cb run <task|dataset>")
+        return 0
+    print(
+        f"{BOLD}{'RUN ID':<10}  {'ON':<6}  {'DATASET':<24}  {'AGENT':<12}  "
+        f"{'STATUS':<34}  AVG REWARD{RESET}"
+    )
+    for run_id, sessions in runs.items():
+        rows = _rows(sessions)
+        counts = Counter(row["status"] for row in rows)
+        rewards = [row["reward"] for row in rows if row["reward"] is not None]
+        avg = f"{sum(rewards) / len(rewards):.3f}" if rewards else "-"
+        status = " ".join(f"{k}({v})" for k, v in sorted(counts.items()))
+        print(
+            f"{run_id:<10}  {rows[0]['on']:<6}  {_dataset_of(sessions)[:24]:<24}  "
+            f"{(sessions[0].get('agent') or '-')[:12]:<12}  {status[:34]:<34}  {avg}"
+        )
+    print(f"\n{GREY}cb run info <id> | watch <id> | logs <id> | stop <id>{RESET}")
     return 0
 
 
 def cmd_info(args) -> int:
-    """Show detailed info about a run (static snapshot)."""
-    return asyncio.run(_cmd_info_async(args))
-
-
-async def _cmd_info_async(args) -> int:
-    """Show run info asynchronously."""
-    from cua_bench.sessions import list_sessions
-    from cua_bench.sessions.providers.docker import DockerProvider
-
-    run_id = getattr(args, "run_id", None)
-    if not run_id:
-        print(f"{RED}Error: run_id required{RESET}")
+    sessions = _run_sessions(args.run_id)
+    if not sessions:
+        print(f"{RED}Error: No sessions found for run: {args.run_id}{RESET}")
         return 1
-
-    sessions = list_sessions()
-    run_sessions = [s for s in sessions if s.get("run_id") == run_id]
-
-    if not run_sessions:
-        print(f"{RED}Error: No sessions found for run: {run_id}{RESET}")
-        return 1
-
-    docker_provider = DockerProvider()
-
-    # Get metadata
-    agent = run_sessions[0].get("agent") or "-"
-    model = run_sessions[0].get("model") or "-"
-    output_dir = run_sessions[0].get("output_dir", None)
-
-    # Get run output dir from first session's output_dir (go up one level)
-    run_output_dir = None
-    if output_dir:
-        session_output = Path(output_dir)
-        # Session output is like: .../runs/<run_id>/<task>_v<variant>
-        # We want: .../runs/<run_id>
-        if session_output.parent.name == run_id:
-            run_output_dir = str(session_output.parent)
-
-    if not run_output_dir:
-        run_output_dir = str(_get_run_output_dir(run_id))
-
-    # Extract dataset from first session's env_path
-    env_path = run_sessions[0].get("env_path", "")
-    dataset = "-"
-    if env_path:
-        path_parts = Path(env_path).parts
-        if "datasets" in path_parts:
-            dataset_idx = path_parts.index("datasets")
-            if dataset_idx + 1 < len(path_parts):
-                dataset = path_parts[dataset_idx + 1]
-        else:
-            dataset = Path(env_path).parent.name
-
-    # Collect session data
-    sessions_data = []
-    completed_count = 0
-    rewards = []
-
-    for session in run_sessions:
-        session_id = session.get("session_id", "unknown")
-        if session_id == "unknown" or session.get("status") == "queued":
-            continue
-
-        env_path = session.get("env_path", "unknown")
-        environment = Path(env_path).name if env_path != "unknown" else "unknown"
-        variant = str(session.get("task_index", 0))
-
-        try:
-            status_info = await docker_provider.get_session_status(session_id)
-            status = status_info.get("status", "unknown")
-        except Exception:
-            status = "error"
-
-        if status in ("completed", "failed", "stopped", "deleted"):
-            completed_count += 1
-
-        reward = "-"
-        if status == "completed":
-            try:
-                logs = await docker_provider.get_session_logs(session_id, tail=100)
-                match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                if match:
-                    reward = match.group(1)
-                    try:
-                        rewards.append(float(reward))
-                    except ValueError:
-                        pass
-            except Exception:
-                pass
-        elif status == "failed":
-            rewards.append(0.0)
-            reward = "0.0"
-
-        # Get session output dir for logs location
-        session_output = session.get("output_dir", "-")
-
-        sessions_data.append(
-            {
-                "session_id": session_id,
-                "environment": environment,
-                "variant": variant,
-                "status": status,
-                "reward": reward,
-                "output_dir": session_output,
-            }
-        )
-
-    total_count = len(sessions_data)
-
-    # Print header
-    print()
-    print(f"{BOLD}Run: {run_id}{RESET}")
-    print(f"Dataset:  {dataset}")
-    print(f"Agent:    {agent}")
-    print(f"Model:    {model}")
-    print(f"Progress: {completed_count}/{total_count}")
+    rows = _rows(sessions)
+    done = sum(1 for row in rows if row["status"] in FINAL)
+    rewards = [row["reward"] for row in rows if row["reward"] is not None]
+    first = sessions[0]
+    print(f"\n{BOLD}Run: {args.run_id}{RESET}")
+    print(f"Dataset:  {_dataset_of(sessions)}")
+    where = first.get("location") or first.get("on") or "-"
+    print(f"Target:   {where} ({first.get('backend', '-')})")
+    print(f"Image:    {first.get('image', '-')}")
+    if first.get("kind") or first.get("runtime"):
+        variant = first.get("image_variant") or "-"
+        engine = f", {first['runtime']}" if first.get("runtime") else ""
+        print(f"Kind:     {first.get('kind') or '-'}{engine} ({variant})")
+    if first.get("image_digest"):
+        print(f"Digest:   {first.get('image_digest')}")
+    print(f"Agent:    {first.get('agent') or '-'}")
+    print(f"Model:    {first.get('model') or '-'}")
+    print(f"Progress: {done}/{len(rows)}")
     if rewards:
-        avg_reward = sum(rewards) / len(rewards)
-        reward_color = GREEN if avg_reward >= 0.5 else RED
-        print(f"Avg Reward: {reward_color}{avg_reward:.3f}{RESET}")
-    print(f"\nOutput: {run_output_dir}")
-    print(f"Logs:   {run_output_dir}/run.log")
-    print()
-
-    # Print sessions table
-    print(
-        f"{BOLD}{'SESSION ID':<40}  {'ENVIRONMENT':<15}  {'VARIANT':<7}  {'STATUS':<15}  {'REWARD':<10}{RESET}"
-    )
-    print("-" * 40 + "  " + "-" * 15 + "  " + "-" * 7 + "  " + "-" * 15 + "  " + "-" * 10)
-
-    for session_data in sessions_data:
-        session_id = session_data["session_id"]
-        environment = session_data["environment"]
-        variant = session_data["variant"]
-        status = session_data["status"]
-        reward = session_data["reward"]
-
-        # Color status
-        if status == "running":
-            status_display = f"{GREEN}{status:<15}{RESET}"
-        elif status == "completed":
-            status_display = f"{CYAN}{status:<15}{RESET}"
-        elif status == "failed":
-            status_display = f"{RED}{status:<15}{RESET}"
-        else:
-            status_display = f"{GREY}{status:<15}{RESET}"
-
-        # Color reward
-        if reward != "-":
-            try:
-                reward_val = float(reward)
-                if reward_val >= 0.5:
-                    reward_display = f"{GREEN}{reward:<10}{RESET}"
-                else:
-                    reward_display = f"{RED}{reward:<10}{RESET}"
-            except ValueError:
-                reward_display = f"{reward:<10}"
-        else:
-            reward_display = f"{GREY}{reward:<10}{RESET}"
-
+        print(f"Avg reward: {sum(rewards) / len(rewards):.3f}")
+    out = Path(first.get("output_dir", "")).parent if first.get("output_dir") else None
+    if out:
+        print(f"Output:   {out}")
+    print(f"\n{BOLD}{'SESSION ID':<48}  {'VARIANT':<7}  {'STATUS':<10}  REWARD{RESET}")
+    for row in rows:
         print(
-            f"{session_id:<40}  {environment:<15}  {variant:<7}  {status_display}  {reward_display}"
+            f"{row['session_id'][:48]:<48}  {row['variant']:<7}  {row['status']:<10}  "
+            f"{_fmt_reward(row['reward'])}"
         )
-
-    print()
-    print(f"{GREY}Commands:{RESET}")
-    print(f"  cb run watch {run_id}   {GREY}# Watch in real-time{RESET}")
-    print(f"  cb run logs {run_id}    {GREY}# View all logs{RESET}")
-    print(f"  cb run stop {run_id}    {GREY}# Stop all sessions{RESET}")
-    print(f"  cb trace grid {run_id}  {GREY}# View all traces{RESET}")
-    print()
-
     return 0
 
 
-# =============================================================================
-# Task and Dataset Execution Commands
-# =============================================================================
-
-
-def cmd_run_task(args) -> int:
-    """Run a single task using 2-container architecture.
-
-    By default, runs asynchronously and returns immediately with a run ID.
-    Use --wait to wait for completion.
-    """
-    # Load .env file if it exists
-    from dotenv import load_dotenv
-
-    env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        load_dotenv(env_file)
-        print(f"{GREY}Loaded environment from: {env_file}{RESET}")
-
-    # Apply configuration defaults from .cua/config.yaml
-    args = _apply_config_defaults_for_task(args)
-
-    # Generate run ID upfront
-    run_id = generate_task_id()
-
-    # Determine output directory (user-specified or default)
-    user_output_dir = getattr(args, "output_dir", None)
-    if user_output_dir:
-        output_dir = Path(user_output_dir)
-    else:
-        output_dir = _get_run_output_dir(run_id)
-
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Store on args for the async function
-    args.output_dir = str(output_dir)
-    args._run_id = run_id
-
-    # Check if user wants to wait for completion
-    wait_mode = getattr(args, "wait", False)
-
-    if wait_mode:
-        # Synchronous mode - wait for completion
-        return asyncio.run(_cmd_run_task_async(args))
-    else:
-        # Async mode - start in background and return
-        return asyncio.run(_cmd_run_task_detached(args))
-
-
-async def _cmd_run_task_async(args) -> int:
-    """Execute single task using 2-container architecture."""
-    from cua_bench.runner import TaskRunner
-    from cua_bench.sessions import manager
-
-    task_path = Path(args.task_path)
-    if not task_path.exists():
-        print(f"{RED}Error: Task not found: {task_path}{RESET}")
+def cmd_watch(args) -> int:
+    try:
+        from rich.console import Console
+        from rich.live import Live
+        from rich.table import Table
+    except ImportError:
+        print(f"{RED}Error: 'rich' is required for watch mode.{RESET}")
         return 1
+    run_id = args.run_id
+    if not _run_sessions(run_id):
+        print(f"{RED}No sessions found for run: {run_id}{RESET}")
+        return 1
+    console = Console()
 
-    # Get provider type (explicit arg or auto-detect)
-    provider_type = getattr(args, "provider_type", None) or _detect_provider_type(task_path)
-
-    # Log provider
-    if provider_type in ("simulated", "webtop"):
-        print(f"{GREY}Provider: simulated - agent will use local Playwright session{RESET}")
-    elif provider_type == "daytona":
-        print(f"{GREY}Provider: daytona - running fully remote in Daytona sandboxes{RESET}")
-    elif provider_type in ("native", "computer"):
-        print(f"{GREY}Provider: native - using 2-container architecture{RESET}")
-    else:
-        print(f"{GREY}Provider: unknown - using 2-container architecture{RESET}")
-
-    # Get task index
-    task_index = getattr(args, "variant_id", 0) or 0
-
-    # Detect env type and image (only used for native providers)
-    env_type, image_name = _detect_env_type_and_image(task_path, args)
-
-    # Get optional debug ports - auto-allocate if either is requested
-    user_vnc = getattr(args, "vnc_port", None)
-    user_api = getattr(args, "api_port", None)
-    debug_mode = getattr(args, "debug", False)
-
-    if debug_mode or user_vnc is not None or user_api is not None:
-        # Auto-allocate ports for debugging
-        if user_vnc is not None and user_api is not None:
-            vnc_port = user_vnc
-            api_port = user_api
-        else:
-            vnc_port, api_port = allocate_ports(
-                vnc_default=user_vnc if user_vnc else 8006,
-                api_default=user_api if user_api else 5000,
+    def table() -> tuple[Table, bool]:
+        rows = _rows(_run_sessions(run_id))
+        done = sum(1 for row in rows if row["status"] in FINAL)
+        t = Table(title=f"run {run_id}: {done}/{len(rows)} done", expand=True, box=None)
+        for column in ("ENVIRONMENT", "VARIANT", "STATUS", "REWARD"):
+            t.add_column(column)
+        style = {"completed": "cyan", "failed": "red", "cancelled": "red", "running": "green"}
+        for row in rows:
+            t.add_row(
+                row["environment"],
+                row["variant"],
+                f"[{style.get(row['status'], 'yellow')}]{row['status']}[/]",
+                _fmt_reward(row["reward"]),
             )
-            if not user_vnc or not user_api:
-                print(f"{CYAN}Auto-allocated debug ports: VNC={vnc_port}, API={api_port}{RESET}")
-    else:
-        vnc_port = None
-        api_port = None
-
-    # Resolve agent configuration
-    agent_name = getattr(args, "agent", None)
-    agent_image = None
-    agent_command = None
-    agent_import_path = getattr(args, "agent_import_path", None)
-
-    # If agent is specified, check if it's a Docker image agent
-    if agent_name:
-        config_loader = getattr(args, "_config_loader", None)
-        if config_loader:
-            agent_entry = config_loader.get_agent_by_name(agent_name)
-            if agent_entry:
-                if agent_entry.is_docker_agent():
-                    agent_image = agent_entry.get_image()
-                    agent_command = agent_entry.command
-                    print(f"{CYAN}Using Docker image agent: {agent_image}{RESET}")
-                elif agent_entry.import_path:
-                    agent_import_path = agent_entry.import_path
-
-    # Get run info
-    # Use run_id from args if provided (from parent or subprocess), otherwise generate new one
-    run_id = getattr(args, "_run_id", None) or getattr(args, "run_id", None) or generate_task_id()
-
-    # Get or generate run output directory
-    run_output_dir = getattr(args, "output_dir", None)
-    if not run_output_dir:
-        run_output_dir = str(_get_run_output_dir(run_id))
-
-    # Create session output directory (nested inside run directory, like dataset runs)
-    session_output_dir = str(Path(run_output_dir) / f"{task_path.name}_v{task_index}")
-
-    # Register or update session before starting
-    # Use provided session_id if available (from dataset command), otherwise generate one
-    session_id = getattr(args, "session_id", None) or f"task-{run_id}"
-
-    # Determine agent display value
-    oracle_mode = getattr(args, "oracle", False)
-    agent_display = "oracle" if oracle_mode else agent_name
-
-    session_data = {
-        "session_id": session_id,
-        "run_id": run_id,
-        "provider": "docker",
-        "env_path": str(task_path),
-        "task_index": task_index,
-        "env_type": env_type,
-        "image": image_name,
-        "agent": agent_display,
-        "model": getattr(args, "model", None) or "-",
-        "output_dir": session_output_dir,  # Use session output dir
-        "status": "starting",
-    }
-
-    # Check if session already exists (from dataset pre-registration)
-    existing_sessions = manager.list_sessions()
-    session_exists = any(s.get("session_id") == session_id for s in existing_sessions)
-
-    if session_exists:
-        # Update status from queued to starting
-        manager.update_session(session_id, {"status": "starting"})
-    else:
-        # New session - register it
-        manager.add_session(session_data)
-
-    # Get the actual agent image that will be used (for display purposes)
-    from cua_bench.runner.task_runner import DEFAULT_AGENT_IMAGE
-
-    display_agent_image = agent_image or DEFAULT_AGENT_IMAGE
-
-    print(f"{CYAN}Starting 2-container task execution{RESET}")
-    print(f"  Run ID: {run_id}")
-
-    # Show environment type based on provider
-    if provider_type in ("simulated", "webtop"):
-        print("  Environment: simulated (Playwright)")
-    elif provider_type == "daytona":
-        print(f"  Environment: {image_name} (daytona)")
-    else:
-        print(f"  Environment: {image_name} ({env_type})")
-
-    print(f"  Task: {task_path.name} index={task_index}")
-    print(f"  Output: {run_output_dir}")
-    print(f"  Session: {session_output_dir}")
-    print(f"  Agent image: {display_agent_image}")
-    if agent_name:
-        print(f"  Agent: {agent_name}")
-    if vnc_port:
-        print(f"  VNC: http://localhost:{vnc_port}")
-
-    # Create runner
-    runner = TaskRunner()
+        return t, done == len(rows)
 
     try:
-        result = await runner.run_task(
-            env_path=task_path,
-            task_index=task_index,
-            env_type=env_type,
-            golden_name=image_name,
-            agent=agent_name,
-            agent_image=agent_image,
-            agent_command=agent_command,
-            agent_import_path=agent_import_path,
-            model=getattr(args, "model", None),
-            max_steps=getattr(args, "max_steps", 100),
-            oracle=getattr(args, "oracle", False),
-            memory=getattr(args, "memory", "8G"),
-            cpus=getattr(args, "cpus", "8"),
-            vnc_port=vnc_port,
-            api_port=api_port,
-            output_dir=session_output_dir,  # Use the session output dir
-            stream_agent_logs=True,  # Stream logs to run.log
-            provider_type=provider_type,  # Pass detected provider type
-            dev_paths=getattr(args, "dev_paths", None),
-            verbose=getattr(args, "verbose", False),
-        )
-
-        if result.success:
-            print(f"\n{GREEN}✓ Task completed successfully!{RESET}")
-        else:
-            print(f"\n{RED}✗ Task failed with exit code {result.exit_code}{RESET}")
-            if result.error:
-                print(f"{RED}Error: {result.error}{RESET}")
-
-        if result.agent_logs:
-            print(f"\n{CYAN}--- Agent Logs (last 250 lines) ---{RESET}")
-            log_lines = result.agent_logs.strip().split("\n")
-            for line in log_lines[-250:]:
-                print(line)
-            print(f"{CYAN}--- End Agent Logs ---{RESET}")
-
-        # Show log file location
-        log_file = Path(session_output_dir) / "run.log"
-        if log_file.exists():
-            print(f"\n{GREY}Full logs saved to: {log_file}{RESET}")
-
-        # Summary
-        task_name = task_path.name
-        model_name = getattr(args, "model", None) or "default"
-        print("\n")
-        if result.success:
-            print(f"Task '{task_name}' completed successfully with model '{model_name}'.")
-        else:
-            print(
-                f"Task '{task_name}' failed (exit code {result.exit_code}) with model '{model_name}'."
-            )
-        print(f"Logs and artifacts: {session_output_dir}")
-
-        # Update session status before cleanup
-        try:
-            final_status = "completed" if result.success else "failed"
-            manager.update_session(session_id, {"status": final_status})
-        except Exception:
-            # Non-fatal - session might not exist if run in sync mode
-            pass
-
-        return 0 if result.success else 1
-
-    except Exception as e:
-        print(f"{RED}Error: {e}{RESET}")
-        import traceback
-
-        traceback.print_exc()
-
-        # Update session status to failed before cleanup
-        try:
-            manager.update_session(session_id, {"status": "failed"})
-        except Exception:
-            pass
-
-        return 1
-
-    finally:
-        await runner.cleanup_all()
-
-
-async def _cmd_run_task_detached(args) -> int:
-    """Start task in background and return immediately with status hints.
-
-    This is the default mode - tasks run asynchronously and users can
-    check status with `cb run watch/status/logs`.
-    """
-    from cua_bench.sessions import manager
-
-    task_path = Path(args.task_path)
-    if not task_path.exists():
-        print(f"{RED}Error: Task not found: {task_path}{RESET}")
-        return 1
-
-    # Get provider type (explicit arg or auto-detect)
-    provider_type = getattr(args, "provider_type", None) or _detect_provider_type(task_path)
-
-    # Get task index
-    task_index = getattr(args, "variant_id", 0) or 0
-
-    # Detect env type and image (only used for native providers)
-    env_type, image_name = _detect_env_type_and_image(task_path, args)
-
-    # Get run info
-    run_id = getattr(args, "_run_id", generate_task_id())
-
-    # Get or generate run output directory
-    run_output_dir = getattr(args, "output_dir", None)
-    if not run_output_dir:
-        run_output_dir = str(_get_run_output_dir(run_id))
-
-    # Create session output directory (nested inside run directory, like dataset runs)
-    session_output_dir = str(Path(run_output_dir) / f"{task_path.name}_v{task_index}")
-
-    # Get optional debug ports - auto-allocate if either is requested
-    user_vnc = getattr(args, "vnc_port", None)
-    user_api = getattr(args, "api_port", None)
-    debug_mode = getattr(args, "debug", False)
-
-    if debug_mode or user_vnc is not None or user_api is not None:
-        if user_vnc is not None and user_api is not None:
-            vnc_port = user_vnc
-            api_port = user_api
-        else:
-            vnc_port, api_port = allocate_ports(
-                vnc_default=user_vnc if user_vnc else 8006,
-                api_default=user_api if user_api else 5000,
-            )
-    else:
-        vnc_port = None
-        api_port = None
-
-    # Resolve agent configuration
-    agent_name = getattr(args, "agent", None)
-    agent_import_path = getattr(args, "agent_import_path", None)
-
-    if agent_name:
-        config_loader = getattr(args, "_config_loader", None)
-        if config_loader:
-            agent_entry = config_loader.get_agent_by_name(agent_name)
-            if agent_entry:
-                if agent_entry.is_docker_agent():
-                    agent_entry.get_image()
-                elif agent_entry.import_path:
-                    agent_import_path = agent_entry.import_path
-
-    # Register or update session before starting
-    # Use provided session_id if available (from dataset command), otherwise generate one
-    session_id = getattr(args, "session_id", None) or f"task-{run_id}"
-
-    # Determine agent display value
-    # If oracle flag is set, show 'oracle', otherwise show agent name or None
-    oracle_mode = getattr(args, "oracle", False)
-    agent_display = "oracle" if oracle_mode else agent_name
-
-    session_data = {
-        "session_id": session_id,
-        "run_id": run_id,
-        "provider": "docker",
-        "env_path": str(task_path),
-        "task_index": task_index,
-        "env_type": env_type,
-        "image": image_name,
-        "agent": agent_display,
-        "model": getattr(args, "model", None) or "-",
-        "output_dir": session_output_dir,  # Use session output dir
-        "status": "starting",
-    }
-
-    # Check if session already exists (from dataset pre-registration)
-    existing_sessions = manager.list_sessions()
-    session_exists = any(s.get("session_id") == session_id for s in existing_sessions)
-
-    if session_exists:
-        # Update status from queued to starting
-        manager.update_session(session_id, {"status": "starting"})
-    else:
-        # New session - register it
-        manager.add_session(session_data)
-
-    # Print startup info
-    print(f"\n{GREEN}✓ Run started{RESET}")
-    print(f"\n  {BOLD}Run ID:{RESET}  {run_id}")
-    print(f"  {BOLD}Task:{RESET}    {task_path.name} (variant {task_index})")
-
-    # Show environment based on provider
-    if provider_type in ("simulated", "webtop"):
-        print(f"  {BOLD}Env:{RESET}     simulated (Playwright)")
-    else:
-        print(f"  {BOLD}Image:{RESET}   {image_name}")
-    print(f"  {BOLD}Output:{RESET}  {run_output_dir}")
-    print(f"  {BOLD}Session:{RESET} {session_output_dir}")
-    if vnc_port:
-        print(f"  {BOLD}VNC:{RESET}     http://localhost:{vnc_port}")
-
-    print(f"\n{CYAN}Commands:{RESET}")
-    print(f"  cb run watch {run_id}   {GREY}# Watch progress in real-time{RESET}")
-    print(f"  cb run info {run_id}    {GREY}# Show run details{RESET}")
-    print(f"  cb run logs {run_id}    {GREY}# View logs{RESET}")
-    print(f"  cb run stop {run_id}    {GREY}# Stop the run{RESET}")
-
-    # Debug: Show Python executable being used
-    print(f"\n{GREY}Python: {sys.executable}{RESET}")
-
-    # Get Python version
-    import platform
-
-    print(f"{GREY}Version: {platform.python_version()}{RESET}")
-
-    # Start task in background using subprocess
-    # This spawns a new process that runs the task synchronously
-    cmd = [
-        sys.executable,
-        "-m",
-        "cua_bench.cli.main",
-        "run",
-        "task",
-        str(task_path),
-        "--wait",  # The subprocess waits for completion
-        "--variant-id",
-        str(task_index),
-        "--output-dir",
-        str(run_output_dir),  # Pass the run directory (subprocess will create session subdir)
-        "--run-id",
-        run_id,  # Pass the run ID so subprocess updates the correct session
-    ]
-
-    # Pass through relevant args
-    if agent_name:
-        cmd.extend(["--agent", agent_name])
-    if agent_import_path:
-        cmd.extend(["--agent-import-path", agent_import_path])
-    if getattr(args, "model", None):
-        cmd.extend(["--model", args.model])
-    if getattr(args, "max_steps", None):
-        cmd.extend(["--max-steps", str(args.max_steps)])
-    if getattr(args, "oracle", False):
-        cmd.append("--oracle")
-    if getattr(args, "image", None):
-        cmd.extend(["--image", args.image])
-    if getattr(args, "platform", None):
-        cmd.extend(["--platform", args.platform])
-    if vnc_port:
-        cmd.extend(["--vnc-port", str(vnc_port)])
-    if api_port:
-        cmd.extend(["--api-port", str(api_port)])
-
-    # Add provider type to command (will be passed to subprocess which calls run_task)
-    if provider_type in ("simulated", "webtop"):
-        cmd.extend(["--provider-type", "simulated"])
-    elif provider_type == "daytona":
-        cmd.extend(["--provider-type", "daytona"])
-
-    # Forward --with paths to subprocess (resolve to absolute so CWD changes don't matter)
-    for dev_path in getattr(args, "dev_paths", None) or []:
-        abs_dev_path = str(Path(dev_path).resolve())
-        cmd.extend(["--with", abs_dev_path])
-
-    # Forward --verbose
-    if getattr(args, "verbose", False):
-        cmd.append("--verbose")
-
-    # Start background process
-    # Set environment variables for UTF-8 encoding on Windows
-    # This prevents UnicodeEncodeError with the banner
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
-
-    log_file = Path(session_output_dir) / "run.log" if session_output_dir else None
-    if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "w", encoding="utf-8") as f:
-            process = subprocess.Popen(
-                cmd,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,  # Detach from parent
-                env=env,
-            )
-        print(f"\n{GREY}Logs: {log_file}{RESET}")
-    else:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env=env,
-        )
-
-    # Update session with PID
-    manager.update_session(session_id, {"pid": process.pid, "status": "running"})
-
-    print(f"\n{GREEN}Task running in background (PID: {process.pid}){RESET}\n")
+        with Live(console=console, refresh_per_second=2) as live:
+            for _ in range(24 * 3600 * 2):  # bounded: at most a day of polling
+                current, finished = table()
+                live.update(current)
+                if finished:
+                    break
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        console.print(f"[yellow]Detached. Resume with: cb run watch {run_id}[/yellow]")
     return 0
 
 
-def cmd_run_dataset(args) -> int:
-    """Run all tasks in a dataset using parallel 2-container architecture."""
-    # Load .env file if it exists
-    from dotenv import load_dotenv
-
-    env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        load_dotenv(env_file)
-        print(f"{GREY}Loaded environment from: {env_file}{RESET}")
-
-    # Apply configuration defaults
-    args = _apply_config_defaults_for_task(args)
-
-    return asyncio.run(_cmd_run_dataset_async(args))
-
-
-async def _cmd_run_dataset_async(args) -> int:
-    """Execute dataset tasks using parallel 2-container architecture.
-
-    In --wait mode: Runs tasks directly with semaphore, prints progress
-    In detached mode: Spawns subprocess with --wait
-    """
-    import fnmatch
-
-    from cua_bench.runner import TaskRunner
+def cmd_stop(args) -> int:
     from cua_bench.sessions import manager
 
-    from .registry import resolve_dataset_path
-
-    dataset_path = Path(args.dataset_path)
-
-    # Try to resolve from registry if not a path
-    if not dataset_path.exists():
-        resolved = resolve_dataset_path(args.dataset_path, update_registry=True)
-        if resolved:
-            dataset_path = resolved
-        else:
-            print(f"{RED}Error: Dataset not found: {args.dataset_path}{RESET}")
-            return 1
-
-    # Discover tasks in dataset
-    tasks = []
-
-    # Check if it's a single task directory (has main.py)
-    if (dataset_path / "main.py").exists():
-        tasks.append(dataset_path)
-    else:
-        # Find all subdirectories with main.py
-        for task_dir in sorted(dataset_path.iterdir()):
-            if task_dir.is_dir() and (task_dir / "main.py").exists():
-                tasks.append(task_dir)
-
-    if not tasks:
-        print(f"{RED}Error: No tasks found in dataset: {dataset_path}{RESET}")
-        return 1
-
-    # Get provider type (explicit arg or auto-detect from first task)
-    provider_type = getattr(args, "provider_type", None)
-    if not provider_type and tasks:
-        provider_type = _detect_provider_type(tasks[0])
-    if not provider_type:
-        provider_type = "unknown"
-
-    # Log provider
-    if provider_type in ("simulated", "webtop"):
-        print(f"{GREY}Provider: simulated - agents will use local Playwright sessions{RESET}")
-    elif provider_type == "daytona":
-        print(f"{GREY}Provider: daytona - running fully remote in Daytona sandboxes{RESET}")
-    elif provider_type in ("native", "computer"):
-        print(f"{GREY}Provider: native - using 2-container architecture{RESET}")
-    else:
-        print(f"{GREY}Provider: unknown - using 2-container architecture{RESET}")
-
-    # Apply task filter if specified
-    task_filter = getattr(args, "task_filter", None)
-    if task_filter:
-        _patterns = [p.strip() for p in task_filter.split(",")]
-        tasks = [t for t in tasks if any(fnmatch.fnmatch(t.name, p) for p in _patterns)]
-        if not tasks:
-            print(f"{RED}Error: No tasks match filter: {task_filter}{RESET}")
-            return 1
-
-    # Get max variants per task
-    max_variants = getattr(args, "max_variants", None)
-
-    # Expand tasks to (task_path, variant_id) tuples
-    task_variants = []
-    for task_path in tasks:
-        # Try to get variant count from task
+    run_id = args.run_id
+    pid_file = _get_run_output_dir(run_id) / "run.pid"
+    sessions = _run_sessions(run_id)
+    if not pid_file.exists() and sessions and sessions[0].get("output_dir"):
+        pid_file = Path(sessions[0]["output_dir"]).parent / "run.pid"
+    if pid_file.exists():
         try:
-            from cua_bench import make
-
-            env = make(str(task_path))
-            if env.tasks_config_fn:
-                variant_count = len(env.tasks_config_fn())
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            print(f"{CYAN}Stopping run {run_id} (pid {pid}); it releases its sandboxes...{RESET}")
+            for _ in range(120):  # up to 60 s for a clean release
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.5)
             else:
-                variant_count = 1
-        except Exception:
-            variant_count = 1
+                print(f"{YELLOW}Still running after 60s; cloud claims expire on their TTL.{RESET}")
+        except (ValueError, ProcessLookupError):
+            pass
+    for session in sessions:
+        if session.get("status") not in FINAL:
+            manager.update_session(session["session_id"], {"status": "cancelled"})
+    print(f"{GREEN}✓ Run stopped{RESET}")
+    return 0
 
-        if max_variants:
-            variant_count = min(variant_count, max_variants)
 
-        for variant_id in range(variant_count):
-            task_variants.append((task_path, variant_id))
+def cmd_logs(args) -> int:
+    from cua_bench.sessions import get_session, session_logs
 
-    # Generate run ID (or use provided one from parent process)
-    run_id = getattr(args, "run_id", None) or generate_task_id()
+    identifier = args.identifier
+    tail = getattr(args, "tail", None)
+    session = get_session(identifier)
+    sessions = [session] if session else _run_sessions(identifier)
+    if not sessions:
+        print(f"{RED}Error: no run or session {identifier}{RESET}")
+        return 1
+    for session in sessions:
+        print(f"\n{'=' * 60}\nSession: {session.get('session_id')}\n{'=' * 60}")
+        print(session_logs(session, tail=tail) or f"{GREY}(no log yet){RESET}")
+    return 0
 
-    # Determine output directory
-    user_output_dir = getattr(args, "output_dir", None)
-    if user_output_dir:
-        output_dir = Path(user_output_dir)
-    else:
-        output_dir = _get_run_output_dir(run_id)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Detect env type from first task
-    first_task = task_variants[0][0] if task_variants else None
-    if first_task:
-        env_type, image_name = _detect_env_type_and_image(first_task, args)
-    else:
-        env_type = getattr(args, "platform", "linux-docker")
-        image_name = getattr(args, "image", env_type)
-
-    # Get agent configuration
-    agent_name = getattr(args, "agent", None)
-    oracle_mode = getattr(args, "oracle", False)
-    agent_display = "oracle" if oracle_mode else agent_name
-
-    agent_image = None
-    agent_command = None
-    agent_import_path = getattr(args, "agent_import_path", None)
-
-    if agent_name:
-        config_loader = getattr(args, "_config_loader", None)
-        if config_loader:
-            agent_entry = config_loader.get_agent_by_name(agent_name)
-            if agent_entry:
-                if agent_entry.is_docker_agent():
-                    agent_image = agent_entry.get_image()
-                    agent_command = agent_entry.command
-                elif agent_entry.import_path:
-                    agent_import_path = agent_entry.import_path
-
-    # Get max parallel workers
-    max_parallel = getattr(args, "max_parallel", 4)
-
-    # Register all sessions as queued
-    for task_path, variant_id in task_variants:
-        session_id = f"task-{run_id}-{task_path.name}-v{variant_id}"
-        session_data = {
-            "session_id": session_id,
-            "run_id": run_id,
-            "provider": "docker",
-            "env_path": str(task_path),
-            "task_index": variant_id,
-            "env_type": env_type,
-            "image": image_name,
-            "agent": agent_display,
-            "model": getattr(args, "model", None) or "-",
-            "output_dir": str(output_dir / f"{task_path.name}_v{variant_id}"),
-            "status": "queued",
-        }
-        manager.add_session(session_data)
-
-    # Check if --wait mode
-    wait_mode = getattr(args, "wait", False)
-
-    # Track batch job started
-    if _telemetry_available:
-        track_batch_job_started(
-            dataset_name=dataset_path.name,
-            task_count=len(tasks),
-            variant_count=len(task_variants),
-            parallelism=max_parallel,
-            agent=agent_display,
-            model=getattr(args, "model", None),
-            run_id=run_id,
-            provider_type=provider_type,
-        )
-
-    if wait_mode:
-        # --wait mode: Run tasks directly with semaphore
-        print(f"{CYAN}Running dataset: {dataset_path.name}{RESET}")
-        print(f"  Tasks: {len(tasks)}")
-        print(f"  Total variants: {len(task_variants)}")
-        print(f"  Max parallel: {max_parallel}")
-        print()
-
-        # Open global run.log for dataset progress output
-        global_log_file = output_dir / "run.log"
-
-        def log_print(msg):
-            """Print and write to global log file."""
-            print(msg)
-            with open(global_log_file, "a", encoding="utf-8") as f:
-                # Strip ANSI codes for log file
-                import re
-
-                clean_msg = re.sub(r"\033\[[0-9;]*m", "", msg)
-                f.write(clean_msg + "\n")
-
-        async def run_single_task(task_path: Path, variant_id: int, task_num: int):
-            """Run a single task variant."""
-            task_output_dir = output_dir / f"{task_path.name}_v{variant_id}"
-            task_output_dir.mkdir(parents=True, exist_ok=True)
-
-            session_id = f"task-{run_id}-{task_path.name}-v{variant_id}"
-
-            # Update session status to starting
-            manager.update_session(session_id, {"status": "starting"})
-
-            log_print(
-                f"{GREY}[{task_num}/{len(task_variants)}] Starting {task_path.name} variant={variant_id}{RESET}"
-            )
-
-            # Track task start time
-            task_start_time = time.time()
-
-            runner = TaskRunner()
-            try:
-                result = await runner.run_task(
-                    env_path=task_path,
-                    task_index=variant_id,
-                    env_type=env_type,
-                    golden_name=image_name,
-                    agent=agent_name,
-                    agent_image=agent_image,
-                    agent_command=agent_command,
-                    agent_import_path=agent_import_path,
-                    model=getattr(args, "model", None),
-                    max_steps=getattr(args, "max_steps", 100),
-                    oracle=oracle_mode,
-                    memory=getattr(args, "memory", "8G"),
-                    cpus=getattr(args, "cpus", "8"),
-                    output_dir=str(task_output_dir),
-                    stream_agent_logs=True,  # Stream agent logs to <task_output_dir>/run.log
-                    cleanup_before=False,
-                    provider_type=provider_type,  # Pass detected provider type
-                    dev_paths=getattr(args, "dev_paths", None),
-                )
-
-                # Extract reward from logs if available
-                reward_str = "?"
-                reward_color = ""
-                if result.agent_logs:
-                    import re
-
-                    match = re.search(r"Evaluation result: \[([^\]]+)\]", result.agent_logs)
-                    if match:
-                        reward_str = match.group(1)
-                        try:
-                            reward_val = float(reward_str)
-                            reward_color = GREEN if reward_val >= 0.5 else RED
-                        except ValueError:
-                            pass
-
-                # Update session status
-                final_status = "completed" if result.success else "failed"
-                manager.update_session(session_id, {"status": final_status})
-
-                # Track batch task completed
-                if _telemetry_available:
-                    task_duration = time.time() - task_start_time
-                    reward_val = None
-                    try:
-                        reward_val = float(reward_str) if reward_str != "?" else None
-                    except ValueError:
-                        pass
-                    track_batch_task_completed(
-                        env_name=task_path.name,
-                        task_index=variant_id,
-                        success=result.success,
-                        reward=reward_val,
-                        total_steps=0,  # Not tracked at this level
-                        duration_seconds=task_duration,
-                        run_id=run_id,
-                    )
-
-                if result.success:
-                    log_print(
-                        f"{GREEN}[{task_num}/{len(task_variants)}] ✓ {task_path.name} variant={variant_id}{RESET} reward={reward_color}{reward_str}{RESET}"
-                    )
-                else:
-                    log_print(
-                        f"{RED}[{task_num}/{len(task_variants)}] ✗ {task_path.name} variant={variant_id}{RESET} reward={reward_color}{reward_str}{RESET}"
-                    )
-
-                return result
-
-            except Exception as e:
-                manager.update_session(session_id, {"status": "failed"})
-                log_print(
-                    f"{RED}[{task_num}/{len(task_variants)}] ✗ {task_path.name} variant={variant_id} error={str(e)}{RESET}"
-                )
-
-                # Track task failure
-                if _telemetry_available:
-                    task_duration = time.time() - task_start_time
-                    track_task_execution_failed(
-                        env_name=task_path.name,
-                        task_index=variant_id,
-                        error_type=type(e).__name__,
-                        error_message=str(e),
-                        stage="execution",
-                        run_id=run_id,
-                    )
-
-                return None
-            finally:
-                await runner.cleanup_all()
-
-        # Process with semaphore for parallelism control
-        semaphore = asyncio.Semaphore(max_parallel)
-
-        async def run_with_semaphore(task_path, variant_id, task_num):
-            async with semaphore:
-                return await run_single_task(task_path, variant_id, task_num)
-
-        # Create all tasks
-        coroutines = [
-            run_with_semaphore(task_path, variant_id, i + 1)
-            for i, (task_path, variant_id) in enumerate(task_variants)
-        ]
-
-        # Run all tasks (semaphore controls parallelism)
-        results = await asyncio.gather(*coroutines, return_exceptions=True)
-
-        # Summarize results
-        success_count = sum(1 for r in results if r and hasattr(r, "success") and r.success)
-        failed_count = len(results) - success_count
-
-        summary = f"\n{CYAN}{'=' * 60}{RESET}\n"
-        summary += f"{CYAN}Dataset Complete: {dataset_path.name}{RESET}\n"
-        summary += f"{CYAN}{'=' * 60}{RESET}\n"
-        summary += f"  Total:   {len(results)}\n"
-        summary += f"  Success: {success_count}\n"
-        summary += f"  Failed:  {failed_count}\n"
-
-        log_print(summary)
-
-        # Summary
-        model_name = getattr(args, "model", None) or "default"
-        print("\n")
-        if failed_count == 0:
-            print(
-                f"All {len(results)} tasks in '{dataset_path.name}' passed with model '{model_name}'."
-            )
-        else:
-            print(
-                f"{failed_count}/{len(results)} tasks in '{dataset_path.name}' failed with model '{model_name}'."
-            )
-        print(f"Logs and artifacts: {output_dir}")
-
-        return 0 if failed_count == 0 else 1
-
-    else:
-        # Detached mode - spawn subprocess with --wait
-        print(f"\n{GREEN}✓ Dataset started{RESET}")
-        print(f"\n  {BOLD}Run ID:{RESET}      {run_id}")
-        print(f"  {BOLD}Dataset:{RESET}     {dataset_path.name}")
-        print(f"  {BOLD}Tasks:{RESET}       {len(tasks)}")
-        print(f"  {BOLD}Variants:{RESET}    {len(task_variants)}")
-        print(f"  {BOLD}Agent:{RESET}       {agent_display or '-'}")
-
-        # Show environment based on provider
-        if provider_type in ("simulated", "webtop"):
-            print(f"  {BOLD}Env:{RESET}         simulated (Playwright)")
-        elif provider_type == "daytona":
-            print(f"  {BOLD}Image:{RESET}       {image_name} (daytona)")
-        else:
-            print(f"  {BOLD}Image:{RESET}       {image_name}")
-
-        print(f"  {BOLD}Parallelism:{RESET} {max_parallel}")
-        print(f"  {BOLD}Output:{RESET}      {output_dir}")
-
-        print(f"\n{CYAN}Commands:{RESET}")
-        print(f"  cb run watch {run_id}   {GREY}# Watch progress in real-time{RESET}")
-        print(f"  cb run info {run_id}    {GREY}# Show run details{RESET}")
-        print(f"  cb run logs {run_id}    {GREY}# View logs{RESET}")
-        print(f"  cb run stop {run_id}    {GREY}# Stop the run{RESET}")
-
-        # Build command for subprocess
-        cmd = [
-            sys.executable,
-            "-m",
-            "cua_bench.cli.main",
-            "run",
-            "dataset",
-            str(dataset_path),
-            "--wait",
-            "--run-id",
-            run_id,  # Pass run ID to subprocess
-        ]
-
-        # Pass through all relevant args
-        if agent_name:
-            cmd.extend(["--agent", agent_name])
-        if agent_import_path:
-            cmd.extend(["--agent-import-path", agent_import_path])
-        if getattr(args, "model", None):
-            cmd.extend(["--model", args.model])
-        if getattr(args, "max_steps", None):
-            cmd.extend(["--max-steps", str(args.max_steps)])
-        if oracle_mode:
-            cmd.append("--oracle")
-        if getattr(args, "platform", None):
-            cmd.extend(["--platform", args.platform])
-        if getattr(args, "image", None):
-            cmd.extend(["--image", args.image])
-        if max_parallel != 4:
-            cmd.extend(["--max-parallel", str(max_parallel)])
-        if max_variants:
-            cmd.extend(["--max-variants", str(max_variants)])
-        if task_filter:
-            cmd.extend(["--task-filter", task_filter])
-        if user_output_dir:
-            cmd.extend(["--output-dir", str(user_output_dir)])
-        if provider_type in ("simulated", "webtop"):
-            cmd.extend(["--provider-type", "simulated"])
-        elif provider_type == "daytona":
-            cmd.extend(["--provider-type", "daytona"])
-
-        # Set UTF-8 encoding
-        env_vars = os.environ.copy()
-        env_vars["PYTHONIOENCODING"] = "utf-8"
-        env_vars["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
-
-        # Redirect output to global run.log
-        global_log_file = output_dir / "run.log"
-        log_handle = open(global_log_file, "w", encoding="utf-8", buffering=1)
-
-        # Start detached subprocess
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,  # Detach from parent so child survives parent exit
-            env=env_vars,
-        )
-        # Close the parent's copy of the fd; the subprocess has its own inherited copy.
-        log_handle.close()
-
-        # Save PID so `cb run stop` can kill the process
-        pid_file = output_dir / "run.pid"
-        pid_file.write_text(str(proc.pid))
-
-        return 0
+# =============================================================================
+# Config defaults
+# =============================================================================
 
 
 def _apply_config_defaults_for_task(args):
-    """Apply configuration defaults from .cua/config.yaml for task/dataset commands.
-
-    Loads config and applies defaults for any unspecified CLI arguments.
-    CLI arguments always take priority over config file settings.
-    """
+    """Apply .cua/config.yaml defaults for unset CLI arguments."""
     from cua_bench.config import ConfigLoader, detect_env_type
 
-    # Determine search path for config
-    if hasattr(args, "task_path") and args.task_path:
-        search_path = Path(args.task_path).resolve()
-        if not search_path.exists():
-            search_path = Path.cwd()
-    elif hasattr(args, "dataset_path") and args.dataset_path:
-        search_path = Path(args.dataset_path).resolve()
-        if not search_path.exists():
-            search_path = Path.cwd()
-    else:
+    path_arg = getattr(args, "task_path", None) or getattr(args, "dataset_path", None)
+    search_path = Path(path_arg).resolve() if path_arg else Path.cwd()
+    if not search_path.exists():
         search_path = Path.cwd()
-
-    # Load config
     config_loader = ConfigLoader(search_path)
-    config_dir = config_loader.find_config_dir()
-
-    if config_dir:
-        print(f"{GREY}Found config at: {config_dir}{RESET}")
-
-    # Detect environment type for env-specific overrides
-    env_type = None
-    if hasattr(args, "task_path") and args.task_path:
-        env_type = detect_env_type(str(args.task_path))
-    elif hasattr(args, "dataset_path") and args.dataset_path:
-        env_type = detect_env_type(str(args.dataset_path))
-
-    # Get effective config
-    cli_args = {
-        "agent": getattr(args, "agent", None),
-        "agent_import_path": getattr(args, "agent_import_path", None),
-        "model": getattr(args, "model", None),
-        "max_steps": getattr(args, "max_steps", None),
-        "output_dir": getattr(args, "output_dir", None),
-    }
-
-    effective = config_loader.get_effective_config(cli_args, env_type)
-
-    # Apply effective config back to args (only for unset values)
-    if not getattr(args, "agent", None) and effective.get("agent"):
-        args.agent = effective["agent"]
-    if not getattr(args, "agent_import_path", None) and effective.get("agent_import_path"):
-        args.agent_import_path = effective["agent_import_path"]
-    if not getattr(args, "model", None) and effective.get("model"):
-        args.model = effective["model"]
-    if not getattr(args, "max_steps", None) and effective.get("max_steps"):
-        args.max_steps = effective["max_steps"]
-    if not getattr(args, "output_dir", None) and effective.get("output_dir"):
-        args.output_dir = effective["output_dir"]
-
-    # Store config loader for later use
+    if config_loader.find_config_dir():
+        print(f"{GREY}Found config at: {config_loader.find_config_dir()}{RESET}")
+    env_type = detect_env_type(str(path_arg)) if path_arg else None
+    keys = ("agent", "agent_import_path", "model", "max_steps", "output_dir")
+    effective = config_loader.get_effective_config(
+        {k: getattr(args, k, None) for k in keys}, env_type
+    )
+    for key in keys:
+        if not getattr(args, key, None) and effective.get(key):
+            setattr(args, key, effective[key])
     args._config_loader = config_loader
-
-    return args
-
-
-def _apply_config_defaults(args):
-    """Apply configuration defaults from .cua/config.yaml.
-
-    Loads config and applies defaults for any unspecified CLI arguments.
-    CLI arguments always take priority over config file settings.
-    """
-    from cua_bench.config import ConfigLoader, detect_env_type
-
-    # Determine search path for config
-    # Start from env_path if available, otherwise use cwd
-    if hasattr(args, "task_id") and args.task_id:
-        search_path = Path(args.task_id).resolve()
-        if not search_path.exists():
-            search_path = Path.cwd()
-    elif hasattr(args, "dataset_path") and args.dataset_path:
-        search_path = Path(args.dataset_path).resolve()
-    else:
-        search_path = Path.cwd()
-
-    # Load config
-    config_loader = ConfigLoader(search_path)
-    config_dir = config_loader.find_config_dir()
-
-    if config_dir:
-        print(f"{GREY}Found config at: {config_dir}{RESET}")
-
-    # Detect environment type for env-specific overrides
-    env_type = None
-    if hasattr(args, "task_id") and args.task_id:
-        env_type = detect_env_type(str(args.task_id))
-    elif hasattr(args, "dataset_path") and args.dataset_path:
-        env_type = detect_env_type(str(args.dataset_path))
-
-    # Get effective config (merges config file with CLI args)
-    cli_args = {
-        "agent": getattr(args, "agent", None),
-        "agent_import_path": getattr(args, "agent_import_path", None),
-        "model": getattr(args, "model", None),
-        "max_steps": getattr(args, "max_steps", None),
-        "output_dir": getattr(args, "output_dir", None),
-    }
-
-    effective = config_loader.get_effective_config(cli_args, env_type)
-
-    # Apply effective config back to args (only for unset values)
-    if not getattr(args, "agent", None) and effective.get("agent"):
-        args.agent = effective["agent"]
-    if not getattr(args, "agent_import_path", None) and effective.get("agent_import_path"):
-        args.agent_import_path = effective["agent_import_path"]
-    if not getattr(args, "model", None) and effective.get("model"):
-        args.model = effective["model"]
-    if not getattr(args, "max_steps", None) and effective.get("max_steps"):
-        args.max_steps = effective["max_steps"]
-    if not getattr(args, "output_dir", None) and effective.get("output_dir"):
-        args.output_dir = effective["output_dir"]
-
-    # Store config loader for later use (e.g., agent resolution)
-    args._config_loader = config_loader
-
     return args
 
 
 def execute(args):
-    """Execute the run command."""
-    # Check for subcommands first
-    run_command = getattr(args, "run_command", None)
-
-    if run_command == "task":
-        return cmd_run_task(args)
-    elif run_command == "dataset":
-        return cmd_run_dataset(args)
-    elif run_command == "list":
-        return cmd_list(args)
-    elif run_command == "watch":
-        return cmd_watch(args)
-    elif run_command == "stop":
-        return cmd_stop(args)
-    elif run_command == "logs":
-        return cmd_logs(args)
-    elif run_command == "info":
-        return cmd_info(args)
-    else:
-        # No subcommand specified - show help
-        print(f"{YELLOW}Please specify a subcommand:{RESET}")
-        print("\n  cb run task <path>      Run a single task")
-        print("  cb run dataset <path>   Run all tasks in a dataset")
-        print("  cb run list             List all runs")
-        print("  cb run watch <id>       Watch a run in real-time")
-        print("  cb run info <id>        Show run info")
-        print("  cb run stop <id>        Stop a run")
-        print("  cb run logs <id>        View run logs")
+    commands = {
+        "task": cmd_run_task,
+        "dataset": cmd_run_dataset,
+        "list": cmd_list,
+        "watch": cmd_watch,
+        "stop": cmd_stop,
+        "logs": cmd_logs,
+        "info": cmd_info,
+    }
+    command = commands.get(getattr(args, "run_command", None))
+    if command is None:
+        print(f"{YELLOW}Usage:{RESET}")
+        print("  cb run <task|dataset> [--on local|cloud]   Run tasks")
+        print("  cb run list | info <id> | watch <id> | logs <id> | stop <id>")
         return 1
-
-
-def _check_adapter_setup(env_path: Path, args) -> bool:
-    """Check if adapter requires setup and handle it.
-
-    Returns True if we should continue, False if we should abort.
-    """
-    # Only check for local provider (cloud handles setup automatically)
-    provider = getattr(args, "provider", "local")
-    if provider != "local":
-        return True
-
-    # Try to import check_setup from the adapter
-    try:
-        import importlib
-
-        main_py = env_path / "main.py"
-        if not main_py.exists():
-            return True
-
-        # Add both the env_path's parent and parent's parent to sys.path
-        # This handles both "tasks/winarena_adapter" and direct paths
-        env_path_resolved = env_path.resolve()
-        parent_dir = str(env_path_resolved.parent)
-        if parent_dir not in sys.path:
-            sys.path.insert(0, parent_dir)
-
-        # Also add current working directory if not present
-        cwd = str(Path.cwd())
-        if cwd not in sys.path:
-            sys.path.insert(0, cwd)
-
-        # Import the module using standard import mechanism
-        package_name = env_path_resolved.name
-        module = importlib.import_module(f"{package_name}.main")
-
-        # Check if adapter has check_setup function
-        if not hasattr(module, "check_setup"):
-            return True
-
-        status = module.check_setup()
-
-        if status.ready:
-            return True
-
-        # Setup is required
-        print(f"\n{YELLOW}⚠ Setup Required{RESET}")
-        print(f"{GREY}{status.message}{RESET}\n")
-
-        if getattr(args, "setup", False):
-            # User requested setup
-            if not status.can_setup:
-                print(f"{RED}Error: Setup cannot be performed on this system.{RESET}")
-                return False
-
-            print(f"{CYAN}Running setup...{RESET}\n")
-
-            if hasattr(module, "run_setup"):
-                # Pass iso-related arguments if the run_setup function accepts them
-                iso_path = getattr(args, "iso", None)
-                download_iso = getattr(args, "download_iso", False)
-
-                import inspect
-
-                sig = inspect.signature(module.run_setup)
-                if len(sig.parameters) >= 2:
-                    # New signature with iso support
-                    success = module.run_setup(iso_path=iso_path, download_iso=download_iso)
-                else:
-                    # Legacy signature
-                    success = module.run_setup()
-
-                if success:
-                    print(f"\n{GREEN}✓ Setup complete!{RESET}\n")
-                    return True
-                else:
-                    print(f"\n{RED}✗ Setup failed.{RESET}")
-                    return False
-            elif status.setup_command:
-                print(f"Run: {BOLD}{status.setup_command}{RESET}")
-                return False
-        else:
-            # Show instructions
-            if status.can_setup:
-                print(f"Run with {BOLD}--setup{RESET} to prepare, or manually:")
-                if status.setup_command:
-                    print(f"  {GREY}{status.setup_command}{RESET}\n")
-            return False
-
-    except Exception as e:
-        # If we can't check, just continue
-        print(f"{GREY}Note: Could not check adapter setup: {e}{RESET}")
-        return True
-
-    return True
-
-
-def _detect_provider_type(env_path: Path) -> str:
-    """Detect provider type from task configuration.
-
-    Args:
-        env_path: Path to task environment directory
-
-    Returns:
-        Provider type ("simulated", "webtop", "native", "computer", or "unknown")
-    """
-    import importlib.util
-    import sys
-
-    # Try to import and inspect the task
-    try:
-        # Load main.py module
-        main_file = env_path / "main.py"
-        if not main_file.exists():
-            return "unknown"
-
-        spec = importlib.util.spec_from_file_location("env_module", main_file)
-        if spec is None or spec.loader is None:
-            return "unknown"
-
-        module = importlib.util.module_from_spec(spec)
-
-        # Add env_path to Python path temporarily for imports
-        sys.path.insert(0, str(env_path))
-        try:
-            spec.loader.exec_module(module)
-
-            # Look for tasks_config function
-            for name in dir(module):
-                obj = getattr(module, name)
-                if callable(obj) and hasattr(obj, "_td_type"):
-                    if getattr(obj, "_td_type") == "tasks_config":
-                        # Call the function to get tasks
-                        tasks = obj()
-                        if tasks and len(tasks) > 0:
-                            task = tasks[0]
-                            if hasattr(task, "computer") and task.computer:
-                                provider = task.computer.get("provider", "unknown")
-                                return provider
-
-            return "unknown"
-
-        finally:
-            sys.path.pop(0)
-            # Clean up module
-            if "env_module" in sys.modules:
-                del sys.modules["env_module"]
-
-    except Exception:
-        return "unknown"
-
-
-def _detect_env_type_and_image(env_path: Path, args) -> tuple[str, str]:
-    """Detect environment type and image name from task config or args.
-
-    Returns:
-        Tuple of (env_type, image_name)
-    """
-    # Check if explicitly specified
-    image_name = getattr(args, "image", None)
-    env_type = getattr(args, "platform", None)
-
-    # If image_name is specified but env_type isn't, derive env_type from image_name
-    if image_name and not env_type:
-        if "windows" in image_name:
-            env_type = "windows-qemu"
-        elif "android" in image_name:
-            env_type = "android-qemu"
-        elif "linux-qemu" in image_name:
-            env_type = "linux-qemu"
-        else:
-            env_type = "linux-docker"
-
-    if image_name and env_type:
-        return env_type, image_name
-
-    # Try to detect from task config
-    try:
-        from cua_bench import make
-
-        env = make(str(env_path))
-
-        if env.tasks_config_fn:
-            tasks = env.tasks_config_fn()
-            # Use the specific variant if specified, otherwise use first task
-            variant_id = getattr(args, "variant_id", None) or 0
-            task_idx = int(variant_id) if variant_id is not None else 0
-            task_idx = min(task_idx, len(tasks) - 1) if tasks else 0
-
-            if tasks and task_idx < len(tasks):
-                task = tasks[task_idx]
-                if hasattr(task, "computer") and task.computer:
-                    computer = task.computer
-                    # Handle both dict and object access patterns
-                    os_type = None
-                    if isinstance(computer, dict):
-                        setup_config = computer.get("setup_config", {})
-                        os_type = setup_config.get("os_type")
-                    elif hasattr(computer, "os_type"):
-                        os_type = computer.os_type
-                    elif hasattr(computer, "setup_config"):
-                        os_type = getattr(
-                            computer.setup_config, "os_type", None
-                        ) or computer.setup_config.get("os_type")
-
-                    if os_type and "windows" in os_type.lower():
-                        env_type = env_type or "windows-qemu"
-                        image_name = image_name or "windows-qemu"
-                    elif os_type and "android" in os_type.lower():
-                        env_type = env_type or "android-qemu"
-                        image_name = image_name or "android-qemu"
-                    else:
-                        env_type = env_type or "linux-docker"
-                        image_name = image_name or "linux-docker"
-    except Exception:
-        import traceback
-
-        traceback.print_exc()
-
-    # Defaults
-    env_type = env_type or "linux-docker"
-    image_name = image_name or env_type
-
-    return env_type, image_name
+    return command(args)

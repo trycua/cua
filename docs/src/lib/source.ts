@@ -1,13 +1,19 @@
 import { docs } from '@/.source';
 import { loader } from 'fumadocs-core/source';
 import { icons } from 'lucide-react';
-import { createElement } from 'react';
+import { cloneElement, createElement } from 'react';
+import { SiAnthropic, SiGooglegemini, SiMeta, SiOllama, SiOpenai } from 'react-icons/si';
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 // Custom brand icons (not available in Lucide)
 const brandIcons: Record<string, () => React.ReactElement> = {
+  anthropic: () => createElement(SiAnthropic, { className: 'w-4 h-4' }),
+  gemini: () => createElement(SiGooglegemini, { className: 'w-4 h-4' }),
+  meta: () => createElement(SiMeta, { className: 'w-4 h-4' }),
+  ollama: () => createElement(SiOllama, { className: 'w-4 h-4' }),
+  openai: () => createElement(SiOpenai, { className: 'w-4 h-4' }),
   github: () =>
     createElement(
       'svg',
@@ -110,9 +116,9 @@ const brandIcons: Record<string, () => React.ReactElement> = {
 function iconResolver(icon: string | undefined) {
   if (!icon) return;
   // Check brand icons first (github, discord, etc.)
-  if (icon in brandIcons) return brandIcons[icon]();
+  if (icon in brandIcons) return cloneElement(brandIcons[icon](), { key: icon });
   // Fall back to Lucide icons
-  if (icon in icons) return createElement(icons[icon as keyof typeof icons]);
+  if (icon in icons) return createElement(icons[icon as keyof typeof icons], { key: icon });
 }
 
 /**

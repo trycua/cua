@@ -1,0 +1,11 @@
+{
+  "title": "Lume",
+  "root": true,
+  "pages": [
+    "index",
+    "quickstart",
+    "guides",
+    "concepts",
+    "reference"
+  ]
+}

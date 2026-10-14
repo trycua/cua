@@ -1,0 +1,10 @@
+[
+  { "command": "commandPalette.toggle", "key": "mod+k" },
+  { "command": "sidebar.toggle", "key": "mod+b" },
+  { "command": "nav.spaces", "key": "mod+1" },
+  { "command": "nav.machines", "key": "mod+2" },
+  { "command": "nav.agents", "key": "mod+3" },
+  { "command": "nav.keyvault", "key": "mod+4" },
+  { "command": "nav.settings", "key": "mod+," },
+  { "command": "theme.cycle", "key": "mod+shift+l" }
+]

@@ -1,0 +1,12 @@
+{
+  "name": "cua-driver-modern-mcp-compat",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
+    "ajv": "8.17.1",
+    "yaml": "2.8.1"
+  }
+}

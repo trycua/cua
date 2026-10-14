@@ -1,0 +1,299 @@
+{
+  "schema": "cua.jev_use_page_structure_replay_v1",
+  "description": "Page-structure (DOM) path fixture. Snapshots are real get_browser_state semantic_v2 results from the loopback fixture (captured with cua-driver on macOS); recorded_live_runs are the step choices TypeSafe Jev made in live Linux/Windows runs with released Cua Driver 0.30.1. pre_fix_submit_state is the exact state the runner sent Jev at the submit step before the filled-form-state fix.",
+  "token": "jev-guide-live",
+  "snapshots": {
+    "before_typing": {
+      "target_id": "bt-40b005f3-6f85-41d7-a7d5-47f158a19dc6",
+      "tab_id": "tab-e66e7ea2-0fe8-4606-9495-c81518229489",
+      "page": {
+        "title": "about:blank",
+        "url": "http://127.0.0.1:8799/"
+      },
+      "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\" [editable=\"plaintext\",focusable=true,required=true]\n    - button \"Submit\" [focusable=true]\n  - status\n    - statictext \"status=waiting\"",
+      "refs": [
+        {
+          "actions": ["type", "pointer"],
+          "frame": "main",
+          "name": "verification value",
+          "ref": "p3:0",
+          "role": "textbox",
+          "states": {
+            "editable": "plaintext",
+            "focusable": true,
+            "required": true
+          },
+          "value": null,
+          "visibility": "in_viewport"
+        },
+        {
+          "actions": ["click", "pointer"],
+          "frame": "main",
+          "name": "Submit",
+          "ref": "p3:1",
+          "role": "button",
+          "states": {
+            "focusable": true
+          },
+          "value": null,
+          "visibility": "in_viewport"
+        },
+        {
+          "actions": ["type"],
+          "frame": "main",
+          "name": null,
+          "ref": "p3:10",
+          "role": "generic",
+          "states": {
+            "editable": "plaintext"
+          },
+          "value": null,
+          "visibility": "unknown"
+        }
+      ]
+    },
+    "after_typing": {
+      "target_id": "bt-40b005f3-6f85-41d7-a7d5-47f158a19dc6",
+      "tab_id": "tab-e66e7ea2-0fe8-4606-9495-c81518229489",
+      "page": {
+        "title": "about:blank",
+        "url": "http://127.0.0.1:8799/"
+      },
+      "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n      - generic [editable=\"plaintext\"]\n  - form\n    - textbox \"verification value\": jev-guide-live [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"jev-guide-live\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+      "refs": [
+        {
+          "actions": ["type", "pointer"],
+          "frame": "main",
+          "name": "verification value",
+          "ref": "p4:1",
+          "role": "textbox",
+          "states": {
+            "editable": "plaintext",
+            "focusable": true,
+            "focused": true,
+            "required": true
+          },
+          "value": "jev-guide-live",
+          "visibility": "in_viewport"
+        },
+        {
+          "actions": ["click", "pointer"],
+          "frame": "main",
+          "name": "Submit",
+          "ref": "p4:2",
+          "role": "button",
+          "states": {
+            "focusable": true
+          },
+          "value": null,
+          "visibility": "in_viewport"
+        },
+        {
+          "actions": ["type"],
+          "frame": "main",
+          "name": null,
+          "ref": "p4:10",
+          "role": "generic",
+          "states": {
+            "editable": "plaintext"
+          },
+          "value": null,
+          "visibility": "unknown"
+        },
+        {
+          "actions": ["type"],
+          "frame": "main",
+          "name": "jev-guide-live",
+          "ref": "p4:11",
+          "role": "statictext",
+          "states": {
+            "editable": "plaintext"
+          },
+          "value": null,
+          "visibility": "unknown"
+        }
+      ]
+    }
+  },
+  "pre_fix_submit_state": {
+    "goal": "Enter the verification token, then submit the form.",
+    "observation": {
+      "page": {
+        "title": "about:blank",
+        "url": "http://127.0.0.1:8799/"
+      },
+      "outline": "- main\n  - heading \"Cua Driver + TypeSafe Jev fixture\"\n  - paragraph\n    - statictext \"Enter the verification value and submit it.\"\n  - form\n      - generic [editable=\"plaintext\"]\n    - textbox \"verification value\": jev-guide-live [editable=\"plaintext\",focusable=true,focused=true,required=true]\n    - button \"Submit\" [focusable=true]\n        - statictext \"jev-guide-live\" [editable=\"plaintext\"]\n  - status\n    - statictext \"status=waiting\"",
+      "visual": null
+    },
+    "history": [
+      {
+        "event": "step",
+        "step": 1,
+        "candidate": "type-verification-value",
+        "confidence": 1.0,
+        "probabilities": {
+          "type-verification-value": 1.0,
+          "reobserve": 0.0,
+          "abstain": 0.0
+        },
+        "decision_ms": 41.43,
+        "action_ms": 1610.77,
+        "dry_run": false,
+        "tool": "browser_type",
+        "delivery_mode": null,
+        "visual": {
+          "status": "skipped",
+          "reason": "disabled"
+        }
+      }
+    ]
+  },
+  "recorded_live_runs": {
+    "windows-page-1-python": {
+      "steps": [
+        {
+          "step": 1,
+          "selected_id": "type-verification-value",
+          "probabilities": {
+            "abstain": 0.11,
+            "reobserve": 0.06,
+            "type-verification-value": 0.83
+          }
+        },
+        {
+          "step": 2,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.22,
+            "reobserve": 0.5,
+            "submit-form": 0.28
+          }
+        },
+        {
+          "step": 3,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.07,
+            "reobserve": 0.63,
+            "submit-form": 0.3
+          }
+        },
+        {
+          "step": 4,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.05,
+            "reobserve": 0.65,
+            "submit-form": 0.3
+          }
+        }
+      ],
+      "outcome": "budget_exhausted"
+    },
+    "linux-page-3-python": {
+      "steps": [
+        {
+          "step": 1,
+          "selected_id": "type-verification-value",
+          "probabilities": {
+            "abstain": 0.11,
+            "reobserve": 0.07,
+            "type-verification-value": 0.82
+          }
+        },
+        {
+          "step": 2,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.23,
+            "reobserve": 0.49,
+            "submit-form": 0.28
+          }
+        },
+        {
+          "step": 3,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.09,
+            "reobserve": 0.6,
+            "submit-form": 0.31
+          }
+        },
+        {
+          "step": 4,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.06,
+            "reobserve": 0.6,
+            "submit-form": 0.34
+          }
+        }
+      ],
+      "outcome": "budget_exhausted"
+    },
+    "linux-page-7-typescript": {
+      "steps": [
+        {
+          "step": 1,
+          "selected_id": "type-verification-value",
+          "probabilities": {
+            "abstain": 0.1,
+            "reobserve": 0.08,
+            "type-verification-value": 0.82
+          }
+        },
+        {
+          "step": 2,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.23,
+            "reobserve": 0.53,
+            "submit-form": 0.24
+          }
+        },
+        {
+          "step": 3,
+          "selected_id": "reobserve",
+          "probabilities": {
+            "abstain": 0.11,
+            "reobserve": 0.75,
+            "submit-form": 0.14
+          }
+        },
+        {
+          "step": 4,
+          "selected_id": "submit-form",
+          "probabilities": {
+            "abstain": 0.03,
+            "reobserve": 0.48,
+            "submit-form": 0.49
+          }
+        }
+      ],
+      "outcome": "verified"
+    },
+    "linux-page-2-python": {
+      "steps": [
+        {
+          "step": 1,
+          "selected_id": "type-verification-value",
+          "probabilities": {
+            "abstain": 0.09,
+            "reobserve": 0.06,
+            "type-verification-value": 0.85
+          }
+        },
+        {
+          "step": 2,
+          "selected_id": "submit-form",
+          "probabilities": {
+            "abstain": 0.21,
+            "reobserve": 0.35,
+            "submit-form": 0.44
+          }
+        }
+      ],
+      "outcome": "verified"
+    }
+  }
+}

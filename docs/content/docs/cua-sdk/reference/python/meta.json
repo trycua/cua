@@ -1,0 +1,12 @@
+{
+  "title": "Python high-level API",
+  "pages": [
+    "sandbox",
+    "image",
+    "pool",
+    "interfaces",
+    "services",
+    "runtimes",
+    "configuration"
+  ]
+}

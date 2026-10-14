@@ -28,7 +28,7 @@
 //! └─────────────────────────────────────────────┘
 //! ```
 //!
-//! A 1 Hz `NSTimer` reads [`current_status`] on every tick and updates
+//! A 1 Hz `NSTimer` reads a fresh helper-process status on every tick and updates
 //! the row icons / heading / subheading / "All set" strip in place.
 //! When both grants flip green and `suppress_auto_close == false` the
 //! poll callback calls `[NSApp stopModal]` and `show_modal` returns
@@ -63,7 +63,7 @@ use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::permissions::gate::MissingPermission;
-use crate::permissions::status::{current_status, PermissionsStatus};
+use crate::permissions::status::PermissionsStatus;
 
 // ── Public API ──────────────────────────────────────────────────────────
 
@@ -506,7 +506,7 @@ extern "C" fn on_poll_tick(
 }
 
 unsafe fn poll_tick_inner() {
-    let status = current_status();
+    let status = super::gate::fresh_status();
     let mut should_stop = false;
     HANDLES.with(|cell| {
         let mut guard = cell.borrow_mut();

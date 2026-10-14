@@ -1,0 +1,264 @@
+{
+  "schema_version": 1,
+  "name": "omarchy",
+  "description": "Omarchy (edge channel) on Arch Linux: Hyprland under SDDM autologin, Omarchy's cua-driver-bin and cua-hyprland-plugin (OS-level input through two compositor agent seats), cua-spacesd, Chromium and the cua fixtures. VM only: Hyprland needs a DRM device.",
+  "repository": "ghcr.io/trycua/omarchy",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "outputs": {
+    "containerdisk": {
+      "tag_prefix": "",
+      "tag_suffix": "-disk",
+      "runtimes": [
+        "kubevirt",
+        "qemu"
+      ],
+      "init": "systemd",
+      "path": "/disk/disk.img",
+      "firmware": {
+        "amd64": [
+          "bios",
+          "efi"
+        ]
+      }
+    }
+  },
+  "vm_dockerfile": "vm.Dockerfile",
+  "channel": {
+    "name": "edge",
+    "packages": "https://pkgs.omarchy.org/edge/x86_64",
+    "mirror": "https://mirror.omarchy.org"
+  },
+  "desktop": {
+    "display": "wayland-1",
+    "compositor": "hyprland",
+    "resolution": "1280x800",
+    "user": "cua",
+    "uid": 1000,
+    "runtime_dir": "/run/user/1000",
+    "session_env": "/run/cua-desktop/desktop.env"
+  },
+  "services": [
+    {
+      "name": "env",
+      "port": 3211,
+      "protocol": "grpc",
+      "component": "cua-spacesd",
+      "auth": "bearer token: CUA_ENV_TOKEN or /run/cua/env-token",
+      "readiness": "tcp"
+    },
+    {
+      "name": "viewer",
+      "port": 3211,
+      "protocol": "http",
+      "component": "cua-spacesd",
+      "readiness": "http:/viewer/"
+    },
+    {
+      "name": "env-media",
+      "port": 3212,
+      "protocol": "udp",
+      "component": "cua-spacesd"
+    },
+    {
+      "name": "ssh",
+      "port": 22,
+      "protocol": "tcp",
+      "variants": [
+        "containerdisk"
+      ]
+    }
+  ],
+  "cua_driver": {
+    "package": "cua-driver-bin",
+    "binary": "/usr/bin/cua-driver",
+    "user_unit": "cua-driver.service",
+    "hyprland_plugin": "/usr/lib/cua/hyprland/cua-hyprland-plugin.so",
+    "seats": [
+      "Cua-Agent",
+      "Cua-Agent-2"
+    ]
+  },
+  "fixtures": {
+    "root": "/opt/cua/fixtures",
+    "launcher": "cua-fixtures start|stop|status [grid|form|http|tone|avsync|all]",
+    "log_dir": "/tmp/cua-fixtures",
+    "apps": [
+      {
+        "name": "grid",
+        "title": "CUA Fixture Grid",
+        "wm_class": "cua-fixture-grid",
+        "color": "r=col*255//(cols-1), g=row*255//(rows-1), b=128; 8x6 cells of 80px"
+      },
+      {
+        "name": "form",
+        "title": "CUA Fixture Form",
+        "wm_class": "cua-fixture-form",
+        "a11y_names": [
+          "Name",
+          "Notes",
+          "Subscribe",
+          "Color",
+          "Submit",
+          "Status"
+        ]
+      },
+      {
+        "name": "http",
+        "port": 18080,
+        "routes": [
+          "/",
+          "/health",
+          "/bytes/<n>",
+          "POST /echo"
+        ]
+      },
+      {
+        "name": "tone",
+        "path": "/opt/cua/fixtures/tone",
+        "sequence_hz_ms": [
+          [
+            440,
+            500
+          ],
+          [
+            0,
+            250
+          ],
+          [
+            880,
+            500
+          ],
+          [
+            0,
+            250
+          ]
+        ],
+        "loop": true
+      },
+      {
+        "name": "avsync",
+        "title": "CUA Fixture AV Sync",
+        "wm_class": "cua-fixture-avsync",
+        "period_s": 1,
+        "flash_ms": 100,
+        "beep_hz": 1000,
+        "skew_budget_ms": 40
+      }
+    ],
+    "audio_probe": "/opt/cua/fixtures/audio_probe.py --source <pulse source> --seconds N --freq F..."
+  },
+  "claims": {
+    "_doc": "What the image promises; cua-image-manifest turns this into /etc/cua-image/manifest.json and cua-spacesd doctor checks it (claimed = required).",
+    "features_required": [
+      "pty",
+      "fs_watch",
+      "tunnel.forward",
+      "driver",
+      "a11y",
+      "desktop_stream",
+      "window_stream",
+      "h264_sw",
+      "quic_media",
+      "windows",
+      "launch_app",
+      "clipboard.text",
+      "presence",
+      "presence.cursor_shape",
+      "volume.mount"
+    ],
+    "features_optional": [
+      "background_input",
+      "hotspot",
+      "relay_attach",
+      "h264_hw",
+      "audio.desktop",
+      "audio.uplink",
+      "audio.opus",
+      "audio.per_app",
+      "clipboard.files",
+      "clipboard.image",
+      "teleport.*"
+    ],
+    "feature_attributes": {
+      "volume.mount": {
+        "backend": "fs"
+      },
+      "presence.cursor_shape": {
+        "hit_test": "atspi",
+        "system": "none",
+        "probe": "none"
+      }
+    },
+    "codecs_required": [
+      "openh264"
+    ],
+    "auth_modes": [
+      "local",
+      "pod-secret",
+      "kubevirt-bridge"
+    ],
+    "units": {
+      "systemd": [
+        "sddm.service",
+        "cua-env-token-sync.service",
+        "cua-spacesd.service"
+      ]
+    },
+    "unit_processes": {
+      "sddm.service": "sddm",
+      "cua-env-token-sync.service": "token-sync",
+      "cua-spacesd.service": "cua-spacesd"
+    },
+    "apps": {
+      "chromium": [
+        "/usr/lib/chromium/chromium",
+        "--version"
+      ],
+      "cua-driver": [
+        "/usr/bin/cua-driver",
+        "--version"
+      ],
+      "hyprctl": [
+        "hyprctl",
+        "version"
+      ],
+      "python3": [
+        "python3",
+        "--version"
+      ]
+    },
+    "launch_app": {
+      "app": "foot",
+      "args": [
+        "--title",
+        "cua-doctor-foot"
+      ],
+      "window_match": "foot",
+      "timeout_s": 90
+    },
+    "parity_expected_diff": [
+      "kernel",
+      "runtime",
+      "init",
+      "cpu_model",
+      "cpu_count",
+      "memory_mib",
+      "clock_skew_ms",
+      "gpu",
+      "encoder"
+    ],
+    "resources": {
+      "min_disk_gib": 4,
+      "min_shm_mib": 256,
+      "min_memory_mib": 3072
+    },
+    "tz": "Etc/UTC",
+    "locale": "C.UTF-8",
+    "dns_probe": "pkgs.omarchy.org",
+    "av_skew_budget_ms": {
+      "vm": 80
+    }
+  }
+}

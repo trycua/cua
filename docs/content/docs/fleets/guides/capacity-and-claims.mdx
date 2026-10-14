@@ -1,0 +1,195 @@
+---
+title: Create capacity and claim from it
+description: Apply a named pool, claim sandboxes from it, keep a sandbox across processes, and bound lifetimes with TTLs.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+`Sandbox.create(image, local=False)` needs no pool. Create one when you want a
+fixed name that other processes or teams claim from, a static warm size, a
+creation-age TTL, or Terraform ([Terraform](/fleets/guides/terraform)). Pool
+names are lowercase DNS labels, unique across all accounts.
+
+## Create a pool
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python test="docs,fleet" id="create-pool" session="script" prelude="fakefleet,pool-name"
+import os
+
+from cua_sandbox import Image, Pool, PoolOptions, SandboxSpec
+
+pool = await Pool.apply(
+    os.environ["CUA_POOL_NAME"],
+    SandboxSpec(image=Image.linux(), cpu=4, memory_mb=4096, services={"env": 3211}),
+    PoolOptions(replicas=1),
+)
+print(f"Pool ready to claim from: {pool.name}")
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts title="create-fleet-capacity.ts" test="docs" id="create-pool-typescript" prelude="fakefleet,pool-name"
+import { embedded, Pool, poolOptions, sandboxSpec } from '@trycua/cua';
+
+const fleet = embedded().fleet();
+const pool = await Pool.apply(
+  fleet,
+  process.env.CUA_POOL_NAME!,
+  sandboxSpec('ghcr.io/trycua/linux:24.04', { cpu: 4, memoryMb: 4096, services: { env: 3211 } }),
+  poolOptions({ runtime: 'gvisor', replicas: 1 })
+);
+await fleet.waitPoolReady(pool.name, 15 * 60_000);
+console.log(`Pool ready to claim from: ${pool.name}`);
+```
+
+  </Tab>
+</Tabs>
+
+`Pool.apply` creates or updates the pool and its template. `SandboxSpec` is
+what the sandboxes run; `PoolOptions` is how capacity is kept
+([Pool reference](/cua-sdk/reference/python/pool)). `PoolAccessDeniedError`
+(`403`) usually means another account owns the name.
+
+## Claim from it
+
+A pool fixes the image, command, services and size, so pass only the pool:
+
+<Tabs groupId="language" persist items={['CLI', 'Python', 'TypeScript']}>
+  <Tab value="CLI">
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create --on cloud --pool my-team-desktop --name my-task
+cua sb exec my-task uname -a
+cua sb rm -f my-task
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python test="docs,fleet" id="claim-python" prelude="fakefleet,team-pool"
+from cua_sandbox import CloudOptions, Sandbox
+
+async with Sandbox.ephemeral(cloud=CloudOptions(pool="my-team-desktop")) as sb:
+    print((await sb.shell.run("uname -a")).stdout.strip())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="docs,fleet" id="claim-typescript" prelude="fakefleet,team-pool"
+import { CloudOptions, embedded, SandboxCreateOptions } from '@trycua/cua';
+
+const cua = embedded({ fleetFromSession: true });
+const sb = await cua.sandboxes().create(
+  SandboxCreateOptions.create({
+    on: 'cloud',
+    image: '',
+    cloud: CloudOptions.create({ pool: 'my-team-desktop' }),
+  })
+);
+try {
+  const out = await (await sb.spacesd(undefined)).sh('uname -a', undefined);
+  console.log(new TextDecoder().decode(out.stdout).trim());
+} finally {
+  await sb.delete_(); // releases the sandbox; the pool stays
+}
+```
+
+  </Tab>
+</Tabs>
+
+Fields you pass with a pool must match its template, else `PoolSpecMismatch`
+shows the diff; `CloudOptions(pool=..., apply=True)` (CLI `--apply`) writes
+them to the template instead. A released sandbox may be recycled, so copy
+results out first.
+
+### Claim calls
+
+| Call | Behavior |
+| --- | --- |
+| `async with pool.claim(name=None, service="env")` | Reattaches to claim `name` if it exists, else creates one; waits for `service`; releases on exit |
+| `await pool.claim()` | A connected `Sandbox`: `close()` releases it, `disconnect()` keeps the claim |
+| `await pool.create_claim(name=None)` | Creates without waiting. The handle has `wait()`, `renew(shutdown_time)`, `release()` and `to_dict()` (for `Sandbox.from_dict`); you own cleanup |
+| `await Pool.check(name, spec)` | Raises `PoolSpecMismatch` when the set fields of `spec` differ from the template |
+| `await Pool.apply_template(name, spec)` | Writes those fields to the template; the pool keeps its capacity |
+
+A failed claim releases a claim it created, never a preexisting one. Images
+without cua-spacesd pass their own `service=`.
+
+## Keep a sandbox across processes
+
+Name the sandbox, do not release it, and extend its lease for idle periods
+(TypeScript: `sb.keepAlive(...)`, `sb.detach()`, `sandboxes().connect(name)`):
+
+```python test="docs" id="keep-python" session="keep" prelude="fakefleet,image"
+sb = await Sandbox.create(image, local=False, name="my-task", keep_alive_minutes=120)
+reference = sb.to_dict()   # store it (JSON-serializable)
+await sb.disconnect()      # the sandbox stays held
+
+sb = await Sandbox.from_dict(reference)   # later, in another process
+await sb.keep_alive(minutes=120)
+await sb.close()           # releases it
+```
+
+```bash test="cli-shape" id="cua-sb-keep-alive-my-task"
+cua sb keep-alive my-task --for 2h
+cua sb info my-task
+```
+
+## Expiry
+
+| Deadline | Applies to | Set with | Renewed? |
+| --- | --- | --- | --- |
+| Sandbox TTL | Every cloud sandbox | `CloudOptions(claim_ttl=...)`, `--claim-ttl`; `keep_alive` | Yes, while a process holds it |
+| Creation-age TTL | Your pools and their claims | `ttl_seconds_after_created=` | No, counts from creation |
+| Idle TTL | Your pools | `PoolOptions(idle_ttl=...)` | Deletes the pool after this long without claims |
+
+```python test="docs" id="claim-ttl" session="ttl" prelude="fakefleet"
+from cua_sandbox import CloudOptions, Image, Sandbox
+
+sb = await Sandbox.create(Image.linux(), cloud=CloudOptions(claim_ttl=30 * 60))
+await sb.keep_alive(minutes=120)   # an absolute shutdown time two hours from now
+```
+
+```python test="docs" id="pool-ttl" session="pool" prelude="fakefleet,pool-vars"
+pool = await Pool.apply(
+    Image.from_registry(IMAGE),
+    name=POOL_NAME,
+    replicas=1,
+    ttl_seconds_after_created=86400,   # the pool deletes itself after 24 hours
+)
+async with pool.claim(name=CLAIM_NAME, ttl_seconds_after_created=3600) as sb:
+    ...
+```
+
+- Reapplying a pool or reconnecting to a named claim does not reset a
+  creation-age TTL, so a rerun can expire soon after it starts.
+- A pool that expires deletes its sandboxes too. Keep its TTL longer than the
+  work, and copy results out first.
+- In TypeScript set `poolTtlSeconds` in `poolOptions({...})`; in Terraform,
+  `ttl_seconds_after_created` on `fleets_pool`.
+
+## Delete a pool
+
+Delete it after its users have released their sandboxes. Deleting removes its
+template and remaining sandboxes; deletion is asynchronous.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python test="docs" id="delete" session="delete" prelude="fakefleet,pool-applied"
+await pool.delete()  # the Pool from Pool.apply() also deletes its template
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="docs" id="delete-typescript" prelude="fakefleet,pool-applied"
+await fleet.deletePool(POOL_NAME);
+```
+
+  </Tab>
+</Tabs>

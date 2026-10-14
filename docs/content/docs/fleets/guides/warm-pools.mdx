@@ -1,0 +1,60 @@
+---
+title: Keep sandboxes warm
+description: Keep ready sandboxes in a managed or dedicated pool so claims bind in seconds, and size warm capacity against cost.
+---
+
+A warm replica is a booted sandbox waiting for a claim. A claim on a warm pool
+binds in seconds; a claim on a cold pool waits for the image to pull and boot,
+which can take a few minutes. Warm replicas consume capacity, and are billed,
+whether or not anything claims them.
+
+## Managed pools
+
+`Sandbox.create(image, local=False)` claims from a managed pool that scales
+from zero. `CloudOptions(warm=True)` keeps one sandbox of that image and shape
+ready. The canonical images (`Image.linux()`, `Image.windows()`) are warm by
+default; `CUA_FLEET_WARM` changes the default.
+
+```python test="docs" id="managed-warm" session="managed" prelude="fakefleet,image"
+from cua_sandbox import CloudOptions
+
+sb = await Sandbox.create(image, cloud=CloudOptions(warm=True, max_pool_size=20))
+```
+
+In the CLI, pass `--warm` or `--no-warm` to `cua sb create --on cloud`. A
+managed pool is deleted after 30 minutes without claims, warm or not.
+
+## Your own pools
+
+A pool you apply keeps capacity in one of two modes:
+
+| Mode | `PoolOptions` | Behavior |
+| --- | --- | --- |
+| Static | `replicas=N` (default 1) | Keeps N sandboxes, claimed or not |
+| Autoscaling | `min_pool_size`, `max_pool_size` (`warm=True` means a floor of 1) | Scales with claims between the bounds |
+
+```python test="docs,fleet" id="autoscaling-pool" session="pool" prelude="fakefleet,pool-name"
+import os
+from datetime import timedelta
+
+from cua_sandbox import Image, Pool, PoolOptions, SandboxSpec
+
+pool = await Pool.apply(
+    os.environ["CUA_POOL_NAME"],
+    SandboxSpec(image=Image.linux(), services={"env": 3211}),
+    PoolOptions(min_pool_size=2, max_pool_size=10, idle_ttl=timedelta(hours=8)),
+)
+await pool.delete()
+```
+
+`idle_ttl` deletes the pool after that long without claims, so a forgotten
+warm pool does not run forever. In Terraform the same choice is `replicas` or
+an `autoscaling` block ([Terraform](/fleets/guides/terraform#sizing)).
+
+## Size it
+
+Set the floor to the claims you expect within one cold-start time, not to
+your peak: claims beyond the warm replicas still succeed after a cold start.
+A pool that must answer within a deadline (an external webhook) needs a warm
+replica for every concurrent claim. Terraform outputs and
+[run.cua.ai](https://run.cua.ai) show `ready_replicas`.

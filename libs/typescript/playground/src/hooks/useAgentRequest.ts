@@ -3,7 +3,7 @@
 
 import { useRef, useCallback } from 'react';
 import { usePlayground, useChat, useChatDispatch } from './usePlayground';
-import { usePlaygroundTelemetry } from '../telemetry';
+import { classifyTrajectoryError, usePlaygroundTelemetry } from '../telemetry';
 import type { AgentMessage, UserMessage } from '../types';
 import { isVM, isCustomComputer } from '../types';
 
@@ -27,7 +27,10 @@ interface AgentResponse {
 }
 
 /**
- * Simple agent client for making requests to the computer server.
+ * Simple client for an agent endpoint (a server exposing `POST /responses`,
+ * such as a cua-agent proxy). The legacy computer-server that used to host this
+ * endpoint inside every sandbox has been removed.
+ * TODO(cua-sdk): run the agent loop through @trycua/cua (spacesd) instead.
  */
 class AgentClient {
   constructor(
@@ -37,11 +40,10 @@ class AgentClient {
 
   async health(): Promise<{ status: 'ok' | 'unreachable' }> {
     try {
-      // Try /cmd endpoint (cloud sandboxes use this for health checks)
-      await fetch(`${this.baseUrl}/cmd`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...CUA_VERSION_HEADERS },
-        body: JSON.stringify({ command: 'version', params: {} }),
+      // Daemon-agnostic reachability check: any HTTP response means the host is up.
+      await fetch(`${this.baseUrl}/health`, {
+        method: 'GET',
+        headers: { ...CUA_VERSION_HEADERS },
         signal: this.options.signal || AbortSignal.timeout(5000),
       });
       // Consider server reachable if we get any response (even 4xx means server is up)
@@ -209,31 +211,22 @@ export function useAgentRequest() {
       chatDispatch({ type: 'SET_RETRY_STATE', payload: null });
 
       try {
-        // Get computer server URL - try multiple sources in order of preference:
-        // 1. ComputerInfo.agentUrl from state.computers (set by adapter with correct port)
+        // Resolve the agent endpoint, in order of preference:
+        // 1. ComputerInfo.agentUrl from state.computers (set by the adapter)
         // 2. computer.url from the chat's Computer object (set to agentUrl when selected)
-        // 3. Fallback: reconstruct from hostname with port 8443 (legacy cloud VMs)
+        // There is no port-guessing fallback: sandboxes no longer run an in-guest
+        // agent server. TODO(cua-sdk): drive the sandbox through @trycua/cua.
         const computerInfo = state.computers.find((c) => c.id === computer.id);
-        let computerServerUrl = computerInfo?.agentUrl || '';
+        let agentUrl = computerInfo?.agentUrl || '';
 
-        if (!computerServerUrl && isCustomComputer(computer) && computer.url) {
-          computerServerUrl = computer.url;
+        if (!agentUrl && isCustomComputer(computer) && computer.url) {
+          agentUrl = computer.url;
         }
 
-        if (!computerServerUrl) {
-          // Last resort fallback: reconstruct from hostname (legacy behavior for cloud VMs)
-          let hostName = '';
-          if (isVM(computer)) {
-            hostName =
-              (computer as { host?: string }).host ||
-              computer.vncUrl?.replace(/^https?:\/\//, '').split(/[:/]/)[0] ||
-              '';
-          } else if (isCustomComputer(computer)) {
-            hostName = computer.url.replace(/^https?:\/\//, '').split(/[:/]/)[0] || '';
-          }
-          const protocol = hostName === 'localhost' || hostName === '127.0.0.1' ? 'http' : 'https';
-          const port = '8443';
-          computerServerUrl = `${protocol}://${hostName}:${port}`;
+        if (!agentUrl) {
+          throw new Error(
+            'This computer has no agent endpoint. Configure an agent URL (a server exposing POST /responses).'
+          );
         }
 
         // Get inference config from adapter (for env vars like CUA_BASE_URL)
@@ -252,7 +245,7 @@ export function useAgentRequest() {
           env.CUA_API_KEY = inferenceConfig.apiKey;
         }
 
-        const agentClient = new AgentClient(computerServerUrl, {
+        const agentClient = new AgentClient(agentUrl, {
           apiKey: inferenceConfig.apiKey,
           timeout: 120000,
           retries: 3,
@@ -388,8 +381,9 @@ export function useAgentRequest() {
         }
 
         let errorMessage = 'Unknown error';
+        const timedOut = wasAborted && abortReasonRef.current === 'timeout';
         if (error instanceof Error) {
-          if (wasAborted && abortReasonRef.current === 'timeout') {
+          if (timedOut) {
             errorMessage = 'Request timed out.';
           } else if (wasAborted) {
             abortReasonRef.current = null;
@@ -400,7 +394,8 @@ export function useAgentRequest() {
           }
         }
 
-        trackTrajectoryFailed({ model, errorType: errorMessage });
+        // Telemetry gets a fixed classification only, never the message.
+        trackTrajectoryFailed({ model, errorType: classifyTrajectoryError(error, timedOut) });
         abortReasonRef.current = null;
         currentRequestRef.current = null;
         chatDispatch({
@@ -500,7 +495,6 @@ export function useAgentRequest() {
       model,
       isFirstMessage,
       sandboxType: isVM(computer) ? 'vm' : 'custom',
-      message: currentInput,
     });
 
     await sendAgentRequest(updatedMessages, abortController);

@@ -21,16 +21,6 @@ struct GalleryState {
     session_label: Option<&'static str>,
 }
 
-#[cfg(test)]
-fn runtime_state() -> GalleryState {
-    GalleryState {
-        action: CursorAction::Observe,
-        delivery: Some(DeliveryModifier::Background),
-        target: Some(TargetModifier::Browser),
-        session_label: Some(RUNTIME_SESSION_LABEL),
-    }
-}
-
 const DELIVERIES: [Option<DeliveryModifier>; 3] = [
     None,
     Some(DeliveryModifier::Background),
@@ -133,9 +123,14 @@ fn main() {
 fn export_state(output: &Path, state: GalleryState) {
     fs::create_dir_all(output).expect("create frame output");
     for frame in 0..FPS * DURATION_SECS {
-        let mut config = CursorConfig::default();
-        config.cursor_id = "gallery-session".into();
+        let config = CursorConfig {
+            cursor_id: "gallery-session".into(),
+            ..CursorConfig::default()
+        };
         let mut core = RenderStateCore::new(config);
+        // The gallery documents every badge combination, which only the
+        // verbose badge shows.
+        core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         core.motion.idle_hide_ms = 0.0;
         core.pos = (
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
@@ -178,19 +173,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn runtime_preview_uses_the_complete_production_composition() {
-        let state = runtime_state();
-        assert_eq!(state.action, CursorAction::Observe);
-        assert_eq!(state.delivery, Some(DeliveryModifier::Background));
-        assert_eq!(state.target, Some(TargetModifier::Browser));
-        assert_eq!(state.session_label, Some(RUNTIME_SESSION_LABEL));
-    }
-
-    #[test]
     fn preview_inventory_covers_every_runtime_combination_once() {
         let root = Path::new("gallery");
         let states = preview_states(root);
-        assert_eq!(states.len(), 12 * 3 * 5);
+        assert_eq!(
+            states.len(),
+            CursorAction::ALL.len() * DELIVERIES.len() * TARGETS.len()
+        );
 
         let slugs = states
             .iter()

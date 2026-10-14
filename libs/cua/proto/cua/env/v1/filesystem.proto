@@ -1,0 +1,498 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Guest filesystem access.
+//
+// Paths are absolute, or relative to the default working directory set by
+// `SystemService.Init`. A leading "~" expands to the acting user's home.
+// Operations run as the `Init` default user.
+//
+// Large payloads: there is no total size cap. Reads stream in chunks
+// (`ReadFile`). Writes use either the native-gRPC client stream
+// (`WriteFile`) or the gRPC-Web-safe, resumable unary chunk protocol
+// (`BeginUpload` / `UploadChunk` / `CommitUpload`). Browsers and `<img>` tags
+// can use signed URLs on the plain-HTTP `/files` route instead
+// (`CreateSignedUrl`).
+//
+// Writes are atomic: data goes to a temporary file in the destination
+// directory and is renamed into place on success.
+service FilesystemService {
+  // Returns metadata for one path.
+  rpc Stat(StatRequest) returns (StatResponse);
+  // Lists a directory, optionally recursively.
+  rpc ListDir(ListDirRequest) returns (ListDirResponse);
+  // Creates a directory.
+  rpc MakeDir(MakeDirRequest) returns (MakeDirResponse);
+  // Moves or renames a file or directory.
+  rpc Move(MoveRequest) returns (MoveResponse);
+  // Removes a file or directory.
+  rpc Remove(RemoveRequest) returns (RemoveResponse);
+  // Streams change events under a directory. The first message is
+  // `WatchStarted`, sent once the watch is armed, so changes made after it
+  // arrives are guaranteed to be observed.
+  rpc WatchDir(WatchDirRequest) returns (stream WatchDirResponse);
+  // Polling alternative to `WatchDir` for clients that cannot hold a stream:
+  // creates a server-side watcher that buffers events.
+  rpc CreateWatcher(CreateWatcherRequest) returns (CreateWatcherResponse);
+  // Drains buffered events from a watcher.
+  rpc GetWatcherEvents(GetWatcherEventsRequest) returns (GetWatcherEventsResponse);
+  // Deletes a watcher. Watchers not polled for 5 minutes are deleted
+  // automatically.
+  rpc RemoveWatcher(RemoveWatcherRequest) returns (RemoveWatcherResponse);
+  // Streams a file (or a byte range of it) in chunks.
+  rpc ReadFile(ReadFileRequest) returns (stream ReadFileResponse);
+  // Writes a file from a client stream. Native gRPC only; gRPC-Web clients
+  // use `BeginUpload` / `UploadChunk` / `CommitUpload`. The first message
+  // must be a `WriteFileHeader`.
+  rpc WriteFile(stream WriteFileRequest) returns (WriteFileResponse);
+  // Starts, or resumes, a resumable chunked upload.
+  rpc BeginUpload(BeginUploadRequest) returns (BeginUploadResponse);
+  // Appends one chunk to an upload.
+  rpc UploadChunk(UploadChunkRequest) returns (UploadChunkResponse);
+  // Verifies and atomically publishes an upload at its destination path.
+  rpc CommitUpload(CommitUploadRequest) returns (CommitUploadResponse);
+  // Discards an upload and its partial data.
+  rpc AbortUpload(AbortUploadRequest) returns (AbortUploadResponse);
+  // Mints a time-limited URL on the plain-HTTP `/files` route for GET
+  // (download) or PUT (upload) of one path.
+  rpc CreateSignedUrl(CreateSignedUrlRequest) returns (CreateSignedUrlResponse);
+}
+
+// Type of a filesystem entry.
+enum FileType {
+  // Not reported.
+  FILE_TYPE_UNSPECIFIED = 0;
+  // Regular file.
+  FILE_TYPE_FILE = 1;
+  // Directory.
+  FILE_TYPE_DIRECTORY = 2;
+  // Symbolic link (only when not following links).
+  FILE_TYPE_SYMLINK = 3;
+  // Anything else (socket, FIFO, device).
+  FILE_TYPE_OTHER = 4;
+}
+
+// Metadata for one filesystem entry.
+message EntryInfo {
+  // Final path component.
+  string name = 1;
+  // Absolute, normalized path.
+  string path = 2;
+  // Entry type.
+  FileType type = 3;
+  // Size in bytes (0 for directories).
+  uint64 size = 4;
+  // Unix permission bits (for example 0o644). Synthesized on Windows.
+  uint32 mode = 5;
+  // Owning user name.
+  string owner = 6;
+  // Owning group name (empty on Windows).
+  string group = 7;
+  // Last modification time.
+  google.protobuf.Timestamp modified_at = 8;
+  // Target of a symbolic link, when `type` is `FILE_TYPE_SYMLINK`.
+  string symlink_target = 9;
+}
+
+// Request for `FilesystemService.Stat`.
+message StatRequest {
+  // Path to inspect.
+  string path = 1;
+  // Report the link itself rather than its target.
+  bool no_follow_symlinks = 2;
+}
+
+// Response for `FilesystemService.Stat`.
+message StatResponse {
+  // The entry.
+  EntryInfo entry = 1;
+}
+
+// Request for `FilesystemService.ListDir`.
+message ListDirRequest {
+  // Directory to list.
+  string path = 1;
+  // Recursion depth. 0 and 1 both list direct children only; 2 includes
+  // grandchildren, and so on. Symbolic links are never followed during
+  // recursion.
+  uint32 depth = 2;
+  // Include entries whose name starts with "." (and hidden entries on
+  // Windows).
+  bool include_hidden = 3;
+  // Maximum entries per page. 0 means 1000. At most 10000.
+  uint32 page_size = 4;
+  // Continuation token from a previous `ListDirResponse`.
+  string page_token = 5;
+}
+
+// Response for `FilesystemService.ListDir`.
+message ListDirResponse {
+  // Entries in depth-first order, directories before their contents.
+  repeated EntryInfo entries = 1;
+  // Token for the next page, empty on the last page.
+  string next_page_token = 2;
+}
+
+// Request for `FilesystemService.MakeDir`.
+message MakeDirRequest {
+  // Directory to create.
+  string path = 1;
+  // Create missing parents too.
+  bool parents = 2;
+  // Permission bits. 0 means 0o755.
+  uint32 mode = 3;
+}
+
+// Response for `FilesystemService.MakeDir`.
+message MakeDirResponse {
+  // The directory.
+  EntryInfo entry = 1;
+  // False if it already existed (not an error).
+  bool created = 2;
+}
+
+// Request for `FilesystemService.Move`.
+message MoveRequest {
+  // Existing path.
+  string source = 1;
+  // New path.
+  string destination = 2;
+  // Replace an existing destination. Without it an existing destination
+  // fails with ALREADY_EXISTS / `ERROR_REASON_PATH_EXISTS`.
+  bool overwrite = 3;
+  // Create missing parents of `destination`.
+  bool create_parents = 4;
+}
+
+// Response for `FilesystemService.Move`.
+message MoveResponse {
+  // The entry at its new path.
+  EntryInfo entry = 1;
+}
+
+// Request for `FilesystemService.Remove`.
+message RemoveRequest {
+  // Path to remove.
+  string path = 1;
+  // Remove a non-empty directory and its contents.
+  bool recursive = 2;
+  // Succeed when the path does not exist.
+  bool missing_ok = 3;
+}
+
+// Response for `FilesystemService.Remove`.
+message RemoveResponse {}
+
+// Kind of filesystem change.
+enum FsEventType {
+  // Not reported.
+  FS_EVENT_TYPE_UNSPECIFIED = 0;
+  // Entry created.
+  FS_EVENT_TYPE_CREATE = 1;
+  // File content written.
+  FS_EVENT_TYPE_WRITE = 2;
+  // Entry removed.
+  FS_EVENT_TYPE_REMOVE = 3;
+  // Entry renamed or moved. `path` is the new path when known.
+  FS_EVENT_TYPE_RENAME = 4;
+  // Permissions or ownership changed.
+  FS_EVENT_TYPE_CHMOD = 5;
+}
+
+// One filesystem change.
+message FsEvent {
+  // Absolute path of the affected entry.
+  string path = 1;
+  // What happened.
+  FsEventType type = 2;
+  // Previous path for renames, when the platform reports it.
+  string old_path = 3;
+  // When the server observed the change.
+  google.protobuf.Timestamp observed_at = 4;
+}
+
+// Request for `FilesystemService.WatchDir`.
+message WatchDirRequest {
+  // Directory to watch.
+  string path = 1;
+  // Watch the whole subtree.
+  bool recursive = 2;
+  // Interval between `keepalive` messages. Unset means 30 seconds.
+  google.protobuf.Duration keepalive_interval = 3;
+}
+
+// Sent once when a watch is armed.
+message WatchStarted {}
+
+// Sent when the kernel event queue overflowed and events were lost. Clients
+// should rescan.
+message WatchOverflow {}
+
+// One message of the `FilesystemService.WatchDir` stream.
+message WatchDirResponse {
+  // The message payload.
+  oneof message {
+    // First message: the watch is armed.
+    WatchStarted started = 1;
+    // A change.
+    FsEvent event = 2;
+    // Events were dropped.
+    WatchOverflow overflow = 3;
+    // Idle stream heartbeat.
+    KeepAlive keepalive = 4;
+  }
+}
+
+// Request for `FilesystemService.CreateWatcher`.
+message CreateWatcherRequest {
+  // Directory to watch.
+  string path = 1;
+  // Watch the whole subtree.
+  bool recursive = 2;
+}
+
+// Response for `FilesystemService.CreateWatcher`. The watcher is armed when
+// this returns.
+message CreateWatcherResponse {
+  // Watcher id for `GetWatcherEvents` and `RemoveWatcher`.
+  string watcher_id = 1;
+}
+
+// Request for `FilesystemService.GetWatcherEvents`.
+message GetWatcherEventsRequest {
+  // Which watcher.
+  string watcher_id = 1;
+  // Maximum events to return. 0 means all buffered.
+  uint32 max_events = 2;
+}
+
+// Response for `FilesystemService.GetWatcherEvents`.
+message GetWatcherEventsResponse {
+  // Buffered events, oldest first. Returned events are removed from the
+  // buffer.
+  repeated FsEvent events = 1;
+  // True if the watcher's buffer (10000 events) overflowed since the last
+  // poll and events were dropped. Clients should rescan.
+  bool overflowed = 2;
+}
+
+// Request for `FilesystemService.RemoveWatcher`.
+message RemoveWatcherRequest {
+  // Which watcher.
+  string watcher_id = 1;
+}
+
+// Response for `FilesystemService.RemoveWatcher`.
+message RemoveWatcherResponse {}
+
+// Request for `FilesystemService.ReadFile`.
+message ReadFileRequest {
+  // File to read.
+  string path = 1;
+  // First byte to read.
+  uint64 offset = 2;
+  // Maximum bytes to read. 0 means to end of file.
+  uint64 length = 3;
+  // Preferred chunk size. 0 means `Limits.preferred_chunk_bytes` (1 MiB).
+  // Clamped to `Limits.max_chunk_bytes`.
+  uint32 chunk_size = 4;
+  // Compute the SHA-256 of the bytes sent and report it in `ReadFileEnd`.
+  bool compute_sha256 = 5;
+}
+
+// One message of the `FilesystemService.ReadFile` stream: `entry` first,
+// then zero or more `chunk`s in order, then `end`.
+message ReadFileResponse {
+  // The message payload.
+  oneof message {
+    // File metadata, sent first.
+    EntryInfo entry = 1;
+    // File content.
+    FileChunk chunk = 2;
+    // Sent last.
+    ReadFileEnd end = 3;
+  }
+}
+
+// A slice of file content.
+message FileChunk {
+  // Absolute file offset of `data[0]`.
+  uint64 offset = 1;
+  // The bytes.
+  bytes data = 2;
+}
+
+// Final message of a `ReadFile` stream.
+message ReadFileEnd {
+  // Bytes sent in chunks.
+  uint64 bytes_read = 1;
+  // Lowercase hex SHA-256 of the bytes sent, when requested.
+  string sha256 = 2;
+}
+
+// How `WriteFile` and uploads treat an existing destination.
+enum WriteMode {
+  // Not set. Treated as `WRITE_MODE_OVERWRITE`.
+  WRITE_MODE_UNSPECIFIED = 0;
+  // Replace any existing file atomically.
+  WRITE_MODE_OVERWRITE = 1;
+  // Fail with `ERROR_REASON_PATH_EXISTS` if the destination exists.
+  WRITE_MODE_CREATE_NEW = 2;
+  // Append to the existing file (created if missing). Not atomic.
+  WRITE_MODE_APPEND = 3;
+}
+
+// Destination and options for a write.
+message WriteFileHeader {
+  // Destination path.
+  string path = 1;
+  // How to treat an existing file.
+  WriteMode mode = 2;
+  // Permission bits for a new file. 0 means 0o644.
+  uint32 permissions = 3;
+  // Create missing parent directories.
+  bool create_parents = 4;
+  // Expected total size in bytes, 0 if unknown. Checked on completion when
+  // non-zero.
+  uint64 expected_size = 5;
+  // Expected lowercase hex SHA-256 of the full content. Checked on completion
+  // when set; a mismatch discards the data and fails with
+  // `ERROR_REASON_CHECKSUM_MISMATCH`.
+  string expected_sha256 = 6;
+}
+
+// One message of the `FilesystemService.WriteFile` client stream.
+message WriteFileRequest {
+  // The message payload.
+  oneof message {
+    // First message only.
+    WriteFileHeader header = 1;
+    // File content, strictly sequential. Each chunk is at most
+    // `Limits.max_chunk_bytes`.
+    bytes data = 2;
+  }
+}
+
+// Response for `FilesystemService.WriteFile`.
+message WriteFileResponse {
+  // The written file.
+  EntryInfo entry = 1;
+  // Lowercase hex SHA-256 of the bytes received.
+  string sha256 = 2;
+}
+
+// Request for `FilesystemService.BeginUpload`.
+message BeginUploadRequest {
+  // Destination and options. `expected_sha256` is strongly recommended.
+  WriteFileHeader header = 1;
+  // Client-chosen id that makes this call idempotent and resumable. If an
+  // unexpired upload with this id exists for the same path, the call returns
+  // its current `received_bytes` instead of starting over. Empty lets the
+  // server generate an id (not resumable after the response is lost).
+  string upload_id = 2;
+  // How long partial data is kept without progress. Unset means 1 hour.
+  // At most 24 hours.
+  google.protobuf.Duration ttl = 3;
+}
+
+// Response for `FilesystemService.BeginUpload`.
+message BeginUploadResponse {
+  // Upload id for later calls.
+  string upload_id = 1;
+  // Bytes already received. 0 for a new upload; the resume point otherwise.
+  uint64 received_bytes = 2;
+  // Largest chunk the server accepts.
+  uint32 max_chunk_bytes = 3;
+  // When the partial upload expires if no further chunks arrive.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// Request for `FilesystemService.UploadChunk`.
+message UploadChunkRequest {
+  // Which upload.
+  string upload_id = 1;
+  // Offset of `data[0]`. Must equal the server's `received_bytes`; a chunk
+  // wholly below it is acknowledged as a duplicate, anything else fails with
+  // `ERROR_REASON_OFFSET_MISMATCH` and `metadata["expected_offset"]`.
+  uint64 offset = 2;
+  // The bytes. At most `max_chunk_bytes`.
+  bytes data = 3;
+}
+
+// Response for `FilesystemService.UploadChunk`.
+message UploadChunkResponse {
+  // Total bytes received so far.
+  uint64 received_bytes = 1;
+  // True if the chunk was a retry and was not written again.
+  bool duplicate = 2;
+  // New expiry of the partial upload.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// Request for `FilesystemService.CommitUpload`.
+message CommitUploadRequest {
+  // Which upload.
+  string upload_id = 1;
+  // Expected lowercase hex SHA-256, overriding the header's. Optional.
+  string sha256 = 2;
+}
+
+// Response for `FilesystemService.CommitUpload`.
+message CommitUploadResponse {
+  // The published file.
+  EntryInfo entry = 1;
+  // Lowercase hex SHA-256 of the committed content.
+  string sha256 = 2;
+}
+
+// Request for `FilesystemService.AbortUpload`.
+message AbortUploadRequest {
+  // Which upload.
+  string upload_id = 1;
+}
+
+// Response for `FilesystemService.AbortUpload`.
+message AbortUploadResponse {}
+
+// HTTP method a signed URL is valid for.
+enum SignedUrlMethod {
+  // Not set. Rejected.
+  SIGNED_URL_METHOD_UNSPECIFIED = 0;
+  // Download with `GET` (supports `Range`).
+  SIGNED_URL_METHOD_GET = 1;
+  // Upload with `PUT` (the body replaces the file atomically).
+  SIGNED_URL_METHOD_PUT = 2;
+}
+
+// Request for `FilesystemService.CreateSignedUrl`.
+message CreateSignedUrlRequest {
+  // Path the URL grants access to. Exactly this path; no traversal.
+  string path = 1;
+  // Allowed method.
+  SignedUrlMethod method = 2;
+  // Validity. Required; at most 24 hours.
+  google.protobuf.Duration ttl = 3;
+  // For GET: `Content-Type` to serve. Empty means guessed from the name.
+  string content_type = 4;
+  // For GET: serve with `Content-Disposition: attachment` using this file
+  // name. Empty means inline.
+  string download_name = 5;
+}
+
+// Response for `FilesystemService.CreateSignedUrl`.
+message CreateSignedUrlResponse {
+  // Path and query to append to the spacesd's base URL, for example
+  // "/files?path=%2Fhome%2Fu%2Fa.png&method=GET&exp=1767225600&sig=…". The
+  // server does not know how it is addressed (direct, Fleet gateway, relay),
+  // so it never returns an absolute URL. The signature is HMAC-SHA256 over
+  // method, path and expiry with a key derived from the access token;
+  // rotating the token revokes every outstanding URL.
+  string url_path = 1;
+  // When the URL stops working.
+  google.protobuf.Timestamp expires_at = 2;
+}

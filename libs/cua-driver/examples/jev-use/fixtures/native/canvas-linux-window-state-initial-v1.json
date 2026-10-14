@@ -1,0 +1,47 @@
+{
+ "_fixture": {
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed.",
+  "source": "Cua visual-only canvas fixture (tests/fixtures/apps/cross-platform/visual-only-canvas, Tk 8.6), observed by get_window_state: Linux X11 (Ubuntu 24.04, Xvfb + XFCE), released Cua Driver 0.30.2. Tk exposes no AT-SPI tree; Driver reports X11 property metadata only."
+ },
+ "app_name": "Tk",
+ "bounds_complete": true,
+ "capture_id": "capture_23db64ce474c4e579e06b77249bb18ca_0000000000000000",
+ "coordinate_frame": "window",
+ "degraded": true,
+ "degraded_reason": "x11_property_fallback_partial: AT-SPI was unavailable and Cua Driver only recovered window metadata. Treat it as discovery evidence; it cannot prove checked state.",
+ "element_count": 1,
+ "elements": [
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 0,
+   "description": "tk.Tk",
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "label": "Cua Visual-Only Canvas Fixture",
+   "role": "window"
+  }
+ ],
+ "elements_complete": false,
+ "nodes_pending": 0,
+ "nodes_visited": 0,
+ "pid": 3549,
+ "returned_element_count": 1,
+ "screenshot_height": 460,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 760,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 1,
+ "truncated": false,
+ "walk_elapsed_ms": 465,
+ "window_bounds": {
+  "height": 460,
+  "width": 760,
+  "x": 580,
+  "y": 335
+ },
+ "window_id": 50331652,
+ "window_title": "Cua Visual-Only Canvas Fixture"
+}

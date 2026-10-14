@@ -17,6 +17,15 @@ async fn typed_account_apis_use_authenticated_backend_contracts() {
             br#"[{"name":"demo","status":"Active","createdAt":"2026-08-04T12:00:00Z","labels":{"team":"sdk"}}]"#,
         )),
         Ok(response(
+            201,
+            br#"{"name":"new-demo","status":"Active","createdAt":"2026-08-08T00:00:00Z","labels":{}}"#,
+        )),
+        Ok(response(
+            200,
+            br#"{"name":"new-demo","status":"Active","createdAt":"2026-08-08T00:00:00Z","labels":{}}"#,
+        )),
+        Ok(response(204, b"")),
+        Ok(response(
             200,
             br#"{"keys":[{"id":"key-id","client_id":"ukey-demo","name":"demo key","scope":["demo"]}]}"#,
         )),
@@ -37,6 +46,23 @@ async fn typed_account_apis_use_authenticated_backend_contracts() {
             labels: Some(HashMap::from([("team".into(), "sdk".into())])),
         }]
     );
+    let created = Arc::clone(&client)
+        .create_namespace("new-demo".into())
+        .await
+        .unwrap();
+    assert_eq!(created.name, "new-demo");
+
+    let fetched = Arc::clone(&client)
+        .get_namespace("new-demo".into())
+        .await
+        .unwrap();
+    assert_eq!(fetched, created);
+
+    Arc::clone(&client)
+        .delete_namespace("new-demo".into())
+        .await
+        .unwrap();
+
     assert_eq!(
         Arc::clone(&client).list_user_api_keys().await.unwrap(),
         vec![UserApiKey {
@@ -65,7 +91,7 @@ async fn typed_account_apis_use_authenticated_backend_contracts() {
     client.delete_user_api_key("key/id".into()).await.unwrap();
 
     let requests = http.requests().await;
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 7);
     assert_request(
         &requests[0],
         "GET",
@@ -74,18 +100,36 @@ async fn typed_account_apis_use_authenticated_backend_contracts() {
     );
     assert_request(
         &requests[1],
+        "POST",
+        "https://cyclops.example:8443/root/api/namespaces",
+        Some(br#"{"name":"new-demo"}"#),
+    );
+    assert_request(
+        &requests[2],
+        "GET",
+        "https://cyclops.example:8443/root/api/namespaces/new-demo",
+        None,
+    );
+    assert_request(
+        &requests[3],
+        "DELETE",
+        "https://cyclops.example:8443/root/api/namespaces/new-demo",
+        None,
+    );
+    assert_request(
+        &requests[4],
         "GET",
         "https://cyclops.example:8443/root/api/user-keys",
         None,
     );
     assert_request(
-        &requests[2],
+        &requests[5],
         "POST",
         "https://cyclops.example:8443/root/api/user-keys",
         Some(br#"{"name":"ci-key","scope":["demo"]}"#),
     );
     assert_request(
-        &requests[3],
+        &requests[6],
         "DELETE",
         "https://cyclops.example:8443/root/api/user-keys/key%2Fid",
         None,
@@ -109,6 +153,72 @@ async fn list_user_api_keys_treats_null_scope_as_unrestricted() {
             scope: vec![],
         }]
     );
+}
+
+#[tokio::test]
+async fn namespace_crud_preserves_conflict_forbidden_and_not_found_contracts() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(response(409, br#"{"error":"namespace already exists"}"#)),
+        Ok(response(403, br#"{"error":"namespace access denied"}"#)),
+        Ok(response(404, br#"{"error":"namespace not found"}"#)),
+        Ok(response(404, br#"{"error":"namespace not found"}"#)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    assert!(matches!(
+        Arc::clone(&client)
+            .create_namespace("demo".into())
+            .await
+            .unwrap_err(),
+        SdkError::Status { status: 409, .. }
+    ));
+    assert!(matches!(
+        Arc::clone(&client)
+            .get_namespace("demo".into())
+            .await
+            .unwrap_err(),
+        SdkError::Status { status: 403, .. }
+    ));
+    assert!(matches!(
+        Arc::clone(&client)
+            .get_namespace("demo".into())
+            .await
+            .unwrap_err(),
+        SdkError::Status { status: 404, .. }
+    ));
+    Arc::clone(&client)
+        .delete_namespace("demo".into())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn namespace_crud_rejects_invalid_names_without_http_requests() {
+    let http = Arc::new(ScriptedHttpClient::new([]));
+    let client = client(Arc::clone(&http));
+
+    assert!(matches!(
+        Arc::clone(&client)
+            .create_namespace("Invalid".into())
+            .await
+            .unwrap_err(),
+        SdkError::InvalidResourceName { ref field, .. } if field == "namespace"
+    ));
+    assert!(matches!(
+        Arc::clone(&client)
+            .get_namespace("Invalid".into())
+            .await
+            .unwrap_err(),
+        SdkError::InvalidResourceName { ref field, .. } if field == "namespace"
+    ));
+    assert!(matches!(
+        Arc::clone(&client)
+            .delete_namespace("Invalid".into())
+            .await
+            .unwrap_err(),
+        SdkError::InvalidResourceName { ref field, .. } if field == "namespace"
+    ));
+    assert_eq!(http.request_count().await, 0);
 }
 
 #[tokio::test]
@@ -166,7 +276,7 @@ fn assert_request(request: &HttpRequest, method: &str, url: &str, body: Option<&
     assert_eq!(request.url, url);
     assert_eq!(request.body.as_deref(), body);
     let mut expected_headers = vec![header("accept", "application/json")];
-    if body.is_some() {
+    if body.is_some() || request.url.contains("/api/namespaces") {
         expected_headers.push(header("content-type", "application/json"));
     }
     expected_headers.push(header("authorization", "Bearer offline-token"));

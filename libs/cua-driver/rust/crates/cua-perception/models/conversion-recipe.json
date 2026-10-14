@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "maintainer-approved-agpl-distribution",
+  "input": {
+    "bundle_path": "source/upstream/omniparser-icon-detect-model.pt",
+    "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
+    "size": 40623819
+  },
+  "command": [
+    "python3",
+    "models/export_omniparser_detector.py",
+    "source/upstream/omniparser-icon-detect-model.pt",
+    "omniparser-icon-detect-1280-opset17.onnx"
+  ],
+  "parameters": {
+    "format": "onnx",
+    "imgsz": 1280,
+    "opset": 17,
+    "simplify": true,
+    "dynamic": false,
+    "nms": false
+  },
+  "toolchain": {
+    "python": "3.12.13",
+    "torch": "2.8.0",
+    "torchvision": "0.23.0",
+    "ultralytics": "8.3.199",
+    "onnx": "1.19.0",
+    "onnxslim": "0.1.68",
+    "onnxruntime_validation": "1.22.1"
+  },
+  "patches": [],
+  "expected_output": {
+    "sha256": "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2",
+    "size": 80933219
+  },
+  "limitations": "The bundle pins the principal exporter sources and exact command. It does not claim that every transitive build dependency or host toolchain is contained; the output digest remains the byte-for-byte acceptance authority."
+}

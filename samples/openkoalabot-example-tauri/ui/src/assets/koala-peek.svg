@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" role="img" aria-label="A koala peeking over a ledge">
+  <!-- Empty-state illustration: the koala peeks over the edge of a card, paws on the ledge. -->
+  <circle cx="102" cy="70" r="40" fill="#8e98a3"/>
+  <circle cx="218" cy="70" r="40" fill="#8e98a3"/>
+  <circle cx="99" cy="72" r="24" fill="#e6e9ed"/>
+  <circle cx="221" cy="72" r="24" fill="#e6e9ed"/>
+  <ellipse cx="160" cy="128" rx="70" ry="64" fill="#a9b2bc"/>
+  <ellipse cx="160" cy="156" rx="38" ry="24" fill="#c3cad1"/>
+  <circle cx="132" cy="116" r="7.5" fill="#1b1e23"/>
+  <circle cx="188" cy="116" r="7.5" fill="#1b1e23"/>
+  <circle cx="134.5" cy="113.5" r="2.5" fill="#ffffff"/>
+  <circle cx="190.5" cy="113.5" r="2.5" fill="#ffffff"/>
+  <ellipse cx="160" cy="142" rx="18" ry="24" fill="#2a2e35"/>
+  <ellipse cx="154" cy="133" rx="5" ry="6.5" fill="#4a505a"/>
+  <rect x="20" y="170" width="280" height="44" rx="14" fill="#d9dde2"/>
+  <ellipse cx="112" cy="172" rx="24" ry="14" fill="#9aa3ad"/>
+  <ellipse cx="208" cy="172" rx="24" ry="14" fill="#9aa3ad"/>
+  <circle cx="100" cy="176" r="3" fill="#7b848e"/>
+  <circle cx="112" cy="178" r="3" fill="#7b848e"/>
+  <circle cx="124" cy="176" r="3" fill="#7b848e"/>
+  <circle cx="196" cy="176" r="3" fill="#7b848e"/>
+  <circle cx="208" cy="178" r="3" fill="#7b848e"/>
+  <circle cx="220" cy="176" r="3" fill="#7b848e"/>
+</svg>

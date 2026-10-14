@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  cua-spacesd in the logged-in GUI session (Aqua) of the autologin user, so
+  capture and accessibility run with the app bundle's TCC grants. Installed
+  to /Library/LaunchAgents (root:wheel 0644) by install-guest.sh; launchd
+  loads it at every GUI login. Token handling: /opt/cua/bin/start-spacesd.sh.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trycua.spacesd</string>
+  <!-- Login Items shows "Cua Spacesd" rather than the bash launcher. -->
+  <key>AssociatedBundleIdentifiers</key>
+  <string>com.trycua.cua-env-driver</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/opt/cua/bin/start-spacesd.sh</string>
+  </array>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>/tmp/cua-spacesd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/cua-spacesd.log</string>
+</dict>
+</plist>

@@ -1,0 +1,89 @@
+[package]
+name = "cua-daemon"
+description = "The cua SDK runtime (sandboxes, env passthrough, media bridge) hosted as cua.daemon.v1 over a Unix socket or loopback + token, and its client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["server", "client", "spaces"]
+# The Spaces runtime (`cua_spaces::Spaces`): `SpaceService`, the per-Space
+# env passthrough and the Spaces MCP server (`/mcp`, `cua daemon mcp`).
+spaces = ["dep:cua-spaces", "dep:cua-host"]
+# The daemon: tonic services, env passthrough and the media bridge.
+server = ["tonic/server", "tonic/router", "dep:axum", "dep:tower-http", "dep:hyper", "tokio-stream/net"]
+# `DaemonClient` over the Unix socket or loopback.
+client = []
+# Contrib sandbox providers (`--on e2b`, ...), off by default: `contrib`
+# for every one, `contrib-<name>` for one.
+contrib = ["dep:cua-contrib", "cua-contrib/all"]
+contrib-e2b = ["dep:cua-contrib", "cua-contrib/e2b"]
+contrib-daytona = ["dep:cua-contrib", "cua-contrib/daytona"]
+contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
+# Your own cloud account as a location (`--on aws|gcp|modal`): the cua-byoc
+# providers and `cua cloud`.
+byoc = ["dep:cua-byoc", "cua-byoc/all"]
+# `fixtures`: a MockServer spacesd plus a fake Fleet API on loopback,
+# for tests and the `cua-test-fixtures` binary behind the language-binding
+# smoke tests (libs/cua-spacesd/tests/spaces-e2e). Never shipped.
+test-fixtures = ["server", "spaces", "cua-spacesd-client/testing", "cua-fleet/testing", "tokio-tungstenite/handshake", "dep:tempfile"]
+
+[dependencies]
+cua-home.workspace = true
+cua-byoc = { workspace = true, optional = true }
+cua-proto = { workspace = true, features = ["client", "server", "serde"] }
+cua-spacesd-client.workspace = true
+cua-fleet.workspace = true
+# Fleet through the signed-in user's shared session.
+cua-auth.workspace = true
+cua-sandbox-core.workspace = true
+cua-contrib = { workspace = true, optional = true }
+cua-vmm = { path = "../cua-vmm" }
+cua-image = { path = "../cua-image" }
+# Disk accounting, cache GC and orphan reaping.
+cua-disk.workspace = true
+cua-spaces = { path = "../cua-spaces", optional = true }
+# The fixtures' `/media` socket frames video like the real driver.
+# Relay account machines (space://relay/<id>) in SpaceService / `cua daemon mcp`.
+cua-host = { workspace = true, optional = true }
+async-trait.workspace = true
+tonic = { workspace = true, default-features = false, features = ["codegen", "channel"] }
+tonic-web.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+pbjson-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-util = { workspace = true, features = ["server", "server-auto", "service", "client-legacy", "http1"] }
+hyper = { workspace = true, optional = true, features = ["server", "http1", "http2"] }
+tower.workspace = true
+tokio = { workspace = true }
+tokio-stream.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+base64.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+humantime.workspace = true
+url.workspace = true
+tempfile = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+
+[dev-dependencies]
+cua-host = { workspace = true, features = ["testing"] }
+cua-spaces = { path = "../cua-spaces", features = ["mcp-client"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { workspace = true, features = ["testing"] }
+# Keyvault delivery test: a deterministic in-memory export provider and the
+# broker types, exercised against the mock spacesd.
+tempfile.workspace = true

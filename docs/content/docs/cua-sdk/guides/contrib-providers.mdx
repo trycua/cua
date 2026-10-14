@@ -1,0 +1,76 @@
+---
+title: Run on other sandbox providers (contrib)
+description: Run cua sandboxes on E2B, Daytona or Modal with --on e2b, --on daytona or --on modal, from the same registry images, with cua-spacesd, services and cua doctor.
+---
+
+Contrib providers run the same images (the canonical `ghcr.io/trycua/linux`, or any registry image) on third-party sandbox platforms. The location is one more `--on` word: `--on e2b`, `--on daytona`, `--on modal`. Everything above the location works unchanged: services, `sb.spacesd()`, `cua doctor`, cua-bench.
+
+To run in a cloud account you own (AWS, Google Cloud, Modal), see [Use your own cloud](/cua-sdk/guides/your-cloud): it needs no provider key, and its sandboxes join the cua.ai relay. Contrib providers are opt-in. The default `cua` build knows the words and tells you how to get the provider; a build with `--features contrib` includes them.
+
+## Set up
+
+```bash skip="host-install"
+cargo install --locked --path libs/cua/crates/cua-cli --features contrib
+cua auth provider set e2b          # reads E2B_API_KEY from stdin, never echoed
+cua auth provider ls               # where each key comes from, never the value
+```
+
+An environment variable wins over a stored key: `E2B_API_KEY`, `DAYTONA_API_KEY`, or `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
+
+Modal documents no HTTP API, so `--on modal` goes through Modal's official Go SDK in a small helper, `cua-modal-helper`. Build it once and put it next to `cua` or on `PATH` (or point `CUA_MODAL_HELPER` at it):
+
+```bash skip="host-install"
+(cd libs/cua/crates/cua-contrib/modal-helper && go build -o ~/.local/bin/cua-modal-helper .)
+```
+
+## Create a sandbox
+
+```bash test="cli-shape" id="contrib-cli"
+cua sb create linux --on e2b --name demo
+cua doctor e2b:demo --strict
+cua sb delete e2b:demo
+```
+
+The ref is `<provider>:<name>` (`e2b:demo`, `daytona:demo`). `--claim-ttl` sets the platform's lifetime backstop (default one hour).
+
+```python test="contrib" id="contrib-python" prelude="contrib"
+from cua_sandbox import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux(), on="daytona") as sb:
+    await sb.files.write_text("/tmp/hello.txt", "hello from daytona")
+    print(await sb.files.read_text("/tmp/hello.txt"))  # hello from daytona
+```
+
+cua-bench takes the same word: `cb run task <task> --on e2b`.
+
+## What happens to the image
+
+The SDK resolves and pins the image first, then maps it onto the platform:
+
+| Provider | Image step | Cached by | Entrypoint |
+|---|---|---|---|
+| E2B | a template built `fromImage` | digest, start command, shape | runs once at build (E2B snapshots it); the SDK installs the cua-spacesd token |
+| Daytona | a snapshot from `imageName` | digest, entrypoint, shape | runs in every sandbox, with the token in its environment |
+| Modal | `FROM` the pinned image, `ENTRYPOINT []` | Modal's image cache | the image's `ENTRYPOINT` and `CMD` as the command, with the token in its environment |
+
+A moved tag gets a new template. Requests a provider cannot run fail before any API call, with a typed error: VM variants (`--vm`), images without an amd64 build, Windows and macOS images, `network="none"`, sidecars, and (Daytona, Modal) private registries. Modal tunnels are fixed at create: declare every port with `--port`.
+
+## Ports and services
+
+Declared services and cua-spacesd (3211) are reachable through the provider's HTTPS URLs; `sb.service(name).url()` and `sb.tunnel.forward(port)` return them. Ports are public on the provider's proxy: cua-spacesd authenticates with its own token, so keep other services authenticated too.
+
+## Support matrix
+
+Measured nightly: each provider's lane creates `ghcr.io/trycua/linux:24.04`, runs `cua doctor <ref> --strict --json` inside it, and the table below is generated from the latest reports. A regression shows up here on the next run.
+
+{/* GENERATED:contrib-matrix:start */}
+
+| Provider | Kind | Verdict | display | input | streaming | audio | files | process | teleport | tunnels | mcp | auth | Measured |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| e2b | container | not measured | - | - | - | - | - | - | - | - | - | - | never |
+| daytona | container | not measured | - | - | - | - | - | - | - | - | - | - | never |
+| modal | container | not measured | - | - | - | - | - | - | - | - | - | - | never |
+
+{/* GENERATED:contrib-matrix:end */}
+
+`full`: the desktop works (display, input through cua-driver, streaming, files, auth). `container-only`: cua-spacesd answers but the desktop does not. `headless-only`: no cua-spacesd answered. `not measured`: no run yet.

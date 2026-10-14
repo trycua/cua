@@ -18,10 +18,12 @@
 // with a fresh local binding and break the match. Mirrors overlay.rs:12.
 #![allow(non_upper_case_globals)]
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use cua_driver_core::single_flight::SingleFlight;
 
 use anyhow::{bail, Context};
 use windows::core::{Interface, BSTR};
@@ -57,7 +59,8 @@ const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Subtree scans: keep the pre-existing interactive operation budget.
 const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
-const UIA_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
+/// Health probes can tolerate the same budget without delaying window listing.
+const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
 
 enum UiaDeadlineError {
     Timeout,
@@ -69,123 +72,69 @@ enum UiaDeadlineError {
 ///
 /// Windows offers no safe way to cancel a COM provider call in another thread.
 /// The gate therefore remains owned by a timed-out worker until that worker
-/// actually returns. Retries fail fast instead of stranding more threads. Once
-/// the provider recovers, the worker releases the gate after a short cooldown.
-struct UiaSingleFlight {
-    in_flight: AtomicBool,
-    cooldown_until_ms: AtomicU64,
-    cooldown_ms: u64,
+/// actually returns. Retries fail fast instead of stranding more threads, then
+/// resume as soon as the provider call returns (no cooldown).
+fn uia_single_flight() -> &'static Arc<SingleFlight> {
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO)))
 }
 
-impl UiaSingleFlight {
-    const fn new(cooldown_ms: u64) -> Self {
-        Self {
-            in_flight: AtomicBool::new(false),
-            cooldown_until_ms: AtomicU64::new(0),
-            cooldown_ms,
-        }
+/// Run `f` on a dedicated thread under `gate`. `f` receives the flag that is
+/// set when the caller's deadline fires, so it can skip side effects the
+/// caller will no longer observe.
+fn run_uia_single_flight<T, F>(
+    gate: &Arc<SingleFlight>,
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    let Some(permit) = gate.try_acquire() else {
+        tracing::debug!(
+            target: "uia_windows_enum",
+            "UIA {stage} skipped while another provider call is in flight"
+        );
+        return Err(UiaDeadlineError::Busy);
+    };
+
+    let (tx, rx) = mpsc::channel();
+    let cancelled = permit.timeout_flag();
+    let worker_cancelled = permit.timeout_flag();
+    let spawn = thread::Builder::new()
+        .name(format!("cua-uia-{stage}"))
+        .spawn(move || {
+            let _permit = permit;
+            let result = f(worker_cancelled);
+            let _ = tx.send(result);
+        });
+
+    if let Err(e) = spawn {
+        // The unspawned closure, and with it the permit, is already dropped,
+        // which reopened the gate.
+        tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
+        return Err(UiaDeadlineError::Unavailable);
     }
 
-    fn run<T, F>(
-        self: &Arc<Self>,
-        stage: &'static str,
-        timeout: Duration,
-        fallback: &'static str,
-        f: F,
-    ) -> Result<T, UiaDeadlineError>
-    where
-        T: Send + 'static,
-        F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
-    {
-        let now = now_ms();
-        if now < self.cooldown_until_ms.load(Ordering::Acquire)
-            || self
-                .in_flight
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-        {
-            tracing::debug!(
-                target: "uia_windows_enum",
-                "UIA {stage} skipped while another provider call is in flight or cooling down"
-            );
-            return Err(UiaDeadlineError::Busy);
-        }
-
-        let (tx, rx) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = Arc::clone(&cancelled);
-        let worker_gate = Arc::clone(self);
-        let spawn = thread::Builder::new()
-            .name(format!("cua-uia-{stage}"))
-            .spawn(move || {
-                let _guard = InFlightGuard {
-                    gate: worker_gate,
-                    cancelled: Arc::clone(&worker_cancelled),
-                };
-                let result = f(worker_cancelled);
-                let _ = tx.send(result);
-            });
-
-        if let Err(e) = spawn {
-            self.in_flight.store(false, Ordering::Release);
-            tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
-            return Err(UiaDeadlineError::Unavailable);
-        }
-
-        match rx.recv_timeout(timeout) {
-            Ok(result) => Ok(result),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                cancelled.store(true, Ordering::Release);
-                tracing::warn!(
-                    target: "uia_windows_enum",
-                    "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
-                    timeout.as_millis()
-                );
-                Err(UiaDeadlineError::Timeout)
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                tracing::warn!(target: "uia_windows_enum", "UIA {stage} thread exited without a result");
-                Err(UiaDeadlineError::Unavailable)
-            }
-        }
-    }
-}
-
-struct InFlightGuard {
-    gate: Arc<UiaSingleFlight>,
-    cancelled: Arc<AtomicBool>,
-}
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        if self.cancelled.load(Ordering::Acquire) {
-            self.gate.cooldown_until_ms.store(
-                now_ms().saturating_add(self.gate.cooldown_ms),
-                Ordering::Release,
-            );
+    match rx.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancelled.store(true, Ordering::Release);
             tracing::warn!(
                 target: "uia_windows_enum",
-                "timed-out UIA provider call returned; cooling down for {}ms before recovery probe",
-                self.gate.cooldown_ms
+                "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
+                timeout.as_millis()
             );
+            Err(UiaDeadlineError::Timeout)
         }
-        self.gate.in_flight.store(false, Ordering::Release);
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!(target: "uia_windows_enum", "UIA {stage} thread exited without a result");
+            Err(UiaDeadlineError::Unavailable)
+        }
     }
-}
-
-fn uia_single_flight() -> &'static Arc<UiaSingleFlight> {
-    static GATE: OnceLock<Arc<UiaSingleFlight>> = OnceLock::new();
-    GATE.get_or_init(|| {
-        Arc::new(UiaSingleFlight::new(
-            UIA_RECOVERY_COOLDOWN.as_millis() as u64
-        ))
-    })
-}
-
-fn now_ms() -> u64 {
-    // Monotonic: cooldown must not depend on wall-clock jumps.
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn run_uia_with_deadline<T, F>(
@@ -211,7 +160,7 @@ where
     T: Send + 'static,
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
-    uia_single_flight().run(stage, timeout, fallback, f)
+    run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
 struct ComInit {
@@ -324,14 +273,14 @@ fn enumerate_top_level_windows_unbounded() -> Vec<WindowInfo> {
 pub(crate) fn probe_desktop_availability() -> Result<(), String> {
     match run_uia_with_deadline(
         "health probe",
-        DESKTOP_CALL_TIMEOUT,
+        HEALTH_PROBE_TIMEOUT,
         "Win32-only window tools",
         probe_desktop_availability_unbounded,
     ) {
         Ok(result) => result,
         Err(UiaDeadlineError::Timeout) => Err(format!(
             "UI Automation desktop enumeration exceeded {}ms; a UIA provider may be hung. Window tools will fall back to Win32-only enumeration until it recovers.",
-            DESKTOP_CALL_TIMEOUT.as_millis()
+            HEALTH_PROBE_TIMEOUT.as_millis()
         )),
         Err(UiaDeadlineError::Busy) => Err(
             "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration."
@@ -391,7 +340,7 @@ fn probe_desktop_availability_unbounded() -> Result<(), String> {
 /// route for UWP / WebView2 / packaged-app targets, where
 /// `PostMessage(WM_LBUTTONDOWN)` silently no-ops because UWP routes
 /// input through `Windows.UI.Input` rather than the HWND message
-/// queue. Callers fall back to PostMessage when this returns `false`
+/// queue. Callers fall back to PostMessage only after a completed miss
 /// (e.g. plain Win32 native controls with no UIA InvokePattern at
 /// the hit point, or apps with no useful UIA tree at all).
 ///
@@ -412,12 +361,9 @@ fn probe_desktop_availability_unbounded() -> Result<(), String> {
 /// matters for canvases, panes, and custom-drawn surfaces where Invoke would
 /// fire `mousedown` at the element centre — losing the caller's pixel
 /// precision (see #1621).
-fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
-    let ct: UIA_CONTROLTYPE_ID = match unsafe { elem.CurrentControlType() } {
-        Ok(t) => t,
-        Err(_) => return false,
-    };
-    matches!(
+fn is_coord_independent_action(elem: &IUIAutomationElement) -> windows::core::Result<bool> {
+    let ct: UIA_CONTROLTYPE_ID = unsafe { elem.CurrentControlType() }?;
+    Ok(matches!(
         ct,
         UIA_ButtonControlTypeId
             | UIA_MenuItemControlTypeId
@@ -428,17 +374,55 @@ fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
             | UIA_RadioButtonControlTypeId
             | UIA_SplitButtonControlTypeId
             | UIA_TreeItemControlTypeId
-    )
+    ))
 }
 
-pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
-    run_uia_with_deadline_cancelable(
+fn point_pattern_available<T>(
+    result: windows::core::Result<T>,
+) -> Result<bool, PointInvokeOutcome> {
+    match result {
+        Ok(_) => Ok(true),
+        // GetCurrentPattern returns a null interface for an unsupported pattern;
+        // windows-rs 0.58 represents that successful null result as Error::empty().
+        Err(error)
+            if error.code().is_ok()
+                || error.code() == windows::Win32::Foundation::E_NOINTERFACE
+                || error.code().0 as u32
+                    == windows::Win32::UI::Accessibility::UIA_E_NOTSUPPORTED =>
+        {
+            Ok(false)
+        }
+        Err(_) => Err(PointInvokeOutcome::Unavailable),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PointInvokeOutcome {
+    Invoked,
+    Miss,
+    Busy,
+    Timeout,
+    Unavailable,
+}
+
+impl PointInvokeOutcome {
+    fn from_worker(result: Result<Self, UiaDeadlineError>) -> Self {
+        match result {
+            Ok(outcome) => outcome,
+            Err(UiaDeadlineError::Busy) => Self::Busy,
+            Err(UiaDeadlineError::Timeout) => Self::Timeout,
+            Err(UiaDeadlineError::Unavailable) => Self::Unavailable,
+        }
+    }
+}
+
+pub(crate) fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> PointInvokeOutcome {
+    PointInvokeOutcome::from_worker(run_uia_with_deadline_cancelable(
         "window hit-test invoke",
         SUBTREE_OP_TIMEOUT,
-        "PostMessage click delivery",
+        "an unknown-effect error without another input attempt",
         move |cancelled| try_invoke_in_window_at_point_unbounded(hwnd, sx, sy, &cancelled),
-    )
-    .unwrap_or(false)
+    ))
 }
 
 fn try_invoke_in_window_at_point_unbounded(
@@ -446,48 +430,52 @@ fn try_invoke_in_window_at_point_unbounded(
     sx: i32,
     sy: i32,
     cancelled: &AtomicBool,
-) -> bool {
+) -> PointInvokeOutcome {
+    use PointInvokeOutcome::{Invoked, Miss, Timeout, Unavailable};
     // Keep this first so COM interfaces drop before CoUninitialize.
     let _com = ComInit::new();
     if hwnd == 0 {
-        return false;
+        return Unavailable;
     }
     let uia = match get_uia() {
         Some(u) => u,
-        None => return false,
+        None => return Unavailable,
     };
     unsafe {
         let root = match uia.ElementFromHandle(HWND(hwnd as *mut _)) {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(target: "click", "ElementFromHandle(0x{hwnd:x}) failed: {e}");
-                return false;
+                return Unavailable;
             }
         };
         let cond = match uia.CreateTrueCondition() {
             Ok(c) => c,
             Err(e) => {
                 tracing::debug!(target: "click", "CreateTrueCondition failed: {e}");
-                return false;
+                return Unavailable;
             }
         };
         let arr = match root.FindAll(TreeScope_Subtree, &cond) {
             Ok(a) => a,
             Err(e) => {
                 tracing::debug!(target: "click", "FindAll(Subtree) on 0x{hwnd:x} failed: {e}");
-                return false;
+                return Unavailable;
             }
         };
-        let n = arr.Length().unwrap_or(0);
+        let n = match arr.Length() {
+            Ok(n) => n,
+            Err(_) => return Unavailable,
+        };
         let mut best: Option<(IUIAutomationElement, i64)> = None;
         for i in 0..n {
             let elem = match arr.GetElement(i) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(_) => return Unavailable,
             };
             let rect = match elem.CurrentBoundingRectangle() {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(_) => return Unavailable,
             };
             if sx < rect.left || sx > rect.right || sy < rect.top || sy > rect.bottom {
                 continue;
@@ -497,10 +485,18 @@ fn try_invoke_in_window_at_point_unbounded(
             // Invoke does nothing on them, only Expand opens the submenu.
             // (See FreeCAD finding 2026-05-21: clicking File menu via Invoke
             // returned ✅ but the menu never opened.)
-            let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
-            let has_expand = elem
-                .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
-                .is_ok();
+            let has_invoke =
+                match point_pattern_available(elem.GetCurrentPattern(UIA_InvokePatternId)) {
+                    Ok(available) => available,
+                    Err(outcome) => return outcome,
+                };
+            let has_expand =
+                match point_pattern_available(elem.GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                )) {
+                    Ok(available) => available,
+                    Err(outcome) => return outcome,
+                };
             if !has_invoke && !has_expand {
                 continue;
             }
@@ -517,8 +513,10 @@ fn try_invoke_in_window_at_point_unbounded(
             // have a single primary action whose location is the element
             // itself — Invoke is the right path for those. Everything
             // else falls through to PostMessage with the literal coords.
-            if !is_coord_independent_action(&elem) {
-                continue;
+            match is_coord_independent_action(&elem) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(_) => return Unavailable,
             }
             let w = (rect.right - rect.left).max(0) as i64;
             let h = (rect.bottom - rect.top).max(0) as i64;
@@ -536,12 +534,12 @@ fn try_invoke_in_window_at_point_unbounded(
                     target: "click",
                     "no Invoke/ExpandCollapse descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
                 );
-                return false;
+                return Miss;
             }
         };
         if cancelled.load(Ordering::Acquire) {
             tracing::debug!(target: "click", "UIA hit-test invoke cancelled before activation");
-            return false;
+            return Timeout;
         }
         // Pattern preference for menu items: when both Invoke AND
         // ExpandCollapse are advertised, the element is almost always a
@@ -549,22 +547,25 @@ fn try_invoke_in_window_at_point_unbounded(
         // submenu" — Invoke would be a no-op. Prefer ExpandCollapse.Expand
         // in that case. Pure-Invoke leaves (buttons, links, etc.) go
         // through Invoke as before.
-        let winner_has_expand = winner
-            .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId)
-            .is_ok();
-        let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
+        let winner_has_expand = match point_pattern_available(
+            winner
+                .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId),
+        ) {
+            Ok(available) => available,
+            Err(outcome) => return outcome,
+        };
         if cancelled.load(Ordering::Acquire) {
-            return false;
+            return Timeout;
         }
         // UWP foreground-steal bypass: gate the entire activation block on
         // `is_xaml_host_hwnd(hwnd)`. For non-XAML hosts the closure is a
         // straight passthrough.
         crate::uia::fg_bypass::run_with_uwp_bypass(hwnd, || {
             if cancelled.load(Ordering::Acquire) {
-                return false;
+                return Timeout;
             }
-            if winner_has_expand && winner_has_invoke {
-                // Try Expand first, fall back to Invoke if Expand fails.
+            if winner_has_expand {
+                // A failed activation may already have taken effect. Do not replay it.
                 if let Ok(pat) = winner.GetCurrentPattern(
                     windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
                 ) {
@@ -572,45 +573,29 @@ fn try_invoke_in_window_at_point_unbounded(
                         .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
                     {
                         if cancelled.load(Ordering::Acquire) {
-                            return false;
+                            return Timeout;
                         }
-                        if ec.Expand().is_ok() {
-                            return true;
-                        }
+                        return if ec.Expand().is_ok() { Invoked } else { Unavailable };
                     }
                 }
-                // Expand failed — fall through to Invoke as best-effort.
-            } else if winner_has_expand && !winner_has_invoke {
-                if let Ok(pat) = winner.GetCurrentPattern(
-                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-                ) {
-                    if let Ok(ec) = pat
-                        .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
-                    {
-                        if cancelled.load(Ordering::Acquire) {
-                            return false;
-                        }
-                        return ec.Expand().is_ok();
-                    }
-                }
-                return false;
+                return Unavailable;
             }
             let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
                 Ok(p) => p,
-                Err(_) => return false,
+                Err(_) => return Unavailable,
             };
             let inv: IUIAutomationInvokePattern = match pattern.cast() {
                 Ok(i) => i,
-                Err(_) => return false,
+                Err(_) => return Unavailable,
             };
             if cancelled.load(Ordering::Acquire) {
-                return false;
+                return Timeout;
             }
             match inv.Invoke() {
-                Ok(()) => true,
+                Ok(()) => Invoked,
                 Err(e) => {
                     tracing::debug!(target: "click", "UIA Invoke (windowed) at ({sx},{sy}) failed: {e}");
-                    false
+                    Unavailable
                 }
             }
         })
@@ -1085,7 +1070,48 @@ fn window_bounds(hwnd: HWND, prefer_win32: bool) -> Option<(i32, i32, i32, i32)>
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
     use windows::Win32::Foundation::RECT;
+
+    #[test]
+    fn point_invoke_preserves_worker_outcomes() {
+        for outcome in [PointInvokeOutcome::Invoked, PointInvokeOutcome::Miss] {
+            assert_eq!(PointInvokeOutcome::from_worker(Ok(outcome)), outcome);
+        }
+        for (error, expected) in [
+            (UiaDeadlineError::Busy, PointInvokeOutcome::Busy),
+            (UiaDeadlineError::Timeout, PointInvokeOutcome::Timeout),
+            (
+                UiaDeadlineError::Unavailable,
+                PointInvokeOutcome::Unavailable,
+            ),
+        ] {
+            assert_eq!(PointInvokeOutcome::from_worker(Err(error)), expected);
+        }
+    }
+
+    #[test]
+    fn point_patterns_distinguish_unsupported_from_provider_failure() {
+        use windows::core::{Error, HRESULT};
+        use windows::Win32::Foundation::{E_FAIL, E_NOINTERFACE, E_POINTER};
+        assert_eq!(point_pattern_available(Ok(())), Ok(true));
+        assert_eq!(
+            point_pattern_available::<()>(Err(Error::empty())),
+            Ok(false)
+        );
+        for code in [E_NOINTERFACE, HRESULT(0x80040204u32 as i32)] {
+            assert_eq!(
+                point_pattern_available::<()>(Err(Error::from_hresult(code))),
+                Ok(false)
+            );
+        }
+        for code in [E_FAIL, E_POINTER] {
+            assert_eq!(
+                point_pattern_available::<()>(Err(Error::from_hresult(code))),
+                Err(PointInvokeOutcome::Unavailable),
+            );
+        }
+    }
 
     fn rect() -> RECT {
         RECT {
@@ -1122,8 +1148,8 @@ mod tests {
     }
 
     #[test]
-    fn wedged_provider_has_bounded_worker_growth_and_recovers() {
-        let gate = Arc::new(UiaSingleFlight::new(40));
+    fn wedged_provider_has_bounded_worker_growth_and_recovers_immediately() {
+        let gate = Arc::new(SingleFlight::new(Duration::ZERO));
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let starts = Arc::new(AtomicUsize::new(0));
@@ -1132,34 +1158,49 @@ mod tests {
         let side_effects = Arc::new(AtomicUsize::new(0));
 
         let first_start = Instant::now();
-        let result = gate.run("test wedge", Duration::from_millis(20), "test", {
-            let starts = Arc::clone(&starts);
-            let active = Arc::clone(&active);
-            let max_active = Arc::clone(&max_active);
-            let side_effects = Arc::clone(&side_effects);
-            move |cancelled| {
-                starts.fetch_add(1, Ordering::AcqRel);
-                let current = active.fetch_add(1, Ordering::AcqRel) + 1;
-                max_active.fetch_max(current, Ordering::AcqRel);
-                started_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-                if !cancelled.load(Ordering::Acquire) {
-                    side_effects.fetch_add(1, Ordering::AcqRel);
+        let result =
+            run_uia_single_flight(&gate, "test wedge", Duration::from_millis(20), "test", {
+                let starts = Arc::clone(&starts);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                let side_effects = Arc::clone(&side_effects);
+                move |cancelled| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    max_active.fetch_max(current, Ordering::AcqRel);
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    if !cancelled.load(Ordering::Acquire) {
+                        side_effects.fetch_add(1, Ordering::AcqRel);
+                    }
+                    active.fetch_sub(1, Ordering::AcqRel);
                 }
-                active.fetch_sub(1, Ordering::AcqRel);
-            }
-        });
+            });
         assert!(matches!(result, Err(UiaDeadlineError::Timeout)));
+        assert_eq!(
+            PointInvokeOutcome::from_worker(result.map(|()| PointInvokeOutcome::Miss)),
+            PointInvokeOutcome::Timeout,
+        );
         assert!(first_start.elapsed() < Duration::from_millis(500));
         started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
         let retries_start = Instant::now();
         for _ in 0..100 {
             let starts = Arc::clone(&starts);
-            let retry = gate.run("test retry", Duration::from_secs(1), "test", move |_| {
-                starts.fetch_add(1, Ordering::AcqRel);
-            });
+            let retry = run_uia_single_flight(
+                &gate,
+                "test retry",
+                Duration::from_secs(1),
+                "test",
+                move |_| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                },
+            );
             assert!(matches!(retry, Err(UiaDeadlineError::Busy)));
+            assert_eq!(
+                PointInvokeOutcome::from_worker(retry.map(|()| PointInvokeOutcome::Miss)),
+                PointInvokeOutcome::Busy,
+            );
         }
         assert!(retries_start.elapsed() < Duration::from_millis(500));
         assert_eq!(starts.load(Ordering::Acquire), 1);
@@ -1167,35 +1208,129 @@ mod tests {
 
         release_tx.send(()).unwrap();
         let recovery_deadline = Instant::now() + Duration::from_secs(1);
-        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < recovery_deadline {
+        while gate.is_in_flight() && Instant::now() < recovery_deadline {
             thread::yield_now();
         }
-        assert!(!gate.in_flight.load(Ordering::Acquire));
+        assert!(!gate.is_in_flight());
         assert_eq!(side_effects.load(Ordering::Acquire), 0);
 
-        let during_cooldown = gate.run("test cooldown", Duration::from_secs(1), "test", |_| 1);
-        assert!(matches!(during_cooldown, Err(UiaDeadlineError::Busy)));
-        let cooldown_deadline = Instant::now() + Duration::from_secs(1);
-        while now_ms() < gate.cooldown_until_ms.load(Ordering::Acquire)
-            && Instant::now() < cooldown_deadline
-        {
-            thread::yield_now();
-        }
-
-        let recovered = gate.run("test recovery", Duration::from_secs(1), "test", {
-            let starts = Arc::clone(&starts);
-            let active = Arc::clone(&active);
-            let max_active = Arc::clone(&max_active);
-            move |_| {
-                starts.fetch_add(1, Ordering::AcqRel);
-                let current = active.fetch_add(1, Ordering::AcqRel) + 1;
-                max_active.fetch_max(current, Ordering::AcqRel);
-                active.fetch_sub(1, Ordering::AcqRel);
-                42
-            }
-        });
+        let recovered =
+            run_uia_single_flight(&gate, "test recovery", Duration::from_secs(1), "test", {
+                let starts = Arc::clone(&starts);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                move |_| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    max_active.fetch_max(current, Ordering::AcqRel);
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    42
+                }
+            });
         assert!(matches!(recovered, Ok(42)));
         assert_eq!(starts.load(Ordering::Acquire), 2);
         assert_eq!(max_active.load(Ordering::Acquire), 1);
+    }
+}
+
+/// Hit chain (nearest first), each node's bounds `[x, y, w, h]`, and whether
+/// the hit is inside a `Document`.
+pub(crate) type PointShapeChain = (
+    Vec<crate::pointer_shape_map::UiaHitNode>,
+    Vec<Option<[f64; 4]>>,
+    bool,
+);
+
+/// Budget for the presence hit-test's UIA work. Short: a hover cursor that
+/// misses its deadline just falls back to the arrow.
+const POINT_SHAPE_TIMEOUT: Duration = Duration::from_millis(150);
+/// How far up to look for an enclosing `Document` from page text.
+const POINT_SHAPE_DOCUMENT_DEPTH: usize = 16;
+
+/// The element under screen point `(sx, sy)` and up to three generic
+/// ancestors, as [`crate::pointer_shape_map::UiaHitNode`]s, plus whether the
+/// hit sits inside a `Document` and each node's bounding rectangle
+/// (`[x, y, w, h]`).
+///
+/// Uses desktop-wide `ElementFromPoint`, which is the right question here
+/// ("what is under the pointer", whatever window it belongs to). Where it
+/// stops at an outer host pane (UWP frames, see
+/// [`try_invoke_in_window_at_point`]), the answer degrades to the arrow.
+/// `None` when UIA is unavailable, busy with another call, or over budget.
+pub(crate) fn point_shape_chain(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    run_uia_with_deadline(
+        "pointer shape hit-test",
+        POINT_SHAPE_TIMEOUT,
+        "the arrow",
+        move || point_shape_chain_unbounded(sx, sy),
+    )
+    .ok()
+    .flatten()
+}
+
+fn point_shape_chain_unbounded(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    use crate::pointer_shape_map::{control_type, is_generic_control, UiaHitNode};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationValuePattern, UIA_TextPatternId, UIA_ValuePatternId,
+    };
+
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    let uia = get_uia()?;
+    unsafe {
+        let hit = uia.ElementFromPoint(POINT { x: sx, y: sy }).ok()?;
+        let walker = uia.ControlViewWalker().ok()?;
+        let node_of = |e: &IUIAutomationElement| -> UiaHitNode {
+            let control_type = e.CurrentControlType().map(|c| c.0).unwrap_or(0);
+            let value_read_only = e
+                .GetCurrentPattern(UIA_ValuePatternId)
+                .and_then(|p| p.cast::<IUIAutomationValuePattern>())
+                .and_then(|p| p.CurrentIsReadOnly())
+                .ok()
+                .map(|b| b.as_bool());
+            let text_pattern = matches!(control_type, control_type::DOCUMENT | control_type::EDIT)
+                && e.GetCurrentPattern(UIA_TextPatternId).is_ok();
+            UiaHitNode {
+                control_type,
+                enabled: e.CurrentIsEnabled().ok().map(|b| b.as_bool()),
+                value_read_only,
+                text_pattern,
+            }
+        };
+        let rect_of = |e: &IUIAutomationElement| -> Option<[f64; 4]> {
+            let r = e.CurrentBoundingRectangle().ok()?;
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            (w > 0 && h > 0).then_some([r.left as f64, r.top as f64, w as f64, h as f64])
+        };
+
+        let mut elements = vec![hit];
+        let mut chain = vec![node_of(&elements[0])];
+        while elements.len() < 4 && is_generic_control(chain[chain.len() - 1].control_type) {
+            let Ok(parent) = walker.GetParentElement(&elements[elements.len() - 1]) else {
+                break;
+            };
+            chain.push(node_of(&parent));
+            elements.push(parent);
+        }
+        let in_document = chain[0].control_type == control_type::TEXT && {
+            let mut found = chain
+                .iter()
+                .any(|n| n.control_type == control_type::DOCUMENT);
+            let mut current = elements[elements.len() - 1].clone();
+            let mut depth = elements.len();
+            while !found && depth < POINT_SHAPE_DOCUMENT_DEPTH {
+                let Ok(parent) = walker.GetParentElement(&current) else {
+                    break;
+                };
+                found =
+                    parent.CurrentControlType().map(|c| c.0).unwrap_or(0) == control_type::DOCUMENT;
+                current = parent;
+                depth += 1;
+            }
+            found
+        };
+        let rects = elements.iter().map(rect_of).collect();
+        Some((chain, rects, in_document))
     }
 }

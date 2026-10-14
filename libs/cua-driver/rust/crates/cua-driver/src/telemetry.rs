@@ -214,16 +214,43 @@ pub fn is_enabled() -> bool {
 }
 
 fn effective_enabled() -> (bool, &'static str) {
+    // The cross-tool opt-out wins over everything.
+    if std::env::var("DO_NOT_TRACK").is_ok_and(|v| {
+        let v = v.trim();
+        !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+    }) {
+        return (false, "do_not_track");
+    }
     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED) {
         return (value, "environment");
     }
     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED_COMPAT) {
         return (value, "environment_compat");
     }
+    // The switches every Cua program shares: `CUA_TELEMETRY`, then
+    // `cua config set telemetry off` / the Spaces app setting.
+    if let Some(value) = parse_env_bool(cua_telemetry::config::ENV_TELEMETRY) {
+        return (value, "environment_shared");
+    }
+    if shared_config_disabled() {
+        return (false, "shared_config");
+    }
     if let Some(value) = persisted_enabled() {
         return (value, "persisted");
     }
     (true, "default")
+}
+
+/// `[telemetry] enabled = "off"` in `$CUA_HOME/config.toml` (outside
+/// tests, `~/.cua/config.toml` when `CUA_HOME` is unset). Only an explicit
+/// off counts here; on is the driver's own default.
+fn shared_config_disabled() -> bool {
+    let home = if cfg!(test) {
+        std::env::var_os("CUA_HOME").map(PathBuf::from)
+    } else {
+        cua_telemetry::config::cua_home(&cua_telemetry::config::process_env)
+    };
+    home.is_some_and(|h| cua_telemetry::config::config_value(&h) == Some(false))
 }
 
 pub fn status() -> TelemetryStatus {
@@ -502,6 +529,8 @@ struct AgentSessionState {
     used_cursor_tools: bool,
     used_recording: bool,
     used_config_write: bool,
+    used_window_modality: bool,
+    used_desktop_modality: bool,
 }
 
 impl AgentSessionState {
@@ -529,6 +558,8 @@ impl AgentSessionState {
             used_cursor_tools: false,
             used_recording: false,
             used_config_write: false,
+            used_window_modality: false,
+            used_desktop_modality: false,
         }
     }
 
@@ -536,10 +567,22 @@ impl AgentSessionState {
         &mut self,
         transport: Transport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
+        if is_history_tool(&outcome.tool_name) {
+            return;
+        }
         self.transport_bits |= transport_bit(transport);
+        self.used_window_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Window)
+        );
+        self.used_desktop_modality |= matches!(
+            capture_modality,
+            Some(cua_driver_core::session::CaptureModality::Desktop)
+        );
         let tool_name = outcome.tool_name.as_str();
         if tool_name == "escalate_session"
             && outcome.success
@@ -608,6 +651,7 @@ impl AgentSessionState {
         let cursor = cursor.unwrap_or(cua_driver_core::session::CursorOutcomeObservation {
             observed: false,
             enabled: false,
+            visible: false,
             theme: CursorThemeCategory::Unknown,
             motion_customized: false,
             active_cursor_count: 0,
@@ -649,6 +693,14 @@ impl AgentSessionState {
             ("used_cursor_tools", Value::Bool(self.used_cursor_tools)),
             ("used_recording", Value::Bool(self.used_recording)),
             ("used_config_write", Value::Bool(self.used_config_write)),
+            (
+                "used_window_modality",
+                Value::Bool(self.used_window_modality),
+            ),
+            (
+                "used_desktop_modality",
+                Value::Bool(self.used_desktop_modality),
+            ),
             ("cursor_outcome_observed", Value::Bool(cursor.observed)),
             ("cursor_overlay_enabled_at_end", Value::Bool(cursor.enabled)),
             ("cursor_theme", Value::String(cursor_theme.into())),
@@ -847,6 +899,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
         session_id: &str,
         transport: cua_driver_core::session::SessionTransport,
         computer_action: bool,
+        capture_modality: Option<cua_driver_core::session::CaptureModality>,
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
@@ -860,6 +913,7 @@ impl cua_driver_core::session::SessionObserver for TelemetryObserver {
             state.observe(
                 session_transport(transport),
                 computer_action,
+                capture_modality,
                 escalation_reason,
                 outcome,
             );
@@ -970,6 +1024,9 @@ pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    if is_history_tool(&outcome.tool_name) {
+        return;
+    }
     let is_first_value_candidate =
         outcome.computer_action && outcome.success && !outcome.refusal_code.is_refusal();
     if !is_enabled() || !should_capture_tool_completion(Instant::now(), is_first_value_candidate) {
@@ -981,6 +1038,10 @@ pub(crate) fn capture_tool_completed(
         Value::String(execution_mode().into()),
     );
     capture_bounded(event::MCP_TOOL_COMPLETED, properties, transport);
+}
+
+fn is_history_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "history_status" | "history_query")
 }
 
 #[derive(Debug)]
@@ -1037,10 +1098,10 @@ fn tool_completion_properties(
         ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams
     ) {
         "other".to_owned()
-    } else if outcome.tool_name == "type_text_chars" {
-        "type_text".to_owned()
     } else {
-        outcome.tool_name
+        // Re-checked against the compile-time registry, as on the CLI
+        // path: an extension or dynamically named tool is `other`.
+        fixed_tool_name(&outcome.tool_name)
     };
     let error_class = match outcome.error_class {
         ToolErrorClass::None => "none",
@@ -1132,6 +1193,7 @@ pub(crate) fn capture_mcp_startup_completed(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_completed(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1166,6 +1228,7 @@ pub(crate) fn capture_permissions_gate_completed(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) const fn permissions_gate_resolution(
     gate_failed: bool,
     dismissed: bool,
@@ -1179,6 +1242,7 @@ pub(crate) const fn permissions_gate_resolution(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_started(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1196,6 +1260,7 @@ pub(crate) fn capture_permissions_gate_started(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_dismissed(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1296,8 +1361,6 @@ fn normalize_model(value: Option<&str>) -> String {
         } else {
             "gemini_other"
         }
-    } else if raw.starts_with("grok-") {
-        "grok"
     } else if raw.starts_with("nova-") {
         "amazon_nova"
     } else if raw.starts_with("phi-") {
@@ -1754,6 +1817,7 @@ pub(crate) fn capture_cli_completed(
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1762,6 +1826,7 @@ pub(crate) fn capture_cli_completed(
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     };
@@ -1908,6 +1973,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1916,6 +1982,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     }
@@ -1925,6 +1992,7 @@ fn fixed_tool_name(tool_name: &str) -> String {
     if tool_name == "type_text_chars" {
         return "type_text".into();
     }
+    let tool_name = cua_driver_core::tool::renamed_tool(tool_name).unwrap_or(tool_name);
     if cua_driver_core::tool::default_capabilities_for(tool_name).is_empty() {
         "other".into()
     } else {
@@ -1943,6 +2011,18 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "stop" => "stop",
             "status" => "status",
             "render" => "render",
+            _ => "other",
+        },
+        "history" => match operation {
+            "enable" => "enable",
+            "disable" => "disable",
+            "pause" => "pause",
+            "resume" => "resume",
+            "status" => "status",
+            "flush" => "flush",
+            "list" => "list",
+            "show" => "show",
+            "delete" => "delete",
             _ => "other",
         },
         "permissions" => match operation {
@@ -1969,6 +2049,16 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "update" => "update",
             "uninstall" => "uninstall",
             "status" => "status",
+            "path" => "path",
+            _ => "other",
+        },
+        "extension" => match operation {
+            "list" => "list",
+            "info" => "info",
+            "status" => "status",
+            "install" => "install",
+            "update" => "update",
+            "uninstall" => "uninstall",
             "path" => "path",
             _ => "other",
         },
@@ -2042,6 +2132,8 @@ fn build_payload(
     );
     event_properties.insert("id_persisted".into(), Value::Bool(identity.persisted));
     event_properties.insert("$process_person_profile".into(), Value::Bool(false));
+    // No location lookup from the request IP (same as Lume and the cua SDK).
+    event_properties.insert("$geoip_disable".into(), Value::Bool(true));
     event_properties.insert("$lib".into(), Value::String("cua-driver-rs".into()));
     event_properties.insert(
         "$lib_version".into(),
@@ -2517,7 +2609,7 @@ fn os_version() -> String {
         .output();
     #[cfg(target_os = "linux")]
     {
-        return std::fs::read_to_string("/etc/os-release")
+        std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|contents| {
                 contents
@@ -2525,7 +2617,7 @@ fn os_version() -> String {
                     .find_map(|line| line.strip_prefix("VERSION_ID=").map(str::to_owned))
             })
             .map(|value| value.trim_matches('"').to_owned())
-            .unwrap_or_else(|| "unknown".into());
+            .unwrap_or_else(|| "unknown".into())
     }
     #[cfg(not(target_os = "linux"))]
     command
@@ -2590,6 +2682,9 @@ mod tests {
             std::env::set_var(ENV_TELEMETRY_HOME, &telemetry_home);
             std::env::remove_var(ENV_TELEMETRY_ENABLED);
             std::env::remove_var(ENV_TELEMETRY_ENABLED_COMPAT);
+            std::env::remove_var("DO_NOT_TRACK");
+            std::env::remove_var("CUA_TELEMETRY");
+            std::env::remove_var("CUA_HOME");
         }
         let result = test(&root);
         let _ = std::fs::remove_dir_all(&root);
@@ -2838,6 +2933,54 @@ mod tests {
     }
 
     #[test]
+    fn shared_cua_switches_turn_the_driver_off() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            assert_eq!(effective_enabled(), (true, "default"));
+            unsafe {
+                std::env::set_var("DO_NOT_TRACK", "1");
+                std::env::set_var(ENV_TELEMETRY_ENABLED, "true");
+            }
+            assert_eq!(effective_enabled(), (false, "do_not_track"));
+            unsafe {
+                std::env::remove_var("DO_NOT_TRACK");
+                std::env::remove_var(ENV_TELEMETRY_ENABLED);
+                std::env::set_var("CUA_TELEMETRY", "0");
+            }
+            assert_eq!(effective_enabled(), (false, "environment_shared"));
+            unsafe {
+                std::env::remove_var("CUA_TELEMETRY");
+            }
+            let cua_home = home.join("cua-home");
+            std::fs::create_dir_all(&cua_home).unwrap();
+            std::fs::write(
+                cua_home.join("config.toml"),
+                "[telemetry]\nenabled = \"off\"\n",
+            )
+            .unwrap();
+            unsafe {
+                std::env::set_var("CUA_HOME", &cua_home);
+            }
+            assert_eq!(effective_enabled(), (false, "shared_config"));
+            // The driver's own switch still wins over the shared file.
+            unsafe {
+                std::env::set_var(ENV_TELEMETRY_ENABLED, "true");
+            }
+            assert_eq!(effective_enabled(), (true, "environment"));
+            unsafe {
+                std::env::remove_var(ENV_TELEMETRY_ENABLED);
+                std::env::remove_var("CUA_HOME");
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_tool_names_outside_the_registry_are_other() {
+        assert_eq!(fixed_tool_name("my_private_extension_tool"), "other");
+        assert_eq!(fixed_tool_name("type_text_chars"), "type_text");
+    }
+
+    #[test]
     fn persisted_install_channel_prevents_first_run_attribution_race() {
         let _guard = ENV_LOCK.lock().unwrap();
         with_isolated_home(|root| {
@@ -3012,7 +3155,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
+    fn v3_payload_disables_geoip_and_sends_no_ip_or_client_timestamp() {
         let _guard = ENV_LOCK.lock().unwrap();
         let identity = InstallationIdentity {
             id: "test-id".into(),
@@ -3050,7 +3193,7 @@ mod tests {
         }
         assert_eq!(properties["telemetry_schema_version"], 3);
         assert_eq!(properties["is_synthetic"], false);
-        assert!(!properties.contains_key("$geoip_disable"));
+        assert_eq!(properties["$geoip_disable"], true);
         assert!(!properties.contains_key("$ip"));
         let serialized = serde_json::to_string(&payload)
             .unwrap()
@@ -3282,6 +3425,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             true,
+            Some(cua_driver_core::session::CaptureModality::Window),
             None,
             &ToolCompletionObservation {
                 tool_name: "click".into(),
@@ -3298,6 +3442,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::NoWindowTarget),
             &ToolCompletionObservation {
                 tool_name: "escalate_session".into(),
@@ -3314,6 +3459,7 @@ mod tests {
         state.observe(
             Transport::McpHttp,
             false,
+            Some(cua_driver_core::session::CaptureModality::Desktop),
             None,
             &ToolCompletionObservation {
                 tool_name: "page".into(),
@@ -3332,6 +3478,7 @@ mod tests {
             Some(cua_driver_core::session::CursorOutcomeObservation {
                 observed: true,
                 enabled: true,
+                visible: true,
                 theme: cua_driver_core::session::CursorThemeCategory::Custom,
                 motion_customized: true,
                 active_cursor_count: 3,
@@ -3351,6 +3498,8 @@ mod tests {
         assert_eq!(properties["multi_cursor_bucket"], "3_5");
         assert_eq!(properties["observed_multiple_transports"], true);
         assert_eq!(properties["client_kind"], "python_sdk");
+        assert_eq!(properties["used_window_modality"], true);
+        assert_eq!(properties["used_desktop_modality"], true);
         assert_eq!(properties["capture_scope"], "auto");
         assert_eq!(properties["auto_escalated_to_desktop"], true);
         assert_eq!(properties["escalation_reason"], "no_window_target");
@@ -3373,6 +3522,42 @@ mod tests {
                 "aggregate contains {forbidden}: {serialized}"
             );
         }
+    }
+
+    #[test]
+    fn history_reads_do_not_change_tool_or_agent_session_telemetry() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
+        };
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        for tool_name in ["history_status", "history_query"] {
+            assert!(is_history_tool(tool_name));
+            state.observe(
+                Transport::McpHttp,
+                false,
+                Some(cua_driver_core::session::CaptureModality::Desktop),
+                None,
+                &ToolCompletionObservation {
+                    tool_name: tool_name.into(),
+                    operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                    computer_action: false,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                    duration_bucket: DurationBucket::Under10Ms,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+            );
+        }
+        assert_eq!(state.tool_count, 0);
+        assert_eq!(state.transport_bits, transport_bit(Transport::McpStdio));
+        assert!(!state.used_desktop_modality);
+        assert!(!state.had_successful_tool);
     }
 
     #[test]
@@ -3401,6 +3586,7 @@ mod tests {
         auto.observe(
             Transport::Daemon,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::Other),
             &failed,
         );
@@ -3420,6 +3606,7 @@ mod tests {
         desktop.observe(
             Transport::Daemon,
             false,
+            None,
             Some(cua_driver_core::EscalationReason::Other),
             &successful,
         );
@@ -3461,7 +3648,7 @@ mod tests {
             cua_driver_core::session::SessionClientKind::Mcp,
             cua_driver_core::CaptureScope::Window,
         );
-        state.observe(Transport::McpStdio, true, None, &outcome);
+        state.observe(Transport::McpStdio, true, None, None, &outcome);
         let session_properties =
             state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
         assert_eq!(session_properties["computer_action_count_bucket"], "0");
@@ -3499,6 +3686,7 @@ mod tests {
             state.observe(
                 Transport::McpStdio,
                 true,
+                None,
                 None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),
@@ -3705,6 +3893,9 @@ mod tests {
     fn cli_operations_and_client_kinds_are_revalidated_in_the_worker() {
         assert_eq!(fixed_cli_operation("recording", "start"), "start");
         assert_eq!(fixed_cli_operation("recording", "/private/path"), "other");
+        assert_eq!(fixed_cli_command("history"), "history");
+        assert_eq!(fixed_cli_operation("history", "query-secret"), "other");
+        assert_eq!(fixed_cli_operation("history", "show"), "show");
         assert_eq!(fixed_cli_operation("doctor", "start"), "not_applicable");
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),

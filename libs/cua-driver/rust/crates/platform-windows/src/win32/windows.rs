@@ -92,6 +92,69 @@ pub(crate) fn find_window_by_pid_and_handle(pid: u32, hwnd: u64) -> Option<Windo
     exact_window_from_probe(pid, hwnd, window_info_by_handle)
 }
 
+/// Outcome of validating a caller-supplied `(pid, window_id)` pair.
+#[derive(Debug, Clone)]
+pub(crate) enum PidWindowLookup {
+    /// The HWND is a visible, titled top-level window owned by `pid`.
+    Found(WindowInfo),
+    /// The HWND is listed, but under another pid.
+    OtherPid(u32),
+    /// No listed window has this HWND.
+    Missing,
+}
+
+/// Validate that `hwnd` is a listed top-level window of `pid`.
+///
+/// Probes the exact HWND through Win32 first, so the common case never waits
+/// on the desktop-wide UIA enumeration (and its 2 s deadline, #4416). Only a
+/// miss falls back to the full Win32 + UIA union, which still resolves
+/// UIA-only windows and names the owning pid of a mismatched HWND.
+pub(crate) fn lookup_window_for_pid(pid: u32, hwnd: u64) -> PidWindowLookup {
+    lookup_window_for_pid_with(pid, hwnd, find_window_by_pid_and_handle, || {
+        list_windows(None)
+    })
+}
+
+fn lookup_window_for_pid_with(
+    pid: u32,
+    hwnd: u64,
+    exact: impl FnOnce(u32, u64) -> Option<WindowInfo>,
+    full: impl FnOnce() -> Vec<WindowInfo>,
+) -> PidWindowLookup {
+    if let Some(window) = exact(pid, hwnd) {
+        return PidWindowLookup::Found(window);
+    }
+    match full().into_iter().find(|window| window.hwnd == hwnd) {
+        Some(window) if window.pid == pid => PidWindowLookup::Found(window),
+        Some(window) => PidWindowLookup::OtherPid(window.pid),
+        None => PidWindowLookup::Missing,
+    }
+}
+
+/// List `pid`'s top-level windows, consulting UIA only when Win32 finds none.
+///
+/// Polling callers (e.g. `launch_app` waiting for a first window) otherwise
+/// pay the UIA desktop-enumeration deadline on every attempt even when
+/// `EnumWindows` already sees the window (#4416).
+pub(crate) fn list_windows_win32_first(pid: u32) -> Vec<WindowInfo> {
+    win32_first_with(
+        || list_windows_via_win32(Some(pid)),
+        || list_windows(Some(pid)),
+    )
+}
+
+fn win32_first_with(
+    win32: impl FnOnce() -> Vec<WindowInfo>,
+    full: impl FnOnce() -> Vec<WindowInfo>,
+) -> Vec<WindowInfo> {
+    let windows = win32();
+    if windows.is_empty() {
+        full()
+    } else {
+        windows
+    }
+}
+
 fn exact_window_from_probe(
     pid: u32,
     hwnd: u64,
@@ -154,29 +217,27 @@ fn owner_chain_reaches_target(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PostActionForegroundTarget {
+pub(crate) struct ForegroundTarget {
     hwnd: u64,
     pid: u32,
     owner: Option<u64>,
 }
 
-/// Snapshot the exact target identity and owner before pointer input is sent.
-pub(crate) fn capture_post_action_foreground_target(
-    target: u64,
-) -> Option<PostActionForegroundTarget> {
+/// Snapshot the exact target identity and owner before global input is sent.
+pub(crate) fn capture_foreground_target(target: u64) -> Option<ForegroundTarget> {
     let pid = window_owner_pid(target)?;
     let owner = unsafe { GetWindow(HWND(target as *mut _), GW_OWNER) }
         .ok()
         .filter(|owner| !owner.0.is_null())
         .map(|owner| owner.0 as usize as u64);
-    Some(PostActionForegroundTarget {
+    Some(ForegroundTarget {
         hwnd: target,
         pid,
         owner,
     })
 }
 
-/// Verify the foreground after an exact-target pointer action.
+/// Verify the foreground before or after an exact-target global input action.
 ///
 /// The requested HWND must become foreground before input is sent. The action
 /// may then legitimately open a same-process owned popup or modal, so the
@@ -185,8 +246,8 @@ pub(crate) fn capture_post_action_foreground_target(
 /// A dismiss action may instead destroy the requested owned modal; that is
 /// accepted only when foreground returns to its snapshotted same-process owner.
 /// Unrelated same-process siblings and foreign foreground windows fail closed.
-pub(crate) fn post_action_foreground_matches(
-    target: PostActionForegroundTarget,
+pub(crate) fn foreground_matches_target_or_owned_window(
+    target: ForegroundTarget,
     actual: u64,
 ) -> bool {
     let current_target_pid = window_owner_pid(target.hwnd);
@@ -340,7 +401,8 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
 #[cfg(test)]
 mod exact_window_tests {
     use super::{
-        exact_window_from_probe, owner_chain_reaches_target, post_action_foreground_allowed,
+        exact_window_from_probe, lookup_window_for_pid_with, owner_chain_reaches_target,
+        post_action_foreground_allowed, win32_first_with, PidWindowLookup,
         PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -357,6 +419,59 @@ mod exact_window_tests {
             is_on_screen: true,
             minimized: false,
         }
+    }
+
+    #[test]
+    fn pid_window_lookup_skips_full_enumeration_on_exact_hit() {
+        let found = lookup_window_for_pid_with(
+            42,
+            0x1234,
+            |pid, hwnd| Some(window(pid, hwnd)),
+            || panic!("exact hit must not enumerate the desktop"),
+        );
+        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234 && w.pid == 42));
+    }
+
+    #[test]
+    fn pid_window_lookup_falls_back_for_uia_only_window() {
+        let calls = AtomicUsize::new(0);
+        let found = lookup_window_for_pid_with(
+            42,
+            0x1234,
+            |_, _| None,
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                vec![window(7, 0x9999), window(42, 0x1234)]
+            },
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234));
+    }
+
+    #[test]
+    fn pid_window_lookup_reports_other_pid_and_missing() {
+        let other = lookup_window_for_pid_with(42, 0x1234, |_, _| None, || vec![window(7, 0x1234)]);
+        assert!(matches!(other, PidWindowLookup::OtherPid(7)));
+
+        let missing = lookup_window_for_pid_with(42, 0x1234, |_, _| None, Vec::new);
+        assert!(matches!(missing, PidWindowLookup::Missing));
+    }
+
+    #[test]
+    fn win32_first_listing_consults_uia_only_when_win32_is_empty() {
+        let listed = win32_first_with(
+            || vec![window(42, 0x1)],
+            || panic!("Win32 hit must not enumerate UIA"),
+        );
+        assert_eq!(listed.len(), 1);
+
+        let calls = AtomicUsize::new(0);
+        let listed = win32_first_with(Vec::new, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            vec![window(42, 0x2)]
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(listed[0].hwnd, 0x2);
     }
 
     #[test]
@@ -605,4 +720,56 @@ pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
         is_on_screen: true,
         minimized: false,
     })
+}
+
+/// Resolve the real packaged-app process hosted by a specific
+/// `ApplicationFrameWindow`.
+///
+/// An ApplicationFrameHost pid is shared by unrelated apps, so callers must
+/// provide the frame HWND as well as the host pid. The hosted CoreWindow child
+/// retains ownership by the packaged app process and supplies the identity we
+/// need for attribution.
+pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
+    let frame = HWND(frame_hwnd as *mut _);
+    if unsafe { IsWindow(frame) }.0 == 0 || window_class_name(frame) != "ApplicationFrameWindow" {
+        return None;
+    }
+
+    let mut owner_pid = 0;
+    unsafe { GetWindowThreadProcessId(frame, Some(&mut owner_pid)) };
+    if owner_pid != host_pid {
+        return None;
+    }
+
+    struct ChildScan {
+        host_pid: u32,
+        app_pid: Option<u32>,
+    }
+
+    unsafe extern "system" fn child_cb(child: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut ChildScan);
+        let mut child_pid = 0;
+        GetWindowThreadProcessId(child, Some(&mut child_pid));
+        if child_pid != 0
+            && child_pid != scan.host_pid
+            && window_class_name(child) == "Windows.UI.Core.CoreWindow"
+        {
+            scan.app_pid = Some(child_pid);
+            return windows::Win32::Foundation::FALSE;
+        }
+        TRUE
+    }
+
+    let mut scan = ChildScan {
+        host_pid,
+        app_pid: None,
+    };
+    unsafe {
+        let _ = EnumChildWindows(
+            frame,
+            Some(child_cb),
+            LPARAM(&mut scan as *mut ChildScan as isize),
+        );
+    }
+    scan.app_pid
 }

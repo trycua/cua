@@ -14,9 +14,8 @@ import (
 
 func TestInit_ExportsSpansOverOTLPHTTP(t *testing.T) {
 	var (
-		mu          sync.Mutex
-		requestPath string
-		bodySize    int
+		mu        sync.Mutex
+		bodySizes = map[string]int{}
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,8 +24,7 @@ func TestInit_ExportsSpansOverOTLPHTTP(t *testing.T) {
 			t.Fatalf("read body: %v", err)
 		}
 		mu.Lock()
-		requestPath = r.URL.Path
-		bodySize = len(body)
+		bodySizes[r.URL.Path] = len(body)
 		mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -53,6 +51,11 @@ func TestInit_ExportsSpansOverOTLPHTTP(t *testing.T) {
 
 	_, span := otel.Tracer("test").Start(ctx, "backend.request")
 	span.End()
+	counter, err := otel.Meter("test").Int64Counter("test.requests")
+	if err != nil {
+		t.Fatalf("create counter: %v", err)
+	}
+	counter.Add(ctx, 1)
 
 	if err := shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown() error = %v", err)
@@ -61,10 +64,9 @@ func TestInit_ExportsSpansOverOTLPHTTP(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if requestPath != "/v1/traces" {
-		t.Fatalf("request path = %q, want %q", requestPath, "/v1/traces")
-	}
-	if bodySize == 0 {
-		t.Fatalf("body size = %d, want > 0", bodySize)
+	for _, path := range []string{"/v1/traces", "/v1/metrics"} {
+		if bodySizes[path] == 0 {
+			t.Fatalf("body size for %s = %d, want > 0; requests = %#v", path, bodySizes[path], bodySizes)
+		}
 	}
 }

@@ -36,5 +36,36 @@ import Foundation
 
         let legacy = SandboxTemplateRef(name: "legacy")
         precondition(legacy.name == "legacy")
+
+        let configuration = try CyclopsTokenProviderConfigurationBuilder()
+            .baseUrl(value: "https://api.example.test")
+            .poolPollIntervalMs(value: 5000)
+            .poolPollLimit(value: 120)
+            .claimPollIntervalMs(value: 5000)
+            .claimPollLimit(value: 120)
+            .build()
+        let userKey = try CreateUserApiKeyRequestBuilder()
+            .name(value: "automation")
+            .scope(value: [])
+            .build()
+        let autoscaling = try WarmPoolAutoscalingBuilder()
+            .minPoolSize(value: 1)
+            .initialPoolSize(value: 2)
+            .maxPoolSize(value: 5)
+            .build()
+
+        precondition(configuration.poolPollIntervalMs == 5000)
+        precondition(userKey.scope.isEmpty)
+        precondition(autoscaling.maxPoolSize == 5)
+        do {
+            _ = try TemplateBuilder().build()
+            fatalError("missing Template field did not fail")
+        } catch SdkBuildError.MissingRequiredField(_, _) {
+        }
+        do {
+            _ = try CreateClaimRequestBuilder().build()
+            fatalError("missing claim pool did not fail")
+        } catch SdkBuildError.MissingRequiredField(_, _) {
+        }
     }
 }

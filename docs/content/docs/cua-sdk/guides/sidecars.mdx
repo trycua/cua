@@ -1,0 +1,91 @@
+---
+title: Add sidecar containers
+description: Run extra containers such as a database or cache next to a sandbox and reach them by name.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A sidecar is an extra container next to the sandbox, like a Docker Compose
+service. It is addressed by name on every runtime:
+
+- the sandbox reaches a sidecar at its `name` (`db:6379`);
+- a sidecar reaches the sandbox at `main`;
+- `services=` names a sidecar port so you can call it from your machine.
+
+```python test="container" id="local" prelude="local-cleanup"
+from cua_sandbox import Container, Image, Sandbox, tcp
+
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=["sleep", "infinity"],
+    sidecars=[Container("redis:7-alpine", ports=[6379], name="db")],
+    services={"db": 6379},
+    wait_for=tcp("db"),
+    runtime="runc",
+)
+```
+
+Local sidecars share the sandbox container's network namespace, so
+`localhost` works too. They need `runtime="runc"`: separate gVisor containers
+cannot share a network namespace, and the SDK refuses rather than switching
+runtimes silently. Local VM sandboxes refuse sidecars.
+
+## Reach the sandbox from a sidecar
+
+This relay fetches the sandbox's page from `http://main:8000` and serves it on
+its own port.
+
+```python test="container" id="by-name" prelude="local-cleanup"
+from cua_sandbox import Container, Image, Sandbox, http
+
+relay = Container(
+    "busybox:1.36",
+    name="relay",
+    ports=[8081],
+    command=["sh", "-c", "mkdir -p /www; "
+             "until wget -qO /www/index.html http://main:8000/; do sleep 1; done; "
+             "exec httpd -f -p 8081 -h /www"],
+)
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=["python", "-m", "http.server", "8000"],
+    sidecars=[relay],
+    services={"relay": 8081},
+    wait_for=http("relay", "/"),
+    runtime="runc",
+)
+print((await sb.service("relay").request("GET", "/")).status_code)  # 200
+```
+
+## Options
+
+`Container(image, command=None, env=None, ports=None, name=None)`:
+
+- `name` is a DNS label and the hostname. It defaults from the image (`redis`
+  for `redis:7-alpine`) and cannot be `main`.
+- `command` replaces the sidecar image's entrypoint; `env` holds plain values.
+- A bare image string works too: `sidecars=["redis:7-alpine"]`.
+- At most 8 sidecars. With sidecars, the service names `main`, `sidecars` and
+  `sc` are reserved.
+- A private sidecar image on the sandbox image's registry uses the same
+  [registry secret](/cua-sdk/guides/images#private-registries).
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create python:3.12-slim --name app --runtime runc \
+  --sidecar redis:7-alpine,port=6379,name=db --service db=6379 --wait tcp:db \
+  -- sleep infinity
+```
+
+`--sidecar` takes `IMAGE[,port=PORT][,env=K=V][,name=NAME]` and repeats.
+
+```ts test="docs" id="typescript"
+import { sidecar, SandboxCreateOptions } from '@trycua/cua';
+
+SandboxCreateOptions.create({
+  image: 'python:3.12-slim',
+  command: ['sleep', 'infinity'],
+  sidecars: [sidecar('redis:7-alpine', { ports: [6379], name: 'db' })],
+  services: new Map([['db', 6379]]),
+  runtime: 'runc',
+});
+```

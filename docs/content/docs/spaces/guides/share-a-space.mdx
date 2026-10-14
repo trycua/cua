@@ -1,0 +1,115 @@
+---
+title: Share a Space
+description: 'Let another cua.ai account watch or use one of your Spaces through the relay, and reach a Space from your other devices.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Share a Space with another cua.ai account by email or account ID. A **viewer**
+joins with their own named cursor and watches; an **editor** can also use the
+Space. They open it as `relay:<machine>` from `cua spaces ls` or the app.
+
+```bash test="cli-shape" id="cua-spaces-share"
+cua spaces share local:studio bob@example.com                 # viewer
+cua spaces share local:studio bob@example.com --role editor   # change the role
+cua spaces shares local:studio                                # who, and who is connected
+cua spaces unshare local:studio bob@example.com               # at once
+cua spaces unshare local:studio --all                         # nobody; leaves the relay
+```
+
+In the app, **Share** in a Space's toolbar opens the same list.
+
+## What each role can do
+
+| | Viewer | Editor |
+|---|---|---|
+| Presence, with their own named cursor | yes | yes |
+| Watch the desktop stream | view only | yes |
+| Pointer and keyboard input | refused | yes, as a human |
+| Shell, files, clipboard, MCP | refused | yes |
+
+The Space's own cua-spacesd enforces the role, not the caller. A refused call
+fails with `PermissionDenied` (`view-only share: <who> cannot call <method>`).
+
+## How it works
+
+Sharing uses the relay and allowlist that [unattended access](/spaces/guides/unattended-access)
+uses:
+
+- A host (`relay:<id>` from `cua host setup`) is shared directly.
+- Any other Space is published on the relay on its first share. The owner's
+  account registers a machine for it, and the Space's own driver dials out
+  over WSS, so no inbound port opens.
+- The relay keeps two lists per machine: `allow` (editors) and `viewers`.
+- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/unattended-access#reach-it-from-your-devices).
+- Removing someone, or changing their role, cuts their open streams at once.
+
+```rust test="excerpt" id="rs-share-space" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-share-space"
+let shares = ada
+    .share_space(&info.id, "bob@example.com", ShareRole::Viewer)
+    .await
+    .unwrap();
+```
+
+The SDK call in other languages is `space.share(who, role)`, with
+`space.unshare(who)` and `space.shares()`. The MCP tools are `share_space`,
+`unshare_space` and `space_shares`.
+
+## Confirmation
+
+Sharing asks you first:
+
+- Through `cua daemon` (the app, `cua mcp`, agents), with Touch ID or your
+  login password. An agent can ask to share a Space; only you can allow it.
+- The `cua` CLI without a daemon asks on the terminal. Pass `--yes` to confirm
+  up front.
+
+Removing someone needs no confirmation.
+
+## Reach a Space from your other devices
+
+To reach a Space from your phone or another computer without sharing it with
+anyone, publish it on the relay:
+
+```bash test="cli-shape" id="cua-spaces-relay-register"
+cua spaces relay-register local:studio      # prints relay:<machine>
+cua spaces relay-unregister local:studio
+```
+
+```rust test="excerpt" id="rs-relay-register" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-relay-register"
+let reg = ada.relay_register(&info.id).await.unwrap();
+```
+
+Only your account's enrolled devices reach it until you share it. The MCP
+tools are `relay_register_space` and `relay_unregister_space`.
+
+## Audit
+
+- `cua spaces shares` lists who has access now.
+- The owner's share log (`~/.cua/shares-audit.jsonl`, hash-chained) records
+  every share, removal, attach and detach.
+- The relay's audit log (`cua devices audit`) records `viewer_added`,
+  `share_added`, `share_removed` and each shared access.
+- The Space's access log records every relay caller, including refused
+  view-only calls (`refused ProcessService (view-only share)`).
+
+## Limits
+
+| Space | Shareable | Why |
+|---|---|---|
+| Host (`relay:<id>`) | yes | Already on the relay. |
+| Local container or VM | yes, while this machine runs it | Its driver dials the relay. Suspending it disconnects everyone. |
+| Cloud | yes | Its driver dials the relay from the cloud. |
+| Added by address (`direct:`) | yes, if its driver supports `relay_attach` | Older drivers report `capability_missing`. |
+| A Space shared with you | no | Only the owner can share (`permission_denied`). |
+
+- The relay shares with accounts, not teams: share with each member.
+- Presence cursors travel on the relay stream, not QUIC datagrams, so remote
+  cursors update a little less often than on your own network.
+- A cloud Space that is released (for example a paused persistent agent)
+  leaves the relay. Share it again after it is created again.
+
+<Callout type="warn">
+  An editor gets full control of the Space, including anything signed in
+  there. Share as a viewer unless they need to act.
+</Callout>

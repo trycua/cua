@@ -1,0 +1,33 @@
+[package]
+name = "cua-image"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/trycua/cua"
+description = "OCI images for the cua SDK: pull/push, containerDisk and rootfs formats, ImageSpec, local builder."
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+cua-vmm = { path = "../cua-vmm" }
+flate2 = "1"
+futures = "0.3"
+hex = "0.4"
+http = "1"
+oci-client = { version = "0.18", default-features = false, features = ["rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing = "0.1"
+
+[dev-dependencies]
+jsonschema = { version = "0.33", default-features = false }
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

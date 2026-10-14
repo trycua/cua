@@ -1,7 +1,10 @@
 """Unit tests for the Image builder (no runtime needed)."""
 
 import pytest
-from cua_sandbox.image import Image
+from cua_sandbox.image import Image, cloud_registry_image
+
+LINUX = "ghcr.io/trycua/linux:24.04"
+WINDOWS = "ghcr.io/trycua/windows:2022"
 
 
 class TestImageBuilder:
@@ -18,6 +21,69 @@ class TestImageBuilder:
     def test_windows(self):
         img = Image.windows("11")
         assert img.os_type == "windows"
+        assert img.distro == "windows"
+        assert img.version == "11"
+
+    def test_windows_defaults_to_the_version_with_a_pinned_disk(self):
+        assert Image.windows().version == "2022"
+
+
+class TestBuiltinRegistryImages:
+    """Built-in descriptors are the canonical ghcr.io/trycua images; the native
+    resolver picks the variant (rootfs, -disk containerDisk, Lume) per backend."""
+
+    @pytest.mark.parametrize(
+        "image, expected",
+        [
+            (Image.linux(), LINUX),
+            (Image.linux("ubuntu", "24.04"), LINUX),
+            (Image.linux(kind="vm"), LINUX),
+            (Image.linux(kind="container"), LINUX),
+            (Image.linux("ubuntu", "22.04"), "ghcr.io/trycua/linux:22.04"),
+            (Image.windows(), WINDOWS),
+            (Image.windows("2022"), WINDOWS),
+            (Image.macos(), "ghcr.io/trycua/macos:26"),
+            (Image.macos("15"), "ghcr.io/trycua/macos:15"),
+            (Image.macos("tahoe"), "ghcr.io/trycua/macos:26"),
+        ],
+    )
+    def test_builtin_descriptors_are_canonical(self, image, expected):
+        assert cloud_registry_image(image) == expected
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            Image.linux("debian", "12"),
+            # Client Windows has no canonical image; it installs from an ISO locally.
+            Image.windows("11"),
+            Image.windows("10"),
+            Image.android("14"),
+        ],
+    )
+    def test_other_descriptors_have_no_canonical_image(self, image):
+        assert cloud_registry_image(image) is None
+
+    @pytest.mark.parametrize("image", [Image.linux(), Image.windows()])
+    def test_explicit_registry_overrides_the_canonical_image(self, image):
+        override = image._with(_registry="registry.example/custom:latest")
+
+        assert cloud_registry_image(override) == "registry.example/custom:latest"
+
+    @pytest.mark.parametrize(
+        "variable",
+        ["CUA_IMAGE_LINUX", "CUA_DEFAULT_LINUX_IMAGE", "CUA_SANDBOX_LINUX_CONTAINER_IMAGE"],
+    )
+    def test_one_override_per_os_and_the_old_names(self, monkeypatch, variable):
+        monkeypatch.setenv(variable, "registry.example/linux:1")
+        assert cloud_registry_image(Image.linux()) == "registry.example/linux:1"
+        # Only the default version is overridden.
+        assert cloud_registry_image(Image.linux("ubuntu", "22.04")) == (
+            "ghcr.io/trycua/linux:22.04"
+        )
+
+    def test_linux_kind_defaults_to_the_image(self):
+        assert Image.linux().kind is None
+        assert Image.windows().kind == "vm"
 
     def test_chaining_is_immutable(self):
         base = Image.linux()
@@ -216,3 +282,50 @@ class TestOsCompatibilityErrors:
         Image.linux().run("echo hi").env(X="1")
         Image.windows().run("echo hi").env(X="1")
         Image.android().run("echo hi").env(X="1")
+
+
+def _published(ref):
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    catalog = json.loads((root / "images/sandbox-images.json").read_text())
+    return next((i["published"] for i in catalog["images"] if i["ref"] == ref), True)
+
+
+class TestTiersAndOmarchy:
+    """Tiers (``<os-version>[-<tier>]``) and Omarchy come from the native
+    resolver, which refuses catalog entries CI has not published."""
+
+    def test_full_is_the_default(self):
+        assert Image.linux(tier="full")._registry is None
+        assert cloud_registry_image(Image.linux(tier="full")) == LINUX
+
+    @pytest.mark.parametrize(
+        "make, ref",
+        [
+            (lambda: Image.linux(tier="slim"), "ghcr.io/trycua/linux:24.04-slim"),
+            (lambda: Image.macos("26", tier="xcode"), "ghcr.io/trycua/macos:26-xcode"),
+            (lambda: Image.omarchy(), "ghcr.io/trycua/omarchy:edge"),
+        ],
+    )
+    def test_tier_and_omarchy_refs(self, make, ref):
+        from cua_sandbox._sdk import native
+
+        if _published(ref):
+            img = make()
+            assert cloud_registry_image(img) == ref
+            assert img.to_dict()["registry"] == ref
+        else:
+            with pytest.raises(native().CuaError.ImageNotPublished, match="not published yet"):
+                make()
+
+    def test_omarchy_is_an_amd64_linux_vm_by_explicit_ref(self):
+        img = Image.from_registry("ghcr.io/trycua/omarchy:edge", kind="vm")
+        assert (img.os_type, img.kind) == ("linux", "vm")
+
+    def test_xcode_is_macos_only(self):
+        from cua_sandbox._sdk import native
+
+        with pytest.raises(native().CuaError.InvalidArgument):
+            Image.linux(tier="xcode")

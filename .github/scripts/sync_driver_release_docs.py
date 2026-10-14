@@ -8,11 +8,16 @@ from pathlib import Path
 import re
 from typing import Sequence
 
+from release_reference_docs import reference_paths
 
-DOC_PATHS = (
-    "docs/content/docs/reference/cua-driver/cli-reference.mdx",
-    "docs/content/docs/reference/cua-driver/mcp-tools.mdx",
-)
+
+# The CLI-shape oracle the generator writes next to the pages; it records
+# the documented version too.
+CLI_SPEC = "scripts/docs-generators/cli-specs/cua-driver.json"
+
+
+def driver_reference_paths(root: Path) -> tuple[str, ...]:
+    return reference_paths(root, "cua-driver")
 
 
 def replace_once(content: str, pattern: str, replacement: str, path: Path) -> str:
@@ -24,18 +29,15 @@ def replace_once(content: str, pattern: str, replacement: str, path: Path) -> st
 
 def sync_driver_release_docs(root: Path) -> None:
     version = (root / "libs/cua-driver/rust/VERSION").read_text().strip()
-    for relative in DOC_PATHS:
+    for relative in driver_reference_paths(root):
         path = root / relative
         content = path.read_text()
         content = replace_once(content, r"^  Version: \S+$", f"  Version: {version}", path)
-        if relative.endswith("cli-reference.mdx"):
-            content = replace_once(
-                content,
-                r"Documented against Cua Driver \*\*\S+\*\*\.",
-                f"Documented against Cua Driver **{version}**.",
-                path,
-            )
         path.write_text(content)
+    spec = root / CLI_SPEC
+    if spec.exists():
+        content = replace_once(spec.read_text(), r'^ "version": "[^"]*"$', f' "version": "{version}"', spec)
+        spec.write_text(content)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

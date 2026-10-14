@@ -52,6 +52,11 @@ done
 
 # Get VERSION from environment or use default
 VERSION=${VERSION:-"0.1.0"}
+BUNDLE_VERSION=${BUNDLE_VERSION:-"$VERSION"}
+if ! [[ "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  log "error" "Error: BUNDLE_VERSION must be a numeric x.y.z version"
+  exit 1
+fi
 
 # Move to the project root directory
 cd "$LUME_DIR"
@@ -86,7 +91,7 @@ fi
 cp -f ./resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 # Stamp and copy Info.plist
-sed "s/__VERSION__/$VERSION/g" "./resources/Info.plist" > "$APP_BUNDLE/Contents/Info.plist"
+sed "s/__VERSION__/$BUNDLE_VERSION/g" "./resources/Info.plist" > "$APP_BUNDLE/Contents/Info.plist"
 
 # Embed the provisioning profile
 PROVISION_PROFILE="./resources/embedded.provisionprofile"
@@ -135,7 +140,7 @@ ditto "$APP_BUNDLE" "$TEMP_ROOT/usr/local/share/lume/lume.app"
 
 if ! pkgbuild --root "$TEMP_ROOT" \
          --identifier "com.trycua.lume" \
-         --version "$VERSION" \
+         --version "$BUNDLE_VERSION" \
          --install-location "/" \
          --sign "$CERT_INSTALLER_NAME" \
          ./.release/lume.pkg; then

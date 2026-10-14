@@ -1,0 +1,157 @@
+---
+title: Choose and build an image
+description: Pick a canonical or registry image, add packages and files, and pull private images, the same way locally and in the cloud.
+---
+
+A sandbox runs one image reference. One resolver picks the variant each
+backend runs (container rootfs or VM disk) and pins its digest, so the same
+reference works locally and in the cloud.
+
+<span id="choose-a-published-fleet-image" />
+
+## Canonical images
+
+```python test="docs" id="canonical" session="canonical"
+from cua_sandbox import Image
+
+Image.linux()          # ghcr.io/trycua/linux:24.04, Ubuntu 24.04 desktop with cua-spacesd
+Image.windows()        # ghcr.io/trycua/windows:2022, Windows Server 2022 VM
+Image.macos()          # ghcr.io/trycua/macos:26 (Tahoe); Image.macos("15") for Sequoia
+```
+
+| Image | Local | Cloud |
+| --- | --- | --- |
+| `Image.linux()` | Container (gVisor when installed) | gVisor container |
+| `Image.linux(kind="vm")` | QEMU VM from `linux:24.04-disk` | KubeVirt VM from `linux:24.04-disk` |
+| `Image.windows()` | QEMU VM from `windows:2022-disk` | KubeVirt VM from `windows:2022-disk` |
+| `Image.macos()` | Lume VM (Apple silicon) | Not available |
+
+- Only `Image.linux()` ships cua-spacesd, so only it gets the computer
+  interfaces. Reach the Windows and macOS images through services you declare.
+- `CUA_IMAGE_LINUX`, `CUA_IMAGE_WINDOWS` and `CUA_IMAGE_MACOS` override the
+  defaults. The CLI takes the aliases `linux`, `windows`, `macos`,
+  `macos:tahoe` and `macos:sequoia`.
+- Windows images do not include a Windows license. Confirm that your own
+  licenses cover your use, including hosting and virtualization rights.
+
+The full list is in the [image catalog details](/cua-sdk/reference/os-image-catalog).
+
+## Any registry image
+
+```python test="docs" id="registry" session="registry" prelude="image"
+image = Image.from_registry("python:3.12-slim")          # short refs mean docker.io
+image = Image.from_registry("ghcr.io/acme/app@sha256:...")
+windows = Image.from_registry("registry.example/win:1", os_type="windows", kind="vm")
+```
+
+- `kind` is detected: a container image runs as a container, a containerDisk
+  (a disk at `/disk/disk.img`) as a VM.
+- `os_type="windows"` selects EFI firmware; a Windows disk never boots on BIOS.
+- The cloud runs amd64. Pin a digest when every sandbox must boot the same
+  content.
+
+```bash test="cli-shape" id="cua-sb-create-linux"
+cua sb create linux --name desk
+cua sb create python:3.12-slim --name app -- python -m http.server 8000
+```
+
+## Add packages, files and settings
+
+Each builder method returns a new, immutable `Image`. Locally, steps build
+into your container engine before boot (VM images apply them after boot
+through cua-spacesd). In the cloud, `apt_install`, `pip_install`, `uv_install`,
+`run`, `copy` and `env` build remotely; until the cloud builds images, build
+and push it yourself ([Fleet images](/fleets/guides/images)).
+
+```python test="docs" id="install-packages" session="build"
+from cua_sandbox import Image
+
+Image.linux().apt_install('curl', 'git', 'ffmpeg')
+Image.macos().brew_install('ffmpeg', 'jq')
+Image.windows().choco_install('nodejs', 'git')
+Image.windows().winget_install('Microsoft.VisualStudioCode')
+```
+
+```python test="docs" id="chain" session="build"
+img = (
+    Image.linux()
+    .apt_install('curl', 'git', 'ffmpeg', 'python3-pip')   # Image.linux() has no pip
+    .pip_install('requests', 'Pillow')                       # or .uv_install(...)
+    .env(LOG_LEVEL='debug')                                  # not for secrets
+    .copy('./config.json', '/app/config.json')
+    .run('mkdir -p /app/data')
+    .expose(8080)                                            # prefer services={"app": 8080}
+)
+```
+
+Fork a base and start the result like any image:
+
+```python test="docs" id="fork" session="build"
+base = Image.linux().apt_install('curl', 'git', 'python3-pip')
+dev  = base.pip_install('ipython', 'rich').env(DEBUG='1')
+prod = base.pip_install('gunicorn').run('useradd -m appuser')
+```
+
+```python test="container" id="start-dev" session="dev" prelude="images-dev"
+from cua_sandbox import Sandbox
+
+async with Sandbox.ephemeral(dev) as sb:
+    print((await sb.shell.run('python -c "import rich"')).returncode)
+```
+
+```python test="docs" id="inspect" session="build"
+img = Image.linux().apt_install('curl').pip_install('requests')
+print(img.to_dict())   # the spec
+# {'os_type': 'linux', 'distro': 'ubuntu', 'version': '24.04', 'kind': None,
+#  'layers': [{'type': 'apt_install', 'packages': ['curl']},
+#             {'type': 'pip_install', 'packages': ['requests']}]}
+```
+
+`Image.from_file()` boots a local qcow2, vhdx, raw or ISO disk (URLs are
+downloaded and cached):
+
+```python skip="pseudo"
+Image.from_file('/path/to/disk.qcow2', os_type='linux')
+Image.from_file('https://example.com/windows.vhdx', os_type='windows')
+```
+
+## Private registries
+
+Pass a `RegistrySecret`. The SDK uses it for the pull (in the cloud it becomes
+the sandbox's pull secret, which also covers sidecar images on the same
+registry). Credentials are never logged or saved in `~/.cua`.
+
+```python skip="pseudo"
+from cua_sandbox import Image, RegistrySecret, Sandbox
+
+image = Image.from_registry(
+    "ghcr.io/acme/agent:1.4",
+    secret=RegistrySecret.from_env(),   # CUA_REGISTRY_USERNAME / CUA_REGISTRY_PASSWORD
+)
+sb = await Sandbox.create(image)
+```
+
+| Secret | Credentials |
+| --- | --- |
+| `RegistrySecret(username, password)` | Explicit values; a token works as the password |
+| `RegistrySecret.from_env(username_var=..., password_var=...)` | Read from the environment at create time |
+| `RegistrySecret.aws_ecr(region=None)` | A private Amazon ECR image, via the AWS CLI |
+
+Without a secret, local pulls also use `CUA_REGISTRY_*`, `GITHUB_TOKEN` for
+`ghcr.io`, your Docker config and ECR credentials.
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create ghcr.io/acme/agent:1.4 \
+  --registry-secret env:CUA_REGISTRY_USERNAME:CUA_REGISTRY_PASSWORD
+cua sb create 123456789012.dkr.ecr.us-east-1.amazonaws.com/agent:1.4 \
+  --registry-secret aws-ecr:us-east-1
+```
+
+```ts test="docs" id="typescript"
+import { registrySecret, SandboxCreateOptions } from '@trycua/cua';
+
+SandboxCreateOptions.create({
+  image: 'ghcr.io/acme/agent:1.4',
+  registrySecret: registrySecret.fromEnv('CUA_REGISTRY_USERNAME', 'CUA_REGISTRY_PASSWORD'),
+});
+```

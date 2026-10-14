@@ -1,0 +1,100 @@
+name: "CD: Image runtime-gvisor"
+
+# Builds the disk of the built-in Linux runtime (cua_vmm::managed), the VM a
+# Mac with no Docker runs Linux Spaces in, and publishes it to
+# ghcr.io/trycua/runtime-gvisor:
+#
+#   build (arch)  libs/images/runtime-gvisor/build.sh: Colima's Ubuntu Docker
+#                 disk with gVisor's runsc baked in (versions.env pins every
+#                 input by digest); prints the .raw.gz's sha256 and size
+#   publish       libs/images/runtime-gvisor/push.sh <tag>: <tag>-<arch>
+#                 artifacts (one gzip raw-disk layer each) and the <tag>
+#                 index. Tags are written once (check-tag-safety.sh): there is
+#                 no floating tag, the SDK pins each arch's layer digest in
+#                 libs/cua/crates/cua-vmm/src/managed.rs, so a new disk ships
+#                 with the SDK release that pins it.
+#
+# Pull requests build only. Publishing runs on runtime-gvisor-v<tag> tags and
+# on workflow_dispatch with publish=true; <tag> is versions.env's
+# RUNTIME_VERSION, or RUNTIME_VERSION-rcN for a pre-release.
+#
+# The image is not a Spaces image (no cua-spacesd), so the doctor reports and
+# ledger of the Spaces images do not apply. Its gate is the SDK's opt-in test
+# on a Mac (sets up the runtime from these bytes, boots it, checks runsc is
+# Docker's default runtime): see libs/images/README.md.
+
+on:
+  push:
+    tags: ["runtime-gvisor-v*"]
+  pull_request:
+    paths:
+      - "libs/images/runtime-gvisor/**"
+      - ".github/workflows/cd-image-runtime-gvisor.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (RUNTIME_VERSION or RUNTIME_VERSION-rcN)"
+        required: true
+      publish:
+        description: "Push to ghcr.io/trycua/runtime-gvisor"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-image-runtime-gvisor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        arch: [arm64, amd64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build the disk
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends bzip2 pigz
+          sudo TMPDIR=/mnt libs/images/runtime-gvisor/build.sh "${{ matrix.arch }}" out
+          sudo chown -R "$(id -u):$(id -g)" out
+          {
+            echo "### runtime-gvisor ${{ matrix.arch }}"
+            echo '```'
+            cat out/*.sha256
+            ls -l out/*.raw.gz
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-gvisor-${{ matrix.arch }}
+          path: out/
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: runtime-gvisor-*
+          path: out
+          merge-multiple: true
+      - name: Push tools
+        run: scripts/images/install-release-tools.sh --push-only
+      - name: Push
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          tag="${TAG#runtime-gvisor-v}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          libs/images/runtime-gvisor/push.sh "$tag" out | tee -a "$GITHUB_STEP_SUMMARY"

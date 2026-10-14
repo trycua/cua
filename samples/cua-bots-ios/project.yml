@@ -1,0 +1,36 @@
+# XcodeGen spec for the iPhone app (the SwiftPM package holds everything
+# but the app target). Needs Xcode 16+ and the cua SDK XCFramework with iOS
+# slices:
+#   (cd ../../libs/cua/swift && scripts/build-xcframework.sh --ios)
+#   CUA_SWIFT_XCFRAMEWORK=build/CuaSDKFFI.xcframework xcodegen generate
+#   xcodebuild -scheme CuaBots -destination 'platform=iOS Simulator,name=iPhone 16' build
+name: CuaBots
+options:
+  bundleIdPrefix: ai.cua.samples
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  CuaBotsiOS:
+    path: .
+  Cua:
+    path: ../../libs/cua/swift
+targets:
+  CuaBots:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: CuaBotsiOS
+        product: CuaBotsPhone
+      - package: CuaBotsiOS
+        product: CuaBotsRemote
+      - package: Cua
+        product: Cua
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Cua Bots
+        UILaunchScreen: {}
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [cuabots]
+        NSLocalNetworkUsageDescription: Reach a bot's computer on your network.

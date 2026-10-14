@@ -48,10 +48,7 @@ pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -84,10 +81,7 @@ pub fn nearest_container_selection_state(element_ptr: usize) -> Option<(String, 
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -184,10 +178,7 @@ pub fn capture_nearest_container_selection(element_ptr: usize) -> Option<Selecti
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -219,7 +210,7 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
 
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action);
+    let ax_action = map_action(action)?;
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 
@@ -230,20 +221,95 @@ pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()>
     }
 }
 
-fn map_action(action: &str) -> &'static str {
-    match action.to_lowercase().as_str() {
+/// The AX action named by a tool's `action` argument. Accepts the short
+/// names (`press`, `show_menu`, ...) and the tree's spelling (`showalternateui`,
+/// `AXShowAlternateUI`). An unknown name is an error: falling back to AXPress
+/// would press a control the caller meant only to reveal.
+pub fn map_action(action: &str) -> anyhow::Result<&'static str> {
+    let key: String = action
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .collect::<String>()
+        .to_lowercase();
+    let key = key.strip_prefix("ax").unwrap_or(&key);
+    Ok(match key {
         "press" | "click" => "AXPress",
-        "show_menu" | "right_click" | "rightclick" => "AXShowMenu",
+        "showmenu" | "rightclick" => "AXShowMenu",
         "pick" => "AXPick",
         "confirm" => "AXConfirm",
         "cancel" => "AXCancel",
         "open" => "AXOpen",
-        _ => "AXPress",
+        "showalternateui" => "AXShowAlternateUI",
+        "showdefaultui" => "AXShowDefaultUI",
+        _ => anyhow::bail!(
+            "unknown action \"{action}\": use press, show_menu, pick, confirm, cancel, open, \
+             show_alternate_ui or show_default_ui"
+        ),
+    })
+}
+
+/// Set AXFocused=true on an element (for pre-focusing before key press).
+pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
+    let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
+    if err == kAXErrorSuccess {
+        Ok(())
+    } else {
+        // Focus errors are often benign (element doesn't support focus).
+        tracing::warn!("AXSetAttribute(AXFocused) returned {err}");
+        Ok(())
+    }
+}
+
+/// Report whether `element_ptr` is the application's currently focused element.
+///
+/// This is a read-only confirmation for the foreground typing rung: an
+/// `AXFocused` write can be accepted by the element and then immediately
+/// clobbered when AppKit installs the window's remembered first responder, so
+/// "the write returned success" is not evidence that focus stuck. Identity is
+/// compared with `CFEqual` because the app hands back a fresh `AXUIElementRef`
+/// for the same underlying element.
+///
+/// A `false` return is deliberately conservative: an app whose
+/// `AXFocusedUIElement` is unreadable reports not-focused, which at worst costs
+/// one extra re-apply.
+pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
+    unsafe {
+        let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+            return false;
+        };
+        let same = CFEqual(focused as CFTypeRef, element_ptr as CFTypeRef) != 0;
+        CFRelease(focused as CFTypeRef);
+        same
+    }
+}
+
+/// Set the AXValue of an element (for dropdowns, text fields, etc.).
+pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
+    let err = unsafe { set_string_attr(element_ptr as AXUIElementRef, "AXValue", value) };
+    if err == kAXErrorSuccess {
+        Ok(())
+    } else {
+        anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn action_names_accept_the_tree_spelling_and_refuse_unknown_ones() {
+        use super::map_action;
+        assert_eq!(map_action("press").unwrap(), "AXPress");
+        assert_eq!(
+            map_action("show_alternate_ui").unwrap(),
+            "AXShowAlternateUI"
+        );
+        assert_eq!(map_action("showalternateui").unwrap(), "AXShowAlternateUI");
+        assert_eq!(map_action("AXShowDefaultUI").unwrap(), "AXShowDefaultUI");
+        assert_eq!(map_action("right_click").unwrap(), "AXShowMenu");
+        // An unknown name must not fall back to pressing the control.
+        assert!(map_action("hover").is_err());
+    }
+
     use super::*;
 
     #[test]
@@ -269,27 +335,5 @@ mod tests {
         for role in ["AXButton", "AXTextField", "AXWindow", "AXOutline"] {
             assert!(!is_selectable_container_role(role), "{role}");
         }
-    }
-}
-
-/// Set AXFocused=true on an element (for pre-focusing before key press).
-pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
-    let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
-    if err == kAXErrorSuccess {
-        Ok(())
-    } else {
-        // Focus errors are often benign (element doesn't support focus).
-        tracing::warn!("AXSetAttribute(AXFocused) returned {err}");
-        Ok(())
-    }
-}
-
-/// Set the AXValue of an element (for dropdowns, text fields, etc.).
-pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
-    let err = unsafe { set_string_attr(element_ptr as AXUIElementRef, "AXValue", value) };
-    if err == kAXErrorSuccess {
-        Ok(())
-    } else {
-        anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
     }
 }

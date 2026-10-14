@@ -2,32 +2,23 @@
 
 This directory contains the checked-in generated sources for several Cyclops
 SDK targets. Rust is the native `cyclops-sdk` API and owns the canonical
-implementation. The authoritative deterministic generation and drift pipeline
-in `generate-sdk-bindings.sh` owns **Python, Kotlin, Swift, and Ruby**.
-The OpenAPI JavaScript client and native-library packaging are outside that
-four-language binding surface; separate UniFFI snapshots are described below.
+implementation. The deterministic generation and drift pipeline in
+`generate-sdk-bindings.sh` owns Python, Kotlin, Swift, Ruby, Go, Node.js
+TypeScript, and Browser/WASM TypeScript source roots.
 
-### Separately generated targets
+### Compatibility targets
 
-`go-uniffi`, `ts-uniffi` (Node.js), and `ts-uniffi-browser` are checked-in
-compatibility snapshots produced by `uniffi-bindgen-go` and
-`uniffi-bindgen-react-native`, not outputs of `generate-sdk-bindings.sh`. They
-consume the same Rust cdylib, whose UniFFI metadata includes the builder
-objects, but their checked-in sources are not owned or drift-checked by this
-testbed. The Go and Node.js snapshots are not regenerated here. Browser/WASM
-packaging runs UBRN generation during its build, but no committed-source drift
-or builder contract verifies that generated surface. The checked-in separate
-snapshots therefore retain direct record constructors and do not currently
-advertise `UniffiBuilder` companions.
+The pinned Go and TypeScript generators run from the same Rust metadata as
+UniFFI. Go and Node.js retain their existing direct-record API: the canonical
+generator reuses `normalize-compat-sdk-bindings.py` to exclude generated builder
+ABI, without deleting non-builder records or methods. Go exposes the status helper
+as `GetPoolDisplayStatus` to avoid colliding with its `PoolDisplayStatus` record. The normalizer never uses
+checked-in snapshots as transformation input. The schema-only
+`generate-compat-sdk-bindings.sh --check` remains an independent compatibility
+check. Browser/WASM retains its advertised generated builder surface.
 
-This is a binding-pipeline adoption gap, not a Rust or UniFFI metadata
-limitation. Adding builders to the Go, Node.js, or browser/WASM public
-contracts requires separately regenerating where applicable and
-validating each third-party generator, cross-component converter layer,
-packaging path, checked-in scope, and runtime API. Until that work lands,
-"authoritative generated builder targets" in this document means only Python,
-Kotlin, Swift, and Ruby; do not infer builder availability for the separate
-snapshots or from browser build-time generation alone.
+Native-library and browser/WASM packaging still use their existing separate
+build commands; generating source does not prove runtime packaging works.
 
 ## Source of truth and compatibility
 
@@ -35,8 +26,10 @@ snapshots or from browser build-time generation alone.
 CRD bundle at `clusters/base/osgym/crd.yaml` is derived from that schema with
 `generate-crds`; it is not hand-maintained and must not be post-processed.
 Short-term compatibility breaks in this evolving API are intentional. Update
-the schema and raw CRD together rather than adding compatibility shims,
-rewriters, or binding-specific post-processing.
+the schema and raw CRD together rather than adding compatibility shims or
+rewriters. The only binding-specific exception is the repository-owned Go/Node
+compatibility normalization above: it deterministically removes generated
+builder ABI from fresh raw output and does not alter the schema or CRD source.
 
 Generated binding source is committed so review and drift checks are
 reproducible. Native libraries, Cargo target output, Gradle caches, and staged
@@ -83,12 +76,15 @@ cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
   --output "$REPO_ROOT/clusters/base/osgym/crd.yaml"
 ```
 
-Generate or check all four UniFFI language roots with the pinned workspace
-wrapper around UniFFI `0.31.0`:
+Generate or check every binding root with UniFFI `0.31.0`,
+`uniffi-bindgen-go 0.7.1+v0.31.0`, `uniffi-bindgen-react-native@0.31.0-3`,
+and Go (`gofmt`) on PATH:
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh"
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh" --check
+"$REPO_ROOT/cyclops-cs/scripts/generate-compat-sdk-bindings.sh"
+"$REPO_ROOT/cyclops-cs/scripts/generate-compat-sdk-bindings.sh" --check
 "$REPO_ROOT/cyclops-cs/scripts/test-generate-sdk-bindings.sh"
 ```
 
@@ -239,7 +235,7 @@ pool = await client.create_pool(CreatePoolRequest(namespace="default", spec=pool
 claim_spec = ClaimSpec(
     sandbox_template_ref=SandboxTemplateRef(name=pool.metadata.name),
     warmpool=None,
-    bind_deadline=None,
+    bind_deadline=None,  # SDK defaults omitted deadlines to 900 seconds
     lifecycle=None,
 )
 claim = await client.create_claim(CreateClaimRequest(pool=pool, spec=claim_spec))

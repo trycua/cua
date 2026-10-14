@@ -1,0 +1,87 @@
+---
+title: How sandboxes work
+description: The SDK, the daemon, cua-spacesd and the backends, where a sandbox runs and on what, how it becomes ready, and how its lifetime works.
+---
+
+```text output
+  Python (cua-sandbox, cua)   TypeScript (@trycua/cua)   Swift (Cua)   Rust (cua-sdk)
+            \                         |                       |           /
+             +------------- cua SDK (Rust core, UniFFI) -----------------+
+                  embedded in your process, or a client of `cua daemon`
+                                        |
+        local (gVisor, runc, QEMU, Lume) | cloud | direct | relay
+                                        v
+             sandbox: any OCI image; optional cua-spacesd on port 3211
+```
+
+## The pieces
+
+| Piece | What it is | Runs on |
+| --- | --- | --- |
+| cua SDK and `cua` CLI | The client: a Rust core with generated bindings | Your process or machine |
+| `cua daemon` | The SDK as a local service, so several processes (the CLI, the Spaces app, MCP clients, your script) share sandboxes, connections and credentials. `cua.connect()` instead of `cua.embedded()` | Your machine |
+| cua-spacesd | The optional daemon inside a sandbox: one port (`3211`), gRPC and gRPC-Web. Input and accessibility go to Cua Driver in the guest | The sandbox |
+| Runtimes | Local: gVisor or runc (on Docker or Podman), QEMU, Lume. Cloud: gVisor containers and KubeVirt VMs | This machine or the cloud |
+
+## Where, what kind, which engine
+
+Every create takes the same three choices, all optional:
+
+| Axis | SDK | CLI | Values | Default |
+| --- | --- | --- | --- | --- |
+| Where | `on=` (cua-sandbox also `local=True/False`) | `--on` | `local`, `cloud`, `direct:<addr>` (an existing machine running cua-spacesd), a registered provider | `default.on`, else `local` |
+| What kind | `kind=` | `--kind` | `auto`, `container`, `vm` | `auto` |
+| Which engine | `runtime=` | `--runtime` | `auto` or an engine below | `auto` |
+
+| Location | container | vm |
+| --- | --- | --- |
+| `local` | `gvisor` (auto when installed), `runc` | `qemu` (auto), `lume` (auto for macOS guests; Apple silicon only) |
+| `cloud` | `gvisor` | `kubevirt` |
+| `direct:<addr>` | the existing machine: `auto` only | |
+
+`auto` kind comes from the image: macOS and Windows images are VMs, an image
+with a container rootfs is a container, and a disk-only image is a VM. So
+`ghcr.io/trycua/linux:24.04` is a gVisor container locally and in the cloud,
+and `--kind vm` picks its `-disk` variant (QEMU locally, KubeVirt in the
+cloud). A runtime implies its kind. A combination that does not exist fails
+with `InvalidPlacement`, listing the valid values.
+
+Defaults resolve in this order, first match wins:
+
+1. explicit: `--on` / `--kind` / `--runtime`, `on=` / `local=` / `kind=` / `runtime=`
+2. env: `CUA_DEFAULT_ON`, `CUA_DEFAULT_KIND`, `CUA_DEFAULT_RUNTIME`
+3. config: `$CUA_HOME/config.toml` (`cua config set default.on cloud`)
+4. built-in: `local`, `auto`, `auto`
+
+A default kind or runtime that does not fit an explicit request is skipped.
+See [Choose where sandboxes run by default](/cua-sdk/guides/cloud#choose-where-sandboxes-run-by-default).
+
+## Sandboxes do not require a guest agent
+
+Creating, waiting for and deleting a sandbox never assumes anything runs in
+the guest. A sandbox is ready when its backend reports it running and every
+probe you declare passes (`wait_for=tcp("mcp")`, `http("web", "/health")`). If
+the command exits first, readiness fails at once.
+
+| Guest | What works |
+| --- | --- |
+| Your own services | `sb.service(name)`, `sb.public_url(name)`, `sb.tunnel.forward(port)`, `sb.mcp(name)` |
+| cua-spacesd | Also shell, files, screenshots, input, windows, accessibility, streaming, and `sb.spacesd()` |
+| Nothing | Lifecycle, plus the runtime's agentless paths (QMP, VNC, SSH or ADB) where available |
+
+## Lifetime
+
+A connection and a sandbox have separate lifetimes. Disconnecting never stops
+a sandbox; deleting destroys it and its state.
+
+| Pattern | Lifetime |
+| --- | --- |
+| `Sandbox.ephemeral(...)` | Deleted when the block exits |
+| `Sandbox.create(...)`, `cua sb create` | Until deleted; a cloud sandbox also lapses when nothing renews its TTL |
+| `suspend` / `resume` | Local only |
+| Direct sandbox | Deleting only forgets the record |
+
+The SDK manages cloud capacity for your account; to manage it yourself, see
+[Cua Fleets](/fleets). `Sandbox.snapshot()` is not available in
+`cua-sandbox` 0.9.0. Streaming, teleport and the other
+[Spaces](/spaces) primitives need cua-spacesd.

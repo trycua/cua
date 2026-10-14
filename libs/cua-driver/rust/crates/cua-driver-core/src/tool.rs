@@ -163,12 +163,13 @@ impl ToolDef {
         //
         // Published SDK tools resolve capabilities from their typed Rust
         // contract. The legacy map remains only for runtime-only tools.
-        let caps = advertised_capabilities_for(&self.name, &self.input_schema);
+        let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
+        let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
         let mut entry = serde_json::json!({
             "name": self.name,
             "description": self.description,
-            "inputSchema": self.input_schema,
+            "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
                 "destructiveHint": self.destructive,
@@ -178,29 +179,479 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
-        let output_schema = if crate::action_record::is_action_tool(&self.name) {
-            Some(
-                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
-                ),
-            )
-        } else {
-            cua_driver_contract::tool_success_output_schema(&self.name)
-        };
-        if let Some(output_schema) = output_schema {
-            // Advertise the refusal envelope alongside the success shape. MCP
-            // holds every `structuredContent` we emit — refusals included — to
-            // the advertised schema, and a success-only schema made strict
-            // clients discard our refusal message in favour of a schema error.
+        // Advertise the refusal envelope alongside the success shape. MCP
+        // holds every `structuredContent` we emit — refusals included — to
+        // the advertised schema, and a success-only schema made strict
+        // clients discard our refusal message in favour of a schema error.
+        // The `tools/call` boundary answers from the same lookup, so what a
+        // client is promised and what it is held to cannot drift.
+        if let Some(output_schema) = cua_driver_contract::advertised_tool_output_schema(&self.name)
+        {
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert(
-                    "outputSchema".into(),
-                    cua_driver_contract::advertised_output_schema(output_schema),
-                );
+                .insert("outputSchema".into(), output_schema);
         }
         entry
     }
+}
+
+/// The argument names absent from the tool's advertised closed schema, as one
+/// refusal message that also lists the accepted names, so the caller can fix
+/// every name in one retry instead of guessing one at a time.
+fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
+    let schema = advertised_runtime_input_schema(&def.name, &def.input_schema);
+    if schema["additionalProperties"] != false {
+        return None;
+    }
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let unknown: Vec<&str> = args
+        .as_object()?
+        .keys()
+        .filter(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
+        .map(String::as_str)
+        .collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    // A direct action named by role/name: that targeting lives in run_steps.
+    const NAME_TARGET: &[&str] = &["role", "name", "label", "app", "window", "nth"];
+    let name_targeted = crate::batch_tools::BATCHABLE_TOOLS.contains(&def.name.as_str())
+        && unknown.iter().all(|name| NAME_TARGET.contains(name));
+    let accepted: Vec<&str> = properties
+        .map(|properties| {
+            properties
+                .keys()
+                .map(String::as_str)
+                .filter(|name| *name != "session")
+                .collect()
+        })
+        .unwrap_or_default();
+    let noun = if unknown.len() == 1 {
+        "argument"
+    } else {
+        "arguments"
+    };
+    let hint = if name_targeted {
+        format!(
+            ". To target by role/name/app/window, send the same arguments as one run_steps \
+             step: run_steps {{\"steps\":[{{\"{}\": {{...}}}}]}}",
+            def.name
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "{noun} {}; accepted: {}{hint}",
+        unknown.join(", "),
+        accepted.join(", ")
+    ))
+}
+
+/// Rewrite argument spellings models guess into the advertised ones, before
+/// the closed schema is checked. Shared by dispatch and `run_steps` step
+/// validation, so a batch step accepts what a direct call accepts. `Err` is a
+/// refusal detail for an alias that cannot be translated.
+pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if cfg!(target_os = "linux") && tool_name == "set_value" {
+        if let Some(value @ Value::Number(_)) = args.get_mut("value") {
+            *value = Value::String(value.to_string());
+        }
+    }
+    normalize_zoom_args(tool_name, args);
+    normalize_key_args(tool_name, args);
+    normalize_menu_args(tool_name, args);
+    normalize_scroll_args(tool_name, args)?;
+    normalize_set_config_args(tool_name, args)
+}
+
+/// `{key, value}` is unadvertised; rewrite it before the closed schema rejects `key`.
+fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    let Some(object) = args.as_object_mut().filter(|_| tool_name == "set_config") else {
+        return Ok(());
+    };
+    match (object.remove("key"), object.remove("value")) {
+        (None, None) => Ok(()),
+        (Some(Value::String(key)), Some(value))
+            if !key.starts_with('_') && !matches!(key.as_str(), "key" | "value" | "session") =>
+        {
+            object.insert(key, value);
+            Ok(())
+        }
+        (Some(Value::String(key)), Some(_)) => Err(format!("key '{key}' is reserved")),
+        (Some(_), _) => Err("key requires an exact value".into()),
+        (None, Some(_)) => Err("value requires an exact key".into()),
+    }
+}
+
+/// `invoke_menu` takes `path` as a list of labels. Models also send
+/// `menu_path`, a JSON-encoded list, or one "File > Save As..." string.
+fn normalize_menu_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "invoke_menu" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    if !arguments.contains_key("path") {
+        if let Some(alias) = ["menu_path", "menu", "items"]
+            .iter()
+            .find(|alias| arguments.contains_key(**alias))
+        {
+            let value = arguments.remove(*alias).expect("present");
+            arguments.insert("path".to_owned(), value);
+        }
+    }
+    let Some(Value::String(text)) = arguments.get("path") else {
+        return;
+    };
+    let text = text.trim();
+    let labels: Vec<String> = match serde_json::from_str::<Vec<String>>(text) {
+        Ok(labels) => labels,
+        Err(_) => text
+            .split(['>', '→'])
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    if !labels.is_empty() {
+        arguments.insert(
+            "path".to_owned(),
+            Value::Array(labels.into_iter().map(Value::String).collect()),
+        );
+    }
+}
+
+/// The JSON types a property schema admits, from `type` (a string or a list)
+/// and the `type` of each `anyOf`/`oneOf` branch. Empty when the schema
+/// declares none.
+fn declared_types(schema: &Value) -> Vec<&str> {
+    fn add<'v>(types: &mut Vec<&'v str>, value: Option<&'v Value>) {
+        match value {
+            Some(Value::String(name)) => types.push(name.as_str()),
+            Some(Value::Array(names)) => types.extend(names.iter().filter_map(Value::as_str)),
+            _ => {}
+        }
+    }
+    let mut types = Vec::new();
+    add(&mut types, schema.get("type"));
+    for key in ["anyOf", "oneOf"] {
+        if let Some(branches) = schema.get(key).and_then(Value::as_array) {
+            for branch in branches {
+                add(&mut types, branch.get("type"));
+            }
+        }
+    }
+    types
+}
+
+/// Models sometimes send scalars as strings (`"include_screenshot": "false"`,
+/// `"observe": "true"`, `"pid": "4211"`). A tool reading `as_bool()` would
+/// silently take `"false"` as absent and use the default, which is the
+/// opposite of what was asked. Rewrite a top-level string argument into the
+/// boolean, integer or number its schema declares, but only when the schema
+/// does not also admit a string, so no string-valued field is reinterpreted.
+pub(crate) fn coerce_string_scalars(schema: &Value, args: &mut Value) {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for (name, value) in arguments.iter_mut() {
+        let Value::String(text) = value else {
+            continue;
+        };
+        let Some(property) = properties.get(name) else {
+            continue;
+        };
+        let types = declared_types(property);
+        if types.is_empty() || types.contains(&"string") {
+            continue;
+        }
+        let text = text.trim();
+        let coerced = if types.contains(&"boolean") && text.eq_ignore_ascii_case("true") {
+            Some(Value::Bool(true))
+        } else if types.contains(&"boolean") && text.eq_ignore_ascii_case("false") {
+            Some(Value::Bool(false))
+        } else if types.contains(&"integer") {
+            text.parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| text.parse::<u64>().map(Value::from))
+                .ok()
+        } else if types.contains(&"number") {
+            text.parse::<f64>()
+                .ok()
+                .filter(|number| number.is_finite())
+                .and_then(|number| serde_json::Number::from_f64(number).map(Value::Number))
+        } else {
+            None
+        };
+        if let Some(coerced) = coerced {
+            *value = coerced;
+        }
+    }
+}
+
+/// Key spellings models reach for that every platform's key table spells
+/// differently. Only unambiguous renames: `delete` itself means backspace on
+/// macOS and forward delete elsewhere, so it is left alone.
+fn canonical_key_name(key: &str) -> Option<&'static str> {
+    let folded: String = key
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(match folded.as_str() {
+        "pagedown" | "pgdn" | "pgdown" | "pagedn" => "pagedown",
+        "pageup" | "pgup" => "pageup",
+        "arrowleft" | "leftarrow" => "left",
+        "arrowright" | "rightarrow" => "right",
+        "arrowup" | "uparrow" => "up",
+        "arrowdown" | "downarrow" => "down",
+        "forwarddelete" | "fwddelete" | "deleteforward" => {
+            if cfg!(target_os = "macos") {
+                "forward_delete"
+            } else {
+                "delete"
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// `press_key` takes one key plus `modifiers`, `hotkey` a list of keys.
+/// Rewrite the shapes models send instead: a combination in `key`
+/// ("shift+Right" becomes key "Right" with modifiers ["shift"]), `hotkey`
+/// keys as one "cmd+s" string, and spellings such as "Page_Down".
+fn normalize_key_args(tool_name: &str, args: &mut Value) {
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    match tool_name {
+        "press_key" => {
+            let Some(key) = arguments
+                .get("key")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                return;
+            };
+            let mut key = key.trim().to_owned();
+            if key.chars().count() > 1 && key.contains('+') && !key.ends_with('+') {
+                let parts: Vec<String> =
+                    key.split('+').map(|part| part.trim().to_owned()).collect();
+                if parts.iter().all(|part| !part.is_empty()) {
+                    let (modifiers, last) = parts.split_at(parts.len() - 1);
+                    let existing = arguments
+                        .get("modifiers")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut merged: Vec<Value> = existing;
+                    for modifier in modifiers {
+                        let modifier = Value::String(modifier.to_lowercase());
+                        if !merged.contains(&modifier) {
+                            merged.push(modifier);
+                        }
+                    }
+                    arguments.insert("modifiers".to_owned(), Value::Array(merged));
+                    key = last[0].clone();
+                }
+            }
+            if let Some(canonical) = canonical_key_name(&key) {
+                key = canonical.to_owned();
+            }
+            arguments.insert("key".to_owned(), Value::String(key));
+        }
+        "hotkey" => {
+            if let Some(Value::String(combo)) = arguments.get("keys") {
+                let keys: Vec<Value> = combo
+                    .split('+')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| Value::String(part.to_owned()))
+                    .collect();
+                arguments.insert("keys".to_owned(), Value::Array(keys));
+            }
+            if let Some(Value::Array(keys)) = arguments.get_mut("keys") {
+                for key in keys.iter_mut() {
+                    if let Some(canonical) = key.as_str().and_then(canonical_key_name) {
+                        *key = Value::String(canonical.to_owned());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A larger `dx`/`dy` magnitude than this many notches is read as pixels.
+const SCROLL_MAX_NOTCHES: f64 = 50.0;
+/// Pixels per wheel notch when `dx`/`dy` is given in pixels (a Chromium
+/// wheel notch scrolls about 100 px).
+const SCROLL_PIXELS_PER_NOTCH: f64 = 100.0;
+
+/// `scroll` takes `direction` plus `amount` (wheel notches) on every platform.
+/// Models reach for signed `dx`/`dy` deltas (sometimes as strings), so
+/// translate them: positive `dy` scrolls down and positive `dx` right, as in
+/// DOM `scrollBy` and wheel `deltaY`. A magnitude up to 50 counts notches; a
+/// larger one is pixels at 100 px per notch, clamped to 50 notches. An
+/// explicit `direction` (and `amount`) wins over `dx`/`dy`.
+fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if tool_name != "scroll" {
+        return Ok(());
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return Ok(());
+    };
+    let read = |value: Option<Value>| -> Result<f64, String> {
+        match value {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(value) => value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+                .filter(|number: &f64| number.is_finite())
+                .ok_or_else(|| format!("dx/dy must be numbers, got {value}")),
+        }
+    };
+    if !arguments.contains_key("dx") && !arguments.contains_key("dy") {
+        return Ok(());
+    }
+    let dx = read(arguments.remove("dx"))?;
+    let dy = read(arguments.remove("dy"))?;
+    if arguments.contains_key("direction") {
+        return Ok(());
+    }
+    let (direction, delta) = match (dx != 0.0, dy != 0.0) {
+        (true, true) => {
+            return Err(format!(
+                "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or \
+                 dy (or direction and amount), or use two scroll steps in run_steps."
+            ))
+        }
+        (false, false) => {
+            return Err(
+                "dx and dy are both 0, so there is nothing to scroll. Pass direction \
+                 (up, down, left or right) and amount (wheel notches). To hover without \
+                 scrolling, use move_cursor."
+                    .to_owned(),
+            )
+        }
+        (false, true) => (if dy > 0.0 { "down" } else { "up" }, dy),
+        (true, false) => (if dx > 0.0 { "right" } else { "left" }, dx),
+    };
+    let magnitude = delta.abs();
+    let notches = if magnitude <= SCROLL_MAX_NOTCHES {
+        magnitude
+    } else {
+        magnitude / SCROLL_PIXELS_PER_NOTCH
+    };
+    let notches = notches.round().clamp(1.0, SCROLL_MAX_NOTCHES) as u64;
+    arguments.insert("direction".to_owned(), Value::String(direction.to_owned()));
+    arguments
+        .entry("amount")
+        .or_insert_with(|| serde_json::json!(notches));
+    Ok(())
+}
+
+/// `zoom` takes a region as two corners (`x1,y1`-`x2,y2`). Models reach for
+/// `x, y, width, height` (and pass numbers as strings), so rewrite that shape
+/// into corners before the closed schema is checked. Explicit corners win.
+fn normalize_zoom_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "zoom" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "x1", "y1", "x2", "y2", "x", "y", "width", "height", "w", "h",
+    ] {
+        if let Some(number) = arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+        {
+            arguments.insert(key.to_owned(), serde_json::json!(number));
+        }
+    }
+    for (short, long) in [("w", "width"), ("h", "height")] {
+        if !arguments.contains_key(long) {
+            if let Some(value) = arguments.remove(short) {
+                arguments.insert(long.to_owned(), value);
+            }
+        }
+    }
+    let num = |arguments: &serde_json::Map<String, Value>, key: &str| {
+        arguments.get(key).and_then(Value::as_f64)
+    };
+    for (origin, extent, first, second) in [("x", "width", "x1", "x2"), ("y", "height", "y1", "y2")]
+    {
+        if arguments.contains_key(first) || arguments.contains_key(second) {
+            continue;
+        }
+        if let (Some(start), Some(size)) = (num(arguments, origin), num(arguments, extent)) {
+            arguments.remove(origin);
+            arguments.remove(extent);
+            arguments.insert(first.to_owned(), serde_json::json!(start));
+            arguments.insert(second.to_owned(), serde_json::json!(start + size));
+        }
+    }
+}
+
+pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
+    let mut schema = schema.clone();
+    let closed = schema["additionalProperties"] == false;
+    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+        return schema;
+    };
+    // Dispatch reads `session` for every tool, so every closed schema must admit it.
+    if closed {
+        properties
+            .entry("session")
+            .or_insert_with(crate::tool_schema::session_schema);
+    }
+    if !crate::action_target::supports_typed_target(tool_name) {
+        return schema;
+    }
+    if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
+        if let Some(portable_properties) = portable
+            .input_schema
+            .get("properties")
+            .and_then(Value::as_object)
+        {
+            if let Some(field_schema) = portable_properties.get("target") {
+                properties.insert("target".into(), field_schema.clone());
+            }
+        }
+    }
+    schema
+}
+
+/// Tools renamed before 0.35.0, as (old name, new name). The old name still
+/// dispatches to the new tool, but it is not registered, so tools/list shows
+/// only the new name, and its result ends with a one-line deprecation note.
+/// To be removed in a future release.
+pub const RENAMED_TOOLS: &[(&str, &str)] = &[("run_actions", crate::batch_tools::RUN_STEPS_TOOL)];
+
+/// `~/.cua-driver/config.json` key that turns `run_script` off when `true`.
+pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
+/// Legacy `~/.cua-driver/config.json` key. `false` turns `run_script` off;
+/// `true` changes nothing.
+pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
+
+/// The current name of a renamed tool, or `None` when `name` is not an old name.
+pub fn renamed_tool(name: &str) -> Option<&'static str> {
+    RENAMED_TOOLS
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
+fn deprecated_name_note(old: &str, new: &str) -> String {
+    format!("Note: `{old}` is deprecated and will be removed in a future release; call `{new}` instead.")
 }
 
 /// Centralised tool name → capability tokens map. Lookup is by name so
@@ -217,6 +668,8 @@ impl ToolDef {
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+/// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
+///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
@@ -227,16 +680,17 @@ impl ToolDef {
 /// - `accessibility.tree`, `accessibility.tree.structured`,
 ///   `accessibility.tree.bounded`, `accessibility.window_state`,
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
-///   opaque `element_token` arg alongside the integer `element_index`)
+///   opaque `element_token` arg)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
 ///   `window.activate`, `window.frame.set`, `window.debug_info`
 /// - `system.permissions.tcc`,
 ///   `system.permissions.tcc.accessibility`,
 ///   `system.permissions.tcc.screen_recording`
 /// - `system.config.read`, `system.config.write`
-/// - `session.lifecycle.start`, `session.lifecycle.end`,
-///   `session.capture_scope`, `session.capture_scope.read`,
-///   `session.capture_scope.escalate`
+/// - `session.lifecycle.start`, `session.lifecycle.read`,
+///   `session.lifecycle.list`, `session.lifecycle.end`, plus the deprecated
+///   `session.capture_scope`, `session.capture_scope.read`, and
+///   `session.capture_scope.escalate` compatibility tokens
 /// - `agent_cursor.move`, `agent_cursor.set_enabled`,
 ///   `agent_cursor.set_motion`, `agent_cursor.set_theme`,
 ///   `agent_cursor.state`
@@ -247,6 +701,7 @@ impl ToolDef {
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
 /// - `driver.update_check`, `driver.probe`
+/// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
 /// downstream consumers fall back to matching by tool name for them.
@@ -258,8 +713,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // ── input.pointer ────────────────────────────────────────────
         //
         // Surface 6: tools that accept the opaque `element_token` arg
-        // (in addition to the integer `element_index`) claim the
-        // `accessibility.element_tokens` token so consumers can branch
+        // claim the `accessibility.element_tokens` token so consumers can branch
         // on its presence — Hermes' wrapper currently does this by name
         // for each tool; the capability token removes that coupling.
         "double_click" => &[
@@ -329,6 +783,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "screen.capture",
             "screen.capture.window",
         ],
+        "parse_visual_regions" => &["screen.perception.visual_regions"],
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
@@ -364,7 +819,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "stop_recording" => &["recording.stop"],
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
+        "run_steps" => &["input.batch"],
+        "run_script" => &["input.script"],
         "install_ffmpeg" => &["recording.install_dependency"],
+        "install_extension" => &["extension.install"],
 
         // ── cross-platform page ──────────────────────────────────────
         "page" => &["page.action"],
@@ -388,6 +846,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "check_for_update" => &["driver.update_check"],
         "probe" => &["driver.probe"],
 
+        // ── encrypted local Computer History ─────────────────────────
+        "history_status" => &["history.status"],
+        "history_query" => &["history.query"],
+
         // ── unsupported_platform stub & anything else ────────────────
         _ => &[],
     };
@@ -397,18 +859,16 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// Capabilities advertised by a concrete runtime tool definition.
 ///
 /// Most capabilities are stable properties of a tool name and come from the
-/// typed portable contract (or the legacy runtime-only map). Delivery mode is
-/// different: the typed desktop SDK intentionally exposes a narrower,
-/// desktop-only input while the live platform schemas additionally accept
-/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// typed portable contract (or the legacy runtime-only map). Delivery mode and
+/// scroll coordinates are derived from the live schema. The typed desktop SDK
+/// exposes a narrower, desktop-only input while the live schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving these tokens from the concrete
 /// schema keeps `tools/list` truthful on every platform and prevents either
 /// overclaiming a tool that cannot accept the field or omitting support from a
 /// richer live schema.
 pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec<String> {
     let mut capabilities = default_capabilities_for(tool_name);
-    let accepts_delivery_mode = input_schema
-        .pointer("/properties/delivery_mode")
-        .is_some_and(Value::is_object);
+    let accepts_delivery_mode = schema_accepts_delivery_mode(input_schema);
     if accepts_delivery_mode
         && !capabilities
             .iter()
@@ -416,7 +876,64 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
     {
         capabilities.push("input.delivery_mode".into());
     }
+    if tool_name == "scroll"
+        && ["x", "y"].iter().all(|field| {
+            matches!(
+                input_schema["properties"][field]["type"].as_str(),
+                Some("number" | "integer")
+            )
+        })
+    {
+        capabilities.push("input.scroll.coordinates".into());
+    }
     capabilities
+}
+
+fn schema_accepts_delivery_mode(input_schema: &Value) -> bool {
+    input_schema
+        .pointer("/properties/delivery_mode")
+        .is_some_and(Value::is_object)
+}
+
+/// Canonicalize the hidden pre-0.7 Windows `dispatch` compatibility alias.
+///
+/// This runs at the native dispatch boundary before policy, protected-resource
+/// authorization, recording, and platform execution. Every downstream
+/// consumer therefore sees the same modern field and one of the two supported
+/// values. The live schema remains modern-only, and schema gating prevents an
+/// unrelated tool's `dispatch` argument from being reinterpreted.
+///
+/// Presence of `delivery_mode` always wins, including when its value is null or
+/// malformed. As with the platform parsers, only an explicit case-insensitive
+/// `foreground` opts into foreground delivery; every other supplied value,
+/// including the removed legacy `auto`, fails closed to `background`.
+fn normalize_delivery_mode_args(tool: &ToolDef, args: &mut Value) {
+    if !schema_accepts_delivery_mode(&tool.input_schema) {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+
+    let supplied = if arguments.contains_key("delivery_mode") {
+        arguments.get("delivery_mode")
+    } else {
+        arguments.get("dispatch")
+    };
+    let Some(supplied) = supplied else {
+        return;
+    };
+    let mode = if supplied
+        .as_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case("foreground"))
+    {
+        "foreground"
+    } else {
+        "background"
+    };
+
+    arguments.remove("dispatch");
+    arguments.insert("delivery_mode".to_owned(), Value::String(mode.to_owned()));
 }
 
 /// Runtime-owned provenance for protected-resource admission.
@@ -430,6 +947,15 @@ pub enum ProtectedResourceOwnership {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
+
+    /// Implementation-attested routing that cannot touch the primary input
+    /// lane. The adapter must serialize its own lifecycle and fail closed if
+    /// that independent route is unavailable; it must never fall back to
+    /// global input. Caller fields alone cannot establish this guarantee.
+    /// Existing platform routes conservatively retain global coordination.
+    fn has_independent_input_lane(&self, _args: &Value) -> bool {
+        false
+    }
 
     /// Trusted implementation-side provenance for prompt-light disposable
     /// resources. The default is deliberately conservative: caller arguments
@@ -494,8 +1020,14 @@ impl Drop for RuntimeCleanup {
 pub struct TrustedInvocationEvidence {
     session_id: Option<String>,
     transport_session_id: Option<String>,
-    browser_prepare_mcp_host_approved: bool,
     browser_download_mcp_host_approved: bool,
+    /// Who originated the input (`_input_origin`): a trusted host relaying
+    /// a human's input marks it so no agent cursor is drawn for it.
+    input_origin: Option<crate::agent_cursor::InputOrigin>,
+    /// Window-relative pixels are native window pixels (see
+    /// [`ToolRegistry::invoke_with_native_window_pixels`]). Never read from
+    /// arguments: only that in-process entry point sets it.
+    native_window_pixels: bool,
 }
 
 impl TrustedInvocationEvidence {
@@ -511,17 +1043,39 @@ impl TrustedInvocationEvidence {
                 .remove("_transport_session_id")
                 .and_then(|value| value.as_str().map(str::to_owned))
                 .filter(|value| !value.is_empty());
-            evidence.browser_prepare_mcp_host_approved = arguments
-                .remove(crate::browser::approval::MCP_HOST_APPROVAL_ARG)
-                .and_then(|value| value.as_bool())
-                == Some(true);
             evidence.browser_download_mcp_host_approved = arguments
                 .remove(crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG)
                 .and_then(|value| value.as_bool())
                 == Some(true);
+            evidence.input_origin = arguments
+                .remove(crate::agent_cursor::INPUT_ORIGIN_ARG)
+                .and_then(|value| {
+                    value
+                        .as_str()
+                        .and_then(crate::agent_cursor::InputOrigin::parse)
+                });
         }
         crate::tool_args::sanitize_reserved_args(args);
         evidence
+    }
+
+    /// Record the call's input origin for the cursor key it resolves to
+    /// (`session`, else `_session_id`, else `cursor_id`, after namespacing),
+    /// so every platform overlay and the cursor hook embedder see it.
+    fn record_input_origin(&self, args: &Value) {
+        let Some(origin) = self.input_origin else {
+            return;
+        };
+        if let Some(key) = ["session", "_session_id", "cursor_id"]
+            .into_iter()
+            .find_map(|key| {
+                args.get(key)
+                    .and_then(Value::as_str)
+                    .filter(|v| !v.is_empty())
+            })
+        {
+            crate::agent_cursor::set_input_origin(key, origin);
+        }
     }
 
     fn apply_runtime_args(&self, args: &mut Value) {
@@ -537,15 +1091,15 @@ impl TrustedInvocationEvidence {
                 Value::String(session.clone()),
             );
         }
-        if self.browser_prepare_mcp_host_approved {
-            arguments.insert(
-                crate::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                Value::Bool(true),
-            );
-        }
         if self.browser_download_mcp_host_approved {
             arguments.insert(
                 crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG.to_owned(),
+                Value::Bool(true),
+            );
+        }
+        if self.native_window_pixels {
+            arguments.insert(
+                crate::snapshot_store::NATIVE_WINDOW_PIXELS_ARG.to_owned(),
                 Value::Bool(true),
             );
         }
@@ -559,10 +1113,16 @@ pub struct ToolRegistry {
     order: Vec<String>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
+    /// Optional encrypted Computer History runtime. It is installed only by a
+    /// trusted host that admitted the experimental preview.
+    history: Option<Arc<crate::history::HistoryManager>>,
     replay_registry: ReplayRegistrySlot,
     session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
+    session_revive_hooks: Vec<crate::session::SessionReviveHookRegistration>,
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
+    _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    capture_service: Arc<crate::capture_runtime::CaptureService>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -582,6 +1142,7 @@ impl ToolRegistry {
     pub fn new_with_protected_consent_provider(
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Self {
+        let capture_service = Arc::new(crate::capture_runtime::CaptureService::default());
         let approval_broker = Arc::new(crate::consent::ApprovalBroker::new(provider));
         let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
             approval_broker.clone(),
@@ -590,10 +1151,15 @@ impl ToolRegistry {
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
+        let weak_captures = Arc::downgrade(&capture_service);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
+                crate::agent_cursor::forget_input_origin(session_id);
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
+                }
+                if let Some(captures) = weak_captures.upgrade() {
+                    captures.retire_session_id(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -610,14 +1176,27 @@ impl ToolRegistry {
                     });
                 }
             });
+        let recording = Arc::new(RecordingSession::new());
+        let weak_recording = Arc::downgrade(&recording);
+        let recording_state_reader =
+            crate::session::register_scoped_recording_state_reader(Arc::new(move |session_id| {
+                weak_recording.upgrade().is_some_and(|recording| {
+                    let state = recording.current_state();
+                    state.enabled && state.owner.as_deref() == Some(session_id)
+                })
+            }));
         Self {
             tools: HashMap::new(),
             order: Vec::new(),
-            recording: Arc::new(RecordingSession::new()),
+            recording,
+            history: None,
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
             session_end_hooks: vec![session_end_hook],
+            session_revive_hooks: Vec::new(),
             cursor_outcome_readers: Vec::new(),
+            _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            capture_service,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -631,6 +1210,11 @@ impl ToolRegistry {
     /// trusted runtime.
     pub fn approval_broker(&self) -> Arc<crate::consent::ApprovalBroker> {
         self.approval_broker.clone()
+    }
+
+    /// Return the immutable-capture service owned by this runtime registry.
+    pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
+        self.capture_service.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -715,6 +1299,13 @@ impl ToolRegistry {
         self.session_end_hooks.push(registration);
     }
 
+    pub fn retain_session_revive_hook(
+        &mut self,
+        registration: crate::session::SessionReviveHookRegistration,
+    ) {
+        self.session_revive_hooks.push(registration);
+    }
+
     pub fn retain_cursor_outcome_reader(
         &mut self,
         registration: crate::session::CursorOutcomeReaderRegistration,
@@ -740,17 +1331,89 @@ impl ToolRegistry {
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
     }
 
-    /// Register the platform-independent session-lifecycle tools
-    /// (`start_session` / `end_session`). Call alongside
+    /// Install the encrypted history hook and its two permission-gated,
+    /// read-only agent tools. Lifecycle mutation remains daemon-private.
+    pub fn register_history_tools(&mut self, manager: Arc<crate::history::HistoryManager>) {
+        self.history = Some(manager.clone());
+        self.register(Box::new(crate::history::HistoryStatusTool::new(
+            manager.clone(),
+        )));
+        self.register(Box::new(crate::history::HistoryQueryTool::new(manager)));
+    }
+
+    pub fn history(&self) -> Option<Arc<crate::history::HistoryManager>> {
+        self.history.clone()
+    }
+
+    /// Register the platform-independent lifecycle and compatibility tools
+    /// (`start_session`, `get_session`, `list_sessions`, `end_session`, and
+    /// the legacy capture-scope readers). Call alongside
     /// `register_recording_tools` from each platform's `register_all`.
     pub fn register_session_tools(&mut self) {
         use crate::session_tools::{
-            EndSessionTool, EscalateSessionTool, GetSessionStateTool, StartSessionTool,
+            EndSessionTool, EscalateSessionTool, GetSessionStateTool, GetSessionTool,
+            ListSessionsTool, StartSessionTool,
         };
         self.register(Box::new(StartSessionTool));
         self.register(Box::new(EscalateSessionTool));
+        self.register(Box::new(GetSessionTool));
+        self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register_batch_tools();
+    }
+
+    /// Register `run_steps`, which re-enters this registry for every step.
+    /// Called from [`Self::register_session_tools`] so every platform that
+    /// registers sessions gets it; [`Self::init_self_weak`] supplies the
+    /// registry handle, as for `replay_trajectory`.
+    fn register_batch_tools(&mut self) {
+        self.register(Box::new(crate::batch_tools::RunStepsTool::new(
+            self.replay_registry.clone(),
+        )));
+        // On by default; the operator can turn it off (see script_tool).
+        #[cfg(feature = "script")]
+        match crate::script_tool::disabled_by() {
+            None => self.register_script_tool(),
+            Some(setting) => tracing::debug!("run_script not offered: turned off by {setting}"),
+        }
+        #[cfg(not(feature = "script"))]
+        tracing::debug!("run_script not offered: built without the `script` engine feature");
+    }
+
+    /// Register the `run_script` tool, which, like
+    /// `run_steps`, re-enters this registry for every driver call.
+    #[cfg(feature = "script")]
+    pub fn register_script_tool(&mut self) {
+        self.register(Box::new(crate::script_tool::RunScriptTool::new(
+            self.replay_registry.clone(),
+        )));
+    }
+
+    pub fn register_perception_tool(
+        &mut self,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
+    ) {
+        let captures = self.capture_service();
+        let resolve_binding = Arc::new(move |args: &Value| {
+            captures.binding_from_args(args).map_err(|error| {
+                crate::perception_client::error(
+                    cua_driver_contract::VisualParseErrorCode::CaptureGenerationMismatch,
+                    "capture session binding is unavailable",
+                    false,
+                    Some(error.to_string()),
+                )
+            })
+        });
+        self.register_perception_tool_with_binding_resolver(client, resolve_binding);
+    }
+
+    pub fn register_perception_tool_with_binding_resolver(
+        &mut self,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
+        resolve_binding: crate::perception_tools::CaptureBindingResolver,
+    ) {
+        crate::perception_tools::register_perception_tool(self, client, resolve_binding);
     }
 
     /// Wire up the replay tool's weak self-reference.
@@ -759,12 +1422,41 @@ impl ToolRegistry {
         *self.replay_registry.lock().unwrap() = Arc::downgrade(self);
     }
 
+    /// Registered tools whose advertised input schema cannot admit a valid
+    /// call through the dispatch argument check. Open schemas bypass that
+    /// check, so each must be named in `open`.
+    pub fn input_conformance_violations(&self, open: &[&str]) -> Vec<String> {
+        let mut violations = Vec::new();
+        for name in &self.order {
+            let def = self.tools[name].def();
+            let schema = advertised_runtime_input_schema(name, &def.input_schema);
+            if schema["additionalProperties"] != false {
+                if !open.contains(&name.as_str()) {
+                    violations.push(format!("{name}: input schema is not closed"));
+                }
+                continue;
+            }
+            if schema.pointer("/properties/session").is_none() {
+                violations.push(format!("{name}: input schema does not accept `session`"));
+            }
+            let properties = &schema["properties"];
+            for field in schema["required"].as_array().into_iter().flatten() {
+                let field = field.as_str().unwrap_or_default();
+                if properties.get(field).is_none() {
+                    violations.push(format!("{name}: required `{field}` is not advertised"));
+                }
+            }
+        }
+        violations
+    }
+
     pub fn tools_list(&self) -> Value {
         let list: Vec<Value> = self
             .order
             .iter()
-            .filter_map(|n| self.tools.get(n))
-            .map(|t| t.def().to_list_entry())
+            .filter(|name| crate::policy::is_tool_listable(name))
+            .filter_map(|name| self.tools.get(name))
+            .map(|tool| tool.def().to_list_entry())
             .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on
@@ -807,11 +1499,43 @@ impl ToolRegistry {
 
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
+        self.invoke_in_process(name, args, false).await
+    }
+
+    /// Invoke for a trusted in-process host whose window-relative pixel
+    /// arguments (`x`/`y`, `from_x`/`to_y`, ...) are native window pixels
+    /// it measured itself, for example a Space stream relaying a viewer's
+    /// input at the captured window's native geometry.
+    ///
+    /// Window-relative pixel actions otherwise need a current snapshot of
+    /// that window with a screenshot owned by the calling session, which
+    /// supplies the screenshot-to-native scale. This entry point uses scale
+    /// 1.0 instead and needs no prior read. Element targets are unchanged:
+    /// they still take an `element_token` from a current snapshot.
+    ///
+    /// It is a Rust API only. The marker it sets travels as trusted
+    /// invocation evidence, never as a caller argument: dispatch strips every
+    /// underscore-prefixed argument before evidence is applied, no protocol
+    /// adapter extracts the marker, and nested registry calls (replay) do not
+    /// inherit it. MCP, the CLI, the SDK ABI and the wire therefore cannot
+    /// reach it.
+    pub async fn invoke_with_native_window_pixels(&self, name: &str, args: Value) -> ToolResult {
+        self.invoke_in_process(name, args, true).await
+    }
+
+    async fn invoke_in_process(
+        &self,
+        name: &str,
+        args: Value,
+        native_window_pixels: bool,
+    ) -> ToolResult {
         if let Ok(context) = DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone) {
             let mut args = args;
-            let evidence = DISPATCH_TRUSTED_INVOCATION_EVIDENCE
+            let mut evidence = DISPATCH_TRUSTED_INVOCATION_EVIDENCE
                 .try_with(Clone::clone)
                 .unwrap_or_default();
+            // Only the outermost in-process call vouches for its pixels.
+            evidence.native_window_pixels = native_window_pixels;
             crate::tool_args::sanitize_reserved_args(&mut args);
             if let Some(bound_session) = context.public_session() {
                 let Some(arguments) = args.as_object_mut() else {
@@ -839,7 +1563,7 @@ impl ToolRegistry {
                 .await;
         }
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -848,16 +1572,45 @@ impl ToolRegistry {
                 ))
             }
         };
-        self.invoke_with_context(name, args, context).await
+        let evidence = TrustedInvocationEvidence {
+            native_window_pixels,
+            ..TrustedInvocationEvidence::default()
+        };
+        self.invoke_with_context_and_evidence(name, args, context, evidence)
+            .await
     }
 
     /// Invoke from a protocol adapter that already stripped caller-owned
     /// reserved fields before adding its own transport evidence.
     #[doc(hidden)]
-    pub async fn invoke_from_trusted_adapter(&self, name: &str, mut args: Value) -> ToolResult {
-        let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+    pub async fn invoke_from_trusted_adapter(&self, name: &str, args: Value) -> ToolResult {
+        self.invoke_from_trusted_adapter_in_process(name, args, false)
+            .await
+    }
+
+    /// [`Self::invoke_from_trusted_adapter`] for an in-process host whose
+    /// window-relative pixels are native window pixels; see
+    /// [`Self::invoke_with_native_window_pixels`].
+    #[doc(hidden)]
+    pub async fn invoke_from_trusted_adapter_with_native_window_pixels(
+        &self,
+        name: &str,
+        args: Value,
+    ) -> ToolResult {
+        self.invoke_from_trusted_adapter_in_process(name, args, true)
+            .await
+    }
+
+    async fn invoke_from_trusted_adapter_in_process(
+        &self,
+        name: &str,
+        mut args: Value,
+        native_window_pixels: bool,
+    ) -> ToolResult {
+        let mut evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+        evidence.native_window_pixels = native_window_pixels;
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -928,6 +1681,7 @@ impl ToolRegistry {
         // fields carry registry-internal attestations and must not be
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
+        let original_name = name;
 
         if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
             return protected_refusal(
@@ -952,12 +1706,50 @@ impl ToolRegistry {
                 eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                 "type_text"
             }
-            other => other,
+            other => renamed_tool(other).unwrap_or(other),
         };
 
         let Some(tool) = self.tools.get(resolved_name) else {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
+
+        // MCP types `arguments` as an object and transports substitute `{}`
+        // when it is absent, but a client can still send any JSON value.
+        // Everything below indexes into the object (session stamping,
+        // protected-resource fingerprints, replay rewrites), so refuse other
+        // shapes here instead of panicking the dispatcher on a caller's input.
+        if !args.is_object() {
+            return ToolResult::error(format!(
+                "{resolved_name}: invalid arguments: expected a JSON object"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "invalid_arguments",
+                "tool": resolved_name,
+                "detail": "arguments must be a JSON object",
+            }));
+        }
+
+        // Normalize deprecated public argument spellings before any policy,
+        // consent, recording, or implementation layer interprets the call.
+        coerce_string_scalars(&tool.def().input_schema, &mut args);
+        normalize_delivery_mode_args(tool.def(), &mut args);
+        if let Err(detail) = normalize_argument_aliases(resolved_name, &mut args) {
+            return ToolResult::error(format!("{resolved_name}: {detail}")).with_structured(
+                serde_json::json!({
+                    "code": "invalid_arguments",
+                    "tool": resolved_name,
+                    "detail": detail,
+                }),
+            );
+        }
+        let unknown_argument = unknown_argument(tool.def(), &args);
+        if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
+        {
+            return result;
+        }
+        if let Err(result) = crate::action_target::enforce_delivery_target(resolved_name, &args) {
+            return result;
+        }
 
         // This registry is the canonical native dispatch boundary shared by
         // the same-process SDK and every transport adapter. Authorization must
@@ -981,22 +1773,41 @@ impl ToolRegistry {
         // caller-chosen label alone. Translate it only after authorization so
         // policy and manifests continue to evaluate the public request.
         let runtime_prefix = namespace_runtime_args(&mut args, context, evidence);
+        if session_selecting_tool(resolved_name)
+            && args.get("_session_id").and_then(Value::as_str).is_none()
+        {
+            let implicit = args
+                .get("_transport_session_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{runtime_prefix}implicit-direct"));
+            args["_session_id"] = Value::String(implicit.clone());
+            args["_transport_session_id"] = Value::String(implicit);
+        }
+        evidence.record_input_origin(&args);
         let runtime_session = args
-            .get("session")
+            .get("_session_id")
             .and_then(Value::as_str)
             .map(str::to_owned);
         if let Some(session) = runtime_session.as_deref() {
+            let owner = args
+                .get("_transport_session_id")
+                .and_then(Value::as_str)
+                .unwrap_or(session);
+            // An unnamed session reclaimed by the idle sweep is recreated at
+            // lifecycle admission below; every other ended episode refuses
+            // with the recovery that actually applies to its identity.
             if !matches!(resolved_name, "start_session" | "end_session")
                 && crate::session::is_session_ended(session)
+                && !crate::session::recreates_on_next_call(session, owner)
             {
-                let mut result = protected_refusal(
-                    "session_ended",
-                    "this session has ended; call start_session explicitly to reuse its label",
+                let message = ended_session_refusal_message(
+                    args.get("_public_session_label").and_then(Value::as_str),
                 );
+                let mut result = protected_refusal("session_ended", &message);
                 restore_public_runtime_result(&mut result, &runtime_prefix);
                 return result;
             }
-            crate::session::touch_session(session);
         }
 
         // Reject modality violations before reserving a recording turn. A
@@ -1095,18 +1906,52 @@ impl ToolRegistry {
             );
         }
 
+        if resolved_name == "set_config" && args.get("capture_scope").is_some() {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
+        }
+        if let Some(key) = [DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY]
+            .into_iter()
+            .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
+        }
+
+        if let Some(detail) = unknown_argument {
+            return protected_refusal(
+                "invalid_arguments",
+                &format!("{resolved_name}: unknown {detail}"),
+            );
+        }
+
         // Resource adapters run at the same canonical boundary as policy and
         // manifest admission, after session capture-scope validation but
         // before recording or the platform tool can observe user state. This
-        // avoids prompting for a call the session policy will refuse, while
+        // avoids prompting for a call the capability manifest will refuse, while
         // preserving the public arguments in the grant scope and the private
         // runtime session key in its revocation lifecycle.
-        if has_adapter("private_observation")
-            && !runtime_proves_driver_owned
-            && tool
-                .protected_resource_ownership("private_observation", &public_args)
-                .await
-                != ProtectedResourceOwnership::DriverOwned
+        let history_observation = has_adapter("computer_history");
+        if (has_adapter("private_observation") || history_observation)
+            && (history_observation
+                || (!runtime_proves_driver_owned
+                    && tool
+                        .protected_resource_ownership("private_observation", &public_args)
+                        .await
+                        != ProtectedResourceOwnership::DriverOwned)
+                || context.capability_manifest().is_some())
         {
             if let Err(error) = self
                 .authorize_private_observation(
@@ -1115,6 +1960,11 @@ impl ToolRegistry {
                     &public_args,
                     context,
                     runtime_session.as_deref(),
+                    if history_observation {
+                        "computer_history"
+                    } else {
+                        "private_observation"
+                    },
                 )
                 .await
             {
@@ -1153,7 +2003,9 @@ impl ToolRegistry {
             namespace_runtime_args(&mut args, context, evidence);
         }
         let recording_args = recording_args_for(resolved_name, &public_args);
-        if has_adapter("desktop_input") && !runtime_proves_driver_owned {
+        if has_adapter("desktop_input")
+            && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
+        {
             if let Err(error) = self
                 .authorize_desktop_input(
                     resolved_name,
@@ -1167,10 +2019,11 @@ impl ToolRegistry {
             }
         }
         if has_adapter("browser_consequential_action")
-            && tool
+            && (tool
                 .protected_resource_ownership("browser_consequential_action", &public_args)
                 .await
                 != ProtectedResourceOwnership::DriverOwned
+                || context.capability_manifest().is_some())
         {
             let approved_scope = match self
                 .authorize_attested_resource(
@@ -1204,10 +2057,11 @@ impl ToolRegistry {
             }
         }
         if has_adapter("browser_bound_input")
-            && tool
+            && (tool
                 .protected_resource_ownership("browser_bound_input", &public_args)
                 .await
                 != ProtectedResourceOwnership::DriverOwned
+                || context.capability_manifest().is_some())
         {
             let approved_scope = match self
                 .authorize_attested_resource(
@@ -1241,8 +2095,7 @@ impl ToolRegistry {
             }
         }
         if has_adapter("process_control")
-            && (!runtime_proves_driver_owned
-                || context.mode() == crate::authorization::PermissionMode::Bounded)
+            && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
         {
             let approved_scope = match self
                 .authorize_attested_resource(
@@ -1292,6 +2145,53 @@ impl ToolRegistry {
             }
         }
 
+        if let Err(error) = context.commit_authorized_dispatch() {
+            return permission_denied_result(error);
+        }
+
+        let lifecycle_dispatch =
+            if session_requiring_tool(resolved_name) && resolved_name != "start_session" {
+                let Some(session_id) = runtime_session.as_deref() else {
+                    return protected_refusal(
+                        "session_unavailable",
+                        "an admitted session-requiring call has no lifecycle identity",
+                    );
+                };
+                let owner = args
+                    .get("_transport_session_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(session_id);
+                let public_label = args.get("_public_session_label").and_then(Value::as_str);
+                let (transport, client_kind) = crate::session::infer_transport_metadata(owner);
+                let admitted = match context.lifecycle_idle_ttl_override() {
+                    Some(idle_ttl) => crate::session::begin_session_dispatch_with_ttl(
+                        session_id,
+                        public_label,
+                        owner,
+                        public_label.is_none(),
+                        transport,
+                        client_kind,
+                        idle_ttl,
+                    ),
+                    None => crate::session::begin_session_dispatch(
+                        session_id,
+                        public_label,
+                        owner,
+                        public_label.is_none(),
+                        transport,
+                        client_kind,
+                    ),
+                };
+                match admitted {
+                    Ok(guard) => Some(guard),
+                    Err(message) => {
+                        return protected_refusal("session_ended", message);
+                    }
+                }
+            } else {
+                None
+            };
+
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {
             self.snapshot_running_pids().await
@@ -1300,16 +2200,31 @@ impl ToolRegistry {
         };
         let start_ms = now_ms();
         let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
+        let pending_history = self.history.as_ref().and_then(|history| {
+            history.begin_action(resolved_name, &public_args, runtime_session.as_deref())
+        });
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
+        // Exclude session lifecycle calls, including one-shot CLI teardown.
         let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
-                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+                "start_recording"
+                    | "stop_recording"
+                    | "get_recording_state"
+                    | "replay_trajectory"
+                    | "run_steps"
+                    | "run_script"
+                    | "start_session"
+                    | "end_session"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if is_physical_desktop_action(resolved_name) {
+        let _desktop_action = if requires_desktop_coordination(
+            resolved_name,
+            &args,
+            tool.has_independent_input_lane(&args),
+        ) {
             let coordinator = desktop_action_coordinator();
             // Avoid yielding the dispatch task when the process-wide input
             // lane is uncontended. On Windows, that yield creates a window in
@@ -1325,17 +2240,61 @@ impl ToolRegistry {
         };
         let pending_turn = should_record
             .then(|| {
+                // Use the same trusted identities the recording owner was minted from.
+                let caller = crate::recording::RecordingCaller {
+                    session: runtime_session.as_deref(),
+                    transport: args.get("_transport_session_id").and_then(Value::as_str),
+                };
                 if private_consent_turn {
-                    self.recording
-                        .begin_private_turn(resolved_name, &recording_args, start_ms)
+                    self.recording.begin_private_turn(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        caller,
+                    )
                 } else {
-                    self.recording
-                        .begin_turn(resolved_name, &recording_args, start_ms)
+                    // A capture-bound click whose capture is already unknown,
+                    // expired, or superseded is refused by every platform
+                    // adapter before dispatch. Do not walk the application for
+                    // evidence of an action that cannot happen.
+                    let predicted_refusal =
+                        matches!(resolved_name, "click" | "double_click" | "right_click")
+                            .then(|| self.capture_service.predict_action_refusal(&args))
+                            .flatten();
+                    self.recording.begin_turn_with_refusal_hint(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        caller,
+                        predicted_refusal,
+                    )
                 }
             })
             .flatten();
 
-        let mut result = tool.invoke(args.clone()).await;
+        // Desktop pixels read off a capped get_desktop_state image are mapped
+        // back to the uncapped capture before any platform interprets them.
+        crate::desktop_capture_scale::map_desktop_args(&mut args);
+        let mut result = crate::recording::scope_dispatch_click_capture(
+            pending_turn.as_ref(),
+            tool.invoke(args.clone()),
+        )
+        .await;
+        match resolved_name {
+            "get_desktop_state" if result.is_error != Some(true) => {
+                crate::desktop_capture_scale::record_desktop_state(
+                    &args,
+                    result.structured_content.as_ref(),
+                );
+            }
+            "end_session" => {
+                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                    crate::desktop_capture_scale::forget_session(session);
+                }
+            }
+            _ => {}
+        }
+        drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
         // finish for the completed call.
@@ -1381,12 +2340,6 @@ impl ToolRegistry {
         // recording/PiP screenshots would unnecessarily block an unrelated
         // runtime after the input side effect has already completed.
         drop(_desktop_action);
-        // A long-running authorized action is active work, not idle time.
-        // Refresh again at completion so the idle TTL measures the gap
-        // between calls rather than time spent executing the previous call.
-        if let Some(session) = runtime_session.as_deref() {
-            crate::session::touch_session(session);
-        }
         restore_public_runtime_result(&mut result, &runtime_prefix);
         // Preserve the producer's private summary for recording/replay before
         // the public ActionResult projection deliberately replaces legacy
@@ -1402,10 +2355,11 @@ impl ToolRegistry {
         if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
-                    "internal action outcome mismatch for {resolved_name}: {error}"
+                    "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                 ))
                 .with_structured(serde_json::json!({
                     "code": "action_outcome_mismatch",
+                    "execution_state": "unknown",
                     "tool": resolved_name,
                     "detail": error,
                 }));
@@ -1417,10 +2371,11 @@ impl ToolRegistry {
                     cua_driver_contract::validate_success_output(resolved_name, structured)
                 {
                     result = ToolResult::error(format!(
-                        "internal typed output mismatch for {resolved_name}: {error}"
+                        "internal typed output mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "code": "typed_output_mismatch",
+                        "execution_state": "unknown",
                         "tool": resolved_name,
                         "detail": error,
                     }));
@@ -1431,6 +2386,25 @@ impl ToolRegistry {
         // exit-code matching and recording paths keep treating the alias
         // as a distinct call site.
         let name = resolved_name;
+
+        if let (Some(history), Some(pending)) = (self.history.as_ref(), pending_history) {
+            history.finish_action(
+                pending,
+                result.action_record.as_ref(),
+                result.is_error == Some(true),
+            );
+        }
+        if result.is_error != Some(true) && matches!(name, "start_session" | "end_session") {
+            if let Some(history) = self.history.as_ref() {
+                history.session_event(
+                    public_args
+                        .get("session")
+                        .and_then(Value::as_str)
+                        .or(runtime_session.as_deref()),
+                    name == "start_session",
+                );
+            }
+        }
 
         // Record non-read-only, non-recording tool calls. The recording-
         // control tools themselves are excluded so the recorded turn
@@ -1464,6 +2438,13 @@ impl ToolRegistry {
             }
         }
 
+        if renamed_tool(original_name).is_some() {
+            result.content.push(Content::text(deprecated_name_note(
+                original_name,
+                resolved_name,
+            )));
+        }
+
         result
     }
 
@@ -1474,13 +2455,19 @@ impl ToolRegistry {
         args: &Value,
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
+        adapter_id: &str,
     ) -> Result<(), crate::consent::ConsentError> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let browser_target = args.get("target_id").and_then(Value::as_str);
         let browser_tab = args.get("tab_id").and_then(Value::as_str);
-        if context.mode() == crate::authorization::PermissionMode::Standard {
+        if adapter_id == "private_observation"
+            && context.mode() == crate::authorization::PermissionMode::Standard
+            && context.capability_manifest().is_none()
+        {
             // Standard observation is promptless, but browser observations
             // still have to attest their live target before dispatch.
             if browser_target.is_some()
@@ -1499,11 +2486,17 @@ impl ToolRegistry {
             // promptless operation into a pure-Wayland failure.
             return Ok(());
         }
-        let browser_scope = tool
-            .protected_resource_scope("private_observation", args)
-            .await
-            .map_err(crate::consent::ConsentError::Provider)?;
-        let (mut resource, summary) = if let Some(resource) = browser_scope {
+        let history_resource = history_observation_resource(tool_name);
+        let browser_scope = if history_resource.is_none() {
+            tool.protected_resource_scope("private_observation", args)
+                .await
+                .map_err(crate::consent::ConsentError::Provider)?
+        } else {
+            None
+        };
+        let (mut resource, summary) = if let Some((resource, summary)) = history_resource {
+            (resource, summary.to_owned())
+        } else if let Some(resource) = browser_scope {
             let target_id = browser_target.unwrap_or("unknown");
             (
                 resource,
@@ -1601,7 +2594,7 @@ impl ToolRegistry {
             )
         };
 
-        if context.mode() == crate::authorization::PermissionMode::Bounded {
+        if context.capability_manifest().is_some() {
             if let Some(pid) = resource.get("pid").and_then(Value::as_i64) {
                 self.enrich_application_resource(&mut resource, pid).await;
             }
@@ -1609,7 +2602,7 @@ impl ToolRegistry {
         self.protected_resource_grants
             .authorize(
                 context,
-                "private_observation",
+                adapter_id,
                 crate::authorization::RiskClass::R2,
                 lifecycle_session,
                 resource,
@@ -1628,11 +2621,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if matches!(
-            context.mode(),
-            crate::authorization::PermissionMode::Standard
-                | crate::authorization::PermissionMode::Unrestricted
-        ) {
+        if context.mode() != crate::authorization::PermissionMode::Bounded
+            && context.capability_manifest().is_none()
+        {
             // Standard and unrestricted input do not need a protected grant.
             // Bounded mode continues below so the exact resource can be
             // checked against its approved manifest.
@@ -1707,7 +2698,7 @@ impl ToolRegistry {
             )
         };
 
-        if context.mode() == crate::authorization::PermissionMode::Bounded {
+        if context.capability_manifest().is_some() {
             if let Some(pid) = resource.get("pid").and_then(Value::as_i64) {
                 self.enrich_application_resource(&mut resource, pid).await;
             }
@@ -1734,7 +2725,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), crate::consent::ConsentError> {
-        if context.mode() != crate::authorization::PermissionMode::Bounded {
+        if context.mode() != crate::authorization::PermissionMode::Bounded
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let (operation, content_kind, summary) = if tool_name == "clipboard_read" {
@@ -1787,7 +2780,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let (resource, summary) = match tool_name {
@@ -1911,6 +2906,15 @@ impl ToolRegistry {
                 }),
                 "Allow Cua to install ffmpeg using the detected system package manager".to_owned(),
             ),
+            "install_extension" if args.get("confirm").and_then(Value::as_bool) == Some(true) => (
+                serde_json::json!({
+                    "kind": "extension_install",
+                    "extension": "perception",
+                    "direction": "local_catalog_to_driver",
+                }),
+                "Allow Cua to install the reviewed perception extension into the Driver home"
+                    .to_owned(),
+            ),
             _ => {
                 return Err(protected_scope_refusal(
                     "the file-transfer operation has no reviewed exact scope",
@@ -1947,7 +2951,9 @@ impl ToolRegistry {
         idle_ttl: Duration,
         absolute_ttl: Duration,
     ) -> Result<Value, ToolResult> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(Value::Null);
         }
         let mut resource = tool
@@ -1993,7 +2999,9 @@ impl ToolRegistry {
         lifecycle_session: Option<&str>,
         approved_scope: &Value,
     ) -> Result<(), ToolResult> {
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
+        {
             return Ok(());
         }
         let mut validation_scope = approved_scope.clone();
@@ -2029,21 +3037,9 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
+        if context.mode() == crate::authorization::PermissionMode::Unrestricted
+            && context.capability_manifest().is_none()
         {
-            return Err(
-                ToolResult::error(
-                    "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
-                )
-                .with_structured(serde_json::json!({
-                    "code": "config_key_retired",
-                    "key": "capture_scope",
-                    "replacement": "start_session.capture_scope",
-                })),
-            );
-        }
-        if context.mode() == crate::authorization::PermissionMode::Unrestricted {
             return Ok(());
         }
         let properties = tool
@@ -2067,25 +3063,8 @@ impl ToolRegistry {
         }
 
         let mut exact = serde_json::Map::new();
-        if let Some(key) = args.get("key").and_then(Value::as_str) {
-            if matches!(key, "key" | "value" | "session" | "_session_id")
-                || !properties.contains_key(key)
-            {
-                return Err(protected_scope_refusal(&format!(
-                    "set_config key '{key}' is not present in the concrete tool schema"
-                )));
-            }
-            let value = args
-                .get("value")
-                .ok_or_else(|| protected_scope_refusal("set_config key requires an exact value"))?;
-            exact.insert(key.to_owned(), value.clone());
-        } else if args.get("value").is_some() {
-            return Err(protected_scope_refusal(
-                "set_config value requires an exact key",
-            ));
-        }
         for (key, value) in object {
-            if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
+            if key == "session" || key.starts_with('_') {
                 continue;
             }
             exact.insert(key.clone(), value.clone());
@@ -2113,6 +3092,46 @@ impl ToolRegistry {
             .await
             .map_err(protected_consent_refusal)?;
         Ok(())
+    }
+}
+
+fn history_observation_resource(tool_name: &str) -> Option<(Value, &'static str)> {
+    match tool_name {
+        "history_status" => Some((
+            serde_json::json!({"kind": "computer_history", "operation": "status"}),
+            "Allow Cua to inspect Computer History status",
+        )),
+        "history_query" => Some((
+            serde_json::json!({"kind": "computer_history", "operation": "query"}),
+            "Allow Cua to read encrypted Computer History metadata",
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod history_observation_tests {
+    use super::*;
+
+    #[test]
+    fn history_grants_are_display_independent_and_operation_specific() {
+        let (status, _) = history_observation_resource("history_status").unwrap();
+        let (query, _) = history_observation_resource("history_query").unwrap();
+        assert_eq!(
+            status,
+            serde_json::json!({"kind":"computer_history","operation":"status"})
+        );
+        assert_eq!(
+            query,
+            serde_json::json!({"kind":"computer_history","operation":"query"})
+        );
+        assert_ne!(status, query);
+        for resource in [status, query] {
+            assert!(resource.get("width").is_none());
+            assert!(resource.get("pid").is_none());
+            assert!(resource.get("session").is_none());
+            assert!(resource.get("since_sequence").is_none());
+        }
     }
 }
 
@@ -2215,7 +3234,12 @@ fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
 /// The deepest existing ancestor is canonicalized first, so symlinked parents
 /// are captured in the approved identity. Only normal path components may be
 /// appended after that ancestor; lexical parent traversal never enters a
-/// protected-resource digest.
+/// protected-resource digest. The caller replaces the raw argument with this
+/// canonical path, so the tool writes exactly the approved location.
+///
+/// A deepest existing ancestor that is itself a symbolic link to a directory
+/// (macOS `/tmp` -> `/private/tmp`) is resolved like any other symlinked
+/// parent. A link to a non-directory is refused.
 fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     let path = expanded_path(raw)?;
     if path.exists() {
@@ -2239,6 +3263,11 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
                 ))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {
+                return Err(protected_scope_refusal(
+                    "an ancestor of the output path is not a directory",
+                ))
+            }
             Err(_) => {
                 return Err(protected_scope_refusal(
                     "the output path could not be inspected safely",
@@ -2253,11 +3282,13 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
             .parent()
             .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
     }
-    let metadata = std::fs::symlink_metadata(existing)
+    // Follow a symlinked ancestor: `exists()` above already resolved it, and
+    // `canonicalize` below records its target in the approved identity.
+    let metadata = std::fs::metadata(existing)
         .map_err(|_| protected_scope_refusal("the output ancestor is unavailable"))?;
     if !metadata.is_dir() {
         return Err(protected_scope_refusal(
-            "the output path's existing ancestor is not a directory",
+            "the output path's deepest existing ancestor is not a directory",
         ));
     }
     let mut canonical = std::fs::canonicalize(existing)
@@ -2298,6 +3329,21 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "bring_to_front"
             | "set_window_frame"
     )
+}
+
+fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+    if !is_physical_desktop_action(tool) {
+        return false;
+    }
+    // Only an implementation-attested, exact-window background route can
+    // leave the shared lane. Explicit desktop and foreground calls never do.
+    let exact_background_window = args["pid"].as_u64().is_some_and(|pid| pid > 0)
+        && args["window_id"].as_u64().is_some_and(|id| id > 0)
+        && args["scope"] != "desktop"
+        && args.pointer("/target/kind").and_then(Value::as_str) != Some("desktop")
+        && args["delivery_mode"] != "foreground"
+        && args["dispatch"] != "foreground";
+    !(independent_lane && exact_background_window)
 }
 
 /// Bucket that owns the processes a call is allowed to terminate.
@@ -2355,6 +3401,13 @@ fn namespace_runtime_args(
             );
         }
     }
+    if let Some(idle_ttl) = context.lifecycle_idle_ttl_override() {
+        let idle_ttl_ms = idle_ttl.as_millis().min(u64::MAX as u128) as u64;
+        arguments.insert(
+            "_session_idle_ttl_ms".to_owned(),
+            Value::Number(idle_ttl_ms.into()),
+        );
+    }
     // The registry is the first boundary shared by every transport and the
     // direct SDK. Transport adapters may already have injected `_session_id`,
     // but a direct runtime call only carries the public `session` field. Mint
@@ -2395,14 +3448,43 @@ fn namespace_runtime_args(
     runtime_prefix
 }
 
+fn session_requiring_tool(tool_name: &str) -> bool {
+    !matches!(
+        tool_name,
+        "check_permissions"
+            | "health_report"
+            | "get_session"
+            | "list_sessions"
+            | "get_session_state"
+            | "end_session"
+    )
+}
+
+fn session_selecting_tool(tool_name: &str) -> bool {
+    session_requiring_tool(tool_name)
+        || matches!(
+            tool_name,
+            "get_session" | "list_sessions" | "get_session_state" | "end_session"
+        )
+}
+
 fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
     let action = result
         .action_record
         .as_ref()
         .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
-    let public = action
+    let mut public = action
         .public_result()
         .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    // Some MCP clients (Claude Code among them) hand the model only
+    // `structuredContent` when it is present and drop the text blocks. The
+    // producer's text is the only place the resolved points, the element hit,
+    // popups, focus outcome and follow-up calls are spelled out, so the
+    // closed contract carries it as `summary`.
+    public.summary = result.content.iter().find_map(|content| match content {
+        Content::Text { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+        _ => None,
+    });
     public
         .validate_invariants()
         .map_err(|error| format!("invalid public projection: {error}"))?;
@@ -2474,7 +3556,7 @@ mod runtime_isolation_tests {
     use crate::{
         authorization::PermissionMode,
         consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
-        protocol::ToolResult,
+        protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
     use std::io::Write;
@@ -2513,6 +3595,13 @@ mod runtime_isolation_tests {
     fn bounded_context(
         manifest_source: &str,
     ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        manifest_context(PermissionMode::Bounded, manifest_source)
+    }
+
+    fn manifest_context(
+        mode: PermissionMode,
+        manifest_source: &str,
+    ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(manifest_source.as_bytes()).unwrap();
         let manifest = Arc::new(
@@ -2520,14 +3609,14 @@ mod runtime_isolation_tests {
                 .expect("test bounded manifest loads"),
         );
         let ceiling = SessionModeCeiling::for_trusted_sessions(
-            [PermissionMode::Bounded],
-            false,
+            [mode],
+            mode == PermissionMode::Unrestricted,
             Duration::from_secs(60),
             Duration::from_secs(30),
         )
         .unwrap();
         SessionAuthorizationRegistry::with_ceiling(ceiling)
-            .compatibility_context(PermissionMode::Bounded, Some(manifest))
+            .compatibility_context(mode, Some(manifest))
             .unwrap()
     }
 
@@ -2610,10 +3699,13 @@ mod runtime_isolation_tests {
             &self.def
         }
 
-        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+        async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
-            crate::protocol::ToolResult::text("private state")
-                .with_structured(serde_json::json!({"snapshot_id": 1}))
+            crate::protocol::ToolResult::text("private state").with_structured(serde_json::json!({
+                "pid": args["pid"].as_u64().unwrap_or(42),
+                "window_id": args["window_id"].as_u64().unwrap_or(7),
+                "snapshot_id": "synthetic-snapshot", "elements": []
+            }))
         }
     }
 
@@ -2709,6 +3801,18 @@ mod runtime_isolation_tests {
         Arc::new(registry)
     }
 
+    // Use the same canonical spelling as manifest loading, including Windows'
+    // drive and extended-length prefix. This is an identity fixture only.
+    fn fixture_executable() -> String {
+        std::env::current_exe()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
     fn attested_registry(
         name: &str,
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
@@ -2722,7 +3826,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             "get_window_state" => serde_json::json!({
@@ -2732,7 +3836,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             _ => serde_json::json!({
@@ -2772,6 +3876,11 @@ mod runtime_isolation_tests {
                     "max_image_dimension": {"type": "integer"},
                     "experimental_pip": {"type": "boolean"}
                 },
+                "additionalProperties": false
+            })
+        } else if name == "check_permissions" {
+            serde_json::json!({
+                "type": "object", "properties": {"prompt": {"type": "boolean"}},
                 "additionalProperties": false
             })
         } else {
@@ -2828,6 +3937,89 @@ mod runtime_isolation_tests {
         registry
     }
 
+    fn recording_scope_registry(hits: Arc<AtomicUsize>) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ReplayProbe {
+            hits,
+            def: super::ToolDef {
+                name: "probe".into(),
+                description: "runtime-local recording-scope probe".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": { "session": { "type": "string" } },
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register_recording_tools();
+        registry.register_session_tools();
+        let registry = Arc::new(registry);
+        registry.init_self_weak();
+        registry
+    }
+
+    #[tokio::test]
+    async fn recording_keeps_only_the_owning_session_and_never_lifecycle_calls() {
+        let registry = recording_scope_registry(Arc::new(AtomicUsize::new(0)));
+        let context = unrestricted_context();
+        let output = tempfile::tempdir().expect("temp dir");
+
+        let started = registry
+            .invoke_with_context(
+                "start_recording",
+                serde_json::json!({
+                    "output_dir": output.path(),
+                    "record_video": false,
+                    "session": "owner",
+                }),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(started.is_error, Some(true), "{started:?}");
+
+        for (tool, session) in [
+            ("probe", "other"),
+            ("end_session", "other"),
+            ("end_session", "owner-lifecycle"),
+        ] {
+            let result = registry
+                .invoke_with_context(
+                    tool,
+                    serde_json::json!({ "session": session }),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true), "{tool} {session}: {result:?}");
+        }
+
+        let owned = registry
+            .invoke_with_context(
+                "probe",
+                serde_json::json!({ "session": "owner" }),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(owned.is_error, Some(true), "{owned:?}");
+        registry
+            .invoke_with_context("stop_recording", serde_json::json!({}), context)
+            .await;
+
+        let action: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(output.path().join("turn-00001").join("action.json"))
+                .expect("the owning session's action is turn-00001"),
+        )
+        .expect("parse action.json");
+        assert_eq!(action["tool"], "probe");
+        assert_eq!(action["arguments"]["session"], "owner");
+        assert!(
+            !output.path().join("turn-00002").exists(),
+            "foreign and lifecycle calls must not leave turn folders"
+        );
+    }
+
     #[tokio::test]
     async fn replay_dispatches_only_through_the_owning_registry() {
         let hits_a = Arc::new(AtomicUsize::new(0));
@@ -2877,10 +4069,79 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
+    async fn standard_history_requires_an_explicit_protected_host_grant() {
+        let denied_hits = Arc::new(AtomicUsize::new(0));
+        let denied_registry = observation_registry_for("history_query", None, denied_hits.clone());
+        let denied = denied_registry
+            .invoke_with_context(
+                "history_query",
+                serde_json::json!({"session": "review"}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            denied
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_required")
+        );
+
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let allowed_hits = Arc::new(AtomicUsize::new(0));
+        let allowed_registry = observation_registry_for(
+            "history_query",
+            Some(provider.clone()),
+            allowed_hits.clone(),
+        );
+        let allowed = allowed_registry
+            .invoke_with_context(
+                "history_query",
+                serde_json::json!({"session": "review"}),
+                standard_context(),
+            )
+            .await;
+        assert_ne!(allowed.is_error, Some(true));
+        assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_history_requires_the_matching_operation_resource() {
+        for (operations, expected_allowed) in
+            [(["status"].as_slice(), false), (["query"].as_slice(), true)]
+        {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = observation_registry_for("history_query", None, hits.clone());
+            let operations = operations
+                .iter()
+                .map(|operation| format!("      - {operation}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let context = bounded_context(&format!(
+                "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  computer_history:\n    operations:\n{operations}\nallow:\n  tools: [history_query]\n"
+            ));
+            let result = registry
+                .invoke_with_context(
+                    "history_query",
+                    serde_json::json!({"session": "review"}),
+                    context,
+                )
+                .await;
+            assert_eq!(result.is_error != Some(true), expected_allowed);
+            assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+        }
+    }
+
+    #[tokio::test]
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);
-        let context = bounded_context(
+        let context = bounded_context(&format!(
             r#"
 version: 2
 mode: bounded
@@ -2890,12 +4151,13 @@ allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       launch: false
       windows: all
       terminate: deny
 "#,
-        );
+            executable = serde_json::to_string(&fixture_executable()).unwrap()
+        ));
         let result = registry
             .invoke_with_context(
                 "get_window_state",
@@ -2906,6 +4168,265 @@ resources:
 
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_ne!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn capability_manifest_typed_resources_narrow_standard_and_unrestricted() {
+        for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
+            let allowed_hits = Arc::new(AtomicUsize::new(0));
+            let registry = attested_registry("get_window_state", None, allowed_hits.clone(), false);
+            let allowed = manifest_context(
+                mode,
+                &format!(
+                    r#"
+version: 3
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - executable: {executable}
+      windows: all
+"#,
+                    executable = serde_json::to_string(&fixture_executable()).unwrap()
+                ),
+            );
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 424242, "window_id": 7, "session": "review"}),
+                    allowed,
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true), "{mode:?} in-scope call");
+            assert_eq!(allowed_hits.load(Ordering::SeqCst), 1);
+
+            let denied_hits = Arc::new(AtomicUsize::new(0));
+            let registry = attested_registry("get_window_state", None, denied_hits.clone(), false);
+            let denied = manifest_context(
+                mode,
+                &format!(
+                    r#"
+version: 3
+allow:
+  tools: [get_window_state]
+resources:
+  apps:
+    - executable: {executable}
+      windows: all
+"#,
+                    executable = serde_json::to_string(
+                        &std::path::Path::new(&fixture_executable())
+                            .with_file_name("another-application.exe")
+                    )
+                    .unwrap()
+                ),
+            );
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 424242, "window_id": 7, "session": "review"}),
+                    denied,
+                )
+                .await;
+            assert_eq!(result.is_error, Some(true), "{mode:?} out-of-scope call");
+            assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_manifest_tools_narrow_standard_and_unrestricted() {
+        for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = attested_registry("get_window_state", None, hits.clone(), false);
+            let context = manifest_context(
+                mode,
+                r#"
+version: 3
+allow:
+  tools: [click]
+"#,
+            );
+            let result = registry
+                .invoke_with_context(
+                    "get_window_state",
+                    serde_json::json!({"pid": 424242, "window_id": 7, "session": "review"}),
+                    context,
+                )
+                .await;
+            assert_eq!(result.is_error, Some(true), "{mode:?} undeclared tool");
+            assert_eq!(hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_typed_resource_does_not_refresh_manifest_idle_lease() {
+        let denied_hits = Arc::new(AtomicUsize::new(0));
+        let allowed_hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new();
+        for (name, window_id, hits) in [
+            ("get_desktop_state", 8_u64, denied_hits.clone()),
+            ("get_window_state", 7_u64, allowed_hits.clone()),
+        ] {
+            registry.register(Box::new(AttestedProbe {
+                hits,
+                scope: serde_json::json!({
+                    "kind": "window",
+                    "pid": 42,
+                    "window_id": window_id,
+                }),
+                stale_before_dispatch: false,
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "manifest idle lease probe".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: true,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }));
+        }
+        let context = manifest_context(
+            PermissionMode::Standard,
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 1s
+allow:
+  tools: [get_desktop_state, get_window_state]
+resources:
+  desktop:
+    windows:
+      - pid: 42
+        window_id: 7
+"#,
+        );
+
+        tokio::time::sleep(Duration::from_millis(650)).await;
+        let denied = registry
+            .invoke_with_context(
+                "get_desktop_state",
+                serde_json::json!({"session": "lease"}),
+                context.clone(),
+            )
+            .await;
+        assert_eq!(denied.is_error, Some(true));
+        assert_eq!(denied_hits.load(Ordering::SeqCst), 0);
+
+        tokio::time::sleep(Duration::from_millis(650)).await;
+        let expired = registry
+            .invoke_with_context(
+                "get_window_state",
+                serde_json::json!({"pid": 42, "window_id": 7, "session": "lease"}),
+                context,
+            )
+            .await;
+        assert_eq!(expired.is_error, Some(true));
+        assert_eq!(allowed_hits.load(Ordering::SeqCst), 0);
+        assert!(expired
+            .content
+            .iter()
+            .any(|content| matches!(content, crate::protocol::Content::Text { text, .. } if text.contains("idle timeout"))));
+    }
+
+    #[tokio::test]
+    async fn idle_reclaimed_unnamed_session_recreates_and_ended_sessions_name_a_working_recovery() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "get_window_state".into(),
+                description: "test observation".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        let context = standard_context();
+        let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+        let call = |args: serde_json::Value| {
+            let registry = &registry;
+            let context = context.clone();
+            async move {
+                let mut args = args;
+                args["pid"] = 42.into();
+                args["window_id"] = 7.into();
+                registry
+                    .invoke_with_context("get_window_state", args, context)
+                    .await
+            }
+        };
+        let refusal = |result: &ToolResult| {
+            let refusal = &result.structured_content.as_ref().unwrap()["refusal"];
+            (
+                refusal["code"].as_str().unwrap().to_owned(),
+                refusal["message"].as_str().unwrap().to_owned(),
+            )
+        };
+
+        assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
+        assert_ne!(
+            call(serde_json::json!({"session": "named"})).await.is_error,
+            Some(true)
+        );
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix).len(),
+            2
+        );
+
+        // The unnamed session comes back on its next call.
+        assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+
+        // A named session stays refused, and the named recovery works.
+        let named = call(serde_json::json!({"session": "named"})).await;
+        assert_eq!(
+            refusal(&named),
+            (
+                "session_ended".to_owned(),
+                "session 'named' has ended; call start_session with session 'named' to start it again, or use a new session label".to_owned()
+            )
+        );
+        let started = registry
+            .invoke_with_context(
+                "start_session",
+                serde_json::json!({"session": "named"}),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(started.is_error, Some(true), "{started:?}");
+        assert_ne!(
+            call(serde_json::json!({"session": "named"})).await.is_error,
+            Some(true)
+        );
+
+        // An explicitly ended unnamed session names the unlabeled recovery.
+        let ended = registry
+            .invoke_with_context("end_session", serde_json::json!({}), context.clone())
+            .await;
+        assert_ne!(ended.is_error, Some(true), "{ended:?}");
+        let unnamed = call(serde_json::json!({})).await;
+        assert_eq!(
+            refusal(&unnamed),
+            (
+                "session_ended".to_owned(),
+                "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned()
+            )
+        );
+        let restarted = registry
+            .invoke_with_context("start_session", serde_json::json!({}), context.clone())
+            .await;
+        assert_ne!(restarted.is_error, Some(true), "{restarted:?}");
+        assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 5);
+
+        crate::session::revoke_sessions_with_prefix(&prefix);
+        crate::session::forget_ended_sessions_with_prefix(&prefix);
     }
 
     #[tokio::test]
@@ -3104,6 +4625,364 @@ resources:
     }
 
     #[tokio::test]
+    async fn background_input_rechecks_manifest_before_every_adapter_dispatch() {
+        // The adapter may retain a native connection after a successful call.
+        // Reusing its public session label must not reuse resource authority.
+        for mode in [
+            PermissionMode::Standard,
+            PermissionMode::Bounded,
+            PermissionMode::Unrestricted,
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            let context = manifest_context(
+                mode,
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [click]
+resources:
+  desktop:
+    windows:
+      - pid: 42
+        window_id: 7
+"#,
+            );
+            for (window, expected_calls) in [(7, 1), (8, 1), (7, 2), (9, 2)] {
+                let result = registry.invoke_with_context("click", serde_json::json!({
+                    "pid": 42, "window_id": window, "x": 10, "y": 20,
+                    "delivery_mode": "background", "session": "persistent-native-connection",
+                    "_session_id": "forged-authority", "_lane": 0,
+                }), context.clone()).await;
+                assert_eq!(
+                    result.is_error == Some(true),
+                    window != 7,
+                    "{mode:?}: window {window}"
+                );
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    expected_calls,
+                    "denied input must never enter the adapter"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn background_input_without_manifest_uses_existing_promptless_modes() {
+        for context in [standard_context(), unrestricted_context()] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            for window in [7, 8] {
+                let result = registry
+                    .invoke_with_context(
+                        "click",
+                        serde_json::json!({
+                            "pid": 42, "window_id": window, "x": 10, "y": 20,
+                            "delivery_mode": "background", "session": "ordinary-desktop-input",
+                        }),
+                        context.clone(),
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true));
+            }
+            assert_eq!(hits.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    /// A trusted host relaying a human's input (a Cua Spaces viewer) marks
+    /// the call human-origin: its session draws no agent cursor on any
+    /// platform. A public caller cannot claim that origin.
+    #[tokio::test]
+    async fn trusted_human_origin_suppresses_the_agent_cursor_and_is_not_forgeable() {
+        use crate::agent_cursor::{input_origin, overlay_suppressed, InputOrigin};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let session_of = |args: &serde_json::Value| {
+            args["_session_id"]
+                .as_str()
+                .expect("session key")
+                .to_owned()
+        };
+
+        let result = registry
+            .invoke_from_trusted_adapter(
+                "click",
+                serde_json::json!({"_session_id": "viewer-human-origin-1", "_input_origin": "human"}),
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let received = last_args.lock().unwrap().clone().expect("arguments");
+        let human = session_of(&received);
+        assert!(human.ends_with("viewer-human-origin-1"));
+        assert_eq!(input_origin(&human), InputOrigin::Human);
+        assert!(overlay_suppressed(&human));
+
+        // An agent's trusted session keeps its cursor.
+        registry
+            .invoke_from_trusted_adapter(
+                "click",
+                serde_json::json!({"_session_id": "agent-origin-run-1"}),
+            )
+            .await;
+        let agent = session_of(&last_args.lock().unwrap().clone().unwrap());
+        assert!(!overlay_suppressed(&agent));
+
+        // A public caller's reserved argument is stripped, never honoured.
+        registry
+            .invoke(
+                "click",
+                serde_json::json!({"session": "forged-human-origin-1", "_input_origin": "human"}),
+            )
+            .await;
+        let forged = last_args.lock().unwrap().clone().unwrap();
+        assert!(forged.get("_input_origin").is_none());
+        assert!(!overlay_suppressed(&session_of(&forged)));
+        assert!(!overlay_suppressed(forged["session"].as_str().unwrap()));
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+
+        // Ending the session forgets its origin.
+        crate::session::end_session(&human);
+        assert!(!overlay_suppressed(&human));
+    }
+
+    /// Calls `click` through the registry it is registered in.
+    struct NestedClickProbe {
+        registry: Arc<std::sync::OnceLock<std::sync::Weak<super::ToolRegistry>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for NestedClickProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            let registry = self.registry.get().and_then(std::sync::Weak::upgrade);
+            registry
+                .expect("registry is alive")
+                .invoke("click", serde_json::json!({}))
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn native_window_pixels_come_only_from_the_in_process_entry_points() {
+        use crate::snapshot_store::NATIVE_WINDOW_PIXELS_ARG;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let handle = Arc::new(std::sync::OnceLock::new());
+        let def = |name: &str| super::ToolDef {
+            name: name.into(),
+            description: "test input".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: def("click"),
+        }));
+        registry.register(Box::new(NestedClickProbe {
+            registry: handle.clone(),
+            // A read-only composite, so it holds no input lane while the
+            // nested click runs.
+            def: super::ToolDef {
+                read_only: true,
+                ..def("list_windows")
+            },
+        }));
+        let registry = Arc::new(registry);
+        handle.set(Arc::downgrade(&registry)).unwrap();
+        let marked = |args: &Option<serde_json::Value>| {
+            args.as_ref().expect("arguments")[NATIVE_WINDOW_PIXELS_ARG]
+                == serde_json::Value::Bool(true)
+        };
+        let forged = serde_json::json!({ NATIVE_WINDOW_PIXELS_ARG: true });
+
+        // A public or adapter caller cannot assert native pixels.
+        registry.invoke("click", forged.clone()).await;
+        assert!(!marked(&last_args.lock().unwrap()));
+        registry
+            .invoke_from_trusted_adapter("click", forged.clone())
+            .await;
+        assert!(!marked(&last_args.lock().unwrap()));
+
+        // The in-process entry points do.
+        registry
+            .invoke_with_native_window_pixels("click", serde_json::json!({}))
+            .await;
+        assert!(marked(&last_args.lock().unwrap()));
+        registry
+            .invoke_from_trusted_adapter_with_native_window_pixels(
+                "click",
+                serde_json::json!({"_session_id": "native-pixels-viewer"}),
+            )
+            .await;
+        let received = last_args.lock().unwrap().clone();
+        assert!(marked(&received));
+        assert!(received.unwrap()["_session_id"]
+            .as_str()
+            .unwrap()
+            .ends_with("native-pixels-viewer"));
+
+        // A nested call (replay) does not inherit the outer call's claim.
+        // (The outer probe's result is not a list_windows payload; only the
+        // nested click's arguments matter here.)
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            registry.invoke_with_native_window_pixels("list_windows", serde_json::json!({})),
+        )
+        .await
+        .expect("the nested call completes");
+        assert_eq!(hits.load(Ordering::SeqCst), 5);
+        assert!(!marked(&last_args.lock().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn dispatch_checks_argument_names_after_alias_normalization() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    },
+                    "additionalProperties": false
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"dispatch": "foreground", "session": "schema-test"}),
+                standard_context(),
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let received = last_args.lock().unwrap().clone().expect("arguments");
+        assert_eq!(received["delivery_mode"], "foreground");
+        assert!(received.get("dispatch").is_none());
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"unknown": null}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["refusal"]["code"],
+            "invalid_arguments"
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "must refuse before invocation"
+        );
+    }
+
+    #[tokio::test]
+    async fn desktop_background_click_refuses_before_platform_invocation() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args,
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    }
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+
+        for args in [
+            serde_json::json!({
+                "target": {"kind": "desktop", "display_id": "primary"},
+                "delivery_mode": "background",
+                "x": 10,
+                "y": 20
+            }),
+            serde_json::json!({
+                "scope": "desktop",
+                "dispatch": "background",
+                "x": 10,
+                "y": 20
+            }),
+        ] {
+            let result = registry
+                .invoke_with_context("click", args, standard_context())
+                .await;
+            assert_eq!(result.is_error, Some(true));
+            assert_eq!(
+                result.structured_content,
+                Some(serde_json::json!({
+                    "code": "background_unavailable",
+                    "effect": "refused",
+                    "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+                    "escalation": {
+                        "recommended": "foreground",
+                        "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
+                    },
+                }))
+            );
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                0,
+                "refusal must occur before the platform tool is invoked"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
@@ -3215,7 +5094,7 @@ resources:
             let denied = registry
                 .invoke_with_context(
                     "check_permissions",
-                    serde_json::json!({"prompt": true, "session": "permissions"}),
+                    serde_json::json!({"prompt": true, "session": "permissions", "unknown": null}),
                     context,
                 )
                 .await;
@@ -3316,6 +5195,80 @@ resources:
     }
 
     #[tokio::test]
+    async fn manifest_cannot_widen_standard_foreign_process_termination() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = attested_registry("kill_app", Some(provider.clone()), hits.clone(), false);
+        let context = manifest_context(
+            PermissionMode::Standard,
+            r#"
+version: 3
+allow:
+  tools: [kill_app]
+resources:
+  processes:
+    terminate: [424242]
+"#,
+        );
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242, "session": "process"}),
+                context,
+            )
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("foreign_process_termination_denied")
+        );
+    }
+
+    #[tokio::test]
+    async fn manifest_preserves_standard_owned_process_termination_inside_scope() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = manifest_context(
+            PermissionMode::Standard,
+            r#"
+version: 3
+allow:
+  tools: [kill_app]
+resources:
+  processes:
+    terminate: [424242]
+"#,
+        );
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &context.runtime_session_key("process"),
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some(fixture_executable()),
+                },
+            );
+
+        let result = registry
+            .invoke_with_context(
+                "kill_app",
+                serde_json::json!({"pid": 424242, "session": "process"}),
+                context,
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn standard_owned_process_termination_reproves_the_fingerprint() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("kill_app", None, hits.clone(), false);
@@ -3328,7 +5281,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3345,22 +5298,20 @@ resources:
 
     #[tokio::test]
     async fn standard_sessionless_owned_process_termination_reproves_the_fingerprint() {
-        // A sessionless launch_app records provenance in the runtime-scoped
-        // anonymous bucket, so the matching sessionless kill_app can reprove
-        // it. Ownership used to be recorded only for calls carrying a
-        // session, which left launch-then-kill without one permanently
-        // refused even though this runtime had just started the process.
+        // A call without a public label now receives the runtime's implicit
+        // lifecycle identity, so launch provenance and the matching kill_app
+        // resolve through that stable private bucket.
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("kill_app", None, hits.clone(), false);
         let context = standard_context();
         registry
             .protected_resource_ownership()
             .mark_driver_owned_process(
-                &context.runtime_session_key("\u{0}anonymous-launch"),
+                &context.runtime_session_key("implicit-direct"),
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3398,6 +5349,57 @@ resources:
     }
 
     #[tokio::test]
+    async fn lifecycle_session_selection_cannot_turn_a_denied_action_into_allow() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = attested_registry("kill_app", None, hits.clone(), false);
+        let context = standard_context();
+        let runtime_prefix = context.runtime_session_key("");
+        let before = crate::session::list_session_snapshots_with_prefix(
+            &runtime_prefix,
+            crate::session::DEFAULT_SESSION_IDLE_TTL,
+        )
+        .len();
+        let variants = [
+            serde_json::json!({"pid": 424242}),
+            serde_json::json!({"pid": 424242, "session": "named-a"}),
+            serde_json::json!({"pid": 424242, "session": "named-b"}),
+            serde_json::json!({
+                "pid": 424242,
+                "session": "named-a",
+                "_session_id": "forged-private-session",
+                "_transport_session_id": "forged-transport"
+            }),
+        ];
+        let mut refusal_codes = Vec::new();
+        for arguments in variants {
+            let result = registry
+                .invoke_with_context("kill_app", arguments, context.clone())
+                .await;
+            refusal_codes.push(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.pointer("/refusal/code"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(refusal_codes
+            .iter()
+            .all(|code| code.as_deref() == Some("foreign_process_termination_denied")));
+        assert_eq!(
+            crate::session::list_session_snapshots_with_prefix(
+                &runtime_prefix,
+                crate::session::DEFAULT_SESSION_IDLE_TTL,
+            )
+            .len(),
+            before,
+            "denied calls must not create or refresh lifecycle sessions"
+        );
+    }
+
+    #[tokio::test]
     async fn sessionless_termination_cannot_reach_a_session_scoped_launch() {
         // The anonymous bucket must not become a backdoor into another
         // agent's processes: a launch attributed to a session stays killable
@@ -3412,7 +5414,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3532,7 +5534,6 @@ resources:
             "session": "public",
             "_session_id": "trusted-owner",
             "_transport_session_id": "transport-a",
-            "_cua_browser_prepare_mcp_host_approved": true,
             "_cua_browser_download_mcp_host_approved": true,
             "_protected_process_fingerprint": {"pid": 1},
             "files": ["/does/not/matter"]
@@ -3563,10 +5564,6 @@ resources:
             .get("_transport_session_id")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.ends_with(":transport-a")));
-        assert_eq!(
-            received["_cua_browser_prepare_mcp_host_approved"],
-            serde_json::Value::Bool(true)
-        );
         assert_eq!(
             received["_cua_browser_download_mcp_host_approved"],
             serde_json::Value::Bool(true)
@@ -3607,12 +5604,74 @@ resources:
                     "value": true,
                     "session": "config"
                 }),
-                context,
+                context.clone(),
             )
             .await;
         assert_eq!(unknown.is_error, Some(true));
+        for key in ["disable_run_script", "experimental_script"] {
+            for args in [
+                serde_json::json!({"key": key, "value": true}),
+                serde_json::json!({key: true}),
+            ] {
+                let refused = registry
+                    .invoke_with_context("set_config", args.clone(), context.clone())
+                    .await;
+                let structured = refused.structured_content.unwrap();
+                assert_eq!(structured["code"], "config_key_operator_only", "{args}");
+                assert_eq!(structured["key"], key, "{args}");
+            }
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_resolves_a_symlinked_deepest_ancestor() {
+        // Mirrors macOS `/tmp/x.png`, where `/tmp` links to `/private/tmp`.
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("private-tmp");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("tmp");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize(&target)
+                .unwrap()
+                .join("x.png")
+                .to_string_lossy()
+        );
+        assert!(!proposed.exists());
+        // The same file already existing was always resolved; both agree.
+        std::fs::write(target.join("x.png"), b"").unwrap();
+        assert_eq!(
+            canonical_proposed_path(proposed.to_str().unwrap()).unwrap(),
+            canonical
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_refuses_a_symlinked_ancestor_that_is_not_a_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let refusal = canonical_proposed_path(proposed.to_str().unwrap()).unwrap_err();
+
+        let text = serde_json::to_string(&refusal).unwrap();
+        assert!(
+            text.contains("an ancestor of the output path is not a directory"),
+            "{text}"
+        );
+        assert!(!file.with_file_name("x.png").exists());
     }
 
     #[test]
@@ -3702,10 +5761,17 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route"]
+            ["delivery", "effect", "route", "summary"]
         );
         assert_eq!(structured["effect"], "unverifiable");
         assert_eq!(structured["delivery"]["mode"], "unknown");
+        // The producer's text travels inside the closed contract for clients
+        // that surface only structuredContent.
+        let text = result.content.iter().find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        assert_eq!(structured["summary"].as_str(), text);
         assert!(matches!(
             structured["route"].as_str(),
             Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")
@@ -3755,50 +5821,46 @@ resources:
     }
 
     #[tokio::test]
-    async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
+    async fn element_tokens_resolve_only_in_the_runtime_that_published_them() {
         let pid = 8_675_309;
-        let token = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                let snapshot = crate::element_token::global().register_snapshot(pid, 44, 1);
-                crate::element_token::token_for(snapshot, 0)
+        let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                let cache = crate::snapshot_test_support::cache();
+                let snapshot =
+                    cache.publish(pid, 44, crate::snapshot_test_support::Payload(vec![0]));
+                (cache, crate::element_token::token_for(snapshot, 0))
             })
             .await;
-
-        let cross_runtime = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+        let second_cache = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                crate::snapshot_test_support::cache()
             })
             .await;
-        assert_eq!(
-            cross_runtime.unwrap_err(),
-            "element_token belongs to another runtime generation"
-        );
         let structured = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(
-                    pid,
-                    None,
-                    Some(&token),
-                    None,
-                    None,
-                    "click",
-                )
-                .unwrap_err()
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                second_cache
+                    .resolve(pid, &serde_json::json!({ "element_token": token }))
+                    .unwrap_err()
             })
             .await
             .structured_content
             .unwrap();
-        assert_eq!(
-            structured.pointer("/refusal/code"),
-            Some(&serde_json::Value::String("generation_mismatch".into()))
-        );
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
 
         let owner = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                first_cache.resolve(pid, &serde_json::json!({ "element_token": token }))
             })
             .await;
-        assert_eq!(owner.unwrap(), (44, 0));
+        assert!(matches!(
+            owner.unwrap(),
+            crate::element_token::ResolvedElement::Element {
+                window_id: 44,
+                element_index: 0,
+                element: 0,
+                ..
+            }
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -3821,6 +5883,33 @@ resources:
             task.await.unwrap();
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn independent_input_requires_adapter_attestation_and_an_exact_background_window() {
+        use super::requires_desktop_coordination;
+        let exact = serde_json::json!({"pid": 10, "window_id": 20, "delivery_mode": "background"});
+        assert!(requires_desktop_coordination("drag", &exact, false));
+        assert!(!requires_desktop_coordination("drag", &exact, true));
+        for fields in [
+            serde_json::json!({"scope": "desktop"}),
+            serde_json::json!({"target": {"kind": "desktop"}}),
+            serde_json::json!({"delivery_mode": "foreground"}),
+            serde_json::json!({"dispatch": "foreground"}),
+            serde_json::json!({"pid": 0}),
+            serde_json::json!({"window_id": null}),
+        ] {
+            let mut args = exact.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            assert!(requires_desktop_coordination("drag", &args, true), "{args}");
+        }
+        assert!(requires_desktop_coordination(
+            "drag",
+            &serde_json::json!({"independent_input_lane": true}),
+            false
+        ));
     }
 
     #[test]
@@ -3988,6 +6077,18 @@ fn protected_scope_refusal(message: &str) -> ToolResult {
     protected_refusal("protected_resource_scope_invalid", message)
 }
 
+/// Recovery text for a call on an ended lifecycle episode. A named session is
+/// restarted by name from its own transport; an unnamed one has no label to
+/// pass, so naming one would only start an unrelated session.
+fn ended_session_refusal_message(public_label: Option<&str>) -> String {
+    match public_label {
+        Some(label) => format!(
+            "session '{label}' has ended; call start_session with session '{label}' to start it again, or use a new session label"
+        ),
+        None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
+    }
+}
+
 fn protected_refusal(code: &str, message: &str) -> ToolResult {
     ToolResult::error(message).with_structured(serde_json::json!({
         "status": "refused",
@@ -4012,13 +6113,6 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
     if let Some(arguments) = redacted.as_object_mut() {
         match tool_name {
             "browser_prepare" => {
-                if arguments.contains_key("approval_token") {
-                    arguments.insert(
-                        "approval_token".to_owned(),
-                        Value::String("[redacted]".to_owned()),
-                    );
-                }
-                arguments.remove("_cua_browser_prepare_mcp_host_approved");
                 arguments.remove("_transport_session_id");
             }
             "browser_dialog" => {
@@ -4079,7 +6173,11 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
     };
     let summary = match tool_name {
         "click" | "double_click" | "right_click" => {
-            if let Some(idx) = args.opt_u64("element_index") {
+            if let Some((_, idx)) = args
+                .opt_str("element_token")
+                .as_deref()
+                .and_then(crate::element_token::parse_token)
+            {
                 format!("element_index={idx}")
             } else if let (Some(x), Some(y)) = (args.opt_f64("x"), args.opt_f64("y")) {
                 format!("({x:.0}, {y:.0})")
@@ -4123,7 +6221,7 @@ mod capability_tests {
     use super::*;
 
     #[test]
-    fn browser_prepare_recording_redacts_authority_and_transport_secrets() {
+    fn browser_prepare_recording_redacts_transport_identity() {
         let recorded = recording_args_for(
             "browser_prepare",
             &serde_json::json!({
@@ -4131,15 +6229,9 @@ mod capability_tests {
                 "window_id": 7,
                 "session": "public-session",
                 "strategy": {"kind": "existing_profile"},
-                "approval_token": "one-use-secret",
-                "_cua_browser_prepare_mcp_host_approved": true,
                 "_transport_session_id": "private-transport",
             }),
         );
-        assert_eq!(recorded["approval_token"], "[redacted]");
-        assert!(recorded
-            .get("_cua_browser_prepare_mcp_host_approved")
-            .is_none());
         assert!(recorded.get("_transport_session_id").is_none());
         assert_eq!(recorded["pid"], 42);
         assert_eq!(recorded["window_id"], 7);
@@ -4273,6 +6365,8 @@ mod capability_tests {
         "set_config",
         // sessions
         "start_session",
+        "get_session",
+        "list_sessions",
         "escalate_session",
         "get_session_state",
         "end_session",
@@ -4287,6 +6381,7 @@ mod capability_tests {
         "get_recording_state",
         "replay_trajectory",
         "install_ffmpeg",
+        "install_extension",
         // misc
         "page",
         "check_for_update",
@@ -4301,6 +6396,9 @@ mod capability_tests {
         "browser_set_input_files",
         "browser_download",
         "browser_pointer",
+        "history_status",
+        "history_query",
+        "parse_visual_regions",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -4315,6 +6413,7 @@ mod capability_tests {
         "input.pointer.click.double",
         "input.pointer.drag",
         "input.pointer.scroll",
+        "input.scroll.coordinates",
         "input.pointer.move",
         "input.pointer.button",
         // keyboard
@@ -4327,8 +6426,10 @@ mod capability_tests {
         "screen.capture",
         "screen.capture.window",
         "screen.capture.region",
+        "screen.capture.registry.read",
         "screen.dimensions",
         "screen.cursor.position",
+        "screen.perception.visual_regions",
         // accessibility
         "accessibility.tree",
         "accessibility.tree.structured",
@@ -4354,6 +6455,8 @@ mod capability_tests {
         "system.config.write",
         // sessions
         "session.lifecycle.start",
+        "session.lifecycle.read",
+        "session.lifecycle.list",
         "session.lifecycle.end",
         "session.capture_scope",
         "session.capture_scope.read",
@@ -4370,6 +6473,8 @@ mod capability_tests {
         "recording.state",
         "recording.replay",
         "recording.install_dependency",
+        "extension.install",
+        "visual.regions.parse",
         // page
         "page.action",
         // browser-tool v1
@@ -4385,6 +6490,9 @@ mod capability_tests {
         // driver self
         "driver.update_check",
         "driver.probe",
+        // encrypted local history
+        "history.status",
+        "history.query",
     ];
 
     #[test]
@@ -4428,43 +6536,74 @@ mod capability_tests {
     }
 
     #[test]
-    fn capability_version_is_string_one() {
-        // Bumping this constant in a non-breaking PR is an error —
-        // the version is the contract version, not the build version.
-        // Pinned to "1" until we ship a BREAKING vocabulary change.
-        assert_eq!(CAPABILITY_VERSION, "1");
-    }
+    fn delivery_mode_normalization_is_schema_gated_modern_first_and_fail_closed() {
+        let with_delivery_mode = super::ToolDef {
+            name: "click".into(),
+            description: "test input".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                }
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let without_delivery_mode = super::ToolDef {
+            name: "other".into(),
+            description: "unrelated tool".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
 
-    #[test]
-    fn delivery_mode_capability_is_derived_from_the_runtime_schema() {
-        let with_delivery_mode = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "delivery_mode": crate::tool_schema::delivery_mode_schema()
-            }
-        });
-        let without_delivery_mode = serde_json::json!({"type": "object", "properties": {}});
+        for (mut args, expected) in [
+            (serde_json::json!({"dispatch": "foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "Foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "background"}), "background"),
+            (serde_json::json!({"dispatch": "auto"}), "background"),
+            (serde_json::json!({"dispatch": "unknown"}), "background"),
+            (serde_json::json!({"dispatch": null}), "background"),
+            (
+                serde_json::json!({"delivery_mode": "Foreground"}),
+                "foreground",
+            ),
+            (
+                serde_json::json!({"delivery_mode": "unknown"}),
+                "background",
+            ),
+            (serde_json::json!({"delivery_mode": null}), "background"),
+            (
+                serde_json::json!({
+                    "delivery_mode": "background",
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+            (
+                serde_json::json!({
+                    "delivery_mode": null,
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+        ] {
+            super::normalize_delivery_mode_args(&with_delivery_mode, &mut args);
+            assert_eq!(args["delivery_mode"], expected, "arguments: {args}");
+            assert!(args.get("dispatch").is_none(), "arguments: {args}");
+        }
 
-        assert!(
-            advertised_capabilities_for("press_key", &with_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-        assert!(
-            !advertised_capabilities_for("press_key", &without_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-    }
+        let mut absent = serde_json::json!({"x": 1});
+        super::normalize_delivery_mode_args(&with_delivery_mode, &mut absent);
+        assert_eq!(absent, serde_json::json!({"x": 1}));
 
-    #[test]
-    fn unknown_tools_get_empty_capabilities() {
-        // Tools without a mapping (typically internal/stub tools like
-        // `unsupported_platform`) return `[]`. Consumers fall back to
-        // name-matching for those, which is fine — they were never
-        // load-bearing for capability routing.
-        assert!(default_capabilities_for("unsupported_platform").is_empty());
-        assert!(default_capabilities_for("totally_made_up_tool").is_empty());
+        let mut unrelated = serde_json::json!({"dispatch": "foreground"});
+        super::normalize_delivery_mode_args(&without_delivery_mode, &mut unrelated);
+        assert_eq!(unrelated, serde_json::json!({"dispatch": "foreground"}));
     }
 
     fn dummy_def(name: &str) -> ToolDef {
@@ -4562,6 +6701,61 @@ mod capability_tests {
     }
 
     #[test]
+    fn to_list_entry_advertises_scroll_coordinates_only_when_accepted() {
+        use serde_json::json;
+
+        for (name, properties, expected) in [
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                true,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+                true,
+            ),
+            ("scroll", json!({}), false),
+            ("scroll", json!({"x": {"type": "number"}}), false),
+            ("scroll", json!({"y": {"type": "number"}}), false),
+            (
+                "scroll",
+                json!({"x": {"type": "string"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "string"}}),
+                false,
+            ),
+            (
+                "click",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "unknown",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+        ] {
+            let mut def = dummy_def(name);
+            def.input_schema = json!({"type": "object", "properties": properties});
+            let entry = def.to_list_entry();
+            let capabilities = entry["capabilities"].as_array().unwrap();
+            assert_eq!(
+                capabilities
+                    .iter()
+                    .filter(|capability| *capability == "input.scroll.coordinates")
+                    .count(),
+                usize::from(expected),
+                "{name}: {}",
+                def.input_schema
+            );
+        }
+    }
+
+    #[test]
     fn to_list_entry_includes_versioned_risk_metadata() {
         let entry = dummy_def("browser_prepare").to_list_entry();
         assert_eq!(entry["risk"]["class"], "r2");
@@ -4573,14 +6767,16 @@ mod capability_tests {
     #[test]
     fn to_list_entry_includes_empty_capabilities_array_for_unknown_tool() {
         // Even when no capabilities are claimed, the field is still
-        // present — consumers can rely on the key existing.
-        let def = dummy_def("totally_made_up_tool");
-        let entry = def.to_list_entry();
-        let caps = entry
-            .get("capabilities")
-            .and_then(|v| v.as_array())
-            .expect("capabilities must be present even if empty");
-        assert!(caps.is_empty());
+        // present — consumers can rely on the key existing. Internal stub
+        // tools such as `unsupported_platform` claim nothing either.
+        for name in ["totally_made_up_tool", "unsupported_platform"] {
+            let entry = dummy_def(name).to_list_entry();
+            let caps = entry
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .expect("capabilities must be present even if empty");
+            assert!(caps.is_empty(), "{name}");
+        }
     }
 
     #[test]
@@ -4793,5 +6989,331 @@ mod capability_tests {
             .any(|adapter| {
                 adapter["id"] == "browser_prepare.existing_profile" && adapter["state"] == "active"
             }));
+    }
+}
+
+#[cfg(test)]
+mod argument_shape_tests {
+    use super::{
+        coerce_string_scalars, normalize_argument_aliases, normalize_zoom_args, unknown_argument,
+        ToolDef,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn string_scalars_follow_the_declared_type() {
+        // v036: "include_screenshot": "false" was read as absent, so the
+        // screenshot the model declined was sent anyway.
+        let schema = json!({"type": "object", "properties": {
+            "include_screenshot": {"type": "boolean"},
+            "observe": {"type": ["object", "boolean"]},
+            "pid": {"type": "integer"},
+            "x": {"type": "number"},
+            "text": {"type": "string"},
+            "value": {"anyOf": [{"type": "string"}, {"type": "boolean"}]},
+            "since": {"type": ["string", "null"]},
+            "untyped": {}
+        }});
+        let mut args = json!({
+            "include_screenshot": "False", "observe": " true", "pid": "4211", "x": "12.5",
+            "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+        });
+        coerce_string_scalars(&schema, &mut args);
+        assert_eq!(
+            args,
+            json!({
+                "include_screenshot": false, "observe": true, "pid": 4211, "x": 12.5,
+                "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+            })
+        );
+        // Not a number or boolean: left for the schema check to name.
+        let mut junk = json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"});
+        coerce_string_scalars(&schema, &mut junk);
+        assert_eq!(
+            junk,
+            json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"})
+        );
+    }
+
+    #[test]
+    fn menu_paths_in_the_shapes_models_send() {
+        let menu = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("invoke_menu", &mut args).unwrap();
+            args
+        };
+        // v036 shapes.
+        assert_eq!(
+            menu(json!({"pid": 1, "menu_path": "[\"Sheet\",\"Navigate\",\"Next Sheet\"]"})),
+            json!({"pid": 1, "path": ["Sheet", "Navigate", "Next Sheet"]})
+        );
+        assert_eq!(
+            menu(json!({"path": "File > Reload"})),
+            json!({"path": ["File", "Reload"]})
+        );
+        assert_eq!(
+            menu(json!({"menu": ["Edit", "Copy"]})),
+            json!({"path": ["Edit", "Copy"]})
+        );
+        // A real path and an explicit path win.
+        assert_eq!(
+            menu(json!({"path": ["File", "Save As..."], "menu_path": "x"})),
+            json!({"path": ["File", "Save As..."], "menu_path": "x"})
+        );
+    }
+
+    #[test]
+    fn a_direct_action_named_by_role_points_to_run_steps() {
+        let click = ToolDef {
+            name: "click".into(),
+            description: String::new(),
+            input_schema: json!({"type": "object", "properties": {"pid": {"type": "integer"}}, "additionalProperties": false}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let detail =
+            unknown_argument(&click, &json!({"pid": 1, "role": "button", "name": "OK"})).unwrap();
+        assert!(detail.contains("one run_steps step"), "{detail}");
+        let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
+        assert!(!other.contains("run_steps"), "{other}");
+    }
+
+    #[test]
+    fn key_combinations_and_spellings_are_normalized() {
+        let press = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("press_key", &mut args).unwrap();
+            args
+        };
+        assert_eq!(
+            press(json!({"key": "shift+Right"})),
+            json!({"key": "Right", "modifiers": ["shift"]})
+        );
+        assert_eq!(
+            press(json!({"key": "cmd+shift+z", "modifiers": ["shift"]})),
+            json!({"key": "z", "modifiers": ["shift", "cmd"]})
+        );
+        assert_eq!(
+            press(json!({"key": "Page_Down"})),
+            json!({"key": "pagedown"})
+        );
+        assert_eq!(press(json!({"key": "ArrowLeft"})), json!({"key": "left"}));
+        let forward = if cfg!(target_os = "macos") {
+            "forward_delete"
+        } else {
+            "delete"
+        };
+        assert_eq!(
+            press(json!({"key": "forwarddelete"})),
+            json!({"key": forward})
+        );
+        // A bare "+" and plain names stay as sent.
+        assert_eq!(press(json!({"key": "+"})), json!({"key": "+"}));
+        assert_eq!(press(json!({"key": "Return"})), json!({"key": "Return"}));
+        assert_eq!(press(json!({"key": "delete"})), json!({"key": "delete"}));
+
+        let mut hotkey = json!({"keys": ["ctrl", "Page_Down"]});
+        normalize_argument_aliases("hotkey", &mut hotkey).unwrap();
+        assert_eq!(hotkey, json!({"keys": ["ctrl", "pagedown"]}));
+        let mut combo = json!({"keys": "cmd+s"});
+        normalize_argument_aliases("hotkey", &mut combo).unwrap();
+        assert_eq!(combo, json!({"keys": ["cmd", "s"]}));
+    }
+
+    fn zoom_def() -> ToolDef {
+        ToolDef {
+            name: "zoom".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "window_id": {"type": "integer"}, "pid": {"type": "integer"},
+                    "x1": {"type": "number"}, "y1": {"type": "number"},
+                    "x2": {"type": "number"}, "y2": {"type": "number"}
+                },
+                "additionalProperties": false
+            }),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+    }
+
+    #[test]
+    fn zoom_accepts_origin_and_size_as_corners() {
+        // The exact shape models sent in the v035 bench (numbers as strings).
+        let mut args = json!({"pid": 1, "window_id": 928, "x": "0", "y": "100", "width": "1180", "height": "640"});
+        normalize_zoom_args("zoom", &mut args);
+        assert_eq!(
+            args,
+            json!({"pid": 1, "window_id": 928, "x1": 0.0, "y1": 100.0, "x2": 1180.0, "y2": 740.0})
+        );
+        assert_eq!(unknown_argument(&zoom_def(), &args), None);
+
+        let mut short = json!({"window_id": 1, "x": 10, "y": 20, "w": 5, "h": 6});
+        normalize_zoom_args("zoom", &mut short);
+        assert_eq!(
+            short,
+            json!({"window_id": 1, "x1": 10.0, "y1": 20.0, "x2": 15.0, "y2": 26.0})
+        );
+
+        let mut corners = json!({"window_id": 1, "x1": "1", "y1": 2, "x2": 3, "y2": 4});
+        normalize_zoom_args("zoom", &mut corners);
+        assert_eq!(
+            corners,
+            json!({"window_id": 1, "x1": 1.0, "y1": 2, "x2": 3, "y2": 4})
+        );
+
+        let mut other_tool = json!({"x": 1, "width": 2});
+        normalize_zoom_args("click", &mut other_tool);
+        assert_eq!(other_tool, json!({"x": 1, "width": 2}));
+    }
+
+    fn scroll(args: serde_json::Value) -> Result<serde_json::Value, String> {
+        let mut args = args;
+        normalize_argument_aliases("scroll", &mut args).map(|()| args)
+    }
+
+    #[test]
+    fn scroll_translates_signed_deltas_into_direction_and_notches() {
+        // Shapes models sent in the v035 bench and the live check of #4812.
+        let base = json!({"pid": 1, "window_id": 2, "x": 450, "y": 500});
+        let with = |extra: serde_json::Value| {
+            let mut args = base.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        for (delta, direction, amount) in [
+            (json!({"dy": "10"}), "down", 10),
+            (json!({"dy": 20}), "down", 20),
+            (json!({"dy": -3}), "up", 3),
+            (json!({"dy": 500}), "down", 5),
+            (json!({"dy": "1500"}), "down", 15),
+            (json!({"dy": "2000"}), "down", 20),
+            (json!({"dy": 99999}), "down", 50),
+            (json!({"dy": 0.2}), "down", 1),
+            (json!({"dx": 5, "dy": 0}), "right", 5),
+            (json!({"dx": "-120"}), "left", 1),
+        ] {
+            let out = scroll(with(delta.clone())).unwrap();
+            assert_eq!(out["direction"], direction, "{delta}");
+            assert_eq!(out["amount"], amount, "{delta}");
+            assert!(
+                out.get("dx").is_none() && out.get("dy").is_none(),
+                "{delta}"
+            );
+            assert_eq!(out["x"], 450);
+        }
+    }
+
+    #[test]
+    fn scroll_keeps_explicit_direction_and_amount_and_refuses_what_it_cannot_translate() {
+        let out = scroll(json!({"direction": "up", "amount": 2, "dy": 900})).unwrap();
+        assert_eq!(out, json!({"direction": "up", "amount": 2}));
+        let out = scroll(json!({"dy": 400, "amount": 7})).unwrap();
+        assert_eq!(out, json!({"direction": "down", "amount": 7}));
+        let both = scroll(json!({"dx": 3, "dy": 4})).unwrap_err();
+        assert!(both.contains("one axis per call"), "{both}");
+        let zero = scroll(json!({"dx": 0, "dy": "0"})).unwrap_err();
+        assert!(zero.contains("nothing to scroll"), "{zero}");
+        let junk = scroll(json!({"dy": "lots"})).unwrap_err();
+        assert!(junk.contains("must be numbers"), "{junk}");
+        let untouched = json!({"direction": "down", "amount": 3});
+        assert_eq!(scroll(untouched.clone()).unwrap(), untouched);
+        let mut click = json!({"dy": 4});
+        normalize_argument_aliases("click", &mut click).unwrap();
+        assert_eq!(click, json!({"dy": 4}));
+    }
+
+    #[test]
+    fn set_config_key_value_alias_matches_the_direct_field_for_every_key() {
+        for key in [
+            "capture_mode",
+            "max_image_dimension",
+            "experimental_pip",
+            "experimental_pip_geometry",
+            "cursor.motion",
+            "cursor.motion.style",
+            "cursor.motion.timing",
+            "cursor.motion.effects.trail",
+            "cursor.motion.effects.glow",
+            "cursor.motion.effects.magnet",
+            "cursor.motion.effects.ripple",
+            "cursor.motion.effects.squish",
+        ] {
+            let mut aliased = json!({"key": key, "value": "default"});
+            normalize_argument_aliases("set_config", &mut aliased).unwrap();
+            assert_eq!(aliased, json!({key: "default"}), "{key}");
+        }
+        let mut bare_key = json!({"key": "capture_mode"});
+        let error = normalize_argument_aliases("set_config", &mut bare_key).unwrap_err();
+        assert!(error.contains("exact value"), "{error}");
+        let mut bare_value = json!({"value": 1});
+        let error = normalize_argument_aliases("set_config", &mut bare_value).unwrap_err();
+        assert!(error.contains("exact key"), "{error}");
+
+        let mut unknown = json!({"key": "not_a_key", "value": 1});
+        normalize_argument_aliases("set_config", &mut unknown).unwrap();
+        let def = ToolDef {
+            name: "set_config".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"max_image_dimension": {"type": "integer"}},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let detail = unknown_argument(&def, &unknown).unwrap();
+        assert!(detail.contains("not_a_key"), "{detail}");
+        let mut retired = json!({"key": "capture_scope", "value": "desktop"});
+        normalize_argument_aliases("set_config", &mut retired).unwrap();
+        assert_eq!(retired, json!({"capture_scope": "desktop"}));
+    }
+
+    #[test]
+    fn set_config_alias_refuses_reserved_keys_before_authorization() {
+        for key in [
+            "_session_id",
+            "_transport_session_id",
+            "_public_session_label",
+            "_other",
+            "key",
+            "value",
+            "session",
+        ] {
+            let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
+            let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
+            assert_eq!(error, format!("key '{key}' is reserved"));
+            let object = args.as_object().unwrap();
+            assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
+            assert!(object.get(key).is_none(), "{key} was written: {args}");
+        }
+    }
+
+    #[test]
+    fn unknown_arguments_are_all_named_with_the_accepted_ones() {
+        let detail = unknown_argument(
+            &zoom_def(),
+            &json!({"window_id": 1, "height": 2, "width": 3}),
+        )
+        .unwrap();
+        assert_eq!(
+            detail,
+            "arguments height, width; accepted: pid, window_id, x1, x2, y1, y2"
+        );
+        let detail = unknown_argument(&zoom_def(), &json!({"window_id": 1, "height": 2})).unwrap();
+        assert!(
+            detail.starts_with("argument height; accepted: "),
+            "{detail}"
+        );
     }
 }

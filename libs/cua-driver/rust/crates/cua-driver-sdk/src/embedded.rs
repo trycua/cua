@@ -7,6 +7,8 @@ use cua_driver_contract::{
     CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::key_pacing::KEY_GAP_ENV;
+use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,11 +45,18 @@ pub struct EmbeddedDriverHostOptions {
     pub startup_timeout_ms: Option<u64>,
     pub shutdown_timeout_ms: Option<u64>,
     pub permission_mode: Option<EmbeddedPermissionMode>,
+    #[uniffi(default = None)]
+    pub capability_manifest_path: Option<String>,
+    #[uniffi(default = false)]
+    pub approve_capability_manifest: bool,
+    /// Deprecated aliases retained for compatibility.
     pub session_policy_path: Option<String>,
     pub approve_session_policy: bool,
     pub dangerously_bypass_approvals: bool,
     pub environment: Vec<EmbeddedEnvironmentVariable>,
     pub inherit_stderr: bool,
+    #[uniffi(default = false)]
+    pub no_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -116,6 +125,7 @@ struct ValidatedOptions {
     dangerously_bypass_approvals: bool,
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
+    no_overlay: bool,
 }
 
 #[cfg(unix)]
@@ -251,11 +261,14 @@ impl EmbeddedCuaDriverHost {
             startup_timeout_ms: None,
             shutdown_timeout_ms: None,
             permission_mode: None,
+            capability_manifest_path: None,
+            approve_capability_manifest: false,
             session_policy_path: None,
             approve_session_policy: false,
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: true,
+            no_overlay: false,
         })
     }
 
@@ -428,6 +441,8 @@ impl EmbeddedCuaDriverHost {
                 Stdio::null()
             })
             .kill_on_drop(true);
+        #[cfg(target_os = "windows")]
+        prevent_console_window(&mut command);
         for variable in safe_environment(&self.options.environment) {
             command.env(variable.name, variable.value);
         }
@@ -633,13 +648,16 @@ impl EmbeddedCuaDriverHost {
             .into(),
         ];
         if let Some(path) = &self.options.session_policy_path {
-            args.extend(["--session-policy".into(), path.clone()]);
+            args.extend(["--capability-manifest".into(), path.clone()]);
         }
         if self.options.approve_session_policy {
-            args.push("--approve-session-policy".into());
+            args.push("--approve-capability-manifest".into());
         }
         if self.options.dangerously_bypass_approvals {
             args.push("--dangerously-bypass-approvals".into());
+        }
+        if self.options.no_overlay {
+            args.push("--no-overlay".into());
         }
         args
     }
@@ -732,13 +750,33 @@ fn validate_options(
     let permission_mode = options
         .permission_mode
         .unwrap_or(EmbeddedPermissionMode::Standard);
+    if options.capability_manifest_path.is_some()
+        && options.session_policy_path.is_some()
+        && options.capability_manifest_path != options.session_policy_path
+    {
+        return configuration_error(
+            "capability_manifest_path conflicts with deprecated session_policy_path",
+        );
+    }
+    let capability_manifest_path = options
+        .capability_manifest_path
+        .clone()
+        .or_else(|| options.session_policy_path.clone());
+    let capability_manifest_approved =
+        options.approve_capability_manifest || options.approve_session_policy;
+    let manifest_configured = capability_manifest_path
+        .as_deref()
+        .is_some_and(|path| !path.trim().is_empty());
+    if capability_manifest_path.is_some() && !manifest_configured {
+        return configuration_error("capability manifest path must not be empty");
+    }
+    if manifest_configured != capability_manifest_approved {
+        return configuration_error(
+            "capability manifest path and approval acknowledgement must be supplied together",
+        );
+    }
     match permission_mode {
         EmbeddedPermissionMode::Standard => {
-            if options.session_policy_path.is_some() || options.approve_session_policy {
-                return configuration_error(
-                    "session policy options are valid only in bounded mode",
-                );
-            }
             if options.dangerously_bypass_approvals {
                 return configuration_error(
                     "dangerously_bypass_approvals is valid only in unrestricted mode",
@@ -746,15 +784,8 @@ fn validate_options(
             }
         }
         EmbeddedPermissionMode::Bounded => {
-            if options
-                .session_policy_path
-                .as_deref()
-                .is_none_or(|path| path.trim().is_empty())
-            {
-                return configuration_error("bounded mode requires session_policy_path");
-            }
-            if !options.approve_session_policy {
-                return configuration_error("bounded mode requires approve_session_policy=true");
+            if !manifest_configured {
+                return configuration_error("bounded mode requires a capability manifest");
             }
             if options.dangerously_bypass_approvals {
                 return configuration_error("bounded mode cannot bypass runtime approvals");
@@ -764,11 +795,6 @@ fn validate_options(
             if !options.dangerously_bypass_approvals {
                 return configuration_error(
                     "unrestricted mode requires dangerously_bypass_approvals=true",
-                );
-            }
-            if options.session_policy_path.is_some() || options.approve_session_policy {
-                return configuration_error(
-                    "unrestricted mode cannot use a bounded session policy",
                 );
             }
         }
@@ -795,11 +821,12 @@ fn validate_options(
         startup_timeout: Duration::from_millis(startup_timeout_ms),
         shutdown_timeout: Duration::from_millis(shutdown_timeout_ms),
         permission_mode,
-        session_policy_path: options.session_policy_path,
-        approve_session_policy: options.approve_session_policy,
+        session_policy_path: capability_manifest_path,
+        approve_session_policy: capability_manifest_approved,
         dangerously_bypass_approvals: options.dangerously_bypass_approvals,
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
+        no_overlay: options.no_overlay,
     })
 }
 
@@ -812,6 +839,9 @@ fn configuration_error<T>(reason: impl Into<String>) -> Result<T, EmbeddedDriver
 pub(crate) fn allowed_environment_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     upper.starts_with("LC_")
+        || upper == WINDOW_CHANGE_TIMEOUT_ENV
+        || upper == WINDOW_CHANGE_POLL_ENV
+        || upper == KEY_GAP_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -832,11 +862,22 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "PROGRAMDATA"
                 | "DISPLAY"
                 | "WAYLAND_DISPLAY"
+                | "CUA_DRIVER_RS_ENABLE_WAYLAND"
                 | "XDG_RUNTIME_DIR"
                 | "XDG_SESSION_TYPE"
                 | "DBUS_SESSION_BUS_ADDRESS"
+                | "XDG_CURRENT_DESKTOP"
+                | "XDG_SESSION_DESKTOP"
+                | "DESKTOP_SESSION"
+                | "NO_AT_BRIDGE"
+                | "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE"
+                | "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE"
                 | "XAUTHORITY"
                 | "CUA_LOG"
+                | "CUA_DRIVER_RS_HOME"
+                | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                | "CUA_TELEMETRY_ENABLED"
+                | "CUA_DRIVER_RS_UPDATE_CHECK"
         )
 }
 
@@ -846,9 +887,10 @@ pub(crate) fn inherited_managed_environment_name(name: &str) -> bool {
         "CUA_DRIVER_PERMISSION_MODE"
             | "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
             | "CUA_DRIVER_DISABLE_UNRESTRICTED"
-            | "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL"
             | "CUA_DRIVER_SESSION_POLICY_FILE"
             | "CUA_DRIVER_SESSION_POLICY_APPROVED"
+            | "CUA_DRIVER_CAPABILITY_MANIFEST_FILE"
+            | "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED"
             | "CUA_DRIVER_POLICY_FILE"
             | "CUA_DRIVER_MANAGED_POLICY_FILE"
     )
@@ -1107,6 +1149,18 @@ async fn terminate_startup_child(child: &mut Child, liveness: &mut ChildStdin) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn prevent_console_window(command: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetConsoleCP() -> u32;
+    }
+    if unsafe { GetConsoleCP() } == 0 {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1123,17 +1177,25 @@ mod tests {
             startup_timeout_ms: None,
             shutdown_timeout_ms: None,
             permission_mode: Some(mode),
+            capability_manifest_path: None,
+            approve_capability_manifest: false,
             session_policy_path: None,
             approve_session_policy: false,
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: false,
+            no_overlay: false,
         }
     }
 
     #[test]
     fn authorization_modes_require_explicit_acknowledgements() {
         assert!(validate_options(options(EmbeddedPermissionMode::Standard)).is_ok());
+
+        let mut standard_manifest = options(EmbeddedPermissionMode::Standard);
+        standard_manifest.capability_manifest_path = Some("capabilities.yaml".into());
+        standard_manifest.approve_capability_manifest = true;
+        assert!(validate_options(standard_manifest).is_ok());
 
         let bounded = options(EmbeddedPermissionMode::Bounded);
         assert!(validate_options(bounded).is_err());
@@ -1147,6 +1209,37 @@ mod tests {
         let mut unrestricted = options(EmbeddedPermissionMode::Unrestricted);
         unrestricted.dangerously_bypass_approvals = true;
         assert!(validate_options(unrestricted).is_ok());
+
+        let mut unrestricted_manifest = options(EmbeddedPermissionMode::Unrestricted);
+        unrestricted_manifest.dangerously_bypass_approvals = true;
+        unrestricted_manifest.capability_manifest_path = Some("capabilities.yaml".into());
+        unrestricted_manifest.approve_capability_manifest = true;
+        assert!(validate_options(unrestricted_manifest).is_ok());
+    }
+
+    #[test]
+    fn no_overlay_is_opt_in_on_the_owned_daemon() {
+        let default_host =
+            EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard)).unwrap();
+        assert!(!default_host
+            .serve_args("/tmp/cua-default.sock")
+            .contains(&"--no-overlay".into()));
+
+        let mut configured = options(EmbeddedPermissionMode::Standard);
+        configured.no_overlay = true;
+        let configured_host = EmbeddedCuaDriverHost::with_options(configured).unwrap();
+        assert!(configured_host
+            .serve_args("/tmp/cua-no-overlay.sock")
+            .contains(&"--no-overlay".into()));
+    }
+
+    #[test]
+    fn capability_manifest_aliases_must_not_conflict() {
+        let mut options = options(EmbeddedPermissionMode::Standard);
+        options.capability_manifest_path = Some("capabilities-v3.yaml".into());
+        options.session_policy_path = Some("legacy-v2.yaml".into());
+        options.approve_capability_manifest = true;
+        assert!(validate_options(options).is_err());
     }
 
     #[test]
@@ -1156,6 +1249,95 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+        assert!(allowed_environment_name(
+            "CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS"
+        ));
+        assert!(allowed_environment_name("CUA_DRIVER_WINDOW_CHANGE_POLL_MS"));
+    }
+
+    #[test]
+    fn driver_state_root_is_inherited_and_overridable() {
+        let inherited = [("CUA_DRIVER_RS_HOME".into(), "host-state".into())];
+        for (overrides, expected) in [
+            (Vec::new(), "host-state"),
+            (
+                vec![EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_HOME".into(),
+                    value: "isolated-state".into(),
+                }],
+                "isolated-state",
+            ),
+        ] {
+            let mut host_options = options(EmbeddedPermissionMode::Standard);
+            host_options.environment = overrides;
+            let validated = validate_options(host_options).expect("state root is supported");
+            let values = merge_safe_environment(inherited.clone(), &validated.environment);
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].name, "CUA_DRIVER_RS_HOME");
+            assert_eq!(values[0].value, expected);
+        }
+    }
+
+    #[test]
+    fn telemetry_preferences_are_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_TELEMETRY_ENABLED"));
+        assert!(allowed_environment_name("cua_telemetry_enabled"));
+
+        let inherited = [
+            ("CUA_DRIVER_RS_TELEMETRY_ENABLED".into(), "1".into()),
+            ("CUA_TELEMETRY_ENABLED".into(), "true".into()),
+        ];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "1"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "true"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_TELEMETRY_ENABLED".into(),
+                    value: "0".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_TELEMETRY_ENABLED".into(),
+                    value: "false".into(),
+                },
+            ],
+        );
+
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "0"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "false"
+        }));
+    }
+
+    #[test]
+    fn update_check_preference_is_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_UPDATE_CHECK"));
+        assert!(allowed_environment_name("cua_driver_rs_update_check"));
+
+        let inherited = [("CUA_DRIVER_RS_UPDATE_CHECK".into(), "1".into())];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_UPDATE_CHECK" && variable.value == "1"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[EmbeddedEnvironmentVariable {
+                name: "CUA_DRIVER_RS_UPDATE_CHECK".into(),
+                value: "false".into(),
+            }],
+        );
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_UPDATE_CHECK" && variable.value == "false"
+        }));
     }
 
     #[test]
@@ -1194,6 +1376,41 @@ mod tests {
     }
 
     #[test]
+    fn wayland_backend_opt_in_reaches_embedded_driver() {
+        let name = "CUA_DRIVER_RS_ENABLE_WAYLAND";
+        assert!(allowed_environment_name(name));
+        let inherited = [(name.to_owned(), "1".to_owned())];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "1"));
+
+        // Hosts can opt in without changing their own process environment.
+        let enabled = EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: "1".into(),
+        };
+        let values = merge_safe_environment(std::iter::empty(), &[enabled]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "1"));
+
+        // An explicit opt-out still wins over the inherited opt-in.
+        let disabled = EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: "0".into(),
+        };
+        let values = merge_safe_environment(inherited, &[disabled]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "0"));
+        assert!(!allowed_environment_name("LD_PRELOAD"));
+        assert!(!allowed_environment_name(
+            "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
+        ));
+    }
+
+    #[test]
     fn interactive_linux_session_environment_is_inherited() {
         let values = merge_safe_environment(
             [
@@ -1222,6 +1439,39 @@ mod tests {
         assert!(!values
             .iter()
             .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
+    }
+
+    #[test]
+    fn desktop_identity_and_accessibility_controls_reach_the_child() {
+        for name in [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+            "NO_AT_BRIDGE",
+            "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE",
+            "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE",
+        ] {
+            let inherited = [(name.to_owned(), "inherited".to_owned())];
+            let host = EmbeddedEnvironmentVariable {
+                name: name.into(),
+                value: "host".into(),
+            };
+            for (values, expected) in [
+                (merge_safe_environment(inherited.clone(), &[]), "inherited"),
+                (
+                    merge_safe_environment(std::iter::empty(), &[host.clone()]),
+                    "host",
+                ),
+                (merge_safe_environment(inherited, &[host]), "host"),
+            ] {
+                let reached: Vec<_> = values
+                    .iter()
+                    .filter(|variable| variable.name == name)
+                    .map(|variable| variable.value.as_str())
+                    .collect();
+                assert_eq!(reached, [expected], "{name}");
+            }
+        }
     }
 
     #[test]
@@ -1319,5 +1569,99 @@ mod tests {
 
         assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
         assert!(!socket_path.exists());
+    }
+
+    /// `CUA_DRIVER_KEY_GAP_MS` must survive both propagation paths into a child launch —
+    /// inherited from the parent environment and supplied as an explicit
+    /// override. An allowlist miss silently strips the deployment's
+    /// override in embedded/worker modes.
+    #[test]
+    fn key_gap_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_KEY_GAP_MS"));
+        let merged =
+            merge_safe_environment([("CUA_DRIVER_KEY_GAP_MS".to_owned(), "7".to_owned())], &[]);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "7"));
+        let overrides = vec![EmbeddedEnvironmentVariable {
+            name: "CUA_DRIVER_KEY_GAP_MS".to_owned(),
+            value: "3".to_owned(),
+        }];
+        let merged = merge_safe_environment(std::iter::empty(), &overrides);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn daemon_console_window_follows_the_host_console() {
+        use std::os::windows::process::CommandExt as _;
+
+        const ROLE: &str = "CUA_DRIVER_SDK_TEST_CONSOLE_ROLE";
+        const HOST_PID: &str = "CUA_DRIVER_SDK_TEST_CONSOLE_HOST_PID";
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+            fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
+        }
+        let rerun = [
+            "--exact",
+            "embedded::tests::daemon_console_window_follows_the_host_console",
+            "--nocapture",
+        ];
+        let assert_probe_passed = |output: std::process::Output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        match std::env::var(ROLE).as_deref() {
+            Ok("probe-without-console") => {
+                let window = unsafe { GetConsoleWindow() };
+                assert!(
+                    window.is_null(),
+                    "a console window was opened for the daemon"
+                );
+            }
+            Ok("probe-with-console") => {
+                let host: u32 = std::env::var(HOST_PID).unwrap().parse().unwrap();
+                let mut attached = [0u32; 64];
+                let count = unsafe { GetConsoleProcessList(attached.as_mut_ptr(), 64) } as usize;
+                assert!(
+                    attached[..count.min(64)].contains(&host),
+                    "the daemon left its host's console"
+                );
+            }
+            Ok(host @ ("host-without-console" | "host-with-console")) => {
+                let mut probe = Command::new(std::env::current_exe().unwrap());
+                probe
+                    .args(rerun)
+                    .env(ROLE, host.replace("host-", "probe-"))
+                    .env(HOST_PID, std::process::id().to_string())
+                    .stdin(Stdio::null());
+                prevent_console_window(&mut probe);
+                assert_probe_passed(probe.output().await.unwrap());
+            }
+            _ => {
+                for (host, flags) in [
+                    ("host-without-console", DETACHED_PROCESS),
+                    ("host-with-console", CREATE_NO_WINDOW),
+                ] {
+                    let output = std::process::Command::new(std::env::current_exe().unwrap())
+                        .args(rerun)
+                        .env(ROLE, host)
+                        .creation_flags(flags)
+                        .output()
+                        .unwrap();
+                    assert_probe_passed(output);
+                }
+            }
+        }
     }
 }

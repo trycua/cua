@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +37,7 @@ func TestRewriteLocation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := rewriteLocation(tc.location, tc.basePath)
+			got := rewriteLocation(tc.location, tc.basePath, "/")
 			if got != tc.want {
 				t.Errorf("rewriteLocation(%q, %q) = %q, want %q", tc.location, tc.basePath, got, tc.want)
 			}
@@ -62,6 +64,154 @@ func TestSvc_Unauthenticated(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestSvcReverseProxyPreservesLargeBodies(t *testing.T) {
+	payload := bytes.Repeat([]byte{0, 1, 2, 255}, 300*1024)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			return
+		}
+		if !bytes.Equal(body, payload) {
+			t.Errorf("request changed: got %d want %d", len(body), len(payload))
+		}
+		_, _ = w.Write(body)
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(payload))
+	res := httptest.NewRecorder()
+	newSvcReverseProxy(target, "/upload", "/api/svc/ns/svc").ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	if !bytes.Equal(res.Body.Bytes(), payload) {
+		t.Fatalf("response changed: got %d want %d", res.Body.Len(), len(payload))
+	}
+}
+
+func TestSvcReverseProxyStreamsRequestWithBackpressure(t *testing.T) {
+	prefixRead := make(chan struct{})
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prefix := make([]byte, 5)
+		if _, err := io.ReadFull(r.Body, prefix); err != nil {
+			t.Errorf("read prefix: %v", err)
+			return
+		}
+		if string(prefix) != "first" {
+			t.Errorf("prefix=%q", prefix)
+		}
+		close(prefixRead)
+		<-release
+		rest, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read rest: %v", err)
+			return
+		}
+		_, _ = w.Write(rest)
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	proxy := httptest.NewServer(newSvcReverseProxy(target, "/upload", "/api/svc/ns/svc"))
+	defer proxy.Close()
+	reader, writer := io.Pipe()
+	req, err := http.NewRequest(http.MethodPost, proxy.URL, reader)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	result := make(chan struct {
+		resp *http.Response
+		err  error
+	}, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		result <- struct {
+			resp *http.Response
+			err  error
+		}{resp, err}
+	}()
+	if _, err := writer.Write([]byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-prefixRead:
+	case <-time.After(time.Second):
+		t.Fatal("request prefix was buffered")
+	}
+	close(release)
+	if _, err := writer.Write([]byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		defer got.resp.Body.Close()
+		body, err := io.ReadAll(got.resp.Body)
+		if err != nil {
+			t.Fatalf("read response: %v", err)
+		}
+		if string(body) != "second" {
+			t.Fatalf("body=%q", body)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("proxy response timed out")
+	}
+}
+
+func TestSvcReverseProxyFlushesStreamingResponse(t *testing.T) {
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("first\n"))
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = w.Write([]byte("second\n"))
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	proxy := httptest.NewServer(newSvcReverseProxy(target, "/stream", "/api/svc/ns/svc"))
+	defer proxy.Close()
+	resp, err := http.Get(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	first := make([]byte, 6)
+	read := make(chan error, 1)
+	go func() { _, err := io.ReadFull(resp.Body, first); read <- err }()
+	select {
+	case err := <-read:
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(first) != "first\n" {
+			t.Fatalf("first=%q", first)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first chunk not flushed")
+	}
+	close(release)
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response remainder: %v", err)
+	}
+	if string(rest) != "second\n" {
+		t.Fatalf("rest=%q", rest)
 	}
 }
 

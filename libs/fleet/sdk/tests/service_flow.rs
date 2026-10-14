@@ -36,6 +36,12 @@ async fn routes_known_service_under_base_prefix_and_forwards_query() {
         "https://cyclops.example:8443/control/api/svc/pool-test/sandbox-1-mcp/tools?cursor=next"
     );
     assert_eq!(requests[1].method, "PATCH");
+    assert!(
+        requests[1]
+            .headers
+            .iter()
+            .any(|h| h.name == "X-Cua-Fleet-Claim" && h.value == "claim-1")
+    );
 }
 
 #[tokio::test]
@@ -184,6 +190,8 @@ async fn filters_hop_by_hop_and_connection_nominated_headers_without_reordering_
             header("Cookie", "session=kept"),
         ],
         body: Some(vec![0, 255, 1]),
+        timeout_secs: Some(75),
+        max_response_bytes: Some(1024),
     };
 
     client
@@ -202,10 +210,13 @@ async fn filters_hop_by_hop_and_connection_nominated_headers_without_reordering_
             header("X-Keep", "first"),
             header("x-keep", "second"),
             header("Cookie", "session=kept"),
+            header("X-Cua-Fleet-Claim", "claim-1"),
             header("authorization", "Bearer service-token"),
         ]
     );
     assert_eq!(request.body, Some(vec![0, 255, 1]));
+    assert_eq!(request.timeout_secs, Some(75));
+    assert_eq!(request.max_response_bytes, Some(1024));
 }
 
 #[tokio::test]
@@ -295,6 +306,8 @@ async fn returns_service_unauthorized_once_without_refreshing_or_replaying() {
         url: "https://attacker.example/ignored".into(),
         headers: vec![header("content-type", "application/octet-stream")],
         body: Some(vec![0, 255, 1]),
+        timeout_secs: None,
+        max_response_bytes: None,
     };
 
     let response = client
@@ -407,6 +420,8 @@ fn request(body: Option<Vec<u8>>) -> HttpRequest {
         url: "https://attacker.example/ignored".into(),
         headers: vec![],
         body,
+        timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

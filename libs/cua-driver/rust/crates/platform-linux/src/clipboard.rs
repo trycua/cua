@@ -1,23 +1,29 @@
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 use clipboard_rs::{common::RustImage, Clipboard, ClipboardContext, ContentFormat};
 use cua_driver_core::clipboard::ClipboardBackend;
 
 pub struct LinuxClipboard {
-    context: Result<Mutex<ClipboardContext>, String>,
+    context: OnceLock<Result<Mutex<ClipboardContext>, String>>,
 }
 
 impl LinuxClipboard {
     pub fn new() -> Self {
         Self {
-            context: ClipboardContext::new()
-                .map(Mutex::new)
-                .map_err(|error| error.to_string()),
+            context: OnceLock::new(),
         }
     }
 
     fn context(&self) -> Result<std::sync::MutexGuard<'_, ClipboardContext>, String> {
         self.context
+            .get_or_init(|| {
+                ClipboardContext::new()
+                    .map(Mutex::new)
+                    .map_err(|error| error.to_string())
+            })
             .as_ref()
             .map_err(Clone::clone)?
             .lock()
@@ -76,6 +82,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn construction_does_not_start_native_clipboard() {
+        let backend = LinuxClipboard::new();
+        assert!(backend.context.get().is_none());
+    }
+
+    #[test]
     fn rejects_relative_local_paths_before_clipboard_access() {
         let backend = LinuxClipboard::new();
         assert!(backend
@@ -88,15 +100,11 @@ mod tests {
             .contains("absolute"));
     }
 
+    /// Needs an X server; CI runs it under `xvfb-run` in ci-rust-linux.yml.
     #[test]
-    fn native_clipboard_round_trips_text_when_ci_has_a_display() {
-        if std::env::var_os("CI").is_none() {
-            return;
-        }
+    #[ignore = "requires an X11 display (run under xvfb-run)"]
+    fn native_clipboard_round_trips_text_on_x11() {
         let backend = LinuxClipboard::new();
-        if backend.available_formats().is_err() {
-            return;
-        }
         backend
             .write_text("cua-driver clipboard test".into())
             .unwrap();

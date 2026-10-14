@@ -39,11 +39,12 @@
 # privileges or Developer Mode. So the whole installer stays sudo-free.
 #
 # Env overrides:
-#   $env:CUA_DRIVER_RS_VERSION       pin a specific release (e.g. "0.2.0")
+#   $env:CUA_DRIVER_RS_VERSION       pin an exact stable version or nightly tag
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   override the visible PATH-entry dir
 #                                    (default %LOCALAPPDATA%\Programs\Cua\cua-driver\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
 #                                    (default %USERPROFILE%\.cua-driver)
+#   $env:CUA_DRIVER_RS_REQUIRE_SIGNATURE=1  same as -RequireSignature
 #   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
 #                                    release dirs after install; older ones
 #                                    are deleted (default 5; set 0 to
@@ -52,8 +53,11 @@
 #                                    independently of each other.
 #
 # Params:
-#   -Release    release tag to install ("latest" or a bare version like "0.2.0").
+#   -Release    release to install ("latest", a bare stable version, or a
+#               canonical nightly-cua-driver-rs-v* tag).
 #               Overridden by $env:CUA_DRIVER_RS_VERSION when set.
+#   -Channel    persist and install the latest "stable" or "nightly" release.
+#               Cannot be combined with an exact release pin.
 #   -AutoStart  register a Scheduled Task that runs `cua-driver serve` at
 #               every logon (Windows-native equivalent of macOS LaunchAgent).
 #               The task runs with LogonType=Interactive so it lands in
@@ -62,6 +66,11 @@
 #               to function. Default off; the post-install message prints
 #               the registration command so you can opt in later. Safe to
 #               re-run: existing task is replaced.
+#   -RequireSignature
+#               fail unless the release zip's Sigstore bundle verifies with
+#               cosign (needs cosign on PATH). Every zip is always checked
+#               against the release's SHA256SUMS, and every staged .exe
+#               must carry a valid Cua AI, Inc. Authenticode signature.
 #   -NoPathUpdate
 #               skip the auto-append of $VisibleBinDir to the User PATH.
 #               Default off — the installer auto-adds the bin dir so
@@ -76,6 +85,12 @@
 [CmdletBinding()]
 param(
     [string]$Release = "latest",
+    # No [ValidateSet] here. This script is documented to be run as
+    # `irm ... | iex`, where param() becomes a set of attributed *variable*
+    # declarations rather than a parameter block: [string]$Channel is then
+    # initialised to '' and the set rejects its own default before the body
+    # ever runs. Validated in Resolve-SelectedChannel instead.
+    [string]$Channel,
     # Default-on: cua-driver-serve is what makes the agent flow work
     # across logon / reboot. Without the scheduled task the user has
     # to remember to run `cua-driver autostart kick` every time, and
@@ -84,11 +99,17 @@ param(
     # that specifically don't want a scheduled task registered.
     [switch]$AutoStart = $true,
     [switch]$NoAutoStart,
-    [switch]$NoPathUpdate
+    [switch]$NoPathUpdate,
+    [switch]$RequireSignature
 )
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
 if ($NoAutoStart) { $AutoStart = $false }
+# Whether the caller passed `-AutoStart` itself rather than relying on the
+# default. `irm | iex` runs have no bound parameters.
+$AutoStartRequested = [bool]$AutoStart -and
+    (Test-Path variable:PSBoundParameters) -and
+    $PSBoundParameters.ContainsKey('AutoStart')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -96,9 +117,24 @@ $ErrorActionPreference = "Stop"
 # over PowerShell ISE and Windows PowerShell 5 — silence it. Restored
 # nowhere on purpose: this script is a one-shot, the user can re-set it.
 $ProgressPreference = "SilentlyContinue"
+# Windows PowerShell 5.1 started from PowerShell 7 (a pwsh terminal, or
+# `cua-driver update --apply` launched from one) inherits pwsh's
+# PSModulePath. Autoload then finds PowerShell 7's Core-only copies of
+# Microsoft.PowerShell.Utility / .Security / .Archive first, fails to load
+# them, and Get-FileHash, Get-AuthenticodeSignature and Expand-Archive are
+# "not recognized". Put this edition's own modules first and drop the
+# PowerShell 7 module paths before any of them is used.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $desktopModules = Join-Path $PSHOME 'Modules'
+    $modulePaths = @($desktopModules) + @(($env:PSModulePath -split ';') | Where-Object {
+            $_ -and ($_ -notmatch '\\PowerShell\\') -and ($_.TrimEnd('\') -ne $desktopModules.TrimEnd('\'))
+        })
+    $env:PSModulePath = $modulePaths -join ';'
+}
 
 $Repo       = "trycua/cua"
 $TagPrefix  = "cua-driver-rs-v"
+$NightlyTagPrefix = "nightly-cua-driver-rs-v"
 $BinaryName = "cua-driver.exe"
 $ThemeBinaryName = "cua-cursor-theme.exe"
 
@@ -113,9 +149,38 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.19.2" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.35.4" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
+#
+# Withdrawn releases (for example, a release published without valid
+# signatures) are never selected: an explicit pin is refused, and API
+# resolution skips them. This must mirror
+# .github/release-state/cua-driver-rs-withdrawn-versions, which records the
+# reasons; validate_release_versions.py enforces the match.
+# ~~~ WITHDRAWN_VERSIONS: mirrors the release-state list — do not edit alone ~~~
+$Script:CuaDriverRsWithdrawnVersions = @('0.28.3') # withdrawn-installer-versions
+# ~~~ END_WITHDRAWN_VERSIONS ~~~
 $CursorThemeRequiredFrom = [version]"0.12.7"
+
+# Release integrity. Stable releases from $ChecksumsRequiredFrom on publish a
+# checksum file: SHA256SUMS, or (0.31.0, from the older release workflow)
+# checksums.txt, the same "<sha256>  <asset>" lines inside a Markdown fence.
+# The release workflow that publishes SHA256SUMS also publishes a keyless
+# Sigstore bundle (<asset>.sigstore.json) per asset, issued to
+# cd-rust-cua-driver.yml at that exact tag, so a stable release with SHA256SUMS
+# must have one. A release cut by the older workflow (checksums.txt only) needs
+# none until $SigstoreRequiredFrom, the first version that can only come from
+# the signing workflow; keying the requirement on the next patch instead would
+# refuse a patch release cut before the signing workflow landed on main. A
+# missing one fails the install. Older releases and nightlies are checked when
+# the files exist and otherwise install with a warning. Windows binaries are
+# Authenticode-signed from $AuthenticodeRequiredFrom on (stable and nightly),
+# as CD verifies.
+$ChecksumsRequiredFrom = [version]"0.31.0"
+$SigstoreRequiredFrom = [version]"0.32.0"
+$AuthenticodeRequiredFrom = [version]"0.22.0"
+$CosignOidcIssuer = "https://token.actions.githubusercontent.com"
+if ($env:CUA_DRIVER_RS_REQUIRE_SIGNATURE -eq '1') { $RequireSignature = $true }
 
 # ---------- Path resolution ------------------------------------------------
 
@@ -152,10 +217,21 @@ $LegacyHomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
 $PackagesDir = Join-Path $HomeDir   "packages"
 $ReleasesDir = Join-Path $PackagesDir "releases"
 $CurrentDir  = Join-Path $PackagesDir "current"
+$ReleaseChannelPath = Join-Path $HomeDir "release-channel"
+$ChannelWasExplicit = $PSBoundParameters.ContainsKey('Channel')
 
 # Post-install GC: how many per-version release dirs to retain. Validated
 # in Resolve-KeepVersions below; 0 means "never GC".
 $Script:KeepVersionsDefault = 5
+
+function Get-Sha256Hex([string]$Path) {
+    # .NET directly: Get-FileHash is missing when the Utility module is not
+    # loaded (e.g. under `cua-driver update --apply` on older drivers).
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
 
 function Resolve-KeepVersions {
     $raw = $env:CUA_DRIVER_RS_KEEP_VERSIONS
@@ -861,6 +937,7 @@ function Invoke-OldReleasesGc {
 #   'api'                 — already the API's answer; nothing left to fall
 #       back to.
 $Script:CuaDriverRsVersionSource = $null
+$Script:CuaDriverRsReleaseTag = $null
 
 function Get-GitHubApiHeaders {
     # GH_TOKEN matches the GitHub CLI's precedence. Keep the token in a header
@@ -885,12 +962,40 @@ function Assert-StableVersion([string]$version, [string]$source) {
     }
 }
 
+function Resolve-ExplicitRelease([string]$value, [string]$source) {
+    if ($value -match '^(?:cua-driver-rs-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$') {
+        $version = $Matches[1]
+        return @{ Version = $version; Tag = "$TagPrefix$version" }
+    }
+    if ($value -match '^nightly-cua-driver-rs-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$') {
+        return @{ Version = $Matches[1]; Tag = $value }
+    }
+    if ($value -match '^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$') {
+        return @{ Version = $Matches[1]; Tag = "$NightlyTagPrefix$($Matches[1])" }
+    }
+    Write-ErrorStep "$source must be an exact x.y.z stable version or canonical nightly tag (got '$value')"
+    exit 1
+}
+
+function Test-WithdrawnVersion([string]$version) {
+    return [bool]($Script:CuaDriverRsWithdrawnVersions -contains $version)
+}
+
+function Assert-NotWithdrawnPin([hashtable]$release) {
+    if (Test-WithdrawnVersion $release.Version) {
+        Write-ErrorStep "$($release.Tag) was withdrawn and must not be installed; pin a different release"
+        Write-ErrorStep "  or remove the pin to install the current release."
+        exit 1
+    }
+}
+
 function Get-LatestVersionFromApi {
     # Highest SemVer $TagPrefix* version published on the repo, or $null when
     # the API is unreachable or has no matching tag. Never exits: callers
     # decide whether a miss is fatal, because this runs both as the primary
     # resolver (fatal) and as a recovery step (advisory).
-    Write-Step "resolving latest $TagPrefix* release via GitHub API"
+    $selectedPrefix = if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') { $NightlyTagPrefix } else { $TagPrefix }
+    Write-Step "resolving latest $($Script:CuaDriverRsSelectedChannel) release via GitHub API"
     # Paginate the /releases endpoint until we've seen every release or
     # collected enough $TagPrefix* matches to be confident the latest is
     # in hand. A single page (even at per_page=100) is not guaranteed to
@@ -913,8 +1018,19 @@ function Get-LatestVersionFromApi {
             $batch = Invoke-RestMethod -Uri $uri -Headers (Get-GitHubApiHeaders) -UseBasicParsing
             if (-not $batch -or $batch.Count -eq 0) { break }
             $releaseMatches += @($batch | Where-Object {
-                (-not $_.draft) -and
-                ($_.tag_name -match "^$([regex]::Escape($TagPrefix))([0-9]+\.[0-9]+\.[0-9]+)$")
+                if ($_.draft) { return $false }
+                if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') {
+                    return $_.tag_name -match "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$"
+                }
+                if ($_.tag_name -notmatch "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+)$") {
+                    return $false
+                }
+                # Withdrawn releases stay published for audit, but must never be chosen.
+                if (Test-WithdrawnVersion $_.tag_name.Substring($selectedPrefix.Length)) {
+                    Write-WarningStep "skipping withdrawn release $($_.tag_name)"
+                    return $false
+                }
+                return $true
             })
             if ($batch.Count -lt 100) { break }
         }
@@ -926,46 +1042,109 @@ function Get-LatestVersionFromApi {
     if (-not $releaseMatches -or $releaseMatches.Count -eq 0) {
         return $null
     }
-    # Sort by SemVer descending. [version] correctly orders dotted triples.
-    $latest = $releaseMatches | Sort-Object {
-        $v = $_.tag_name.Substring($TagPrefix.Length)
-        try { [version]$v } catch { [version]"0.0.0" }
-    } -Descending | Select-Object -First 1
+    if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') {
+        $latest = $releaseMatches | Sort-Object {
+            $v = $_.tag_name.Substring($selectedPrefix.Length)
+            if ($v -match '^([0-9]+\.[0-9]+\.[0-9]+)-nightly\.([0-9]{8})\.([1-9][0-9]*)$') {
+                $base = [version]$Matches[1]
+                return '{0:D10}.{1:D10}.{2:D10}.{3:D10}.{4:D20}' -f $base.Major, $base.Minor, $base.Build, [long]$Matches[2], [long]$Matches[3]
+            }
+            return '0'
+        } -Descending | Select-Object -First 1
+    }
+    else {
+        $latest = $releaseMatches | Sort-Object {
+            $v = $_.tag_name.Substring($selectedPrefix.Length)
+            try { [version]$v } catch { [version]'0.0.0' }
+        } -Descending | Select-Object -First 1
+    }
     Write-Step "latest release: $($latest.tag_name)"
-    return $latest.tag_name.Substring($TagPrefix.Length)
+    return $latest.tag_name.Substring($selectedPrefix.Length)
+}
+
+function Resolve-SelectedChannel {
+    if ($ChannelWasExplicit -and ($env:CUA_DRIVER_RS_VERSION -or $Release -ne 'latest')) {
+        Write-ErrorStep "-Channel cannot be combined with an exact release pin; pins do not change saved channel state"
+        exit 2
+    }
+    if ($ChannelWasExplicit) {
+        # Validated here rather than with [ValidateSet] on the parameter;
+        # see the note in param(). Same accepted values and same wording as
+        # the saved-channel check below.
+        if ($Channel -notin @('stable', 'nightly')) {
+            Write-ErrorStep "invalid -Channel '$Channel'; expected stable or nightly"
+            exit 2
+        }
+        return $Channel
+    }
+    if ($env:CUA_DRIVER_RS_VERSION -or $Release -ne 'latest') {
+        # Exact pins are one-shot and outrank persisted preference. This also
+        # preserves a recovery path when the preference file is malformed.
+        return 'stable'
+    }
+    if (Test-Path -LiteralPath $ReleaseChannelPath) {
+        try { $saved = (Get-Content -LiteralPath $ReleaseChannelPath -Raw).Trim() }
+        catch {
+            Write-ErrorStep "cannot read release channel at ${ReleaseChannelPath}: $($_.Exception.Message)"
+            exit 1
+        }
+        if ($saved -notin @('stable', 'nightly')) {
+            Write-ErrorStep "invalid release channel '$saved' in $ReleaseChannelPath; expected stable or nightly"
+            Write-ErrorStep "  repair with: cua-driver channel set stable"
+            exit 1
+        }
+        return $saved
+    }
+    return 'stable'
 }
 
 function Resolve-Version {
     if ($env:CUA_DRIVER_RS_VERSION) {
-        $v = $env:CUA_DRIVER_RS_VERSION -replace '^v', ''
-        Assert-StableVersion $v 'CUA_DRIVER_RS_VERSION'
-        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $v"
+        $release = Resolve-ExplicitRelease $env:CUA_DRIVER_RS_VERSION 'CUA_DRIVER_RS_VERSION'
+        $v = $release.Version
+        $Script:CuaDriverRsReleaseTag = $release.Tag
+        Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $($release.Tag)"
+        Assert-NotWithdrawnPin $release
         $Script:CuaDriverRsVersionSource = 'env'
         return $v
     }
     if ($Release -ne "latest") {
-        $v = $Release -replace '^v', ''
-        Assert-StableVersion $v '-Release'
-        Write-Step "using -Release $v"
+        $release = Resolve-ExplicitRelease $Release '-Release'
+        $v = $release.Version
+        $Script:CuaDriverRsReleaseTag = $release.Tag
+        Write-Step "using -Release $($release.Tag)"
+        Assert-NotWithdrawnPin $release
         $Script:CuaDriverRsVersionSource = 'release-arg'
         return $v
     }
     # Baked-version fallback — set by the CD workflow after each release
     # so the default `irm | iex` install path doesn't hit the GitHub API.
     # See the BAKED_VERSION sentinel-block near the top of this file.
-    if ($Script:CuaDriverRsBakedVersion) {
+    if ($Script:CuaDriverRsSelectedChannel -eq 'stable' -and $Script:CuaDriverRsBakedVersion) {
         $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
         Assert-StableVersion $v 'baked release'
-        Write-Step "using baked release: $TagPrefix$v"
-        $Script:CuaDriverRsVersionSource = 'baked'
-        return $v
+        if (Test-WithdrawnVersion $v) {
+            # Release validation never lets a withdrawn version be baked; an old
+            # or hand-edited installer copy that still names one resolves through
+            # the API, which skips every withdrawn release.
+            Write-WarningStep "baked release $TagPrefix$v was withdrawn; resolving the newest eligible release instead"
+        }
+        else {
+            Write-Step "using baked release: $TagPrefix$v"
+            $Script:CuaDriverRsReleaseTag = "$TagPrefix$v"
+            $Script:CuaDriverRsVersionSource = 'baked'
+            return $v
+        }
     }
     $v = Get-LatestVersionFromApi
     if (-not $v) {
-        Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
+        $selectedPrefix = if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') { $NightlyTagPrefix } else { $TagPrefix }
+        Write-ErrorStep "no release matching $selectedPrefix* found on $Repo"
         exit 1
     }
     $Script:CuaDriverRsVersionSource = 'api'
+    $selectedPrefix = if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') { $NightlyTagPrefix } else { $TagPrefix }
+    $Script:CuaDriverRsReleaseTag = "$selectedPrefix$v"
     return $v
 }
 
@@ -997,7 +1176,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     # never confused with a transient network, server, or authentication
     # failure. Only the former may activate baked-version fallback.
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
-    $url     = "https://github.com/$Repo/releases/download/$TagPrefix$version/$zipName"
+    $url     = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$zipName"
     $zipPath = Join-Path $destDir $zipName
     $maxAttempts = 3
 
@@ -1043,6 +1222,135 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     }
 }
 
+function Get-BaseVersion([string]$version) {
+    # 0.31.0-nightly.20260928.1 -> 0.31.0
+    return [version]($version -split '-', 2)[0]
+}
+
+function Get-ReleaseFile([string]$name, [string]$destPath) {
+    # Returns $true when fetched, $false on HTTP 404; exits on anything else.
+    $url = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$name"
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $destPath -UseBasicParsing
+            return $true
+        }
+        catch {
+            Remove-Item -LiteralPath $destPath -Force -ErrorAction SilentlyContinue
+            $statusCode = Get-HttpStatusCode $_.Exception
+            if ($statusCode -eq 404) { return $false }
+            if ((Test-TransientDownloadFailure $statusCode) -and $attempt -lt 3) {
+                Start-Sleep -Seconds $attempt
+                continue
+            }
+            Write-ErrorStep "could not download ${url}: $($_.Exception.Message)"
+            exit 1
+        }
+    }
+}
+
+function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
+    $zipName = Split-Path -Leaf $zipPath
+    $tag = $Script:CuaDriverRsReleaseTag
+    $required = $tag.StartsWith($TagPrefix) -and ((Get-BaseVersion $version) -ge $ChecksumsRequiredFrom)
+    $signedRequired = $tag.StartsWith($TagPrefix) -and ((Get-BaseVersion $version) -ge $SigstoreRequiredFrom)
+    $destDir = Split-Path -Parent $zipPath
+
+    # SHA256SUMS, else the older release workflow's checksums.txt.
+    $sumsName = $null
+    foreach ($candidate in @("SHA256SUMS", "checksums.txt")) {
+        if (Get-ReleaseFile $candidate (Join-Path $destDir $candidate)) {
+            $sumsName = $candidate
+            break
+        }
+    }
+    if ($sumsName -eq "SHA256SUMS" -and $tag.StartsWith($TagPrefix)) {
+        $signedRequired = $true
+    }
+    if ($sumsName) {
+        $expected = $null
+        foreach ($line in Get-Content -LiteralPath (Join-Path $destDir $sumsName)) {
+            $parts = $line.Trim() -split '\s+', 2
+            if ($parts.Count -eq 2 -and ($parts[1] -eq $zipName -or $parts[1] -eq "*$zipName")) {
+                $expected = $parts[0].ToLowerInvariant()
+                break
+            }
+        }
+        if (-not $expected -and $sumsName -eq "checksums.txt" -and -not $required) {
+            Write-WarningStep "$zipName is not listed in $tag's checksums.txt; installing it without a checksum check"
+        }
+        elseif (-not $expected) {
+            Write-ErrorStep "$zipName is not listed in $tag's $sumsName; refusing to install it."
+            exit 1
+        }
+        else {
+            $actual = Get-Sha256Hex $zipPath
+            if ($actual -ne $expected) {
+                Write-ErrorStep "$zipName does not match $tag's $sumsName (expected $expected, got $actual); refusing to install it."
+                exit 1
+            }
+            Write-Step "verified $zipName against $sumsName"
+        }
+    }
+    elseif ($required) {
+        Write-ErrorStep "$tag has no SHA256SUMS; releases from $ChecksumsRequiredFrom on must publish one. Refusing to install."
+        exit 1
+    }
+    else {
+        Write-WarningStep "$tag predates published SHA256SUMS; installing $zipName without a checksum check"
+    }
+
+    $bundlePath = "$zipPath.sigstore.json"
+    if (Get-ReleaseFile "$zipName.sigstore.json" $bundlePath) {
+        $cosign = Get-Command cosign -ErrorAction SilentlyContinue
+        if ($cosign) {
+            $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
+            & $cosign verify-blob --bundle $bundlePath `
+                --certificate-identity $identity `
+                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
+            if ($LASTEXITCODE -ne 0) {
+                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
+                exit 1
+            }
+            Write-Step "verified the Sigstore signature of $zipName"
+        }
+        elseif ($RequireSignature) {
+            Write-ErrorStep "-RequireSignature needs cosign on PATH to verify $zipName."
+            exit 1
+        }
+        else {
+            Write-WarningStep "$zipName is signed, but cosign is not installed; verified its sha256 only (install cosign, or pass -RequireSignature to insist)"
+        }
+    }
+    elseif ($RequireSignature) {
+        Write-ErrorStep "$tag publishes no Sigstore bundle for $zipName; -RequireSignature cannot be met."
+        exit 1
+    }
+    elseif ($signedRequired) {
+        Write-ErrorStep "$tag has no Sigstore bundle for $zipName; releases that publish SHA256SUMS, and every release from $SigstoreRequiredFrom on, must publish one. Refusing to install."
+        exit 1
+    }
+}
+
+function Assert-StagedAuthenticode([string]$stageDir, [string]$version) {
+    if ((Get-BaseVersion $version) -lt $AuthenticodeRequiredFrom) {
+        Write-WarningStep "$Script:CuaDriverRsReleaseTag predates signed Windows binaries; skipping the Authenticode check"
+        return
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $stageDir -Recurse -File -Filter *.exe) {
+        $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+        if ($signature.Status -ne 'Valid') {
+            Write-ErrorStep "invalid Authenticode signature on $($file.Name): $($signature.StatusMessage); refusing to install it."
+            exit 1
+        }
+        if ($signature.SignerCertificate.Subject -notmatch 'CN="?Cua AI, Inc\."?') {
+            Write-ErrorStep "unexpected Authenticode signer on $($file.Name): $($signature.SignerCertificate.Subject); refusing to install it."
+            exit 1
+        }
+    }
+    Write-Step "verified the Authenticode signatures of the staged executables"
+}
+
 function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir) {
     # Returns @{ StageDir; Version }. Version can differ from the requested one
     # when a baked version had no downloadable asset and the API named a
@@ -1054,10 +1362,10 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
 
     if ($download.ErrorMessage) {
         if (Test-TransientDownloadFailure $download.StatusCode) {
-            Write-ErrorStep "download failed after $($download.Attempts) attempts for $TagPrefix$resolvedVersion ($archLabel): $($download.ErrorMessage)"
+            Write-ErrorStep "download failed after $($download.Attempts) attempts for $Script:CuaDriverRsReleaseTag ($archLabel): $($download.ErrorMessage)"
         }
         else {
-            Write-ErrorStep "download failed for $TagPrefix$resolvedVersion ($archLabel) with HTTP $($download.StatusCode): $($download.ErrorMessage)"
+            Write-ErrorStep "download failed for $Script:CuaDriverRsReleaseTag ($archLabel) with HTTP $($download.StatusCode): $($download.ErrorMessage)"
         }
         Write-ErrorStep "  The requested version was not changed. Check network access and GitHub credentials, then retry."
         exit 1
@@ -1079,6 +1387,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         else {
             Write-WarningStep "temporary fallback: baked release $TagPrefix$resolvedVersion is missing its $archLabel asset (HTTP 404); installing latest published release $TagPrefix$apiVersion instead"
             $resolvedVersion = $apiVersion
+            $Script:CuaDriverRsReleaseTag = "$TagPrefix$resolvedVersion"
             $download = Get-ReleaseZip $resolvedVersion $archLabel $destDir
             if ($download.ErrorMessage) {
                 if (Test-TransientDownloadFailure $download.StatusCode) {
@@ -1094,7 +1403,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     }
 
     if ($download.Missing) {
-        $message = "release asset for $TagPrefix$resolvedVersion ($archLabel) was not found (HTTP 404)"
+        $message = "release asset for $Script:CuaDriverRsReleaseTag ($archLabel) was not found (HTTP 404)"
         if ($missingDetail) { $message += "; $missingDetail" }
         Write-ErrorStep "$message."
         if ($Script:CuaDriverRsVersionSource -in @('env', 'release-arg')) {
@@ -1107,6 +1416,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     $version = $resolvedVersion
     $zipPath = $download.ZipPath
     $zipName = Split-Path -Leaf $zipPath
+    Assert-ReleaseZipIntegrity $zipPath $version
 
     Write-Step "extracting $zipName"
     $extractDir = Join-Path $destDir "extracted"
@@ -1116,7 +1426,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
 
     # Directory zip from the CD workflow expands to
-    # cua-driver-rs-<v>-<arch>\cua-driver.exe (+ LICENSE).
+    # cua-driver-rs-<v>-<arch>\cua-driver.exe (+ LICENSE, THIRD_PARTY_NOTICES.md).
     $stage = "cua-driver-rs-$version-$archLabel"
     $stageDir = Join-Path $extractDir $stage
     if (-not (Test-Path -LiteralPath (Join-Path $stageDir $BinaryName))) {
@@ -1124,6 +1434,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         Get-ChildItem $extractDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
         exit 1
     }
+    Assert-StagedAuthenticode $stageDir $version
     return @{ StageDir = $stageDir; Version = $version }
 }
 
@@ -1132,22 +1443,6 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
 Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
-
-function Get-AncestorProcessIds {
-    # PIDs of this process and its ancestors, so cleanup never kills the caller.
-    # `cua-driver update --apply` runs the installer as a child of cua-driver.exe.
-    $ids = @()
-    $seen = @{}
-    $currentPid = $PID
-    while ($currentPid -and -not $seen.ContainsKey([int]$currentPid)) {
-        $seen[[int]$currentPid] = $true
-        $ids += $currentPid
-        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
-        if (-not $proc -or -not $proc.ParentProcessId) { break }
-        $currentPid = $proc.ParentProcessId
-    }
-    return $ids
-}
 
 function Remove-LegacyInstall {
     # Best-effort cleanup of v0.2.13-and-earlier install paths. Runs before
@@ -1171,54 +1466,16 @@ function Remove-LegacyInstall {
 
     Write-Step "detected legacy install layout (v0.2.13 or earlier); migrating to Cua\cua-driver"
 
-    # 1. End the running daemon. Order matters:
-    #
-    #    a. `schtasks /End` first — Task Scheduler runs as SYSTEM and can
-    #       terminate elevated (RunLevel=Highest, High IL) processes that a
-    #       Medium-IL Stop-Process from the user's shell cannot. This is
-    #       the case any time the legacy daemon was spawned via the
-    #       AtLogon trigger of the v0.2.13 autostart task on a non-RID-500
-    #       admin account (e.g. cuademo). Without this, Step 4 below fails
-    #       with "Access to the path 'cua-driver.exe' is denied" because
-    #       the legacy binary is held open by an unkillable elevated
-    #       process. Discovered during the cuademo v0.2.13 → v0.2.14
-    #       migration dogfood.
-    #    b. taskkill /F /IM as a backstop for any cua-driver process that
-    #       wasn't task-attached (manual `cua-driver serve`, legacy uia
-    #       worker, etc.). taskkill is more permissive than Stop-Process
-    #       for cross-IL termination.
-    #    c. Stop-Process last — catches anything taskkill missed.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    # Never kill the process tree we are running inside: when the installer is
-    # launched by `cua-driver update --apply`, our own parent IS a cua-driver.exe,
-    # and an unfiltered kill terminates the update mid-flight (the script dies
-    # right after the step banner above). Both cleanup passes below skip these.
-    $ancestorPids = @(Get-AncestorProcessIds)
-    try {
-        # Ends the running task instance. Returns non-zero when the task
-        # isn't running or doesn't exist, both of which we swallow.
-        & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
-        Start-Sleep -Milliseconds 250
-        # Force-kill via taskkill — handles High-IL processes that
-        # Stop-Process can't touch from a Medium-IL caller.
-        $selfFilters = @()
-        foreach ($ancestorPid in $ancestorPids) {
-            $selfFilters += '/FI'
-            $selfFilters += "PID ne $ancestorPid"
-        }
-        & taskkill.exe /F /IM "cua-driver.exe" /T @selfFilters 2>$null | Out-Null
-        & taskkill.exe /F /IM "cua-driver-uia.exe" /T @selfFilters 2>$null | Out-Null
-    } finally {
-        $ErrorActionPreference = $prevEAP
-    }
-    $procs = Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue
-    if ($procs) {
-        foreach ($p in $procs) {
-            if ($ancestorPids -contains $p.Id) { continue }
-            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
+    # 1. End the running daemon through the shared cleanup in
+    #    _install-common.psm1. Its `schtasks /End` terminates elevated
+    #    (RunLevel=Highest, High IL) daemons that a Medium-IL kill cannot.
+    #    Without this, Step 4 below fails with "Access to the path
+    #    'cua-driver.exe' is denied" because the legacy binary is held open
+    #    by an unkillable elevated process (found in the cuademo v0.2.13 ->
+    #    v0.2.14 migration dogfood). It never stops this installer's own
+    #    process tree: `cua-driver update --apply` launches the installer
+    #    from a cua-driver.exe and waits for it (#2803).
+    $null = Stop-CuaDriverDaemons
     Start-Sleep -Milliseconds 500
 
     # 2. Unregister the autostart Scheduled Task if present. Idempotent —
@@ -1306,6 +1563,7 @@ $target    = Get-TargetTriple
 $archLabel = Get-AssetArchLabel $target
 Write-Step "  target      : $target"
 
+$Script:CuaDriverRsSelectedChannel = Resolve-SelectedChannel
 $version = Resolve-Version
 $versionedDir = Join-Path $ReleasesDir "$version-$target"
 
@@ -1426,6 +1684,13 @@ else {
 # Wire up the junction chain. The inner junction (current → releases\<v>)
 # is what makes the upgrade atomic; the outer junction (bin → current)
 # is what gives users a stable PATH entry.
+if ($ChannelWasExplicit) {
+    New-Item -ItemType Directory -Force -Path $HomeDir | Out-Null
+    $channelTempPath = Join-Path $HomeDir (".release-channel." + $PID)
+    Set-Content -LiteralPath $channelTempPath -Value $Script:CuaDriverRsSelectedChannel -Encoding Ascii -NoNewline
+    Move-Item -LiteralPath $channelTempPath -Destination $ReleaseChannelPath -Force
+    Write-Step "saved release channel: $($Script:CuaDriverRsSelectedChannel)"
+}
 Ensure-Junction $CurrentDir    $versionedDir
 Ensure-Junction $VisibleBinDir $CurrentDir
 
@@ -1584,11 +1849,33 @@ Write-Host "Stopping any previous cua-driver processes (best-effort; High-IL nee
 # instructions, same as the previous behavior.
 $null = Repair-CuaDriverStaleDaemon
 
-if ($AutoStart) {
+# Tracks whether registration actually happened, so the closing summary
+# reports the outcome instead of merely restating that -AutoStart was
+# requested. A declined UAC prompt used to leave the summary claiming the
+# task was registered (trycua/cua#3179).
+$AutoStartRegistered = $false
+
+# An isolated install (CUA_DRIVER_RS_HOME or CUA_DRIVER_RS_INSTALL_DIR set)
+# must not register, re-register, or remove the machine's single autostart
+# task unless the caller explicitly passed -AutoStart (#4090). The legacy
+# cleanup above skips these installs for the same reason.
+$IsolatedInstall = [bool]($env:CUA_DRIVER_RS_INSTALL_DIR -or $env:CUA_DRIVER_RS_HOME)
+$SkipIsolatedAutostart = $IsolatedInstall -and -not $AutoStartRequested
+
+if ($SkipIsolatedAutostart) {
+    if ($AutoStart) {
+        Write-Host ""
+        Write-Host "Isolated install (CUA_DRIVER_RS_HOME/CUA_DRIVER_RS_INSTALL_DIR set) - leaving the autostart task unchanged." -ForegroundColor Yellow
+        Write-Host "  The autostart task is shared by the whole machine. Pass -AutoStart explicitly to point it"
+        Write-Host "  at this isolated binary, or pass -NoAutoStart to suppress this notice."
+    }
+}
+elseif ($AutoStart) {
     Write-Host ""
     Write-Host "Registering auto-start (cua-driver autostart enable)..." -ForegroundColor Cyan
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
+        $AutoStartRegistered = $true
         Write-Host "  cua-driver serve will auto-start at every interactive logon (RunLevel=Highest)." -ForegroundColor Green
     }
     catch {
@@ -1602,7 +1889,8 @@ if ($AutoStart) {
     # registered, re-register it against the fresh binary. Otherwise
     # the task <Command> still points at the previous release dir + an
     # older binary that may be missing the hidden-console wrapper (#1654)
-    # or any later autostart-shape fix.
+    # or any later autostart-shape fix. Never reached by an isolated
+    # install, which must not touch the task owned by the default install.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -1644,11 +1932,22 @@ catch {
 
 # Windows-specific autostart hint (kept inline; OS-natural location).
 Write-Host ""
-if ($AutoStart) {
+if ($SkipIsolatedAutostart) {
+    Write-Host "Auto-start: unchanged for this isolated install (the task is shared by the whole machine)." -ForegroundColor Cyan
+    Write-Host "  install.ps1 -AutoStart         (point the task at this isolated binary)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
+}
+elseif ($AutoStartRegistered) {
     Write-Host "Auto-start: 'cua-driver-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
     Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+} elseif ($AutoStart) {
+    # Requested but not registered — the failure was already reported above.
+    # Never claim the task exists here (trycua/cua#3179).
+    Write-Host "Auto-start: 'cua-driver-serve' is NOT registered - registration failed above." -ForegroundColor Yellow
+    Write-Host "  cua-driver autostart enable    (retry; accept the UAC prompt)" -ForegroundColor Yellow
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Yellow
 } else {
     Write-Host "Auto-start at logon (NOT enabled - re-run without -NoAutoStart to register, or:):" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart enable    (Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan

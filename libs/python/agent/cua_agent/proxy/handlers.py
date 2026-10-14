@@ -8,10 +8,31 @@ import os
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
-try:
-    from computer import Computer
-except ImportError:
-    Computer = None  # type: ignore[assignment,misc]
+
+async def _open_computer(config: Dict[str, Any]) -> Any:
+    """Open a cua-sandbox computer from proxy ``computer_kwargs``.
+
+    Recognised keys: ``name`` (existing sandbox to connect to), ``api_key``,
+    ``local`` (connect to a local sandbox by name). ``os_type``/``provider_type``
+    are accepted and ignored. Host control (``localhost`` and the legacy
+    ``use_host_computer_server``) was removed: use cua-driver for the local machine.
+    """
+    if config.get("localhost") or config.get("use_host_computer_server"):
+        raise ValueError(
+            "Host control was removed from the agent proxy. Use cua-driver (its SDK "
+            "or MCP server) to control this machine, or pass a sandbox name."
+        )
+    from cua_sandbox import Sandbox
+
+    name = config.get("name")
+    if not name:
+        raise ValueError(
+            "computer_kwargs.name (or CUA_CONTAINER_NAME) is required to connect to a sandbox"
+        )
+    return await Sandbox.connect(
+        name, api_key=config.get("api_key"), local=bool(config.get("local", False))
+    )
+
 
 from ..agent import ComputerAgent
 
@@ -69,18 +90,13 @@ class ResponsesHandler:
             if computer is None:
                 # Default computer configuration
                 default_c_config = {
-                    "os_type": "linux",
-                    "provider_type": "cloud",
                     "name": os.getenv("CUA_CONTAINER_NAME"),
                     "api_key": os.getenv("CUA_API_KEY"),
                 }
                 default_c_config.update(computer_kwargs)
-                computer = Computer(**default_c_config)
-                await computer.__aenter__()
+                computer = await _open_computer(default_c_config)
                 self._computer_cache[comp_key] = computer
-                logger.info(
-                    f"Computer created and cached with key={comp_key} config={default_c_config}"
-                )
+                logger.info(f"Computer connected and cached with key={comp_key}")
             else:
                 logger.info(f"Reusing cached computer for key={comp_key}")
 
@@ -211,7 +227,7 @@ class ResponsesHandler:
         """Clean up resources."""
         if self.computer:
             try:
-                await self.computer.__aexit__(None, None, None)
+                await self.computer.disconnect()
             except Exception as e:
                 logger.error(f"Error cleaning up computer: {e}")
             finally:

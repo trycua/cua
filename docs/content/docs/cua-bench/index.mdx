@@ -1,0 +1,62 @@
+---
+title: Cua Bench
+description: 'Run the Cua Bench registry tasksets against any computer-use agent on local or cloud desktop sandboxes, or write your own verifiable tasks.'
+landing:
+  summary: 'Run and score computer-use benchmarks on local or cloud desktops, or write your own tasks.'
+  cta: Evaluate an agent
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+Cua Bench (`cb`, MIT) runs verifiable computer-use tasks on real desktop
+sandboxes and scores any agent on them. Start from a taskset in the
+**[Cua Bench registry](https://cua.ai/cuabench/registry)**: one command runs it
+on this machine or in the cloud.
+
+```bash test="cli-shape" id="bench-index-run"
+cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+```
+
+<VideoDemo
+  className="my-8"
+  src="https://github.com/user-attachments/assets/35bf5156-d326-4484-ad1a-87a7991c85f6"
+  poster="https://github.com/user-attachments/assets/1b60d1c6-06fb-47e3-97c0-726421cf45fb"
+  title="An open-source registry and runner for computer-use tasks"
+  sourceUrl="https://x.com/trycua/status/2014406820887183512"
+>
+  A task goes from the registry through variations, agent adapters, the CLI
+  runner, and self-hosted execution.
+</VideoDemo>
+
+## How a task runs
+
+```text output
+dataset -> task -> variant -> session -> trajectory -> evaluator -> reward
+```
+
+A task module (`main.py`) has four functions:
+
+| Function | Does |
+|----------|------|
+| `@tasks_config` | Returns the variants: same objective, different prompt, data, theme or OS. |
+| `@setup_task` | Prepares the variant's environment and opens the apps. |
+| `@solve_task` | Optional oracle: one known way to succeed. A failing oracle means a broken task, not a bad agent. |
+| `@evaluate_task` | Inspects the final state and returns rewards. It scores an oracle, a human or an agent the same way. |
+
+Tasks run in a real sandbox from the [cua SDK](/cua-sdk) on this machine (`cb run --on local`, the default).
+
+## Next
+
+- [Quickstart](/cua-bench/quickstart): run a registry taskset, read the score, add an agent.
+- [Run a benchmark](/cua-bench/guides/benchmarks): every registry taskset, versions, pass@k, local or cloud.
+- [Write a task](/cua-bench/guides/write-a-task): the task module contract.
+- [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks): OSWorld-Verified, MiniWoB++, WebVoyager and other adapters.
+
+<Cards>
+  <Card title="Task registry" href="https://cua.ai/cuabench/registry">
+    Browse the tasksets, their tasks and previews.
+  </Card>
+  <Card title="Source" href="https://github.com/trycua/cua/tree/main/libs/cua-bench">
+    The package, tasksets and CLI.
+  </Card>
+</Cards>

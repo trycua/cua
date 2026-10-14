@@ -1,0 +1,96 @@
+{
+  "elements" : [
+    {
+      "lines" : [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 0,
+        "lastRow" : 5
+      },
+      "type" : "rawText"
+    },
+    {
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 6,
+        "lastRow" : 6
+      },
+      "text" : "Run the shell command uname -a for me.",
+      "type" : "userMessage"
+    },
+    {
+      "argumentSummary" : "1 shell command",
+      "collapsed" : false,
+      "name" : "Ran",
+      "provenance" : "inferred",
+      "region" : {
+        "firstRow" : 8,
+        "lastRow" : 8
+      },
+      "resultLines" : [
+
+      ],
+      "status" : "unknown",
+      "statusProvenance" : "inferred",
+      "type" : "toolCall"
+    },
+    {
+      "markdown" : "Darwin Mac.localdomain 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026;\nroot:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64\n\nmacOS on Apple Silicon (arm64, T6030 — M3 Pro family).",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 10,
+        "lastRow" : 13
+      },
+      "text" : "Darwin Mac.localdomain 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026;\nroot:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64\n\nmacOS on Apple Silicon (arm64, T6030 — M3 Pro family).",
+      "type" : "agentMessage"
+    },
+    {
+      "kind" : "completed",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 15,
+        "lastRow" : 15
+      },
+      "text" : "✻ Brewed for 3s · done 5:56 PM",
+      "type" : "turnBoundary"
+    },
+    {
+      "content" : "now show me the diff in calc.py",
+      "cursorIsInside" : true,
+      "placeholder" : null,
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 30,
+        "lastRow" : 32
+      },
+      "type" : "composer"
+    },
+    {
+      "hint" : "shift+tab to cycle",
+      "mode" : "auto",
+      "provenance" : "observed",
+      "rawText" : "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+      "region" : {
+        "firstRow" : 33,
+        "lastRow" : 33
+      },
+      "type" : "modeIndicator"
+    }
+  ],
+  "schema" : "cua.transcript.jsonui/1",
+  "source" : {
+    "alternateScreen" : true,
+    "cli" : "claude",
+    "cliVersion" : "2.1.278 (Claude Code)",
+    "frameTime" : 12.973000000000001,
+    "layoutProfile" : "claude-code/2.x",
+    "unsupportedSequences" : 0
+  }
+}

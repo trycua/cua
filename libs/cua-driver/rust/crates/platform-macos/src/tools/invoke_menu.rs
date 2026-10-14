@@ -10,7 +10,15 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::time::Duration;
+use std::{
+    ffi::c_void,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc,
+    },
+    time::Duration,
+};
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
@@ -21,6 +29,7 @@ use crate::ax::bindings::{
 pub struct InvokeMenuTool;
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+const MAIN_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
@@ -77,6 +86,88 @@ unsafe fn semantic_children(parent: AXUIElementRef) -> Vec<AXUIElementRef> {
     out
 }
 
+/// A menu title as paths compare it: trimmed, with three periods read as
+/// the ellipsis character macOS menu titles use ("Save As..." finds
+/// "Save As…").
+fn menu_title_key(title: &str) -> String {
+    title.trim().replace("...", "\u{2026}")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TitleMatch {
+    One(usize),
+    Ambiguous,
+    None,
+}
+
+/// Find a path segment among the titles of one menu level: an exact title
+/// first, then a title that differs only in letter case. Anything looser
+/// (word overlap, prefixes) is left to the caller, who sees the titles in
+/// the error, because a wrong guess would run a different command.
+fn pick_title(titles: &[String], segment: &str) -> TitleMatch {
+    let wanted = menu_title_key(segment);
+    let pick = |same: &dyn Fn(&str) -> bool| {
+        let mut hits = titles
+            .iter()
+            .enumerate()
+            .filter(|(_, title)| same(&menu_title_key(title)))
+            .map(|(index, _)| index);
+        match (hits.next(), hits.next()) {
+            (Some(index), None) => TitleMatch::One(index),
+            (Some(_), Some(_)) => TitleMatch::Ambiguous,
+            _ => TitleMatch::None,
+        }
+    };
+    match pick(&|title| title == wanted) {
+        TitleMatch::None => {
+            let wanted = wanted.to_lowercase();
+            pick(&|title| title.to_lowercase() == wanted)
+        }
+        found => found,
+    }
+}
+
+/// Most items a missed segment lists, so a long menu cannot flood the reply.
+const MAX_LISTED_TITLES: usize = 40;
+
+/// A missed segment names what was asked for, where, and the items that are
+/// there, so the next call can use the real title instead of a full tree
+/// read (LibreOffice calls it "To Next Sheet", not "Next Sheet").
+fn missing_segment_error(depth: usize, prefix: &[String], titles: &[String]) -> String {
+    let wanted = &prefix[depth];
+    let location = if depth == 0 {
+        "in the menu bar".to_owned()
+    } else {
+        format!("under \"{}\"", prefix[..depth].join(" > "))
+    };
+    let mut items: Vec<&str> = titles
+        .iter()
+        .map(|title| title.trim())
+        .filter(|title| !title.is_empty())
+        .collect();
+    items.dedup();
+    if items.is_empty() {
+        return format!(
+            "invoke_menu: path segment {depth} \"{wanted}\" was not found {location}, which lists no titled items (the app may fill this menu only while it is open)"
+        );
+    }
+    let more = items.len().saturating_sub(MAX_LISTED_TITLES);
+    let listed = items
+        .iter()
+        .take(MAX_LISTED_TITLES)
+        .map(|title| format!("\"{title}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        "invoke_menu: path segment {depth} \"{wanted}\" was not found {location}. Items there: {listed}{more}"
+    )
+}
+
 unsafe fn resolve_exact_prefix(
     menu_bar: AXUIElementRef,
     prefix: &[String],
@@ -90,28 +181,27 @@ unsafe fn resolve_exact_prefix(
             CFRelease(current as CFTypeRef);
         }
 
-        let mut matches = Vec::new();
-        for child in children {
-            let title = copy_string_attr(child, "AXTitle").unwrap_or_default();
-            if title.trim() == segment {
-                matches.push(child);
+        let titles: Vec<String> = children
+            .iter()
+            .map(|&child| copy_string_attr(child, "AXTitle").unwrap_or_default())
+            .collect();
+        let picked = pick_title(&titles, segment);
+        let mut chosen = None;
+        for (index, child) in children.into_iter().enumerate() {
+            if matches!(picked, TitleMatch::One(i) if i == index) {
+                chosen = Some(child);
             } else {
                 CFRelease(child as CFTypeRef);
             }
         }
 
-        if matches.len() != 1 {
-            let match_count = matches.len();
-            for candidate in matches {
-                CFRelease(candidate as CFTypeRef);
+        match (picked, chosen) {
+            (TitleMatch::One(_), Some(child)) => current = child,
+            (TitleMatch::Ambiguous, _) => {
+                return Err(format!("invoke_menu: path segment {depth} is ambiguous"));
             }
-            return Err(if match_count == 0 {
-                format!("invoke_menu: path segment {depth} was not found")
-            } else {
-                format!("invoke_menu: path segment {depth} is ambiguous")
-            });
+            _ => return Err(missing_segment_error(depth, prefix, &titles)),
         }
-        current = matches.pop().expect("one exact match");
         owns_current = true;
     }
 
@@ -119,6 +209,54 @@ unsafe fn resolve_exact_prefix(
         Ok(current)
     } else {
         Err("invoke_menu: path is empty".into())
+    }
+}
+
+/// Close the menu a failed path opened from the menu bar item `top` with
+/// AXCancel on that item's menu (which also ends its submenus), and read the
+/// result back from WindowServer's window list. Menu windows in
+/// `menus_before` were on screen before this call and do not count.
+unsafe fn close_opened_menu(
+    app: AXUIElementRef,
+    pid: i32,
+    top: &str,
+    menus_before: &[u32],
+) -> Option<bool> {
+    // An action that reported an error can still open its menu a moment
+    // later; give it the same settle time as a hop before looking.
+    std::thread::sleep(Duration::from_millis(80));
+    if crate::windows::new_menu_windows(pid, menus_before)? == 0 {
+        return Some(true);
+    }
+    let item = copy_element_attr(app, "AXMenuBar").and_then(|bar| {
+        set_messaging_timeout(bar);
+        let item = resolve_exact_prefix(bar, std::slice::from_ref(&top.to_owned())).ok();
+        CFRelease(bar as CFTypeRef);
+        item
+    });
+    let Some(item) = item else {
+        return Some(false);
+    };
+    set_messaging_timeout(item);
+    for child in copy_children(item) {
+        set_messaging_timeout(child);
+        if copy_string_attr(child, "AXRole").as_deref() == Some("AXMenu") {
+            let _ = perform_action(child, "AXCancel");
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    CFRelease(item as CFTypeRef);
+    crate::windows::wait_for_new_menus_closed(pid, menus_before)
+}
+
+/// The refusal for a path that failed after pressing a menu item, saying
+/// whether the menu it opened was seen to close.
+fn failure_after_press(error: String, top: &str, closed: Option<bool>) -> String {
+    match closed {
+        Some(true) => format!("{error}. No menu window this call opened is still on screen."),
+        Some(false) | None => format!(
+            "{error}. The {top} menu this call opened may still be open: press escape on the window before other input."
+        ),
     }
 }
 
@@ -139,6 +277,12 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     }
     set_messaging_timeout(app);
 
+    // Whether this call pressed a menu item (a press that reports an error
+    // can still open its menu), so a failure must close what it opened.
+    let mut pressed = false;
+    // Unreadable now counts every menu window later as this call's, which can
+    // only make the closed claim more cautious.
+    let menus_before = crate::windows::menu_window_ids(pid).unwrap_or_default();
     let result = (|| {
         for depth in 0..path.len() {
             // Resolve from the live app root for every hop. Opening a menu can
@@ -166,6 +310,7 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
                     return Err(error);
                 }
             };
+            pressed = true;
             let error = perform_action(target, action);
             CFRelease(target as CFTypeRef);
             if error != kAXErrorSuccess {
@@ -180,8 +325,49 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
         Ok(())
     })();
 
+    // A failure after a hop opened a menu: close it, so the app is not left
+    // tracking a menu (where the next menu command reports success and does
+    // nothing).
+    let result = result.map_err(|error| {
+        if !pressed {
+            return error;
+        }
+        let closed = close_opened_menu(app, pid, &path[0], &menus_before);
+        failure_after_press(error, &path[0], closed)
+    });
+
     CFRelease(app as CFTypeRef);
     result
+}
+
+fn select_frontmost_pid(
+    front_process_matches: Option<bool>,
+    workspace_fallback: impl FnOnce() -> Option<i32>,
+    pid: i32,
+) -> Option<i32> {
+    match front_process_matches {
+        Some(true) => Some(pid),
+        Some(false) => None,
+        None => workspace_fallback(),
+    }
+}
+
+fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
+    select_frontmost_pid(
+        crate::input::skylight::front_process_matches(pid, window_id),
+        crate::apps::frontmost_pid,
+        pid,
+    )
+}
+
+fn live_frontmost_app() -> Option<i32> {
+    crate::windows::visible_windows()
+        .into_iter()
+        .find(|window| {
+            crate::input::skylight::front_process_matches(window.pid, window.window_id)
+                == Some(true)
+        })
+        .map(|window| window.pid)
 }
 
 /// Make one exact application window key before resolving focus-sensitive
@@ -194,18 +380,7 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
 /// disabled even though the application itself is frontmost. Raise and mark
 /// only the requested AX window, then require an exact focused-window readback
 /// before menu resolution proceeds.
-fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
-    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
-    if !native_key_requested
-        && crate::apps::frontmost_pid() != Some(pid)
-        && !crate::apps::activate_pid(pid)
-    {
-        return Err("invoke_menu: target application could not be activated".into());
-    }
-    if !native_key_requested {
-        std::thread::sleep(Duration::from_millis(120));
-    }
-
+fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -237,6 +412,88 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         let _ = set_bool_attr_true(target, "AXFocused");
         CFRelease(target as CFTypeRef);
     }
+    Ok(())
+}
+
+struct AxWindowFocusRequest {
+    pid: i32,
+    window_id: u32,
+    tx: SyncSender<Result<(), String>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[link(name = "System", kind = "framework")]
+extern "C" {
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
+}
+
+unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
+    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
+    if request.cancelled.load(Ordering::Acquire) {
+        return;
+    }
+    let result = focus_ax_window(request.pid, request.window_id);
+    let _ = request.tx.send(result);
+}
+
+fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
+    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
+    if pid != std::process::id() as i32 || is_main_thread {
+        return focus_ax_window(pid, window_id);
+    }
+
+    // AX actions against another process execute in that process. An embedded
+    // driver targeting its own window is different: AppKit services AXRaise
+    // in this process, and window ordering is main-thread-only. Queue just the
+    // self-process AX mutation onto AppKit's main queue, then return to the
+    // blocking worker for readiness polling and menu traversal.
+    let (tx, rx) = mpsc::sync_channel(1);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let request = Box::new(AxWindowFocusRequest {
+        pid,
+        window_id,
+        tx,
+        cancelled: Arc::clone(&cancelled),
+    });
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(
+            main_queue,
+            Box::into_raw(request).cast::<c_void>(),
+            focus_ax_window_on_main,
+        );
+    }
+    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
+        Ok(result) => result,
+        Err(error) => {
+            // If AppKit never serviced the request, prevent a stale focus
+            // change from firing after this tool call has already failed.
+            cancelled.store(true, Ordering::Release);
+            Err(format!(
+                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+            ))
+        }
+    }
+}
+
+fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
+    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
+    if !native_key_requested
+        && live_frontmost_pid(pid, window_id) != Some(pid)
+        && !crate::apps::activate_pid(pid)
+    {
+        return Err("invoke_menu: target application could not be activated".into());
+    }
+    if !native_key_requested {
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    focus_ax_window_with_thread_affinity(pid, window_id)?;
 
     // AXFocusedWindow can lead AppKit's native `isKeyWindow` state while the
     // WindowServer activation is still settling. Menu validation observes the
@@ -247,7 +504,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     loop {
         let now = std::time::Instant::now();
         if exact_window_is_ready(
-            crate::apps::frontmost_pid(),
+            live_frontmost_pid(pid, window_id),
             pid,
             crate::ax::bindings::focused_window_id_of_pid(pid),
             window_id,
@@ -277,6 +534,304 @@ fn exact_window_is_ready(
     frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
 }
 
+/// The item could not be invoked with its app in the background. Activating
+/// the app would take the user's front window, so refuse and name the route.
+fn background_unavailable(reason: String) -> ToolResult {
+    let message = format!(
+        "{reason}. invoke_menu does not activate a background app: macOS keeps this menu item \
+         unavailable while the app is behind the user's window. If the user allows it, call \
+         bring_to_front for this window first, then invoke_menu, or send the app's keyboard \
+         shortcut with hotkey and delivery_mode:\"foreground\". A background hotkey does not \
+         help: the disabled item ignores its shortcut too. Otherwise use the control in the \
+         window."
+    );
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "code": "background_unavailable",
+        "refusal": { "code": "background_unavailable", "message": message }
+    }))
+}
+
+/// Why a background menu item could not be pressed.
+#[derive(Debug)]
+enum BackgroundPressError {
+    /// macOS keeps the item disabled while the app is in the background.
+    Disabled {
+        message: String,
+        is_save: bool,
+    },
+    Other(String),
+}
+
+/// What the background route knows about the pressed item.
+#[derive(Debug, Clone, Copy)]
+struct PressedItem {
+    is_save: bool,
+}
+
+/// Whether a menu item's key equivalent is plain Command-S, the Save
+/// shortcut in every language.
+unsafe fn item_is_save(item: AXUIElementRef) -> bool {
+    copy_string_attr(item, "AXMenuItemCmdChar").is_some_and(|ch| ch.eq_ignore_ascii_case("s"))
+        && crate::ax::bindings::copy_number_attr(item, "AXMenuItemCmdModifiers").unwrap_or(0.0)
+            == 0.0
+}
+
+/// Resolve the whole path from the app's live menu bar without opening any
+/// level, then perform the final item's action. Used for a background app:
+/// opening a menu-bar menu would take key focus and draw over the user's
+/// front app.
+unsafe fn invoke_path_in_background(
+    pid: i32,
+    window_id: u32,
+    path: &[String],
+) -> Result<PressedItem, BackgroundPressError> {
+    let app = AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return Err(BackgroundPressError::Other(
+            "invoke_menu: target application is unavailable".into(),
+        ));
+    }
+    set_messaging_timeout(app);
+    let menu_bar = copy_element_attr(app, "AXMenuBar");
+    CFRelease(app as CFTypeRef);
+    let menu_bar = menu_bar.ok_or_else(|| {
+        BackgroundPressError::Other("invoke_menu: target exposes no AXMenuBar".to_owned())
+    })?;
+    set_messaging_timeout(menu_bar);
+    let target = resolve_exact_prefix(menu_bar, path);
+    CFRelease(menu_bar as CFTypeRef);
+    let target = target.map_err(BackgroundPressError::Other)?;
+    set_messaging_timeout(target);
+    let is_save = item_is_save(target);
+    let result = (|| {
+        // AppKit validates menu items against the key window. Make the target
+        // window AppKit-key without raising it or touching the user's window
+        // (the focus record only), so items that need a key window enable.
+        if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+        {
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        if copy_bool_attr(target, "AXEnabled") == Some(false) {
+            return Err(BackgroundPressError::Disabled {
+                message: format!(
+                    "invoke_menu: path segment {} is disabled while the app is in the background",
+                    path.len().saturating_sub(1)
+                ),
+                is_save,
+            });
+        }
+        let actions = copy_action_names(target);
+        let action = choose_action(&actions, true).ok_or_else(|| {
+            BackgroundPressError::Other(
+                "invoke_menu: the final menu item has no usable native menu action".to_owned(),
+            )
+        })?;
+        let error = perform_action(target, action);
+        if error != kAXErrorSuccess {
+            return Err(BackgroundPressError::Other(format!(
+                "invoke_menu: native action for the final menu item failed with AX error {error}"
+            )));
+        }
+        Ok(PressedItem { is_save })
+    })();
+    CFRelease(target as CFTypeRef);
+    result
+}
+
+/// The file behind a document window (its `AXDocument` URL), if any.
+fn document_path_of_window(pid: i32, window_id: u32) -> Option<std::path::PathBuf> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        set_messaging_timeout(app);
+        let mut url = None;
+        for window in copy_ax_windows(app) {
+            if url.is_none() && ax_get_window_id(window) == Some(window_id) {
+                url = copy_string_attr(window, "AXDocument");
+            }
+            CFRelease(window as CFTypeRef);
+        }
+        CFRelease(app as CFTypeRef);
+        url.as_deref()
+            .and_then(crate::apple_events::file_url_to_path)
+    }
+}
+
+/// How a background menu command was asked for, so the result can say it.
+#[derive(Debug, Clone)]
+pub(super) enum MenuRequest {
+    /// `invoke_menu` with a path.
+    Path,
+    /// `hotkey` with this combo, which is the item's key equivalent.
+    KeyEquivalent(String),
+}
+
+impl MenuRequest {
+    fn preface(&self, path: &[String]) -> String {
+        match self {
+            MenuRequest::Path => String::new(),
+            MenuRequest::KeyEquivalent(combo) => format!(
+                "{combo} is the key equivalent of {}. Key events do not reach a background \
+                 app's menus, so no keys were sent. ",
+                path.join(" > ")
+            ),
+        }
+    }
+}
+
+/// Run a menu command in a background app without activating it. Presses
+/// the item through accessibility when macOS keeps it enabled; a disabled
+/// Save of a document window goes through the app's scripting interface
+/// instead (TextEdit disables Save while it is behind the user's window).
+/// A Save is verified on disk. Anything else that is disabled is refused
+/// with `background_unavailable`.
+pub(super) async fn run_in_background(
+    pid: i32,
+    window_id: u32,
+    path: Vec<String>,
+    request: MenuRequest,
+) -> ToolResult {
+    let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
+        .await
+        .ok()
+        .flatten();
+    let before = document
+        .as_deref()
+        .and_then(crate::apple_events::modified_time);
+    let press_path = path.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let _key_focus = crate::key_focus_guard::protect(pid);
+        unsafe { invoke_path_in_background(pid, window_id, &press_path) }
+    })
+    .await;
+    let preface = request.preface(&path);
+    match outcome {
+        Ok(Ok(PressedItem { is_save: true })) if document.is_some() => {
+            let file = document.clone().expect("checked");
+            let written = tokio::task::spawn_blocking(move || {
+                crate::apple_events::wait_for_new_mtime(&file, before, Duration::from_secs(2))
+            })
+            .await
+            .unwrap_or(false);
+            let file = document.expect("checked");
+            if written {
+                background_success(
+                    format!(
+                        "{preface}Pressed {} through accessibility with the app in the \
+                         background (not activated). Verified: {} was written to disk.",
+                        path.join(" > "),
+                        file.display()
+                    ),
+                    ActionEffect::Confirmed,
+                    ActionTransport::MacosAxAction,
+                    "The document's file modification time moved after the press",
+                )
+            } else {
+                background_success(
+                    format!(
+                        "{preface}Pressed {} through accessibility with the app in the \
+                         background (not activated), but {} did not change on disk within 2 s. \
+                         The document may have had no unsaved changes, or the save did not run; \
+                         verify from fresh state.",
+                        path.join(" > "),
+                        file.display()
+                    ),
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosAxAction,
+                    "AX accepted the press; the file modification time did not move",
+                )
+            }
+        }
+        Ok(Ok(_)) => background_success(
+            format!(
+                "{preface}Invoked {} through accessibility with the app in the background (not \
+                 activated); verify the command's semantic effect from fresh state.",
+                path.join(" > ")
+            ),
+            ActionEffect::Unverifiable,
+            ActionTransport::MacosAxAction,
+            "Every menu hop resolved uniquely without opening it and AX accepted the final action",
+        ),
+        Ok(Err(BackgroundPressError::Disabled {
+            is_save: true,
+            message,
+        })) if document.is_some() => {
+            let file = document.expect("checked");
+            let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
+            let app_name =
+                crate::apps::get_app_name_for_pid(pid).unwrap_or_else(|| "the app".into());
+            let save_file = file.clone();
+            let save_app = app_name.clone();
+            let saved = tokio::task::spawn_blocking(move || {
+                crate::apple_events::save_document(&bundle_id, &save_app, &save_file)
+            })
+            .await;
+            match saved {
+                Ok(Ok(saved)) => background_success(
+                    format!(
+                        "{preface}{} is disabled while {app_name} is in the background, so the \
+                         document was saved through {app_name}'s scripting interface instead \
+                         (not activated). Verified: {app_name} reports no unsaved changes{}.",
+                        path.join(" > "),
+                        if saved.file_written {
+                            format!(" and {} was written to disk", file.display())
+                        } else {
+                            format!(
+                                "; {} did not change on disk because it already held the \
+                                 document's content",
+                                file.display()
+                            )
+                        }
+                    ),
+                    ActionEffect::Confirmed,
+                    ActionTransport::MacosAppleEvent,
+                    "The app's scripting interface reported the document saved",
+                ),
+                Ok(Err(refusal)) => background_unavailable(format!(
+                    "{preface}{message}, and saving through {app_name}'s scripting interface did not \
+                     complete ({}: {}). Nothing was saved",
+                    refusal.code, refusal.reason
+                )),
+                Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
+            }
+        }
+        Ok(Err(BackgroundPressError::Disabled { message, .. })) => {
+            background_unavailable(format!("{preface}{message}"))
+        }
+        Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
+        Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
+    }
+}
+
+fn background_success(
+    text: String,
+    effect: ActionEffect,
+    transport: ActionTransport,
+    detail: &str,
+) -> ToolResult {
+    // A confirmed result rests on a readback of the effect (the file on disk
+    // or the app's own saved state), not on the AX return code.
+    let kind = if matches!(effect, ActionEffect::Confirmed) {
+        EvidenceKind::ValueReadback
+    } else {
+        EvidenceKind::NativeApiResult
+    };
+    ToolResult::text(text).with_action_record(
+        ActionExecutionRecord::builder(effect, transport, RequestedDelivery::Background)
+            .actual_delivery(ActualDelivery::Background)
+            .evidence(ActionEvidence {
+                kind,
+                detail: detail.into(),
+            })
+            .build()
+            .expect("invoke_menu record is valid"),
+    )
+}
+
 fn refusal(message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
@@ -291,6 +846,10 @@ impl Tool for InvokeMenuTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // The menu bar belongs to the app: with only a pid, use its focused
+        // window.
+        let mut args = args;
+        super::default_window_for_pid(&mut args);
         let input: InvokeMenuInput =
             match cua_driver_core::tool_args::parse_typed_input("invoke_menu", args) {
                 Ok(input) => input,
@@ -315,8 +874,20 @@ impl Tool for InvokeMenuTool {
             return refusal("invoke_menu: window_id does not belong to pid".into());
         }
 
+        // A background target: invoke the item without activating the app or
+        // raising its window. When macOS keeps the item unavailable to a
+        // background app, refuse and say so instead of activating it.
+        let target_in_front = tokio::task::spawn_blocking(move || {
+            live_frontmost_app().or_else(crate::apps::frontmost_pid) == Some(pid)
+        })
+        .await
+        .unwrap_or(false);
+        if !target_in_front {
+            return run_in_background(pid, window_id, path, MenuRequest::Path).await;
+        }
+
         let outcome = tokio::task::spawn_blocking(move || {
-            let prior_frontmost = crate::apps::frontmost_pid();
+            let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window =
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);
@@ -372,6 +943,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_background_menu_refusal_names_the_code_and_the_route() {
+        let result = background_unavailable("invoke_menu: path segment 1 is disabled".into());
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "background_unavailable");
+        let message = structured["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains("does not activate a background app"));
+        assert!(message.contains("bring_to_front"));
+        assert!(message.contains("delivery_mode:\"foreground\""));
+        assert!(message.contains("A background hotkey does not help"));
+    }
+
+    #[test]
     fn path_normalization_rejects_empty_segments() {
         assert_eq!(
             normalized_path(vec![" Window ".into(), " Left ".into()]).unwrap(),
@@ -389,10 +973,87 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_path_says_whether_its_menu_was_closed() {
+        let error = || "invoke_menu: path segment 1 was not found".to_owned();
+        assert_eq!(
+            failure_after_press(error(), "File", Some(true)),
+            "invoke_menu: path segment 1 was not found. No menu window this call opened is still on screen."
+        );
+        for unconfirmed in [Some(false), None] {
+            assert!(failure_after_press(error(), "File", unconfirmed)
+                .ends_with("The File menu this call opened may still be open: press escape on the window before other input."));
+        }
+    }
+
+    #[test]
+    fn segments_match_exactly_then_ignoring_case() {
+        let titles: Vec<String> = ["To Next Sheet", "To Previous Sheet", "", "Go to Sheet..."]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(pick_title(&titles, "To Next Sheet"), TitleMatch::One(0));
+        assert_eq!(pick_title(&titles, "to next sheet"), TitleMatch::One(0));
+        assert_eq!(pick_title(&titles, "Go to Sheet…"), TitleMatch::One(3));
+        assert_eq!(pick_title(&titles, "Next Sheet"), TitleMatch::None);
+        let twins: Vec<String> = ["Copy", "copy"].map(String::from).to_vec();
+        assert_eq!(pick_title(&twins, "Copy"), TitleMatch::One(0));
+        assert_eq!(pick_title(&twins, "COPY"), TitleMatch::Ambiguous);
+    }
+
+    #[test]
+    fn a_missed_segment_lists_the_items_at_its_level() {
+        let path: Vec<String> = ["Sheet", "Navigate", "Next Sheet"]
+            .map(String::from)
+            .to_vec();
+        let titles: Vec<String> = ["To Next Sheet", "", "To Previous Sheet"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            missing_segment_error(2, &path, &titles),
+            "invoke_menu: path segment 2 \"Next Sheet\" was not found under \"Sheet > Navigate\". Items there: \"To Next Sheet\", \"To Previous Sheet\""
+        );
+        assert!(missing_segment_error(0, &path, &["File".into()]).contains("in the menu bar"));
+        assert!(missing_segment_error(1, &path, &[]).contains("lists no titled items"));
+        let many: Vec<String> = (0..45).map(|i| format!("Item {i}")).collect();
+        assert!(missing_segment_error(1, &path, &many).ends_with("and 5 more"));
+    }
+
+    #[test]
+    fn three_periods_match_the_ellipsis_in_menu_titles() {
+        assert_eq!(
+            menu_title_key(" Save As... "),
+            menu_title_key("Save As\u{2026}")
+        );
+        assert_eq!(menu_title_key("Save As..."), menu_title_key("Save As..."));
+        assert_ne!(menu_title_key("Save As"), menu_title_key("Save As\u{2026}"));
+        assert_ne!(
+            menu_title_key("save as..."),
+            menu_title_key("Save As\u{2026}")
+        );
+    }
+
+    #[test]
     fn menu_focus_requires_the_exact_frontmost_app_and_window() {
         assert!(exact_window_is_ready(Some(7), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    fn workspace_frontmost_must_not_be_read() -> Option<i32> {
+        panic!("stale workspace state must not be consulted");
+    }
+
+    #[test]
+    fn windowserver_mismatch_never_falls_back_to_stale_workspace_state() {
+        assert_eq!(
+            select_frontmost_pid(Some(true), workspace_frontmost_must_not_be_read, 7),
+            Some(7)
+        );
+        assert_eq!(
+            select_frontmost_pid(Some(false), workspace_frontmost_must_not_be_read, 7),
+            None
+        );
+        assert_eq!(select_frontmost_pid(None, || Some(8), 7), Some(8));
+        assert_eq!(select_frontmost_pid(None, || None, 7), None);
     }
 }

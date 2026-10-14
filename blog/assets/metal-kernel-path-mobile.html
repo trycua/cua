@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>From conservative capability answers to faster Metal kernels</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Urbanist:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #000;
+        --bg-card: #181818;
+        --ink-strong: #f6f8fb;
+        --ink-body: rgba(224, 230, 238, 0.84);
+        --ink-muted: rgba(164, 173, 187, 0.82);
+        --brand: #9fd7ff;
+        --brand-soft: #ecf6ff;
+        --brand-tint: rgba(159, 215, 255, 0.09);
+        --line-soft: rgba(255, 255, 255, 0.12);
+        --font-display: 'Instrument Serif', Georgia, serif;
+        --font-body: 'Urbanist', system-ui, sans-serif;
+        --font-docs: 'Inter', system-ui, sans-serif;
+        --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg-base);
+        color: var(--ink-body);
+        font-family: var(--font-docs);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        width: 430px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      .panel {
+        padding: 26px 22px 24px;
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        background: var(--bg-card);
+      }
+      .eyebrow {
+        margin-bottom: 10px;
+        color: var(--brand);
+        font: 600 9px/1 var(--font-mono);
+        letter-spacing: 2.4px;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0 0 10px;
+        color: var(--ink-strong);
+        font: 400 29px/1.08 var(--font-display);
+      }
+      h1 em {
+        color: var(--ink-muted);
+        font-weight: 400;
+      }
+      .sub {
+        margin: 0 0 22px;
+        color: var(--ink-muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .path {
+        display: grid;
+        justify-items: stretch;
+      }
+      .stage,
+      .query {
+        min-height: 72px;
+        padding: 13px 14px;
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .stage-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .stage-title,
+      .query-title {
+        color: var(--ink-strong);
+        font: 600 16px/1.15 var(--font-body);
+      }
+      .stage-detail,
+      .query-detail {
+        margin-top: 7px;
+        color: var(--ink-muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .state {
+        flex: none;
+        padding: 4px 7px;
+        border: 1px solid rgba(159, 215, 255, 0.3);
+        border-radius: 999px;
+        color: var(--brand);
+        font: 600 8px/1 var(--font-mono);
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      .connector {
+        justify-self: center;
+        width: 1px;
+        height: 24px;
+        position: relative;
+        background: linear-gradient(to bottom, var(--brand), rgba(159, 215, 255, 0.18));
+        opacity: 0.75;
+      }
+      .connector::after {
+        content: '';
+        position: absolute;
+        left: -3px;
+        bottom: -1px;
+        width: 7px;
+        height: 7px;
+        border-right: 1.5px solid var(--brand);
+        border-bottom: 1.5px solid var(--brand);
+        transform: rotate(45deg);
+      }
+      .query {
+        border-color: rgba(159, 215, 255, 0.34);
+        background: var(--brand-tint);
+      }
+      .query .stage-head {
+        min-height: 20px;
+      }
+      .query-title {
+        color: var(--brand-soft);
+      }
+      .query .state {
+        border-color: var(--brand);
+        background: var(--brand);
+        color: var(--bg-base);
+      }
+      .branch-connector {
+        justify-self: center;
+        width: 1px;
+        height: 24px;
+        background: rgba(159, 215, 255, 0.58);
+      }
+      .branch {
+        min-height: 144px;
+        padding: 16px;
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .branch.unlocked {
+        border-color: rgba(159, 215, 255, 0.34);
+        background: var(--brand-tint);
+      }
+      .branch-label {
+        color: var(--ink-muted);
+        font: 600 9px/1 var(--font-mono);
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+      }
+      .branch.unlocked .branch-label {
+        color: var(--brand);
+      }
+      .answer {
+        margin-top: 11px;
+        color: var(--ink-strong);
+        font: 600 21px/1.15 var(--font-body);
+      }
+      .features {
+        margin-top: 7px;
+        color: var(--ink-muted);
+        font: 400 10.5px/1.5 var(--font-mono);
+      }
+      .result {
+        margin-top: 12px;
+        padding-top: 11px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--ink-body);
+        font: 500 15px/1.2 var(--font-body);
+      }
+      .branch.unlocked .result {
+        color: var(--brand-soft);
+      }
+      .arrow {
+        margin-right: 6px;
+        color: var(--brand);
+      }
+      .caption {
+        margin: 20px 0 0;
+        padding-top: 15px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--ink-muted);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="panel">
+        <div class="eyebrow">Metal Execution Path</div>
+        <h1>From conservative capability answers to <em>faster Metal kernels</em></h1>
+        <p class="sub">
+          The host GPU and Apple’s virtualization bridge stay the same. The decision changes when
+          one guest process asks which Metal paths it can use.
+        </p>
+
+        <div class="path">
+          <div class="stage">
+            <div class="stage-head">
+              <div class="stage-title">Host Apple GPU</div>
+              <div class="state">Unchanged</div>
+            </div>
+            <div class="stage-detail">Executes the workload on Apple Silicon</div>
+          </div>
+          <div class="connector"></div>
+          <div class="stage">
+            <div class="stage-head">
+              <div class="stage-title">Virtualization.framework</div>
+              <div class="state">Unchanged</div>
+            </div>
+            <div class="stage-detail">Apple’s paravirtualized graphics bridge</div>
+          </div>
+          <div class="connector"></div>
+          <div class="stage">
+            <div class="stage-head">
+              <div class="stage-title">Guest virtual GPU</div>
+              <div class="state">Unchanged</div>
+            </div>
+            <div class="stage-detail">The same virtual Metal device in both runs</div>
+          </div>
+          <div class="connector"></div>
+          <div class="query">
+            <div class="stage-head">
+              <div class="query-title">Capability query</div>
+              <div class="state">One process</div>
+            </div>
+            <div class="query-detail">What can this workload safely select?</div>
+          </div>
+          <div class="branch-connector"></div>
+          <div class="branch">
+            <div class="branch-label">Stock guest answer</div>
+            <div class="answer">Apple 5 · 32 KB</div>
+            <div class="features">
+              SIMD-group matrix unavailable<br />Conservative feature selection
+            </div>
+            <div class="result"><span class="arrow">→</span>slower llama.cpp kernel</div>
+          </div>
+          <div class="branch-connector"></div>
+          <div class="branch unlocked">
+            <div class="branch-label">Shim · tested profile</div>
+            <div class="answer">Apple 9 · 64 KB</div>
+            <div class="features">SIMD-group matrix · bfloat16<br />Newer tested Metal paths</div>
+            <div class="result"><span class="arrow">→</span>faster llama.cpp kernel</div>
+          </div>
+        </div>
+
+        <p class="caption">
+          Selected capability answers change for one guest process while Apple’s bridge and virtual
+          device stay in place. Each additional Metal API requires its own virtualization test.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

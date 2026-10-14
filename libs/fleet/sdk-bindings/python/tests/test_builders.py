@@ -60,6 +60,74 @@ class GeneratedBuilderTest(unittest.TestCase):
         self.assertIs(type(reference), fleet_sdk.SandboxTemplateRef)
         self.assertEqual(reference.name, "legacy")
 
+    def test_http_request_builder_skips_optionals_and_enforces_required_fields(self):
+        request = (
+            fleet_sdk.HttpRequestBuilder()
+            .method("GET")
+            .url("https://run.cua.ai/v1/pools")
+            .headers([])
+            .build()
+        )
+        bounded = (
+            fleet_sdk.HttpRequestBuilder()
+            .method("GET")
+            .url("https://run.cua.ai/v1/pools")
+            .headers([])
+            .timeout_secs(30)
+            .max_response_bytes(4096)
+            .build()
+        )
+
+        self.assertIs(type(request), fleet_sdk.HttpRequest)
+        self.assertIsNone(request.body)
+        self.assertIsNone(request.timeout_secs)
+        self.assertIsNone(request.max_response_bytes)
+        self.assertEqual(bounded.timeout_secs, 30)
+        self.assertEqual(bounded.max_response_bytes, 4096)
+        with self.assertRaises(fleet_sdk.SdkBuildError.MissingRequiredField) as error:
+            fleet_sdk.HttpRequestBuilder().method("GET").headers([]).build()
+        self.assertEqual(error.exception.record_type, "HttpRequest")
+        self.assertEqual(error.exception.field, "url")
+
+    def test_http_request_constructor_treats_request_controls_as_optional(self):
+        request = fleet_sdk.HttpRequest(
+            method="GET", url="https://run.cua.ai/v1/pools", headers=[], body=None
+        )
+        self.assertIsNone(request.timeout_secs)
+        self.assertIsNone(request.max_response_bytes)
+
+    def test_remaining_frontend_builders_are_generated(self):
+        configuration = (
+            fleet_sdk.CyclopsTokenProviderConfigurationBuilder()
+            .base_url("https://api.example.test")
+            .pool_poll_interval_ms(5000)
+            .pool_poll_limit(120)
+            .claim_poll_interval_ms(5000)
+            .claim_poll_limit(120)
+            .build()
+        )
+        user_key = (
+            fleet_sdk.CreateUserApiKeyRequestBuilder()
+            .name("automation")
+            .scope([])
+            .build()
+        )
+        autoscaling = (
+            fleet_sdk.WarmPoolAutoscalingBuilder()
+            .min_pool_size(1)
+            .initial_pool_size(2)
+            .max_pool_size(5)
+            .build()
+        )
+
+        self.assertEqual(configuration.pool_poll_interval_ms, 5000)
+        self.assertEqual(user_key.scope, [])
+        self.assertEqual(autoscaling.max_pool_size, 5)
+        with self.assertRaises(fleet_sdk.SdkBuildError.MissingRequiredField):
+            fleet_sdk.TemplateBuilder().build()
+        with self.assertRaises(fleet_sdk.SdkBuildError.MissingRequiredField):
+            fleet_sdk.CreateClaimRequestBuilder().build()
+
 
 if __name__ == "__main__":
     unittest.main()

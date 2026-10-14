@@ -13,8 +13,10 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // withUser stamps a *auth.User on the request context the same way
@@ -49,8 +51,22 @@ type fakeK8s struct {
 	requests []recordedReq
 }
 
+type fakeK8sResponse struct {
+	status int
+	body   string
+}
+
 func newFakeK8s(status int, respBody string) *fakeK8s {
+	return newFakeK8sSequence(fakeK8sResponse{status: status, body: respBody})
+}
+
+func newFakeK8sSequence(responses ...fakeK8sResponse) *fakeK8s {
+	if len(responses) == 0 {
+		panic("fake K8s requires at least one response")
+	}
+
 	fk := &fakeK8s{}
+	requestIndex := 0
 	fk.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fk.method = r.Method
 		fk.path = r.URL.Path
@@ -64,8 +80,13 @@ func newFakeK8s(status int, respBody string) *fakeK8s {
 			headers:  fk.headers,
 			body:     fk.body,
 		})
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(respBody))
+		responseIndex := requestIndex
+		if responseIndex >= len(responses) {
+			responseIndex = len(responses) - 1
+		}
+		requestIndex++
+		w.WriteHeader(responses[responseIndex].status)
+		_, _ = w.Write([]byte(responses[responseIndex].body))
 	}))
 	return fk
 }
@@ -106,6 +127,128 @@ func nsCreatedResponse(name string) string {
 		"status": map[string]any{"phase": "Active"},
 	})
 	return string(b)
+}
+
+func TestGetNamespace_Success(t *testing.T) {
+	fk := newFakeK8s(http.StatusOK, nsCreatedResponse("demo"))
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/namespaces/demo", nil)
+	r.SetPathValue("name", "demo")
+	r = withUser(r, &auth.User{ID: "test-uuid"})
+	w := httptest.NewRecorder()
+
+	Handlers{}.GetNamespace(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	// One request, not two: the ownership probe this handler used to make after
+	// the read is the policy stage's now, and runs before the handler at all.
+	if len(fk.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(fk.requests))
+	}
+	namespaceGet := fk.requests[0]
+	if namespaceGet.method != http.MethodGet || namespaceGet.path != "/api/v1/namespaces/demo" {
+		t.Fatalf("namespace GET = %s %s", namespaceGet.method, namespaceGet.path)
+	}
+	var got NamespaceResponse
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "demo" || got.Status != "Active" {
+		t.Fatalf("namespace = %#v", got)
+	}
+}
+
+func TestGetNamespace_InvalidNameDoesNotCallK8s(t *testing.T) {
+	fk := newFakeK8s(http.StatusOK, nsCreatedResponse("ignored"))
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/namespaces/INVALID", nil)
+	r.SetPathValue("name", "INVALID")
+	r = withUser(r, &auth.User{ID: "test-uuid"})
+	w := httptest.NewRecorder()
+
+	Handlers{}.GetNamespace(w, r)
+
+	if w.Code != http.StatusBadRequest || len(fk.requests) != 0 {
+		t.Fatalf("status=%d requests=%d", w.Code, len(fk.requests))
+	}
+}
+
+func TestGetNamespace_PreservesForbiddenAndNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   string
+	}{
+		{status: http.StatusForbidden, want: "namespace access denied"},
+		{status: http.StatusNotFound, want: "namespace not found"},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			const upstreamBody = `{"kind":"Status","message":"sensitive upstream detail"}`
+			fk := newFakeK8s(tc.status, upstreamBody)
+			defer fk.server.Close()
+			overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+			r := httptest.NewRequest(http.MethodGet, "/api/namespaces/demo", nil)
+			r.SetPathValue("name", "demo")
+			r = withUser(r, &auth.User{ID: "test-uuid"})
+			w := httptest.NewRecorder()
+
+			Handlers{}.GetNamespace(w, r)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d", w.Code, tc.status)
+			}
+			if len(fk.requests) != 1 {
+				t.Fatalf("request count = %d, want 1", len(fk.requests))
+			}
+			var response ErrorResponse
+			if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Error != tc.want {
+				t.Fatalf("error = %q, want %q", response.Error, tc.want)
+			}
+			if strings.Contains(w.Body.String(), upstreamBody) {
+				t.Fatalf("response exposed upstream body: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// A non-owner CAN read another tenant's namespace object through impersonation
+// — capsule-tenant-cluster-resources grants namespaces get cluster-wide to
+// system:authenticated, so the read succeeds and gates nothing. What stops the
+// request is the ownership conjunct of the namespaces policy, which runs before
+// this handler; TestNamespacesRoute_GetOtherTenant_Forbidden is that test.
+//
+// This one pins the half that is left here: the handler does not re-check, so
+// calling it directly serves the namespace it was given. Same shape as
+// TestK8sProxy_DirectHandlerLeavesAdmissionToMiddleware.
+func TestGetNamespace_DirectHandlerLeavesOwnershipToPolicy(t *testing.T) {
+	fk := newFakeK8s(http.StatusOK, nsCreatedResponse("other-tenant"))
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/namespaces/other-tenant", nil)
+	r.SetPathValue("name", "other-tenant")
+	r = withUser(r, &auth.User{ID: "test-uuid"})
+	w := httptest.NewRecorder()
+
+	Handlers{}.GetNamespace(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if len(fk.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(fk.requests))
+	}
+	if got := fk.requests[0].path; got != "/api/v1/namespaces/other-tenant" {
+		t.Fatalf("namespace GET path = %q", got)
+	}
 }
 
 func TestCreateNamespace_ValidName(t *testing.T) {
@@ -281,19 +424,80 @@ func TestCreateNamespace_CreatesTracingSpan(t *testing.T) {
 	h.CreateNamespace(w, r)
 	root.End()
 
-	var found bool
+	spans := map[string]bool{}
 	for _, span := range recorder.Ended() {
-		if span.Name() != "namespaces.create" {
+		spans[span.Name()] = true
+		if span.Name() == "namespaces.create" {
+			if got, want := span.Parent().SpanID(), root.SpanContext().SpanID(); got != want {
+				t.Fatalf("parent span id = %s, want %s", got, want)
+			}
+		}
+	}
+	for _, name := range []string{"namespaces.create", "namespaces.create.k8s", "namespaces.create.adoption_wait", "namespaces.create.workload_oidc"} {
+		if !spans[name] {
+			t.Errorf("expected %s span", name)
+		}
+	}
+}
+
+func TestCreateNamespace_UnexpectedSuccessStatusMarksK8sSpanError(t *testing.T) {
+	fk := newFakeK8s(http.StatusAccepted, `{}`)
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	r := httptest.NewRequest(http.MethodPost, "/api/namespaces", strings.NewReader(`{"name":"my-workspace"}`))
+	r = withUser(r, &auth.User{ID: "test-uuid"})
+	w := httptest.NewRecorder()
+	before := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_202")
+
+	Handlers{}.CreateNamespace(w, r)
+
+	if w.Code == http.StatusCreated {
+		t.Fatalf("status = %d, want non-201 for unexpected Kubernetes status", w.Code)
+	}
+	after := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_202")
+	if after != before+1 {
+		t.Fatalf("http_202 metric count = %d, want %d", after, before+1)
+	}
+
+	for _, span := range recorder.Ended() {
+		if span.Name() == "namespaces.create.k8s" {
+			if span.Status().Code != codes.Error {
+				t.Fatalf("k8s span status = %v, want error", span.Status().Code)
+			}
+			return
+		}
+	}
+	t.Fatal("expected namespaces.create.k8s span")
+}
+
+func namespaceCreatePhaseHistogramCount(t *testing.T, phase, result string) uint64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "cyclops_cs_namespace_create_phase_duration_seconds" {
 			continue
 		}
-		found = true
-		if got, want := span.Parent().SpanID(), root.SpanContext().SpanID(); got != want {
-			t.Fatalf("parent span id = %s, want %s", got, want)
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, pair := range metric.Label {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["phase"] == phase && labels["result"] == result {
+				return metric.GetHistogram().GetSampleCount()
+			}
 		}
 	}
-	if !found {
-		t.Fatal("expected namespaces.create span")
-	}
+	return 0
 }
 
 func TestDeleteNamespace_Success(t *testing.T) {
@@ -425,5 +629,71 @@ func TestListNamespaces_MissingUser(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListNamespaces_GitHubPrincipalFiltersAllowedNamespaces(t *testing.T) {
+	fk := newFakeK8s(http.StatusOK, nsListResponse("ns-alpha", "ns-beta", "ns-gamma"))
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodGet, "/api/namespaces", nil)
+	r = withUser(r, &auth.User{
+		ID:                "test-uuid",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"ns-beta"},
+	})
+	w := httptest.NewRecorder()
+
+	h.ListNamespaces(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	var nsList []NamespaceResponse
+	if err := json.NewDecoder(w.Body).Decode(&nsList); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(nsList) != 1 || nsList[0].Name != "ns-beta" {
+		t.Fatalf("namespaces = %+v", nsList)
+	}
+}
+
+func TestCreateNamespace_GitHubPrincipalRejectsOutOfScopeNamespace(t *testing.T) {
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodPost, "/api/namespaces", strings.NewReader(`{"name":"other-ns"}`))
+	r = withUser(r, &auth.User{
+		ID:                "test-uuid",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"allowed-ns"},
+	})
+	w := httptest.NewRecorder()
+
+	h.CreateNamespace(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteNamespace_GitHubPrincipalRejectsOutOfScopeNamespace(t *testing.T) {
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodDelete, "/api/namespaces/other-ns", nil)
+	r.SetPathValue("name", "other-ns")
+	r = withUser(r, &auth.User{
+		ID:                "test-uuid",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"allowed-ns"},
+	})
+	w := httptest.NewRecorder()
+
+	h.DeleteNamespace(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", w.Code, w.Body.String())
 	}
 }

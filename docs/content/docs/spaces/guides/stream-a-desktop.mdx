@@ -1,0 +1,146 @@
+---
+title: Stream a desktop
+description: 'Stream a Space desktop or one window with audio: open a media ticket, pick a codec and transport, and start from the streaming examples.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+`OpenMedia` on the Space's cua-spacesd returns a short-lived **ticket** bound to
+one target, codec and policy; the media then flows over a WebSocket or QUIC.
+
+```bash test="cli-shape" id="cua-spacesd-targets"
+cua spacesd targets http://10.0.0.5:3211 --windows    # displays and windows
+```
+
+```python skip="no-runner"
+import cua
+
+opts = cua.SpaceStreamOptions(app_name="Firefox", audio=True, max_fps=30, codecs=["h264"])
+ticket = await space.open_stream(opts)        # hand ticket.ws_url to a player
+media = await space.attach_stream(ticket, frame_sink, audio_sink)  # encoded frames, as they arrive
+await space.close_stream(ticket.media_session_id)
+```
+
+`attach_stream` delivers the media socket's encoded frames and audio packets
+as they arrive; keyframe gating, loss recovery and decoding are yours. The
+streaming client that does them for you, `space.stream_session(...)` with
+decoded frames, ships with Cua Spaces (source-available, FSL-1.1-MIT): it
+runs in the Spaces apps and in processes that register it, and raises
+`HostCapabilityMissing` elsewhere. The wire contract (`StreamService`, the
+RCDP messages and framing) is open source, so any client can attach to a
+ticket.
+
+The same calls in TypeScript, Rust and Swift, from
+[the examples in other languages](/spaces/examples/other-languages). The first frame is a keyframe.
+
+<Tabs items={['TypeScript', 'Rust', 'Swift']}>
+  <Tab value="TypeScript">
+    ```ts test="excerpt" id="ts-stream" source="samples/openkoalabot-example-ts/src/core/runtime.ts#ts-stream"
+    const ticket = await space.openStream(
+      SpaceStreamOptions.create({ maxFps: opts.maxFps, maxDimension: opts.maxDimension }),
+    )
+    const session = await space.attachStream(ticket, counter, undefined)
+    ```
+
+    ```ts test="excerpt" id="ts-ticket" source="samples/openkoalabot-example-ts/src/core/runtime.ts#ts-ticket"
+    const ticket = await space.openStream(
+      SpaceStreamOptions.create({ maxFps: opts.maxFps, maxDimension: opts.maxDimension, codecs: ["h264"] }),
+    )
+    ```
+  </Tab>
+  <Tab value="Rust">
+    ```rust test="excerpt" id="rs-stream" source="samples/openkoalabot-example-tauri/src-tauri/core/src/stream.rs#rs-stream"
+    pub async fn open_ticket(space: &Space, max_fps: u32, max_dimension: u32) -> Result<StreamTicket> {
+        Ok(space
+            .open_stream(
+                StreamTarget::Display(None),
+                StreamOptions {
+                    max_fps,
+                    max_dimension,
+                    ..Default::default()
+                },
+            )
+            .await?)
+    }
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="excerpt" id="sw-stream" source="samples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-stream"
+    let provider = SpaceStreamProvider(space: space)
+    provider.maxFPS = UInt32(step["maxFps"] as? Int ?? 5)
+    let counter = FrameCounter()
+    let session = try await provider.openSession(.desktop, frames: counter, audio: nil)
+    ```
+  </Tab>
+</Tabs>
+
+| Option | Meaning |
+|--------|---------|
+| `window_id`, `app_name`, `display` | Target (none: the primary display). |
+| `codecs` | Preference order: `h264`, `bgra`, `png`. |
+| `max_fps`, `max_dimension` | Limits (`max_fps` 0 means 30). |
+| `audio` | Add an Opus track. |
+| `policy` | `view_only` (default), `background_only`, or `allow_activation` for input over the media socket. |
+| `ticket_ttl_ms` | Ticket lifetime (default 60 s, at most 10 min). |
+
+Without the SDK: `cua spacesd call <url> StreamService/OpenMedia '{"maxFps": 30}'`.
+Agents use the MCP tool `stream_endpoint`. A Space without `desktop_stream`,
+`window_stream` or `audio.desktop` raises `CapabilityMissing`.
+
+## Transport and codecs
+
+| | Details |
+|---|---|
+| WebSocket `/media?ticket=...` on 3211 | Default. Works through the Fleet gateway, the relay and browsers. |
+| QUIC (ALPN `rcdp/2`) on UDP 3212 | Lower latency when you reach the guest directly; certificate pinned from `OpenMedia`. |
+| Video | H.264 (Annex B, SPS/PPS on every keyframe). Encode: VideoToolbox (hardware) on macOS, OpenH264 (software) in Linux Spaces. SDK decode: VideoToolbox (hardware) on macOS, OpenH264 elsewhere. Browser viewers decode with WebCodecs. |
+| Audio | Opus 48 kHz stereo, 20 ms frames, same clock as video (A/V skew within ±40 ms). |
+
+<Callout type="info">
+  NVENC, VA-API, QSV, AMF and Media Foundation are detected but not used yet.
+  Per-app audio and microphone uplink need PipeWire (the Linux Spaces image).
+</Callout>
+
+The wire format is in
+[`libs/cua/proto/MEDIA.md`](https://github.com/trycua/cua/blob/main/libs/cua/proto/MEDIA.md).
+
+## Presence
+
+The operator and each agent join a Space with an identity and move a shared
+cursor on its desktop.
+
+```ts test="excerpt" id="ts-presence" source="samples/openkoalabot-example-ts/src/server/app.ts#ts-presence"
+const session = await space.joinPresence(
+  { id: `openkoalabots-${randomBytes(4).toString("hex")}`, displayName: b.displayName || "Operator", color: "", agent: false },
+  10_000n,
+)
+```
+
+```ts test="excerpt" id="ts-cursor" source="samples/openkoalabot-example-ts/src/server/app.ts#ts-cursor"
+await s.presence.session.updateCursor({ displayId: "", windowId: undefined, x: b.x ?? 0, y: b.y ?? 0, visible: true, pressed: false, shape: "arrow", shapeSource: "unspecified", atMs: 0, receivedMs: 0 })
+```
+
+Python: `space.join_presence(identity, timeout_ms)`. Rust:
+`space.join_presence(Identity { .. }, timeout)`. Swift:
+`native.joinPresence(identity:timeoutMs:)`.
+
+## Examples
+
+Each example streams the desktop and one window with audio, clicks, and
+verifies, against `CUA_ENV_URL` and `CUA_ENV_TOKEN`:
+[Rust](https://github.com/trycua/cua/tree/main/examples/streaming/rust),
+[Python](https://github.com/trycua/cua/tree/main/examples/streaming/python),
+[TypeScript (Node)](https://github.com/trycua/cua/tree/main/examples/streaming/typescript-node),
+[TypeScript (browser)](https://github.com/trycua/cua/tree/main/examples/streaming/typescript-web),
+[Swift](https://github.com/trycua/cua/tree/main/examples/streaming/swift),
+[Kotlin](https://github.com/trycua/cua/tree/main/examples/streaming/kotlin).
+
+```bash skip="no-runner"
+libs/cua/bench/streaming/scripts/space.sh start        # a throwaway local Space
+eval "$(libs/cua/bench/streaming/scripts/space.sh env)"
+```
+
+[`libs/cua/bench/streaming`](https://github.com/trycua/cua/tree/main/libs/cua/bench/streaming)
+benchmarks time to first frame, fps, bandwidth and latency per codec,
+transport and language against `budgets.json`.

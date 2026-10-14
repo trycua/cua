@@ -1,0 +1,597 @@
+{
+ "_fixture": {
+  "source": "CuaTestHarness GTK3 task mode with CUA_GTK3_TASK_DENSITY=12 (initial), observed by cua-driver 0.30.4 get_window_state on X11 with AT-SPI",
+  "sanitized": "Recorded by verify_native.py --capture-dir. Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed."
+ },
+ "app_name": "Main.py",
+ "bounds_complete": true,
+ "capture_id": "capture_19dda7f11675406d96704faa372301bf_0000000000000000",
+ "coordinate_frame": "window",
+ "element_count": 24,
+ "elements": [
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 0,
+   "element_token": "s00000001:0",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 133,
+    "x": 671,
+    "y": 415
+   },
+   "label": "Increase font size",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 133,
+    "x": 16,
+    "y": 50
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 1,
+   "element_token": "s00000001:1",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 84,
+    "x": 1164,
+    "y": 381
+   },
+   "label": "Save draft",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 84,
+    "x": 509,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 2,
+   "element_token": "s00000001:2",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 81,
+    "x": 1077,
+    "y": 381
+   },
+   "label": "Zoom out",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 81,
+    "x": 422,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 3,
+   "element_token": "s00000001:3",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 72,
+    "x": 999,
+    "y": 381
+   },
+   "label": "Zoom in",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 72,
+    "x": 344,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 4,
+   "element_token": "s00000001:4",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 51,
+    "x": 942,
+    "y": 381
+   },
+   "label": "Redo",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 51,
+    "x": 287,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 5,
+   "element_token": "s00000001:5",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 52,
+    "x": 884,
+    "y": 381
+   },
+   "label": "Undo",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 52,
+    "x": 229,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 6,
+   "element_token": "s00000001:6",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 68,
+    "x": 810,
+    "y": 381
+   },
+   "label": "Refresh",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 68,
+    "x": 155,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 7,
+   "element_token": "s00000001:7",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 89,
+    "x": 671,
+    "y": 381
+   },
+   "label": "New folder",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 89,
+    "x": 16,
+    "y": 16
+   }
+  },
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 3,
+   "element_index": 8,
+   "element_token": "s00000001:8",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 154,
+    "x": 671,
+    "y": 451
+   },
+   "label": "Search",
+   "role": "text",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 154,
+    "x": 16,
+    "y": 86
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 9,
+   "element_token": "s00000001:9",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 97,
+    "x": 918,
+    "y": 489
+   },
+   "label": "Word wrap",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 97,
+    "x": 263,
+    "y": 124
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 10,
+   "element_token": "s00000001:10",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 126,
+    "x": 780,
+    "y": 489
+   },
+   "label": "Show previews",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 126,
+    "x": 125,
+    "y": 124
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 11,
+   "element_token": "s00000001:11",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 97,
+    "x": 671,
+    "y": 489
+   },
+   "label": "Show ruler",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 97,
+    "x": 16,
+    "y": 124
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 12,
+   "element_token": "s00000001:12",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 60,
+    "x": 671,
+    "y": 518
+   },
+   "label": "Light",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 60,
+    "x": 16,
+    "y": 153
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 13,
+   "element_token": "s00000001:13",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 59,
+    "x": 743,
+    "y": 518
+   },
+   "label": "Dark",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 59,
+    "x": 88,
+    "y": 153
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 14,
+   "element_token": "s00000001:14",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 77,
+    "x": 814,
+    "y": 518
+   },
+   "label": "System",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 77,
+    "x": 159,
+    "y": 153
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 15,
+   "element_token": "s00000001:15",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 84,
+    "x": 671,
+    "y": 589
+   },
+   "label": "Increment",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 84,
+    "x": 16,
+    "y": 224
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 16,
+   "element_token": "s00000001:16",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 55,
+    "x": 763,
+    "y": 589
+   },
+   "label": "Reset",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 55,
+    "x": 108,
+    "y": 224
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 2,
+   "element_index": 17,
+   "element_token": "s00000001:17",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 577,
+    "x": 671,
+    "y": 625
+   },
+   "label": "I agree",
+   "role": "check box",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 577,
+    "x": 16,
+    "y": 260
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 18,
+   "element_token": "s00000001:18",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 65,
+    "x": 671,
+    "y": 654
+   },
+   "label": "Small",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 65,
+    "x": 16,
+    "y": 289
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 19,
+   "element_token": "s00000001:19",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 81,
+    "x": 748,
+    "y": 654
+   },
+   "label": "Medium",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 81,
+    "x": 93,
+    "y": 289
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 20,
+   "element_token": "s00000001:20",
+   "enabled": true,
+   "frame": {
+    "h": 21,
+    "w": 64,
+    "x": 841,
+    "y": 654
+   },
+   "label": "Large",
+   "role": "radio button",
+   "screenshot_frame": {
+    "h": 21,
+    "w": 64,
+    "x": 186,
+    "y": 289
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "activate"
+   ],
+   "depth": 3,
+   "element_index": 21,
+   "element_token": "s00000001:21",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 234,
+    "x": 671,
+    "y": 683
+   },
+   "label": "Note",
+   "role": "text",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 234,
+    "x": 16,
+    "y": 318
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 3,
+   "element_index": 22,
+   "element_token": "s00000001:22",
+   "enabled": true,
+   "frame": {
+    "h": 30,
+    "w": 83,
+    "x": 913,
+    "y": 683
+   },
+   "label": "Save note",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 83,
+    "x": 258,
+    "y": 318
+   }
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "depth": 2,
+   "element_index": 23,
+   "element_token": "s00000001:23",
+   "enabled": true,
+   "frame": {
+    "h": 28,
+    "w": 43,
+    "x": 671,
+    "y": 721
+   },
+   "label": "Exit",
+   "role": "push button",
+   "screenshot_frame": {
+    "h": 28,
+    "w": 43,
+    "x": 16,
+    "y": 356
+   }
+  }
+ ],
+ "elements_complete": true,
+ "nodes_pending": 0,
+ "nodes_visited": 24,
+ "pid": 3482,
+ "returned_element_count": 24,
+ "screenshot_frame_valid": true,
+ "screenshot_height": 400,
+ "screenshot_mime_type": "image/png",
+ "screenshot_width": 609,
+ "snapshot_id": "s00000001",
+ "timeout_ms": 1000,
+ "total_element_count": 24,
+ "truncated": false,
+ "walk_elapsed_ms": 54,
+ "window_bounds": {
+  "height": 400,
+  "width": 609,
+  "x": 655,
+  "y": 365
+ },
+ "window_id": 50331651,
+ "window_title": "CuaTestHarness GTK3 Tasks"
+}

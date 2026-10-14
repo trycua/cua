@@ -1,0 +1,15 @@
+{
+  "_doc": "Claims of ghcr.io/trycua/macos:26 (Lume only). The doctor runs cua-spacesd doctor over ssh when the image ships cua-spacesd, else the shim through computer-server. Keep in step with the image.",
+  "schema_version": 1,
+  "name": "macos-26",
+  "os": "macos",
+  "variant": "lume",
+  "init": "launchd",
+  "arch": "arm64",
+  "annotations": {"ai.cua.image.os": "macos"},
+  "features_required": [],
+  "display": {"resolution": ""},
+  "resources": {"min_disk_gib": 5, "min_shm_mib": 0, "min_memory_mib": 4096},
+  "tz": "",
+  "locale": ""
+}

@@ -6,6 +6,8 @@
 //! - `overlay::send_command(cmd)` — called from tool implementations
 
 pub mod overlay;
+/// System cursor shape reporting (what the OS draws, not what Cua draws).
+pub mod shape;
 pub mod state;
 
 // Re-export the legacy per-instance cursor state (used by tools for multi-cursor tracking).

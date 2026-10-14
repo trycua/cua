@@ -60,7 +60,7 @@ the strongest candidates and search for competing work.
 Use this compact shape:
 
 ```markdown
-### 1. #123 — Short title
+### 1. #123: Short title
 
 - Work type: Review PR | Implement issue | Decide RFC | Reproduce/clarify
 - Impact: Why it matters

@@ -1,7 +1,8 @@
 use cyclops_sdk_schema::{
     OSGymSandboxTemplateSpec, OSGymSandboxTemplateSpecBuilder, OSGymSandboxWarmPoolSpec,
-    OSGymSandboxWarmPoolSpecBuilder, SandboxService, SandboxServiceBuilder, SandboxTemplateRef,
-    SandboxTemplateRefBuilder, SchemaBuildError, VmTemplate, VmTemplateBuilder,
+    OSGymSandboxWarmPoolSpecBuilder, ProcessMode, SandboxService, SandboxServiceBuilder,
+    SandboxTemplateRef, SandboxTemplateRefBuilder, SchemaBuildError, VmTemplate, VmTemplateBuilder,
+    WarmPoolAutoscaling, WarmPoolAutoscalingBuilder,
 };
 
 #[test]
@@ -79,4 +80,49 @@ fn builder_setters_preserve_prior_versions() {
         second.build().unwrap().container_disk_image,
         "registry.example/second:latest"
     );
+}
+
+#[test]
+fn autoscaling_builder_supports_empty_and_immutable_optional_values() {
+    let base = WarmPoolAutoscalingBuilder::new();
+    let configured = base.min_pool_size(1).initial_pool_size(2).max_pool_size(5);
+
+    assert_eq!(
+        base.build().unwrap(),
+        WarmPoolAutoscaling {
+            min_pool_size: None,
+            initial_pool_size: None,
+            max_pool_size: None,
+        }
+    );
+    assert_eq!(
+        configured.build().unwrap(),
+        WarmPoolAutoscaling {
+            min_pool_size: Some(1),
+            initial_pool_size: Some(2),
+            max_pool_size: Some(5),
+        }
+    );
+}
+
+#[test]
+fn vm_template_builder_sets_env_command_args_and_process_mode() {
+    let vm: VmTemplate = VmTemplateBuilder::new()
+        .container_disk_image("python:3.12-slim".into())
+        .command(vec!["python".into(), "-m".into(), "server".into()])
+        .args(vec!["--port".into(), "8765".into()])
+        .env(std::collections::HashMap::from([(
+            "FOO".into(),
+            "bar".into(),
+        )]))
+        .process_mode(ProcessMode::Run)
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        vm.args.as_deref(),
+        Some(&["--port".to_string(), "8765".to_string()][..])
+    );
+    assert_eq!(vm.env.as_ref().unwrap()["FOO"], "bar");
+    assert_eq!(vm.process_mode, Some(ProcessMode::Run));
 }

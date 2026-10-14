@@ -7,14 +7,16 @@
 - **Implementation branch:** `codex/browser-tool-v1` (local only)
 - **Companion audit:** [Agentic Web Browsing with Cua Driver](agentic-web-browsing-audit.md)
 - **Architecture verdict:** Accept with major changes
+- **Current authority rule:** Endpoint ownership identifies the browser
+  process. A standalone consumer profile also requires an existing-profile
+  grant before any endpoint discovery or connection.
 
 The accepted roadmap now covers the five typed tools, strict endpoint ownership,
 session capabilities, exact-or-refused Chromium mutation, standalone Chromium
 adversarial coverage, isolated `browser_prepare`, composed-frame refs,
 event-capable CDP transport, embedded-webview positive/refusal rows, and the
 legacy `page` transport migration. The body below preserves the reviewed design
-and phase gates; [the implementation journal](browser-tool-implementation-journal.md)
-records what actually shipped and the retained evidence. Safari/WebKit mutation,
+and phase gates. Safari/WebKit mutation,
 Firefox BiDi, split-process WebView2 binding, and mutation on generic Wayland
 without exact compositor geometry remain explicit limitations.
 
@@ -29,7 +31,7 @@ start_session
 list_apps
 list_windows
 get_browser_state
-browser_prepare       # only when get_browser_state reports requires_setup
+browser_prepare       # when get_browser_state reports requires_setup or consent_required
 get_browser_state
 browser_navigate / browser_click / browser_type
 get_browser_state     # verify
@@ -42,9 +44,9 @@ The implementation must improve exact targeting and agent ergonomics. It must no
 
 This proposal comes from recent cross-platform validation of browser automation on macOS, Windows, Linux X11, and Linux Wayland.
 
-Cua Driver currently separates several [capture and delivery modalities](https://cua.ai/docs/concepts/capture-and-delivery-modalities): AX and PX targeting, background and foreground delivery, and window and desktop scope. The [agent action ladder](https://cua.ai/docs/reference/cua-driver/action-selection-policy) starts with background AX, then tries background PX, the `page` tool, and finally foreground delivery. This ordering remains the right safety model because the agent begins with the most semantic and least disruptive route, then escalates only when the previous route is unavailable or cannot be verified. The current OS-specific boundaries are listed in [platform support](https://cua.ai/docs/reference/cua-driver/platform-support).
+Cua Driver currently separates several [capture and delivery modalities](https://cua.ai/docs/cua-driver/concepts/how-cua-driver-works): AX and PX targeting, background and foreground delivery, and window and desktop scope. The [agent action ladder](https://cua.ai/docs/cua-driver/concepts/action-selection-policy) starts with background AX, then tries background PX, the `page` tool, and finally foreground delivery. This ordering remains the right safety model because the agent begins with the most semantic and least disruptive route, then escalates only when the previous route is unavailable or cannot be verified. The current OS-specific boundaries are listed in [platform support](https://cua.ai/docs/cua-driver/concepts/platform-support).
 
-Web content does not always fit this ladder cleanly. Some Chromium actions cannot be delivered reliably to an occluded or unfocused page through native synthetic pointer or keyboard routes. The same operations can often run in the background through the Chrome DevTools Protocol (CDP) or, on macOS, Apple Events. The current [`page` workflow](https://cua.ai/docs/how-to-guides/driver/drive-a-web-page) exposes some of these routes, but its capabilities vary by operating system, it does not reliably bind the native `pid` and `window_id` to one exact browser tab, and its setup requirements are difficult for an agent to discover before an action fails.
+Web content does not always fit this ladder cleanly. Some Chromium actions cannot be delivered reliably to an occluded or unfocused page through native synthetic pointer or keyboard routes. The same operations can often run in the background through the Chrome DevTools Protocol (CDP) or, on macOS, Apple Events. The current [`page` workflow](https://cua.ai/docs/cua-driver/guides/drive-a-web-page) exposes some of these routes, but its capabilities vary by operating system, it does not reliably bind the native `pid` and `window_id` to one exact browser tab, and its setup requirements are difficult for an agent to discover before an action fails.
 
 This leaves some browser actions with best-effort background behavior even when a browser-native route could provide full-background execution. Shared-workspace agents need the stronger contract: supported page actions must avoid raising the browser, moving the cursor, stealing focus, or leaking input into the user's active application.
 

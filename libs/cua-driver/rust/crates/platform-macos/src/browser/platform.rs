@@ -1,6 +1,5 @@
 //! macOS identity and endpoint evidence for the first-class browser tools.
 
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -8,72 +7,211 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareOutcome, PrepareRequest,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
+    parse_devtools_active_port, BrowserCursorTracker,
+};
+use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+const CONSENT_CLEANUP_PASSES: usize = 20;
+
+#[derive(Clone, Debug, Serialize)]
+struct ConsentSurfaceEvidence {
+    window_id: u32,
+    pid: i32,
+    bounds: [f64; 4],
+}
+
+fn consent_surface_evidence(
+    windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
+    pid: i32,
+) -> Vec<ConsentSurfaceEvidence> {
+    let mut surfaces = windows
+        .into_iter()
+        .filter(|window| {
+            window.pid == pid
+                && matches!(
+                    window.title.as_str(),
+                    "Allow remote debugging?" | super::consent_ui::CHINESE_PROMPT
+                )
+                && window.is_on_screen
+                && window.bounds.width > 0.0
+                && window.bounds.height > 0.0
+        })
+        .map(|window| ConsentSurfaceEvidence {
+            window_id: window.window_id,
+            pid: window.pid,
+            bounds: [
+                window.bounds.x,
+                window.bounds.y,
+                window.bounds.width,
+                window.bounds.height,
+            ],
+        })
+        .collect::<Vec<_>>();
+    surfaces.sort_by_key(|surface| surface.window_id);
+    surfaces
+}
+
+fn visible_consent_surfaces(pid: i32) -> Vec<ConsentSurfaceEvidence> {
+    consent_surface_evidence(crate::windows::all_windows(), pid)
+}
+
+fn add_consent_cleanup_detail(
+    mut error: BrowserRefusal,
+    cleanup: serde_json::Value,
+) -> BrowserRefusal {
+    let prior = error.detail.take();
+    error.detail = Some(match prior {
+        Some(serde_json::Value::Object(mut detail)) => {
+            detail.insert("consent_cleanup".to_owned(), cleanup);
+            serde_json::Value::Object(detail)
+        }
+        Some(cause) => serde_json::json!({
+            "cause": cause,
+            "consent_cleanup": cleanup,
+        }),
+        None => serde_json::json!({ "consent_cleanup": cleanup }),
+    });
+    error
+}
+
+fn run_failed_prepare_consent_cleanup<D, R, O, P>(
+    error: BrowserRefusal,
+    max_passes: usize,
+    mut dismiss: D,
+    rollback: R,
+    mut observe: O,
+    mut pause: P,
+) -> BrowserRefusal
+where
+    D: FnMut() -> Result<bool, BrowserRefusal>,
+    R: FnOnce(BrowserRefusal) -> BrowserRefusal,
+    O: FnMut() -> Vec<ConsentSurfaceEvidence>,
+    P: FnMut(),
+{
+    let mut dismissed_via_ax = false;
+    let mut dismiss_error = None;
+    match dismiss() {
+        Ok(dismissed) => dismissed_via_ax |= dismissed,
+        Err(error) => dismiss_error = Some(error),
+    }
+
+    // The retained setup handle is the exact authorization to undo the
+    // setting change. Always run it even when consent UI is AX-ambiguous.
+    let error = rollback(error);
+    let mut retained_surfaces = Vec::new();
+    for pass in 0..max_passes {
+        match dismiss() {
+            Ok(dismissed) => {
+                dismissed_via_ax |= dismissed;
+                dismiss_error = None;
+            }
+            Err(error) => dismiss_error = Some(error),
+        }
+        retained_surfaces = observe();
+        if pass + 1 < max_passes {
+            pause();
+        }
+    }
+
+    let status = if !retained_surfaces.is_empty() {
+        "retained"
+    } else if dismiss_error.is_some() {
+        "unverified"
+    } else {
+        "dismissed"
+    };
+    add_consent_cleanup_detail(
+        error,
+        serde_json::json!({
+            "status": status,
+            "dismissed_via_ax": dismissed_via_ax,
+            "retained_surfaces": retained_surfaces,
+            "dismiss_error": dismiss_error,
+        }),
+    )
+}
+
+fn run_committed_consent_cleanup<D, C, O, P>(
+    max_passes: usize,
+    mut dismiss: D,
+    cleanup_setup: C,
+    mut observe: O,
+    mut pause: P,
+) -> Result<bool, BrowserRefusal>
+where
+    D: FnMut() -> Result<bool, BrowserRefusal>,
+    C: FnOnce() -> Result<bool, BrowserRefusal>,
+    O: FnMut() -> Vec<ConsentSurfaceEvidence>,
+    P: FnMut(),
+{
+    let mut changed = false;
+    let mut dismiss_error = None;
+    match dismiss() {
+        Ok(dismissed) => changed |= dismissed,
+        Err(error) => dismiss_error = Some(error),
+    }
+    let cleanup_result = cleanup_setup();
+    let cleanup_error = cleanup_result.as_ref().err().cloned();
+    if let Ok(cleaned) = cleanup_result.as_ref() {
+        changed |= *cleaned;
+    }
+
+    let mut retained_surfaces = Vec::new();
+    for pass in 0..max_passes {
+        match dismiss() {
+            Ok(dismissed) => {
+                changed |= dismissed;
+                dismiss_error = None;
+            }
+            Err(error) => dismiss_error = Some(error),
+        }
+        retained_surfaces = observe();
+        if pass + 1 < max_passes {
+            pause();
+        }
+    }
+
+    if !retained_surfaces.is_empty() || dismiss_error.is_some() {
+        let mut error = cleanup_error
+            .or_else(|| dismiss_error.clone())
+            .unwrap_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "remote-debugging cleanup retained browser consent UI",
+                )
+            });
+        error = add_consent_cleanup_detail(
+            error,
+            serde_json::json!({
+                "status": if retained_surfaces.is_empty() { "unverified" } else { "retained" },
+                "retained_surfaces": retained_surfaces,
+                "dismiss_error": dismiss_error,
+            }),
+        );
+        return Err(error);
+    }
+
+    cleanup_result.map(|_| changed)
+}
 
 #[derive(Clone)]
 pub struct MacOsBrowserPlatform {
     cursor_registry: Arc<crate::cursor::CursorRegistry>,
     browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserCursorBinding {
-    window_id: u64,
-    cdp_target_id: String,
-}
-
-#[derive(Debug, Default)]
-struct BrowserCursorTracker {
-    bindings: HashMap<String, BrowserCursorBinding>,
-}
-
-impl BrowserCursorTracker {
-    /// Record the session-to-tab binding and return the exact overlay
-    /// visibility changes needed for this action. An active tab owns the sole
-    /// visible browser cursor in its native window. An inactive tab hides only
-    /// its own cursor and never disturbs the cursor for the selected tab.
-    fn update(
-        &mut self,
-        session: &str,
-        window_id: u64,
-        cdp_target_id: &str,
-        tab_is_active: bool,
-    ) -> Vec<(String, bool)> {
-        self.bindings.insert(
-            session.to_owned(),
-            BrowserCursorBinding {
-                window_id,
-                cdp_target_id: cdp_target_id.to_owned(),
-            },
-        );
-
-        if !tab_is_active {
-            return vec![(session.to_owned(), false)];
-        }
-
-        self.bindings
-            .iter()
-            .filter(|(_, binding)| binding.window_id == window_id)
-            .map(|(key, binding)| {
-                (
-                    key.clone(),
-                    key == session && binding.cdp_target_id == cdp_target_id,
-                )
-            })
-            .collect()
-    }
 }
 
 impl MacOsBrowserPlatform {
@@ -83,12 +221,175 @@ impl MacOsBrowserPlatform {
             browser_cursors: Arc::new(Mutex::new(BrowserCursorTracker::default())),
         }
     }
+
+    async fn discover_endpoint(
+        &self,
+        pid: i64,
+        existing_profile: bool,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        // Profile evidence distinguishes the browser from an inherited host listener.
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint_with_relative_fallback(
+            pid,
+            classification.product_kind,
+            !existing_profile,
+        )
+        .await?
+        {
+            return Ok(Some(endpoint));
+        }
+        let mut discovered = None;
+        for port in loopback_ports_for_pid(pid).await? {
+            let Some(ws_url) = browser_websocket_url(port).await else {
+                continue;
+            };
+            if discovered.is_some() {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserBindingAmbiguous,
+                    "multiple browser-level DevTools endpoints are owned by the approved process",
+                ));
+            }
+            let endpoint = OwnedEndpoint {
+                ws_url,
+                http_port: Some(port),
+                transport: EndpointTransport::LegacyJsonVersion,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    listener_pid: None,
+                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
+                },
+            };
+            if !existing_profile {
+                return Ok(Some(endpoint));
+            }
+            discovered = Some(endpoint);
+        }
+        Ok(discovered)
+    }
 }
 
 impl Default for MacOsBrowserPlatform {
     fn default() -> Self {
         Self::new(Arc::new(crate::cursor::CursorRegistry::new()))
     }
+}
+
+/// Number of live [`SelfActivationGuard`]s. Setup reads it to choose the
+/// background routes.
+static GUARDED_ATTACHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Whether a background existing-profile attach may run under the guard: only
+/// when WindowServer places the approved window on another Space than the
+/// user's active one. Chrome's consent window then opens on that Space, out of
+/// the user's sight; on the user's Space it would sit over their window.
+/// Whether an attach or cleanup is running under [`SelfActivationGuard`]: the
+/// setup then uses its background routes.
+pub(crate) fn guarded_attach_active() -> bool {
+    GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
+fn guarded_attach_allowed(window_on_current_space: Option<bool>) -> bool {
+    window_on_current_space == Some(false)
+}
+
+/// While alive, reverts every self-activation of `pid` within milliseconds:
+/// gives the user's exact key window front and key status back, re-keys it
+/// if key status stayed with Chrome, and puts it back above Chrome's window
+/// if Chrome lifted it. It holds off while the driver's own foreground or
+/// background-key turns run, so it never undoes the driver's input.
+struct SelfActivationGuard {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SelfActivationGuard {
+    fn start(pid: i32) -> Self {
+        GUARDED_ATTACHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        std::thread::spawn(move || {
+            if let Some(front) = user_front {
+                watch_self_activation(pid, front, &flag);
+            }
+        });
+        Self { stop }
+    }
+}
+
+impl Drop for SelfActivationGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        GUARDED_ATTACHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+    // Read before anything happens: after a key loss the user's app may
+    // report no focused window.
+    let user_key_window = crate::input::skylight::key_window_of_pid(front);
+    // A Chrome window the user had placed above their own stays there.
+    let above_before = crate::key_focus_guard::target_window_above_front(pid, front);
+    let rekey = || {
+        user_key_window.is_some_and(|wid| crate::input::skylight::make_exact_window_key(front, wid))
+    };
+    let mut last_rekey = Instant::now();
+    let mut last_order_check = Instant::now();
+    let mut epoch = crate::window_change_detector::intentional_epoch();
+    let mut quiet_until = Instant::now();
+    while !stop.load(Ordering::SeqCst) {
+        let now_epoch = crate::window_change_detector::intentional_epoch();
+        if now_epoch != epoch {
+            epoch = now_epoch;
+            quiet_until = Instant::now() + Duration::from_millis(400);
+        }
+        let calm = !crate::input::skylight::foreground_turn_active()
+            && !super::setup_ui::BACKGROUND_KEY_TURN.load(Ordering::SeqCst)
+            && Instant::now() >= quiet_until;
+        if calm {
+            let front_now = crate::input::skylight::front_process_pid();
+            if front_now == Some(pid) {
+                if !rekey() {
+                    crate::key_focus_guard::revert_now(pid, front);
+                }
+                last_rekey = Instant::now();
+            } else if front_now == Some(front) {
+                if !above_before && last_order_check.elapsed() >= Duration::from_millis(20) && {
+                    last_order_check = Instant::now();
+                    crate::key_focus_guard::target_window_above_front(pid, front)
+                } {
+                    // Chrome orders its window front a few ms after it
+                    // activates itself.
+                    rekey();
+                    if crate::key_focus_guard::target_window_above_front(pid, front) {
+                        crate::key_focus_guard::restore_order_now(pid, front);
+                    }
+                } else if crate::input::skylight::key_focus_pid() != Some(front)
+                    && last_rekey.elapsed() >= Duration::from_millis(30)
+                {
+                    // In front again, but key status stayed with Chrome.
+                    rekey();
+                    last_rekey = Instant::now();
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Bring `previous_pid` back to the front when `browser_pid` is in front.
+/// Leaves things alone when some other app took the front in the meantime.
+fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bool {
+    let (Ok(previous), Ok(browser)) = (i32::try_from(previous_pid), i32::try_from(browser_pid))
+    else {
+        return false;
+    };
+    if previous == browser || crate::apps::frontmost_pid() != Some(browser) {
+        return false;
+    }
+    crate::apps::activate_pid(previous)
 }
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
@@ -104,13 +405,6 @@ fn is_chromium(name: &str, bundle_id: &str) -> bool {
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| products.contains(&token))
-}
-
-fn is_firefox(name: &str, bundle_id: &str) -> bool {
-    format!("{name} {bundle_id}")
-        .to_ascii_lowercase()
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| token == "firefox")
 }
 
 fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
@@ -141,16 +435,85 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
     }
 }
 
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
-        .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
+fn isolated_browser_candidates() -> Vec<(PathBuf, &'static str, &'static str)> {
+    // pid-free launch deliberately supports only vendor-signed system-wide
+    // installations. Chromium builds have no stable vendor team identity, so
+    // callers can still select one by supplying its already-running pid.
+    vec![
+        (
+            PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "com.google.Chrome",
+            "EQHXZ8M8AV",
+        ),
+        (
+            PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            "com.microsoft.edgemac",
+            "UBF8T346G9",
+        ),
+    ]
+}
+
+fn codesign_identity_matches(details: &str, identifier: &str, team_identifier: &str) -> bool {
+    let mut observed_identifier = None;
+    let mut observed_team = None;
+    for line in details.lines() {
+        if let Some(value) = line.strip_prefix("Identifier=") {
+            observed_identifier = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("TeamIdentifier=") {
+            observed_team = Some(value.trim());
+        }
+    }
+    observed_identifier == Some(identifier) && observed_team == Some(team_identifier)
+}
+
+fn codesign_verification_args(requirement: &str) -> [&str; 4] {
+    // The explicit requirement already pins the Apple anchor, vendor team, and
+    // bundle identifier. Bare `--strict` also enables the `sideband` check,
+    // which rejects Finder/resource-fork metadata, including the
+    // non-removable `com.apple.provenance` attribute that newer macOS releases
+    // attach to stock vendor-signed browsers (#4058). Retain sealed-symlink
+    // validation without requiring sideband hygiene.
+    [
+        "--verify",
+        "--strict=symlinks",
+        "--test-requirement",
+        requirement,
+    ]
+}
+
+fn has_trusted_codesign_identity(
+    executable: &std::path::Path,
+    identifier: &str,
+    team_identifier: &str,
+) -> bool {
+    let requirement = format!(
+        "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
+    );
+    let verified = std::process::Command::new("/usr/bin/codesign")
+        .args(codesign_verification_args(&requirement))
+        .arg(executable)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !verified {
+        return false;
+    }
+    let Ok(details) = std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(executable)
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    details.status.success()
+        && codesign_identity_matches(
+            &String::from_utf8_lossy(&details.stderr),
+            identifier,
+            team_identifier,
+        )
 }
 
 fn stable_hash(value: &str) -> u64 {
@@ -170,41 +533,136 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     Some(home.join(relative))
 }
 
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
-}
-
-async fn process_uses_custom_user_data_dir(pid: i64) -> Result<bool, BrowserRefusal> {
-    let output = tokio::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser arguments for pid {pid}: {error}"),
-            )
-        })?;
-    if !output.status.success() {
+fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
+    let pid = libc::pid_t::try_from(pid).map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "browser pid is outside the macOS process-id range",
+        )
+    })?;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size = 0usize;
+    let size_result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if size_result != 0 || size < std::mem::size_of::<libc::c_int>() {
         return Err(refusal(
             BrowserRefusalCode::BrowserBindingStale,
-            format!("browser process {pid} is no longer available"),
+            format!("browser process {pid} arguments are unavailable"),
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).contains("--user-data-dir"))
+    let mut bytes = vec![0u8; size];
+    let read_result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            bytes.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read_result != 0 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("browser process {pid} arguments changed during inspection"),
+        ));
+    }
+    bytes.truncate(size);
+    let argc = libc::c_int::from_ne_bytes(
+        bytes[..std::mem::size_of::<libc::c_int>()]
+            .try_into()
+            .expect("c_int byte width"),
+    );
+    if argc <= 0 {
+        return Ok(Vec::new());
+    }
+    let mut cursor = std::mem::size_of::<libc::c_int>();
+    while cursor < bytes.len() && bytes[cursor] != 0 {
+        cursor += 1;
+    }
+    while cursor < bytes.len() && bytes[cursor] == 0 {
+        cursor += 1;
+    }
+    let mut args = Vec::with_capacity(argc as usize);
+    for _ in 0..argc {
+        if cursor >= bytes.len() {
+            break;
+        }
+        let end = bytes[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .unwrap_or(bytes.len());
+        args.push(bytes[cursor..end].to_vec());
+        cursor = end.saturating_add(1);
+    }
+    Ok(args)
+}
+
+fn user_data_dir_from_arguments_with_relative_fallback(
+    args: &[Vec<u8>],
+    default: Option<PathBuf>,
+    allow_relative_fallback: bool,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut directories = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(path) = arg.strip_prefix(b"--user-data-dir=") {
+            if !path.is_empty() {
+                directories.push(PathBuf::from(std::ffi::OsString::from_vec(path.to_vec())));
+            }
+        } else if arg == b"--user-data-dir" {
+            if let Some(path) = args.get(index + 1).filter(|path| !path.is_empty()) {
+                directories.push(PathBuf::from(std::ffi::OsString::from_vec(path.clone())));
+            }
+        }
+    }
+    directories.sort();
+    directories.dedup();
+    match directories.as_slice() {
+        [] => Ok(default),
+        [path] if path.is_absolute() => Ok(Some(path.clone())),
+        [_] if allow_relative_fallback => Ok(None),
+        [_] => Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
+        )),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "browser process has multiple distinct --user-data-dir arguments",
+        )),
+    }
+}
+
+async fn user_data_dir_for_pid(
+    pid: i64,
+    product: BrowserProduct,
+    allow_relative_fallback: bool,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
+    tokio::task::spawn_blocking(move || {
+        let args = process_arguments(pid)?;
+        user_data_dir_from_arguments_with_relative_fallback(
+            &args,
+            default_user_data_dir(product),
+            allow_relative_fallback,
+        )
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("browser argument inspection task failed: {error}"),
+        )
+    })?
 }
 
 fn exact_browser_surface_ids(
@@ -231,9 +689,11 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser process {pid}: {error}"),
+            cua_driver_core::browser::refusal::inspection_spawn_refusal(
+                format!("could not inspect browser process {pid}"),
+                "ps",
+                Some(pid),
+                &error,
             )
         })?;
     if !output.status.success() {
@@ -279,6 +739,8 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     let output = tokio::process::Command::new("lsof")
         .args([
             "-a",
+            // Numeric addresses: never block on DNS while enumerating listeners.
+            "-n",
             "-p",
             &pid.to_string(),
             "-iTCP",
@@ -291,9 +753,11 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
+            cua_driver_core::browser::refusal::inspection_spawn_refusal(
+                "could not inspect browser listeners",
+                "lsof",
+                Some(pid),
+                &error,
             )
         })?;
     Ok(parse_loopback_lsof_ports(&String::from_utf8_lossy(
@@ -305,15 +769,20 @@ async fn active_port_endpoint(
     pid: i64,
     product: BrowserProduct,
 ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    active_port_endpoint_with_relative_fallback(pid, product, false).await
+}
+
+async fn active_port_endpoint_with_relative_fallback(
+    pid: i64,
+    product: BrowserProduct,
+    allow_relative_fallback: bool,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
     // The Chrome 144+ existing-profile bridge deliberately returns 404 for
     // legacy /json discovery. Its exact browser WebSocket path is instead
-    // published in the default profile's DevToolsActivePort file. Custom
-    // user-data dirs remain on the launch/HTTP discovery paths because this
-    // adapter cannot safely recover an arbitrary argv path from `ps` text.
-    if process_uses_custom_user_data_dir(pid).await? {
-        return Ok(None);
-    }
-    let Some(user_data_dir) = default_user_data_dir(product) else {
+    // published in the exact user-data root's DevToolsActivePort file. argv
+    // comes from KERN_PROCARGS2 rather than lossy `ps` text.
+    let Some(user_data_dir) = user_data_dir_for_pid(pid, product, allow_relative_fallback).await?
+    else {
         return Ok(None);
     };
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
@@ -338,6 +807,7 @@ async fn active_port_endpoint(
     Ok(Some(OwnedEndpoint {
         ws_url: format!("ws://127.0.0.1:{port}{path}"),
         http_port: Some(port),
+        transport: EndpointTransport::DevToolsActivePort,
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
@@ -396,8 +866,67 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for MacOsBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        for (candidate, identifier, team_identifier) in isolated_browser_candidates() {
+            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+                continue;
+            };
+            if has_trusted_codesign_identity(
+                std::path::Path::new(&executable),
+                identifier,
+                team_identifier,
+            ) {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no vendor-signed system Chromium executable is available for isolated launch",
+        ))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
-        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
+        // Measured on Chrome 155 with another app frontmost: CDP
+        // Input.dispatchMouseEvent (with and without focus emulation) into a
+        // hidden background tab, and into the active tab of a window behind
+        // another app, delivered trusted events (isTrusted=true) without
+        // changing the frontmost app or raising the browser window, including
+        // clicks that focus inputs, buttons, links and selects. The
+        // background click route never calls Page.bringToFront or
+        // Target.activateTarget.
+        None
+    }
+
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        // Measured on Chrome 154 (no driver input involved): Chrome activates
+        // itself ~50 ms after any new DevTools client connects, to show its
+        // "Allow remote debugging?" sheet. Turning the per-instance setting on
+        // also activates it: its New Tab action does, and its address bar
+        // only navigates on real keystrokes.
+        Some(
+            "Chrome brings itself to the front to show its \"Allow remote debugging?\" prompt \
+             whenever a new DevTools connection opens (sessions then share that one connection), \
+             and turning remote debugging on needs Chrome in front",
+        )
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        let pid = i32::try_from(browser_pid).ok()?;
+        let window_id = u32::try_from(window_id).ok()?;
+        guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn std::any::Any + Send>)
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        crate::apps::frontmost_pid().map(i64::from)
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        restore_front_app_if_browser_front(previous_pid, browser_pid)
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -493,8 +1022,33 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .unwrap_or("");
         let chromium = is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
-        let gecko = is_firefox(name, bundle_id);
+        let gecko = is_firefox(&format!("{name} {bundle_id}"));
         let product_kind = browser_product(name, bundle_id);
+        let helper = name.to_ascii_lowercase().contains("helper")
+            || bundle_id.to_ascii_lowercase().contains(".helper")
+            || process_arguments(pid).ok().is_some_and(|args| {
+                args.iter().any(|arg| {
+                    arg.starts_with(b"--type=") && arg.get(7..).is_some_and(|kind| !kind.is_empty())
+                })
+            });
+        let process_role = if helper {
+            BrowserProcessRole::Helper
+        } else if product_kind == BrowserProduct::Electron {
+            BrowserProcessRole::EmbeddedApplication
+        } else if matches!(
+            product_kind,
+            BrowserProduct::GoogleChrome
+                | BrowserProduct::Chromium
+                | BrowserProduct::MicrosoftEdge
+                | BrowserProduct::Brave
+                | BrowserProduct::Vivaldi
+                | BrowserProduct::Opera
+                | BrowserProduct::Arc
+        ) {
+            BrowserProcessRole::StandaloneConsumer
+        } else {
+            BrowserProcessRole::Unknown
+        };
         Ok(BrowserClassification {
             is_browser: chromium || webkit || gecko,
             engine: if chromium {
@@ -508,7 +1062,18 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             },
             product_kind,
             product: (!name.is_empty()).then(|| name.to_owned()),
-            channel: None,
+            channel: (process_role == BrowserProcessRole::StandaloneConsumer).then(|| {
+                if bundle_id.to_ascii_lowercase().contains("canary") {
+                    "canary".to_owned()
+                } else if bundle_id.to_ascii_lowercase().contains("beta") {
+                    "beta".to_owned()
+                } else if bundle_id.to_ascii_lowercase().contains("dev") {
+                    "dev".to_owned()
+                } else {
+                    "stable".to_owned()
+                }
+            }),
+            process_role,
             supports_cdp: chromium,
         })
     }
@@ -585,62 +1150,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        for port in loopback_ports_for_pid(pid).await? {
-            if let Some(ws_url) = browser_websocket_url(port).await {
-                return Ok(Some(OwnedEndpoint {
-                    ws_url,
-                    http_port: Some(port),
-                    ownership: EndpointOwnershipProof {
-                        method: EndpointOwnershipMethod::ListeningSocketPid,
-                        owner_pid: pid,
-                        listener_pid: None,
-                        detail: Some("lsof loopback listener owner".to_owned()),
-                    },
-                }));
-            }
-        }
-        Ok(None)
+        self.discover_endpoint(pid, false).await
     }
 
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        let classification = self.classify_browser(pid).await?;
-        if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
-            return Ok(Some(endpoint));
-        }
-        let ports = loopback_ports_for_pid(pid).await?;
-        let mut discovered = Vec::new();
-        for port in &ports {
-            if let Some(ws_url) = browser_websocket_url(*port).await {
-                discovered.push((*port, ws_url));
-            }
-        }
-        if discovered.len() == 1 {
-            let (port, ws_url) = discovered.pop().expect("one discovered endpoint");
-            return Ok(Some(OwnedEndpoint {
-                ws_url,
-                http_port: Some(port),
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    listener_pid: None,
-                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
-                },
-            }));
-        }
-        if discovered.len() > 1 {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "multiple browser-level DevTools endpoints are owned by the approved process",
-            ));
-        }
-        // A bare listener is not enough to identify DevTools before approval:
-        // Chromium can own unrelated loopback services. The setup path below
-        // correlates a listener with the exact checkbox transition and the
-        // pooled WebSocket claim proves the protocol before attachment.
-        Ok(None)
+        self.discover_endpoint(pid, true).await
     }
 
     async fn reprove_existing_profile_endpoint(
@@ -670,6 +1187,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
             http_port: Some(port),
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -705,13 +1223,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             )
         })?;
         let listeners_before = loopback_ports_for_pid(request.pid).await?;
-        let handle = crate::focus_guard::with_focus_suppressed_now(
-            Some(pid),
-            "browser_prepare.remote_debugging",
-            || async move {
-                tokio::task::spawn_blocking(move || {
-                    super::setup_ui::enable(pid, window_id, descriptor)
-                })
+        let run_setup = move || async move {
+            tokio::task::spawn_blocking(move || super::setup_ui::enable(pid, window_id, descriptor))
                 .await
                 .map_err(|error| {
                     refusal(
@@ -722,9 +1235,21 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         ),
                     )
                 })?
-            },
-        )
-        .await?;
+        };
+        // Under the self-activation guard, the setup's background key turns make
+        // Chrome's window key on purpose; the generic focus-steal lease would
+        // re-activate the user's app in the middle of them and drop Chrome's
+        // input. The guard reverts Chrome's own activations instead.
+        let handle = if GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            run_setup().await?
+        } else {
+            crate::focus_guard::with_focus_suppressed_now(
+                Some(pid),
+                "browser_prepare.remote_debugging",
+                run_setup,
+            )
+            .await?
+        };
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
         let used_bounded_pixel_fallback = handle.used_bounded_pixel_fallback;
@@ -776,6 +1301,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     break Ok(OwnedEndpoint {
                         ws_url: ws_url.clone(),
                         http_port: Some(*port),
+                        transport: EndpointTransport::LegacyJsonVersion,
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
@@ -862,6 +1388,54 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = i32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the macOS process-id range",
+            )
+        })?;
+        let window_id = u32::try_from(request.window_id).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser window is outside the macOS window-id range",
+            )
+        })?;
+        // Turning remote debugging back off reopens Chrome's setup page,
+        // which brings Chrome to the front; hand the front back afterwards.
+        let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        // Chrome on another Space: the same guarded background routes as the
+        // attach, so the cleanup does not bring Chrome forward either.
+        let _guard = previous_front
+            .filter(|_| {
+                guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+            })
+            .map(|_| SelfActivationGuard::start(pid));
+        let result = run_committed_consent_cleanup(
+            CONSENT_CLEANUP_PASSES,
+            || super::consent_ui::dismiss(pid, window_id),
+            || super::setup_ui::disable(pid, window_id, descriptor),
+            || visible_consent_surfaces(pid),
+            || std::thread::sleep(Duration::from_millis(100)),
+        );
+        if let Some(previous) = previous_front {
+            restore_front_app_if_browser_front(i64::from(previous), request.pid);
+        }
+        result
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,
@@ -873,14 +1447,23 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let Ok(window_id) = u32::try_from(request.window_id) else {
             return error;
         };
-        tokio::task::spawn_blocking(move || super::setup_ui::abort_pending(pid, window_id, error))
-            .await
-            .unwrap_or_else(|join_error| {
-                refusal(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    format!("could not roll back exact browser setup: {join_error}"),
-                )
-            })
+        tokio::task::spawn_blocking(move || {
+            run_failed_prepare_consent_cleanup(
+                error,
+                CONSENT_CLEANUP_PASSES,
+                || super::consent_ui::dismiss(pid, window_id),
+                |error| super::setup_ui::abort_pending(pid, window_id, error),
+                || visible_consent_surfaces(pid),
+                || std::thread::sleep(Duration::from_millis(100)),
+            )
+        })
+        .await
+        .unwrap_or_else(|join_error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not roll back exact browser setup: {join_error}"),
+            )
+        })
     }
 
     async fn handle_existing_profile_consent(
@@ -903,7 +1486,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -923,6 +1512,277 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
+        ConsentSurfaceEvidence {
+            window_id,
+            pid: 42,
+            bounds: [120.0, 120.0, 520.0, 260.0],
+        }
+    }
+
+    #[test]
+    fn consent_cleanup_evidence_requires_exact_pid_title_visibility_and_bounds() {
+        let exact = window(90, 42, "Allow remote debugging?");
+        let mut foreign = window(91, 7, "Allow remote debugging?");
+        foreign.app_name = "Google Chrome".to_owned();
+        let mut hidden = window(92, 42, "Allow remote debugging?");
+        hidden.is_on_screen = false;
+        let mut empty = window(93, 42, "Allow remote debugging?");
+        empty.bounds.width = 0.0;
+
+        let surfaces = consent_surface_evidence(
+            [exact, foreign, hidden, empty, window(94, 42, "Unrelated")],
+            42,
+        );
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].window_id, 90);
+        assert_eq!(surfaces[0].pid, 42);
+    }
+
+    #[test]
+    fn failed_prepare_cleanup_drains_stacked_and_late_consent_surfaces() {
+        let events = std::cell::RefCell::new(Vec::new());
+        let mut observations = vec![
+            vec![consent_surface(90), consent_surface(91)],
+            vec![consent_surface(92)],
+            Vec::new(),
+            Vec::new(),
+        ]
+        .into_iter();
+        let error = run_failed_prepare_consent_cleanup(
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "prepare failed",
+            ),
+            4,
+            || {
+                events.borrow_mut().push("dismiss");
+                Ok(false)
+            },
+            |error| {
+                events.borrow_mut().push("rollback");
+                error
+            },
+            || observations.next().unwrap_or_default(),
+            || {},
+        );
+
+        assert_eq!(
+            *events.borrow(),
+            ["dismiss", "rollback", "dismiss", "dismiss", "dismiss", "dismiss"]
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "dismissed"
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["retained_surfaces"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn failed_prepare_cleanup_returns_bounded_evidence_for_retained_surfaces() {
+        let mut rollback_calls = 0;
+        let error = run_failed_prepare_consent_cleanup(
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "prepare failed",
+            ),
+            3,
+            || {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "ambiguous cancel actions",
+                ))
+            },
+            |error| {
+                rollback_calls += 1;
+                error
+            },
+            || vec![consent_surface(90), consent_surface(91)],
+            || {},
+        );
+
+        assert_eq!(
+            rollback_calls, 1,
+            "ambiguity must not skip exact setup rollback"
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "retained"
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["retained_surfaces"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["dismiss_error"]["message"],
+            "ambiguous cancel actions"
+        );
+    }
+
+    #[test]
+    fn committed_cleanup_refuses_while_an_unresolved_consent_surface_is_retained() {
+        let result = run_committed_consent_cleanup(
+            3,
+            || Ok(false),
+            || Ok(true),
+            || vec![consent_surface(90)],
+            || {},
+        );
+
+        let error = result.expect_err("retained consent UI must retain the core cleanup request");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "retained"
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["retained_surfaces"][0]["window_id"],
+            90
+        );
+    }
+
+    #[test]
+    fn committed_cleanup_observes_the_full_window_for_late_surfaces() {
+        let mut observations = vec![
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![consent_surface(90)],
+            Vec::new(),
+            Vec::new(),
+        ]
+        .into_iter();
+        let result = run_committed_consent_cleanup(
+            6,
+            || Ok(false),
+            || Ok(true),
+            || observations.next().unwrap_or_default(),
+            || {},
+        );
+
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn chinese_consent_surface_is_retained_without_an_ax_match() {
+        let surfaces = consent_surface_evidence(
+            [window(79, 42, super::super::consent_ui::CHINESE_PROMPT)],
+            42,
+        );
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].window_id, 79);
+    }
+
+    #[test]
+    fn reported_scan_error_cannot_become_successful_cleanup() {
+        let error = run_committed_consent_cleanup(
+            1,
+            || {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "truncated scan",
+                ))
+            },
+            || Ok(true),
+            Vec::new,
+            || {},
+        )
+        .unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+        assert_eq!(error.message, "truncated scan");
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "unverified"
+        );
+        let mut rolled_back = false;
+        let error = run_failed_prepare_consent_cleanup(
+            refusal(
+                BrowserRefusalCode::BrowserConsentRevoked,
+                "original prepare failure",
+            ),
+            1,
+            || {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "truncated scan",
+                ))
+            },
+            |error| {
+                rolled_back = true;
+                error
+            },
+            Vec::new,
+            || {},
+        );
+        assert!(rolled_back);
+        assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRevoked);
+        assert_eq!(error.message, "original prepare failure");
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "unverified"
+        );
+    }
+
+    #[test]
+    fn isolated_browser_candidates_are_vendor_attested_system_installs() {
+        let candidates = isolated_browser_candidates();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].1, "com.google.Chrome");
+        assert_eq!(candidates[0].2, "EQHXZ8M8AV");
+        assert!(candidates[0]
+            .0
+            .ends_with("Google Chrome.app/Contents/MacOS/Google Chrome"));
+        assert_eq!(candidates[1].1, "com.microsoft.edgemac");
+        assert_eq!(candidates[1].2, "UBF8T346G9");
+        assert!(candidates[1]
+            .0
+            .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert!(candidates
+            .iter()
+            .all(|(candidate, _, _)| candidate.is_absolute()));
+    }
+
+    #[test]
+    fn codesign_identity_requires_exact_identifier_and_team() {
+        let details = "Identifier=com.google.Chrome\nTeamIdentifier=EQHXZ8M8AV\n";
+        assert!(codesign_identity_matches(
+            details,
+            "com.google.Chrome",
+            "EQHXZ8M8AV"
+        ));
+        assert!(!codesign_identity_matches(
+            details,
+            "com.google.Chrome",
+            "ATTACKER00"
+        ));
+        assert!(!codesign_identity_matches(
+            "Identifier=com.google.Chrome\nTeamIdentifier=\n",
+            "com.google.Chrome",
+            "EQHXZ8M8AV"
+        ));
+    }
+
+    #[test]
+    fn vendor_verification_does_not_require_filesystem_metadata_hygiene() {
+        let requirement = "=anchor apple generic and identifier \"com.example.Browser\"";
+        assert_eq!(
+            codesign_verification_args(requirement),
+            [
+                "--verify",
+                "--strict=symlinks",
+                "--test-requirement",
+                requirement
+            ]
+        );
+        assert!(!codesign_verification_args(requirement).contains(&"--strict"));
+    }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
@@ -994,35 +1854,356 @@ mod tests {
     }
 
     #[test]
-    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
-        let mut tracker = BrowserCursorTracker::default();
-        assert_eq!(
-            tracker.update("session-red", 77, "tab-A", false),
-            vec![("session-red".to_owned(), false)]
-        );
+    fn existing_profile_attach_declares_its_foreground_limitation() {
+        let platform = MacOsBrowserPlatform::default();
+        let limitation = platform
+            .existing_profile_attach_background_limitation()
+            .expect("macOS Chrome attachment brings Chrome forward");
+        assert!(limitation.contains("Allow remote debugging?"));
+    }
 
-        let first_active = tracker.update("session-red", 77, "tab-A", true);
-        assert_eq!(first_active, vec![("session-red".to_owned(), true)]);
+    #[test]
+    fn guarded_background_attach_only_for_a_window_on_another_space() {
+        assert!(guarded_attach_allowed(Some(false)));
+        assert!(!guarded_attach_allowed(Some(true)));
+        // Unknown Space placement keeps the honest refusal.
+        assert!(!guarded_attach_allowed(None));
+    }
 
-        let second_active = tracker
-            .update("session-blue", 77, "tab-B", true)
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-        assert_eq!(second_active.get("session-red"), Some(&false));
-        assert_eq!(second_active.get("session-blue"), Some(&true));
+    #[test]
+    fn guarded_attach_flag_follows_live_guards() {
+        assert!(!guarded_attach_active());
+        let guard = SelfActivationGuard::start(i32::MAX);
+        assert!(guarded_attach_active());
+        drop(guard);
+        assert!(!guarded_attach_active());
+    }
 
-        let other_window = tracker.update("session-green", 88, "tab-C", true);
-        assert_eq!(
-            other_window,
-            vec![("session-green".to_owned(), true)],
-            "an active tab in another native window must not hide this window"
-        );
+    #[test]
+    fn front_restore_never_targets_the_browser_or_an_invalid_pid() {
+        assert!(!restore_front_app_if_browser_front(42, 42));
+        assert!(!restore_front_app_if_browser_front(i64::MAX, 42));
+        assert!(!restore_front_app_if_browser_front(42, i64::MIN));
     }
 
     #[test]
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
+    }
+
+    async fn assert_owned_discovery_profile_case(case: &str) {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut listeners = (0..3)
+            .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+            .collect::<Vec<_>>();
+        listeners.sort_by_key(|listener| listener.local_addr().unwrap().port());
+        let ports = listeners
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().port())
+            .collect::<Vec<_>>();
+        let urls = ports
+            .iter()
+            .enumerate()
+            .map(|(index, port)| format!("ws://127.0.0.1:{port}/devtools/browser/endpoint-{index}"))
+            .collect::<Vec<_>>();
+        let profile = tempfile::tempdir().unwrap();
+        let active_port = profile.path().join("DevToolsActivePort");
+        std::fs::write(
+            &active_port,
+            format!("{}\n/devtools/browser/endpoint-1\n", ports[1]),
+        )
+        .unwrap();
+        let unrelated = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        match case {
+            "missing_file" | "non_loopback" | "wrong_port" | "multiple" | "one_valid"
+            | "no_valid" => std::fs::remove_file(&active_port).unwrap(),
+            "malformed" => std::fs::write(&active_port, "not-a-port\n").unwrap(),
+            "unreadable" => {
+                std::fs::remove_file(&active_port).unwrap();
+                std::fs::create_dir(&active_port).unwrap();
+            }
+            "uncorroborated" => std::fs::write(
+                &active_port,
+                format!(
+                    "{}\n/devtools/browser/foreign\n",
+                    unrelated.local_addr().unwrap().port()
+                ),
+            )
+            .unwrap(),
+            _ => {}
+        }
+        let descriptors = listeners.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "read -r line", "endpoint-fixture"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        match case {
+            "relative" => {
+                command.arg("--user-data-dir=relative-profile");
+            }
+            "absent_profile" => {}
+            "conflicting" => {
+                command.args(["--user-data-dir=/tmp/one", "--user-data-dir=/tmp/two"]);
+            }
+            _ => {
+                command.arg(format!("--user-data-dir={}", profile.path().display()));
+            }
+        }
+        // Only the child's explicitly named listeners lose CLOEXEC.
+        unsafe {
+            command.pre_exec(move || {
+                for &fd in &descriptors {
+                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+        let child = ChildGuard(command.spawn().unwrap());
+        let pid = i64::from(child.0.id());
+        assert_eq!(loopback_ports_for_pid(pid).await.unwrap(), ports);
+        let counts = Arc::new([
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        ]);
+        let mut servers = Vec::new();
+        for (index, listener) in listeners.into_iter().enumerate() {
+            listener.set_nonblocking(true).unwrap();
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            let url = match case {
+                "non_loopback" => format!(
+                    "ws://example.invalid:{}/devtools/browser/foreign",
+                    ports[index]
+                ),
+                "wrong_port" => urls[(index + 1) % 3].clone(),
+                "one_valid" if index == 0 => urls[1].clone(),
+                "one_valid" if index == 2 => {
+                    "ws://example.invalid:1/devtools/browser/foreign".into()
+                }
+                _ => urls[index].clone(),
+            };
+            let body = if case == "no_valid" {
+                "{}".to_owned()
+            } else {
+                serde_json::json!({"webSocketDebuggerUrl": url}).to_string()
+            };
+            let counts = counts.clone();
+            servers.push(tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let mut request = [0; 4096];
+                    let _ = stream.read(&mut request).await;
+                    counts[index].fetch_add(1, Ordering::SeqCst);
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+            }));
+        }
+        let take_counts =
+            || std::array::from_fn::<_, 3, _>(|index| counts[index].swap(0, Ordering::SeqCst));
+        let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
+        let endpoint = platform.discover_owned_endpoint(pid).await;
+        let expected_counts = match case {
+            "absolute" | "conflicting" | "malformed" | "unreadable" => [0, 0, 0],
+            "non_loopback" | "wrong_port" | "no_valid" => [1, 1, 1],
+            "one_valid" => [1, 1, 0],
+            _ => [1, 0, 0],
+        };
+        assert_eq!(take_counts(), expected_counts, "owned probes: {case}");
+        match case {
+            "conflicting" | "malformed" | "unreadable" => {
+                let code = match case {
+                    "conflicting" => BrowserRefusalCode::BrowserBindingAmbiguous,
+                    "malformed" => BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    _ => BrowserRefusalCode::BrowserRouteUnavailable,
+                };
+                assert_eq!(endpoint.unwrap_err().code, code);
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap_err()
+                        .code,
+                    code
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "non_loopback" | "wrong_port" | "no_valid" => {
+                assert!(endpoint.unwrap().is_none());
+                assert!(platform
+                    .discover_existing_profile_endpoint(pid)
+                    .await
+                    .unwrap()
+                    .is_none());
+                assert_eq!(take_counts(), [1, 1, 1]);
+            }
+            _ => {
+                let endpoint = endpoint.unwrap().unwrap();
+                let index = usize::from(matches!(case, "absolute" | "one_valid"));
+                assert_eq!(endpoint.ws_url, urls[index]);
+                assert_eq!(endpoint.ownership.owner_pid, pid);
+                assert_eq!(
+                    endpoint.transport,
+                    if case == "absolute" {
+                        EndpointTransport::DevToolsActivePort
+                    } else {
+                        EndpointTransport::LegacyJsonVersion
+                    }
+                );
+                if case != "absolute" {
+                    assert_eq!(
+                        endpoint.ownership.detail.as_deref(),
+                        Some("lsof loopback listener owner plus /json/version")
+                    );
+                }
+            }
+        }
+        match case {
+            "absolute" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1]
+                );
+                assert_eq!(
+                    platform
+                        .discover_spawned_endpoint(pid, &urls[1])
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1]
+                );
+                assert!(platform
+                    .discover_spawned_endpoint(pid, &urls[0])
+                    .await
+                    .unwrap()
+                    .is_none());
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &urls[0])
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "relative" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserRouteUnavailable
+                );
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &urls[0])
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserRouteUnavailable
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "multiple" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserBindingAmbiguous
+                );
+                assert_eq!(take_counts(), [1, 1, 0]);
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &urls[0])
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[0]
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "one_valid" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1]
+                );
+                assert_eq!(take_counts(), [1, 1, 1]);
+            }
+            _ => {}
+        }
+        for server in servers {
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_prefers_profile_endpoint_over_inherited_listener() {
+        assert_owned_discovery_profile_case("absolute").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_relative_profile_keeps_listener_fallback_and_consent_strict() {
+        assert_owned_discovery_profile_case("relative").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_missing_profile_or_file_keeps_listener_fallback() {
+        assert_owned_discovery_profile_case("absent_profile").await;
+        assert_owned_discovery_profile_case("missing_file").await;
+        assert_owned_discovery_profile_case("uncorroborated").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_rejects_conflicting_profiles_and_malformed_port_file() {
+        assert_owned_discovery_profile_case("conflicting").await;
+        assert_owned_discovery_profile_case("malformed").await;
+        assert_owned_discovery_profile_case("unreadable").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_rejects_non_loopback_fallback() {
+        assert_owned_discovery_profile_case("non_loopback").await;
+        assert_owned_discovery_profile_case("wrong_port").await;
+    }
+
+    #[tokio::test]
+    async fn existing_discovery_requires_one_endpoint_but_reproof_keeps_exact_approval() {
+        for case in ["multiple", "one_valid", "no_valid"] {
+            assert_owned_discovery_profile_case(case).await;
+        }
     }
 
     #[test]
@@ -1035,52 +2216,42 @@ mod tests {
     }
 
     #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("Firefox", "org.mozilla.firefox"));
-        assert!(is_firefox("Mozilla Firefox", "org.mozilla.firefox"));
-        assert!(!is_firefox("FirefoxHelper", "com.example.FirefoxHelper"));
-        assert!(!is_firefox("Waterfox", "net.waterfox.current"));
-    }
-
-    #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
+    fn user_data_dir_parser_preserves_exact_custom_argv_path() {
+        let custom = std::env::temp_dir().join("cua browser profile with spaces");
+        let arg = format!("--user-data-dir={}", custom.display()).into_bytes();
         assert_eq!(
-            loopback_websocket_port("ws://127.0.0.1:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://localhost:9333/devtools/browser/foreign"),
-            Some(9222)
-        );
-        assert_eq!(
-            loopback_websocket_port("ws://192.0.2.1:9222/devtools"),
-            None
+            user_data_dir_from_arguments_with_relative_fallback(
+                &[b"/Applications/Chrome".to_vec(), arg],
+                None,
+                false
+            )
+            .expect("one absolute custom profile"),
+            Some(custom)
         );
     }
 
     #[test]
-    fn active_port_parser_requires_one_exact_browser_path() {
+    fn user_data_dir_parser_does_not_treat_a_path_as_authority() {
+        let default = PathBuf::from("/tmp/default-browser-data");
         assert_eq!(
-            parse_devtools_active_port(
-                "9222\n/devtools/browser/f1d991b4-2694-4b28-b63a-1f2a8da3a435\n"
-            ),
-            Some((
-                9222,
-                "/devtools/browser/f1d991b4-2694-4b28-b63a-1f2a8da3a435"
-            ))
+            user_data_dir_from_arguments_with_relative_fallback(
+                &[b"/Applications/Chrome".to_vec()],
+                Some(default.clone()),
+                false
+            )
+            .expect("default path"),
+            Some(default)
         );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/id\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
-            None
-        );
+        assert!(user_data_dir_from_arguments_with_relative_fallback(
+            &[
+                b"/Applications/Chrome".to_vec(),
+                b"--user-data-dir=/tmp/one".to_vec(),
+                b"--user-data-dir=/tmp/two".to_vec(),
+            ],
+            None,
+            false,
+        )
+        .is_err());
     }
 
     #[test]

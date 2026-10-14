@@ -6,6 +6,7 @@ from update_cua_driver_installer_version import (
     InstallerVersionError,
     POWERSHELL_VERSION,
     SHELL_VERSION,
+    main,
     read_version,
     update_installer_versions,
 )
@@ -108,3 +109,89 @@ def test_accepts_legacy_release_please_sentinels_for_tag_recovery(
     assert changed == (shell, powershell)
     assert "# x-release-please-version" in shell.read_text()
     assert "# x-release-please-version" in powershell.read_text()
+
+
+def write_withdrawn(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "withdrawn-versions"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_refuses_to_bake_a_withdrawn_version(tmp_path: Path) -> None:
+    shell, powershell, state = copy_installers(tmp_path)
+    before = (shell.read_bytes(), powershell.read_bytes(), state.read_bytes())
+    withdrawn = write_withdrawn(
+        tmp_path, "# header\n999.998.997 # macOS app published unsigned\n"
+    )
+
+    with pytest.raises(
+        InstallerVersionError,
+        match="refusing to bake withdrawn release 999.998.997.*published unsigned",
+    ):
+        update_installer_versions(
+            shell,
+            powershell,
+            "999.998.997",
+            state_path=state,
+            withdrawn_path=withdrawn,
+            allow_newer=True,
+        )
+
+    assert (shell.read_bytes(), powershell.read_bytes(), state.read_bytes()) == before
+
+
+def test_bakes_a_version_that_is_not_withdrawn(tmp_path: Path) -> None:
+    shell, powershell, state = copy_installers(tmp_path)
+    withdrawn = write_withdrawn(tmp_path, "999.998.996 # withdrawn\n")
+
+    changed = update_installer_versions(
+        shell, powershell, "999.998.997", state_path=state, withdrawn_path=withdrawn
+    )
+
+    assert changed == (shell, powershell, state)
+
+
+def test_missing_or_malformed_withdrawn_list_fails_closed(tmp_path: Path) -> None:
+    shell, powershell, state = copy_installers(tmp_path)
+
+    with pytest.raises(InstallerVersionError, match="does not exist"):
+        update_installer_versions(
+            shell,
+            powershell,
+            "999.998.997",
+            state_path=state,
+            withdrawn_path=tmp_path / "absent",
+        )
+    with pytest.raises(InstallerVersionError, match="invalid"):
+        update_installer_versions(
+            shell,
+            powershell,
+            "999.998.997",
+            state_path=state,
+            withdrawn_path=write_withdrawn(tmp_path, "latest # not a version\n"),
+        )
+
+
+def test_cli_refuses_the_checked_in_withdrawn_release(tmp_path: Path, capsys) -> None:
+    shell, powershell, state = copy_installers(tmp_path)
+    withdrawn = REPO_ROOT / ".github/release-state/cua-driver-rs-withdrawn-versions"
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            [
+                "--version",
+                "0.28.3",
+                "--shell-path",
+                str(shell),
+                "--powershell-path",
+                str(powershell),
+                "--state-path",
+                str(state),
+                "--withdrawn-path",
+                str(withdrawn),
+                "--allow-newer",
+            ]
+        )
+
+    assert exit_info.value.code == 2
+    assert "refusing to bake withdrawn release 0.28.3" in capsys.readouterr().err

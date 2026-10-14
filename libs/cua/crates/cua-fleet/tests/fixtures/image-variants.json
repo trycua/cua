@@ -1,0 +1,425 @@
+{
+  "_comment": "Shared runtime/image test vectors: cua-fleet (tests/image_variants.rs) and cua-sandbox (tests/test_fleet_image_variants.py) both run them. An image is a containerDisk when its manifest/config shows /disk/disk.img or a trycua containerDisk media type, else a rootfs; a readable manifest always beats the tag. A case with `refused` is a macOS image: classifying it is a typed Unsupported error whose message contains that text. `fallbacks`: the runtime chosen from the reference alone when the manifest cannot be read and no runtime is given (a tag starting with docker- or containing -docker- is gvisor, anything else kubevirt).",
+  "cases": [
+    {
+      "name": "containerdisk-by-history",
+      "reference": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+          "Env": [
+            "PATH=/usr/bin"
+          ],
+          "WorkingDir": "/"
+        },
+        "history": [
+          {
+            "created_by": "COPY disk.img /disk/disk.img # buildkit"
+          }
+        ]
+      },
+      "variant": "container-disk",
+      "runtimes": {
+        "default": "kubevirt",
+        "kubevirt": true,
+        "gvisor": false
+      }
+    },
+    {
+      "name": "rootfs",
+      "reference": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1736679843
+          },
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+          "Cmd": [
+            "/usr/bin/supervisord",
+            "-n"
+          ]
+        },
+        "history": [
+          {
+            "created_by": "CMD [\"/usr/bin/supervisord\"]"
+          }
+        ]
+      },
+      "variant": "rootfs",
+      "runtimes": {
+        "default": "gvisor",
+        "kubevirt": false,
+        "gvisor": true
+      }
+    },
+    {
+      "name": "docker-prefixed-tag-that-is-a-containerdisk",
+      "reference": "ghcr.io/trycua/cua-desktop-linux:docker-latest",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.trycua.containerdisk.layer.v1.tar+gzip",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+          "Env": [
+            "PATH=/usr/bin"
+          ]
+        },
+        "history": []
+      },
+      "variant": "container-disk",
+      "runtimes": {
+        "default": "kubevirt",
+        "kubevirt": true,
+        "gvisor": false
+      }
+    },
+    {
+      "name": "plain-tag-that-is-a-rootfs",
+      "reference": "ghcr.io/trycua/cua-desktop-linux:latest",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+          "Cmd": [
+            "/usr/bin/supervisord",
+            "-n"
+          ]
+        },
+        "history": [
+          {
+            "created_by": "CMD [\"/usr/bin/supervisord\"]"
+          }
+        ]
+      },
+      "variant": "rootfs",
+      "runtimes": {
+        "default": "gvisor",
+        "kubevirt": false,
+        "gvisor": true
+      }
+    },
+    {
+      "name": "spaces-e2e-rootfs-without-docker-prefix",
+      "reference": "123456789012.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:cua-e2e-desktop-linux-docker-0123abcd",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+          "Cmd": [
+            "/usr/bin/supervisord",
+            "-n"
+          ]
+        },
+        "history": [
+          {
+            "created_by": "CMD [\"/usr/bin/supervisord\"]"
+          }
+        ]
+      },
+      "variant": "rootfs",
+      "runtimes": {
+        "default": "gvisor",
+        "kubevirt": false,
+        "gvisor": true
+      }
+    },
+    {
+      "name": "containerdisk-by-layer-title",
+      "reference": "registry.example/vm:1",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843,
+            "annotations": {
+              "org.opencontainers.image.title": "disk/disk.img"
+            }
+          }
+        ]
+      },
+      "config": {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {
+          "Env": [
+            "PATH=/usr/bin"
+          ]
+        },
+        "history": []
+      },
+      "variant": "container-disk",
+      "runtimes": {
+        "default": "kubevirt",
+        "kubevirt": true,
+        "gvisor": false
+      }
+    },
+    {
+      "name": "containerdisk-by-label",
+      "reference": "registry.example/vm:2",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "os": "linux",
+        "config": {
+          "Labels": {
+            "ai.cua.image.variant": "containerdisk"
+          }
+        }
+      },
+      "variant": "container-disk",
+      "runtimes": {
+        "default": "kubevirt",
+        "kubevirt": true,
+        "gvisor": false
+      }
+    },
+    {
+      "name": "rootfs-label-overrides-disk-history",
+      "reference": "registry.example/ct:1",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "os": "linux",
+        "config": {
+          "Labels": {
+            "ai.cua.image.variant": "rootfs"
+          }
+        },
+        "history": [
+          {
+            "created_by": "COPY disk.img /disk/disk.img"
+          }
+        ]
+      },
+      "variant": "rootfs",
+      "runtimes": {
+        "default": "gvisor",
+        "kubevirt": false,
+        "gvisor": true
+      }
+    },
+    {
+      "name": "containerdisk-without-config",
+      "reference": "registry.example/vm:3",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.trycua.containerdisk.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.trycua.containerdisk.v1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": null,
+      "variant": "container-disk",
+      "runtimes": {
+        "default": "kubevirt",
+        "kubevirt": true,
+        "gvisor": false
+      }
+    },
+    {
+      "name": "macos-darwin-config",
+      "reference": "registry.example/mac:15",
+      "manifest": {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size": 445
+        },
+        "layers": [
+          {
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1736679843
+          }
+        ]
+      },
+      "config": {
+        "os": "darwin",
+        "architecture": "arm64",
+        "config": {
+          "Cmd": [
+            "/bin/zsh"
+          ]
+        }
+      },
+      "refused": "Fleet does not offer macOS sandboxes"
+    }
+  ],
+  "fallbacks": [
+    {
+      "reference": "ghcr.io/trycua/cua-desktop-linux:docker-latest",
+      "runtime": "gvisor"
+    },
+    {
+      "reference": "ghcr.io/trycua/cua-desktop-linux:latest",
+      "runtime": "kubevirt"
+    },
+    {
+      "reference": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81",
+      "runtime": "gvisor"
+    },
+    {
+      "reference": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2",
+      "runtime": "kubevirt"
+    },
+    {
+      "reference": "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2",
+      "runtime": "gvisor"
+    },
+    {
+      "reference": "123456789012.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:cua-e2e-desktop-linux-docker-0123abcd",
+      "runtime": "gvisor"
+    },
+    {
+      "reference": "registry:5000/img:DOCKER-1",
+      "runtime": "gvisor"
+    },
+    {
+      "reference": "registry:5000/docker-img",
+      "runtime": "kubevirt"
+    },
+    {
+      "reference": "registry.test/cua-e2e:fake",
+      "runtime": "kubevirt"
+    },
+    {
+      "reference": "img:plain",
+      "runtime": "kubevirt"
+    },
+    {
+      "reference": "example-docker:dockerized",
+      "runtime": "kubevirt"
+    }
+  ]
+}

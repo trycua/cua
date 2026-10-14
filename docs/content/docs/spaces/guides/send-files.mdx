@@ -1,0 +1,55 @@
+---
+title: Send files
+description: 'Send a host file or folder into a Space: it lands in ~/Downloads, verified by SHA-256.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+`send_file` copies a host file or folder into the Space user's `~/Downloads`
+(or a subfolder). Every file is verified by SHA-256 before it is published; a
+transfer that does not land is an error. For a folder, `.gitignore`, `.ignore`
+and a root `.dockerignore` are honored (`respect_ignore_files`). Nothing
+already in the Space is replaced by default: a file of the same name is kept
+and the new copy lands as `name (1).ext` (`conflict: "rename"`). Pass
+`conflict: "skip"` to keep only the existing file, or `conflict: "overwrite"`
+to replace it.
+
+From [the examples in other languages](/spaces/examples/other-languages):
+
+<Tabs items={['TypeScript', 'Rust', 'Swift']}>
+  <Tab value="TypeScript">
+    ```ts test="excerpt" id="ts-send-file" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-send-file"
+    const report = await this.space.sendFile(localPath, {
+      targetDirectory: subdir,
+      respectIgnoreFiles: true,
+      conflict: "rename",
+    })
+    if (!report.verified) throw new Error(`send_file of ${localPath} was not verified`)
+    ```
+  </Tab>
+  <Tab value="Rust">
+    ```rust test="excerpt" id="rs-send-file" source="samples/openkoalabot-example-tauri/src-tauri/core/src/files.rs#rs-send-file"
+    let report: SendFileReport = space
+        .send_file(
+            path,
+            SendFileOptions {
+                subdir: subdir.to_string(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="excerpt" id="sw-send-file" source="samples/openkoalabot-example-swift/Sources/OpenKoalaBotExample/Scenario/ScenarioRunner.swift#sw-send-file"
+    let report = try await handle().sendFile(
+        localPath: file.path,
+        options: SpaceSendFileOptions(targetDirectory: step["subdir"] as? String,
+                                      respectIgnoreFiles: true, conflict: "overwrite"))
+    ```
+  </Tab>
+</Tabs>
+
+Python: `await space.send_file(path, cua.SpaceSendFileOptions(target_directory="inbox"))`. Agents use
+the MCP tool `send_file` ([Use from an agent](/spaces/guides/use-from-an-agent));
+options are in the [`send_file` reference](/spaces/reference/commands-and-files#send_file).

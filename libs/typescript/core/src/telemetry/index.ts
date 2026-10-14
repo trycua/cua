@@ -5,3 +5,12 @@
  */
 
 export { PostHogTelemetryClient as Telemetry } from './clients';
+export {
+  CI_ENV_VARS,
+  isCI,
+  isTelemetryEnabledFromEnv,
+  machineTelemetrySetting,
+  type PostHogFactory,
+  type PostHogLike,
+  type TelemetryClientOptions,
+} from './clients';

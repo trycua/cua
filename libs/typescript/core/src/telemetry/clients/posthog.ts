@@ -18,13 +18,137 @@ export const TELEMETRY_SAMPLE_RATE = 100; // 100% sampling rate
 export const PUBLIC_POSTHOG_API_KEY = 'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14';
 export const PUBLIC_POSTHOG_HOST = 'https://eu.i.posthog.com';
 
+const FALSY = new Set(['0', 'false', 'no', 'off']);
+const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
+
+export const CI_ENV_VARS = [
+  'CI',
+  'GITHUB_ACTIONS',
+  'GITLAB_CI',
+  'BUILDKITE',
+  'CIRCLECI',
+  'JENKINS_URL',
+  'TF_BUILD',
+  'CONTINUOUS_INTEGRATION',
+] as const;
+
+type Env = Record<string, string | undefined>;
+
+const norm = (v: string | undefined) => (v ?? '').trim().toLowerCase();
+
+/** True when the process looks like it runs in CI. */
+export function isCI(env: Env = process.env): boolean {
+  return CI_ENV_VARS.some((name) => {
+    const v = norm(env[name]);
+    return v !== '' && !FALSY.has(v);
+  });
+}
+
+/**
+ * Shared Cua telemetry enablement rules.
+ *
+ * Off when DO_NOT_TRACK is non-empty and not "0", CUA_TELEMETRY is
+ * 0/false/no/off, legacy CUA_TELEMETRY_ENABLED is 0/false/no/off, or legacy
+ * CUA_TELEMETRY_DISABLED is truthy. Then the machine setting
+ * (`[telemetry] enabled` in `$CUA_HOME/config.toml`, default
+ * `~/.cua/config.toml`, written by `cua telemetry off` and the Cua Spaces
+ * app) decides; CUA_TELEMETRY=1 wins over it. Off by default in CI unless
+ * CUA_TELEMETRY is explicitly on. Otherwise on.
+ *
+ * `homeDir` is the user's home when `env` has no HOME (the process's own
+ * home directory for the client); without either no config file is read.
+ */
+export function isTelemetryEnabledFromEnv(env: Env = process.env, homeDir?: string): boolean {
+  const dnt = norm(env.DO_NOT_TRACK);
+  if (dnt !== '' && dnt !== '0') return false;
+  const cua = norm(env.CUA_TELEMETRY);
+  if (FALSY.has(cua)) return false;
+  if (FALSY.has(norm(env.CUA_TELEMETRY_ENABLED))) return false;
+  if (TRUTHY.has(norm(env.CUA_TELEMETRY_DISABLED))) return false;
+  if (TRUTHY.has(cua)) return true;
+  const machine = machineTelemetrySetting(env, homeDir);
+  if (machine !== undefined) return machine;
+  if (isCI(env)) return false;
+  return true;
+}
+
+/**
+ * The machine-wide switch, `[telemetry] enabled` in `$CUA_HOME/config.toml`
+ * (default `~/.cua/config.toml`), if set. Reads the `[telemetry]` table form
+ * the Cua CLI writes and a root `telemetry.enabled` key.
+ */
+export function machineTelemetrySetting(
+  env: Env = process.env,
+  homeDir?: string
+): boolean | undefined {
+  const cuaHome = (env.CUA_HOME ?? '').trim();
+  const userHome = (env.HOME ?? env.USERPROFILE ?? homeDir ?? '').trim();
+  const dir = cuaHome !== '' ? cuaHome : userHome !== '' ? path.join(userHome, '.cua') : '';
+  if (dir === '') return undefined;
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(dir, 'config.toml'), 'utf-8');
+  } catch {
+    return undefined;
+  }
+  let table = '';
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = /^\[\s*([^\]]*?)\s*\]\s*(#.*)?$/.exec(line);
+    if (header) {
+      table = header[1];
+      continue;
+    }
+    const key = table === 'telemetry' ? 'enabled' : table === '' ? 'telemetry.enabled' : null;
+    if (key === null) continue;
+    const m = /^([A-Za-z0-9_."]+)\s*=\s*(.*?)\s*(#.*)?$/.exec(line);
+    if (!m || m[1].replace(/"/g, '').replace(/\s+/g, '') !== key) continue;
+    const value = norm(m[2].replace(/^(["'])(.*)\1$/, '$2'));
+    if (FALSY.has(value) || value === 'disable' || value === 'disabled') return false;
+    if (TRUTHY.has(value) || value === 'enable' || value === 'enabled') return true;
+    if (/^-?\d+$/.test(value)) return Number(value) !== 0;
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Minimal surface of the posthog-node client used here (injectable for tests). */
+export interface PostHogLike {
+  capture(message: {
+    distinctId: string;
+    event: string;
+    properties?: Record<string, unknown>;
+    disableGeoip?: boolean;
+  }): void;
+  flush(): Promise<unknown>;
+  shutdown(): Promise<unknown>;
+  disable?(): Promise<unknown> | unknown;
+}
+
+export type PostHogFactory = (
+  apiKey: string,
+  options: { host: string; flushAt: number; flushInterval: number; disableGeoip: boolean }
+) => PostHogLike;
+
+export interface TelemetryClientOptions {
+  /** Replace the PostHog client (tests). */
+  clientFactory?: PostHogFactory;
+  /** Override the environment (tests). Defaults to process.env. */
+  env?: Env;
+  /** Override the home directory (tests). Defaults to os.homedir(). */
+  homeDir?: string;
+}
+
+const defaultFactory: PostHogFactory = (apiKey, options) =>
+  new PostHog(apiKey, options) as unknown as PostHogLike;
+
 export class PostHogTelemetryClient {
   private config: {
     enabled: boolean;
     sampleRate: number;
     posthog: { apiKey: string; host: string };
   };
-  private installationId: string;
+  private installationId?: string;
   private initialized = false;
   private queuedEvents: {
     name: string;
@@ -32,165 +156,133 @@ export class PostHogTelemetryClient {
     timestamp: number;
   }[] = [];
   private startTime: number; // seconds
-  private posthogClient?: PostHog;
+  private posthogClient?: PostHogLike;
   private counters: Record<string, number> = {};
+  private readonly clientFactory: PostHogFactory;
+  private readonly homeDir: string;
 
   private logger = pino({ name: 'core.telemetry' });
 
-  constructor() {
-    // set up config
+  constructor(options: TelemetryClientOptions = {}) {
+    const env = options.env ?? process.env;
+    this.clientFactory = options.clientFactory ?? defaultFactory;
+    this.homeDir = options.homeDir ?? os.homedir();
     this.config = {
-      enabled: true,
-      sampleRate: TELEMETRY_SAMPLE_RATE,
+      enabled: isTelemetryEnabledFromEnv(env, this.homeDir),
+      sampleRate: Number.parseFloat(env.CUA_TELEMETRY_SAMPLE_RATE || String(TELEMETRY_SAMPLE_RATE)),
       posthog: { apiKey: PUBLIC_POSTHOG_API_KEY, host: PUBLIC_POSTHOG_HOST },
     };
-    // Check CUA_TELEMETRY_ENABLED environment variable (defaults to enabled)
-    const telemetryEnabled = ['1', 'true', 'yes', 'on'].includes(
-      process.env.CUA_TELEMETRY_ENABLED?.toLowerCase() || 'true'
-    );
+    this.startTime = Date.now() / 1000;
 
-    this.config.enabled = telemetryEnabled;
-    this.config.sampleRate = Number.parseFloat(
-      process.env.CUA_TELEMETRY_SAMPLE_RATE || String(TELEMETRY_SAMPLE_RATE)
-    );
-    // init client
-    this.installationId = this._getOrCreateInstallationId();
-    this.startTime = Date.now() / 1000; // Convert to seconds
-
-    // Log telemetry status on startup
     if (this.config.enabled) {
-      this.logger.info(`Telemetry enabled (sampling at ${this.config.sampleRate}%)`);
-      // Initialize PostHog client if config is available
+      this.logger.debug(`Telemetry enabled (sampling at ${this.config.sampleRate}%)`);
       this._initializePosthog();
     } else {
-      this.logger.info('Telemetry disabled');
+      this.logger.debug('Telemetry disabled');
     }
   }
 
   /**
-   * Get or create a random installation ID.
-   * This ID is not tied to any personal information.
+   * Get or create a random installation id in ~/.config/cua/installation_id
+   * (shared with the Python SDK). Only called while telemetry is enabled.
+   * The id is a random UUID, not derived from any personal information.
    */
   private _getOrCreateInstallationId(): string {
-    const homeDir = os.homedir();
-    const idFile = path.join(homeDir, '.cua', 'installation_id');
+    const idFile = path.join(this.homeDir, '.config', 'cua', 'installation_id');
+    const legacyFile = path.join(this.homeDir, '.cua', 'installation_id');
 
-    try {
-      if (fs.existsSync(idFile)) {
-        return fs.readFileSync(idFile, 'utf-8').trim();
+    for (const file of [idFile, legacyFile]) {
+      try {
+        if (fs.existsSync(file)) {
+          const stored = fs.readFileSync(file, 'utf-8').trim();
+          if (stored) return stored;
+        }
+      } catch {
+        this.logger.debug('Failed to read installation id');
       }
-    } catch (error) {
-      this.logger.debug(`Failed to read installation ID: ${error}`);
     }
 
-    // Create new ID if not exists
     const newId = uuidv4();
     try {
-      const dir = path.dirname(idFile);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      fs.mkdirSync(path.dirname(idFile), { recursive: true });
       fs.writeFileSync(idFile, newId);
-      return newId;
-    } catch (error) {
-      this.logger.debug(`Failed to write installation ID: ${error}`);
+    } catch {
+      this.logger.debug('Failed to write installation id');
     }
-
-    // Fallback to in-memory ID if file operations fail
     return newId;
   }
 
-  /**
-   * Initialize the PostHog client with configuration.
-   */
   private _initializePosthog(): boolean {
     if (this.initialized) {
       return true;
     }
+    if (!this.config.enabled) {
+      return false;
+    }
 
     try {
-      this.posthogClient = new PostHog(this.config.posthog.apiKey, {
+      if (!this.installationId) {
+        this.installationId = this._getOrCreateInstallationId();
+      }
+      this.posthogClient = this.clientFactory(this.config.posthog.apiKey, {
         host: this.config.posthog.host,
-        flushAt: 20, // Number of events to batch before sending
-        flushInterval: 30000, // Send events every 30 seconds
+        flushAt: 20,
+        flushInterval: 30000,
+        disableGeoip: true,
       });
       this.initialized = true;
-      this.logger.debug('PostHog client initialized successfully');
-
-      // Process any queued events
+      this.logger.debug('PostHog client initialized');
       this._processQueuedEvents();
       return true;
     } catch (error) {
-      this.logger.error(`Failed to initialize PostHog client: ${error}`);
+      this.logger.debug(
+        `Failed to initialize PostHog client: ${(error as Error)?.name ?? 'Error'}`
+      );
       return false;
     }
   }
 
-  /**
-   * Process any events that were queued before initialization.
-   */
   private _processQueuedEvents(): void {
     if (!this.posthogClient || this.queuedEvents.length === 0) {
       return;
     }
-
     for (const event of this.queuedEvents) {
       this._captureEvent(event.name, event.properties);
     }
     this.queuedEvents = [];
   }
 
-  /**
-   * Capture an event with PostHog.
-   */
   private _captureEvent(eventName: string, properties?: Record<string, unknown>): void {
-    if (!this.posthogClient) {
+    if (!this.posthogClient || !this.installationId) {
       return;
     }
 
     try {
-      // Add standard properties
       const eventProperties = {
         ...properties,
         version: process.env.npm_package_version || 'unknown',
         platform: process.platform,
-        node_version: process.version,
-        is_ci: this._isCI,
+        node_version: process.versions.node.split('.')[0],
+        is_ci: isCI(),
+        $process_person_profile: false,
+        $geoip_disable: true,
       };
 
       this.posthogClient.capture({
         distinctId: this.installationId,
         event: eventName,
         properties: eventProperties,
+        disableGeoip: true,
       });
     } catch (error) {
-      this.logger.debug(`Failed to capture event: ${error}`);
+      this.logger.debug(`Failed to capture event: ${(error as Error)?.name ?? 'Error'}`);
     }
-  }
-
-  private get _isCI(): boolean {
-    /**
-     * Detect if running in CI environment.
-     */
-    return !!(
-      process.env.CI ||
-      process.env.CONTINUOUS_INTEGRATION ||
-      process.env.GITHUB_ACTIONS ||
-      process.env.GITLAB_CI ||
-      process.env.CIRCLECI ||
-      process.env.TRAVIS ||
-      process.env.JENKINS_URL
-    );
   }
 
   increment(counterName: string, value = 1) {
-    /**
-     * Increment a named counter.
-     */
     if (!this.config.enabled) {
       return;
     }
-
     if (!(counterName in this.counters)) {
       this.counters[counterName] = 0;
     }
@@ -198,37 +290,25 @@ export class PostHogTelemetryClient {
   }
 
   recordEvent(eventName: string, properties?: Record<string, unknown>): void {
-    /**
-     * Record an event with optional properties.
-     */
     if (!this.config.enabled) {
       return;
     }
 
-    // Increment counter for this event type
-    const counterKey = `event:${eventName}`;
-    this.increment(counterKey);
+    this.increment(`event:${eventName}`);
 
-    // Apply sampling
     if (Math.random() * 100 > this.config.sampleRate) {
       return;
     }
 
-    const event = {
-      name: eventName,
-      properties: properties || {},
-      timestamp: Date.now() / 1000,
-    };
-
     if (this.initialized && this.posthogClient) {
       this._captureEvent(eventName, properties);
     } else {
-      // Queue event if not initialized
-      this.queuedEvents.push(event);
-      // Try to initialize again
-      if (this.config.enabled && !this.initialized) {
-        this._initializePosthog();
-      }
+      this.queuedEvents.push({
+        name: eventName,
+        properties: properties || {},
+        timestamp: Date.now() / 1000,
+      });
+      this._initializePosthog();
     }
   }
 
@@ -241,57 +321,53 @@ export class PostHogTelemetryClient {
     }
 
     try {
-      // Send counter data as a single event
       if (Object.keys(this.counters).length > 0) {
         this._captureEvent('telemetry_counters', {
           counters: { ...this.counters },
           duration: Date.now() / 1000 - this.startTime,
         });
       }
-
       await this.posthogClient.flush();
-      this.logger.debug('Telemetry flushed successfully');
-
-      // Clear counters after sending
       this.counters = {};
       return true;
     } catch (error) {
-      this.logger.debug(`Failed to flush telemetry: ${error}`);
+      this.logger.debug(`Failed to flush telemetry: ${(error as Error)?.name ?? 'Error'}`);
       return false;
     }
   }
 
+  /**
+   * Enable telemetry collection for this process. Explicit opt-outs in the
+   * environment (DO_NOT_TRACK, CUA_TELEMETRY=0, ...) still win.
+   */
   enable(): void {
-    /**
-     * Enable telemetry collection.
-     */
+    if (
+      !isTelemetryEnabledFromEnv(
+        {
+          ...process.env,
+          CUA_TELEMETRY: process.env.CUA_TELEMETRY || '1',
+        },
+        this.homeDir
+      )
+    ) {
+      return;
+    }
     this.config.enabled = true;
-    this.logger.info('Telemetry enabled');
     if (!this.initialized) {
       this._initializePosthog();
     }
   }
 
   async disable(): Promise<void> {
-    /**
-     * Disable telemetry collection.
-     */
     this.config.enabled = false;
-    await this.posthogClient?.disable();
-    this.logger.info('Telemetry disabled');
+    await this.posthogClient?.disable?.();
   }
 
   get enabled(): boolean {
-    /**
-     * Check if telemetry is enabled.
-     */
     return this.config.enabled;
   }
 
   async shutdown(): Promise<void> {
-    /**
-     * Shutdown the telemetry client and flush any pending events.
-     */
     if (this.posthogClient) {
       await this.flush();
       await this.posthogClient.shutdown();

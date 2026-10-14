@@ -31,6 +31,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from cua_sandbox._paths import cua_home
 from cua_sandbox.builder.windows_unattend import (
     create_unattend_iso,
     download_file,
@@ -39,7 +40,7 @@ from cua_sandbox.builder.windows_unattend import (
 
 logger = logging.getLogger(__name__)
 
-WORK_DIR = Path.home() / ".cua" / "cua-sandbox" / "qemu-builder"
+WORK_DIR = cua_home() / "cua-sandbox" / "qemu-builder"
 VIRTIO_ISO_URL = (
     "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
 )
@@ -115,6 +116,24 @@ def _win_to_wsl(p: Path | str) -> str:
     return s
 
 
+def _guest_daemon_answers(port: int) -> bool:
+    """True once anything answers HTTP on the forwarded guest daemon port.
+
+    Any status counts (cua-spacesd answers 401 without a token): the build
+    only needs to know the base-layer setup finished and the daemon is up.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5)
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except Exception:
+        return False
+
+
 def _build_image_wsl2(
     config: QEMUImageConfig,
     cmd: list[str],
@@ -130,7 +149,6 @@ def _build_image_wsl2(
     import socket
     import threading
     import time
-    import urllib.request
 
     def _convert_arg(arg: str) -> str:
         """Convert Windows paths in a QEMU argument to WSL paths."""
@@ -245,15 +263,13 @@ def _build_image_wsl2(
                 logger.info(f"Sent boot keypress ({i+1}/15)")
 
         # Phase 2: wait for CUA server (KVM is much faster, ~15-30 min)
-        logger.info(f"Waiting for CUA computer-server on port {proc_port}...")
+        logger.info(f"Waiting for cua-spacesd on port {proc_port}...")
         for i in range(180):  # 180 * 10s = 30 min
             time.sleep(10)
-            try:
-                r = urllib.request.urlopen(f"http://127.0.0.1:{proc_port}/", timeout=5)
-                if r.status == 200:
-                    logger.info("CUA computer-server is running! Sending ACPI shutdown...")
-                    break
-            except Exception:
+            if _guest_daemon_answers(proc_port):
+                logger.info("cua-spacesd is running! Sending ACPI shutdown...")
+                break
+            else:
                 if i % 6 == 0:
                     logger.info(f"Still waiting... ({i * 10 // 60} min elapsed)")
         else:
@@ -413,7 +429,7 @@ def build_image(
         "tcp:127.0.0.1:4444,server,nowait",
         # Network (localhost only, no firewall prompt)
         "-netdev",
-        "user,id=net0,hostfwd=tcp::18000-:8000",
+        "user,id=net0,hostfwd=tcp::18000-:3211",
         "-device",
         "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
         # Disable S3/S4 (avoids ACPI sleep issues during install) — same as dockur
@@ -484,7 +500,6 @@ def build_image(
         import socket
         import threading
         import time
-        import urllib.request
 
         def _qmp_cmd(cmd_json: bytes):
             """Send a QMP command and return."""
@@ -504,7 +519,7 @@ def build_image(
 
         def _boot_and_monitor():
             """Phase 1: send Enter keys for 30s to bypass boot prompts.
-            Phase 2: poll CUA server on port 18000 until it responds.
+            Phase 2: poll the forwarded cua-spacesd port 18000 until it responds.
             Phase 3: send ACPI shutdown via QMP."""
             # Phase 1: boot keypresses
             for i in range(15):
@@ -515,15 +530,13 @@ def build_image(
                     logger.info(f"Sent boot keypress ({i+1}/15)")
 
             # Phase 2: wait for CUA server (up to 90 min for TCG installs)
-            logger.info("Waiting for CUA computer-server to become available on port 18000...")
+            logger.info("Waiting for cua-spacesd to become available on port 18000...")
             for i in range(540):  # 540 * 10s = 90 min
                 time.sleep(10)
-                try:
-                    r = urllib.request.urlopen("http://127.0.0.1:18000/", timeout=5)
-                    if r.status == 200:
-                        logger.info("CUA computer-server is running! Sending ACPI shutdown...")
-                        break
-                except Exception:
+                if _guest_daemon_answers(18000):
+                    logger.info("cua-spacesd is running! Sending ACPI shutdown...")
+                    break
+                else:
                     if i % 6 == 0:
                         logger.info(f"Still waiting for CUA server... ({i * 10 // 60} min elapsed)")
             else:

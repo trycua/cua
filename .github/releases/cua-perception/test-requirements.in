@@ -1,0 +1,4 @@
+cryptography==46.0.7
+jsonschema==4.23.0
+pytest==8.3.5
+pyyaml==6.0.2

@@ -1,7 +1,7 @@
 """Tests for the core gym interface (make, reset, step, evaluate).
 
 This module tests the fundamental gym-style environment API using
-end-to-end tests with the simulated (Playwright) provider.
+end-to-end tests with the native provider (in-memory sandbox fake).
 """
 
 import pytest
@@ -33,6 +33,20 @@ SIMPLE_BUTTON_HTML = """
 """
 
 
+@pytest.fixture(autouse=True)
+def _fake_sandboxes(monkeypatch):
+    """Tasks run in a (fake, in-memory) sandbox: no container, no network."""
+    from cua_bench import sandboxes
+
+    from .fakes import FakeSDK
+
+    sdk = FakeSDK()
+    monkeypatch.setattr(sandboxes, "_sdk", sdk.pair)
+    for var in ("CUA_BENCH_ON", "CUA_BENCH_RUNTIME", "CUA_BENCH_IMAGE"):
+        monkeypatch.delenv(var, raising=False)
+    return sdk
+
+
 class TestMakeFunction:
     """Tests for the make() function."""
 
@@ -40,15 +54,13 @@ class TestMakeFunction:
         """Test that make() returns an Environment instance."""
         task_dir = tmp_path / "test-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            """
+        (task_dir / "main.py").write_text("""
 import cua_bench as cb
 
 @cb.tasks_config(split="train")
 def get_tasks():
     return [cb.Task(description="Test task")]
-"""
-        )
+""")
 
         env = make(str(task_dir))
         assert isinstance(env, Environment)
@@ -70,8 +82,7 @@ def get_tasks():
         """Test make() with different splits."""
         task_dir = tmp_path / "split-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            """
+        (task_dir / "main.py").write_text("""
 import cua_bench as cb
 
 @cb.tasks_config(split="train")
@@ -81,8 +92,7 @@ def get_train_tasks():
 @cb.tasks_config(split="test")
 def get_test_tasks():
     return [cb.Task(description="Test task")]
-"""
-        )
+""")
 
         train_env = make(str(task_dir), split="train")
         assert train_env.split == "train"
@@ -92,15 +102,14 @@ def get_test_tasks():
 
 
 class TestEnvironmentResetE2E:
-    """E2E tests for Environment.reset() with simulated provider."""
+    """E2E tests for Environment.reset() with a native task (in-memory sandbox fake)."""
 
     @pytest.mark.asyncio
     async def test_reset_returns_screenshot_and_task(self, tmp_path):
         """Test that reset() returns screenshot bytes and task config."""
         task_dir = tmp_path / "reset-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -109,14 +118,13 @@ HTML = """{SIMPLE_BUTTON_HTML}"""
 def get_tasks():
     return [cb.Task(
         description="Click the button",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
-    await session.launch_window(html=HTML, title="Test", width=400, height=300)
-'''
-        )
+    await session.write_file("/tmp/page.html", HTML)
+''')
 
         env = make(str(task_dir))
         try:
@@ -134,8 +142,7 @@ async def setup(task, session):
         """Test that reset() clears the step counter."""
         task_dir = tmp_path / "reset-steps-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -144,14 +151,13 @@ HTML = """{SIMPLE_BUTTON_HTML}"""
 def get_tasks():
     return [cb.Task(
         description="Test",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
-    await session.launch_window(html=HTML, title="Test", width=400, height=300)
-'''
-        )
+    await session.write_file("/tmp/page.html", HTML)
+''')
 
         env = make(str(task_dir))
         try:
@@ -171,15 +177,14 @@ async def setup(task, session):
 
 
 class TestEnvironmentStepE2E:
-    """E2E tests for Environment.step() with simulated provider."""
+    """E2E tests for Environment.step() with a native task (in-memory sandbox fake)."""
 
     @pytest.mark.asyncio
     async def test_step_executes_click_action(self, tmp_path):
         """Test that step() executes a click action."""
         task_dir = tmp_path / "step-click-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -190,21 +195,21 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="Click the button",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
     global pid
-    clicked = await session.execute_javascript(pid, "window.__clicked")
+    clicked = await session.file_exists("/tmp/clicked")
     return [1.0 if clicked else 0.0]
-'''
-        )
+''')
 
         env = make(str(task_dir))
         try:
@@ -224,8 +229,7 @@ async def evaluate(task, session):
         """Test that step() increments the step counter."""
         task_dir = tmp_path / "step-counter-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -234,14 +238,13 @@ HTML = """{SIMPLE_BUTTON_HTML}"""
 def get_tasks():
     return [cb.Task(
         description="Test",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
-    await session.launch_window(html=HTML, title="Test", width=400, height=300)
-'''
-        )
+    await session.write_file("/tmp/page.html", HTML)
+''')
 
         env = make(str(task_dir))
         try:
@@ -262,15 +265,14 @@ async def setup(task, session):
 
 
 class TestEnvironmentEvaluateE2E:
-    """E2E tests for Environment.evaluate() with simulated provider."""
+    """E2E tests for Environment.evaluate() with a native task (in-memory sandbox fake)."""
 
     @pytest.mark.asyncio
     async def test_evaluate_returns_result(self, tmp_path):
         """Test that evaluate() returns evaluation result."""
         task_dir = tmp_path / "eval-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            '''
+        (task_dir / "main.py").write_text('''
 import cua_bench as cb
 
 HTML = """
@@ -294,15 +296,16 @@ def get_tasks():
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    await session.write_file("/tmp/score", "0.75")
+    pid = 1
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
-    global pid
-    score = await session.execute_javascript(pid, "window.__score")
+    # A task still declaring the retired simulated provider runs natively.
+    score = await session.read_file("/tmp/score")
     return [float(score)]
-'''
-        )
+''')
 
         env = make(str(task_dir))
         try:
@@ -316,15 +319,14 @@ async def evaluate(task, session):
 
 
 class TestEnvironmentSolveE2E:
-    """E2E tests for Environment.solve() with simulated provider."""
+    """E2E tests for Environment.solve() with a native task (in-memory sandbox fake)."""
 
     @pytest.mark.asyncio
     async def test_solve_runs_solver(self, tmp_path):
         """Test that solve() runs the solver function."""
         task_dir = tmp_path / "solve-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -335,27 +337,27 @@ pid = None
 def get_tasks():
     return [cb.Task(
         description="Click the button",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
     global pid
-    pid = await session.launch_window(html=HTML, title="Test", width=400, height=300)
+    await session.write_file("/tmp/page.html", HTML)
+    pid = 1
 
 @cb.solve_task(split="train")
 async def solve(task, session):
     global pid
     # Click the button using bot helper
-    await session.click_element(pid, "#test-btn")
+    await session.write_file("/tmp/clicked", "1")
 
 @cb.evaluate_task(split="train")
 async def evaluate(task, session):
     global pid
-    clicked = await session.execute_javascript(pid, "window.__clicked")
+    clicked = await session.file_exists("/tmp/clicked")
     return [1.0 if clicked else 0.0]
-'''
-        )
+''')
 
         env = make(str(task_dir))
         try:
@@ -383,8 +385,7 @@ class TestEnvironmentCloseE2E:
         """Test that close() cleans up the session."""
         task_dir = tmp_path / "close-task"
         task_dir.mkdir()
-        (task_dir / "main.py").write_text(
-            f'''
+        (task_dir / "main.py").write_text(f'''
 import cua_bench as cb
 
 HTML = """{SIMPLE_BUTTON_HTML}"""
@@ -393,14 +394,13 @@ HTML = """{SIMPLE_BUTTON_HTML}"""
 def get_tasks():
     return [cb.Task(
         description="Test",
-        computer={{"provider": "simulated", "setup_config": {{"width": 800, "height": 600}}}}
+        computer={{"provider": "native", "setup_config": {{"os_type": "linux", "width": 800, "height": 600}}}}
     )]
 
 @cb.setup_task(split="train")
 async def setup(task, session):
-    await session.launch_window(html=HTML, title="Test", width=400, height=300)
-'''
-        )
+    await session.write_file("/tmp/page.html", HTML)
+''')
 
         env = make(str(task_dir))
         await env.reset(task_id=0)

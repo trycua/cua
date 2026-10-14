@@ -11,7 +11,10 @@ from fleet_sdk import SdkError
 from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_namespace_name,
+    build_pool_namespace_name,
     collect_resource_inventory,
+    has_oauth_credentials,
+    is_pool_missing_error,
     wait_claims_absent,
     write_summary,
 )
@@ -47,6 +50,54 @@ def test_build_namespace_name_normalizes_invalid_overlong_lane_input() -> None:
     assert len(name) <= 63
     assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", name)
     assert name.startswith("cua-live-published-package-")
+
+
+@pytest.mark.parametrize("mode", ["warm", "cold"])
+@pytest.mark.parametrize(
+    ("event_name", "event_class"),
+    [("schedule", "schedule"), ("push", "push"), ("workflow_dispatch", "manual")],
+)
+def test_build_pool_namespace_name_is_stable_for_each_mode_lane_and_event_class(
+    mode: str, event_name: str, event_class: str
+) -> None:
+    name = build_pool_namespace_name(mode, "published-package", event_name)
+    assert name == f"cua-live-pool-{mode}-published-package-{event_class}"
+    assert len(name) <= 63
+
+
+def test_build_pool_namespace_name_normalizes_invalid_overlong_input() -> None:
+    name = build_pool_namespace_name(
+        "warm", "Published_Package!!!" + "X" * 100, "workflow_dispatch"
+    )
+
+    assert len(name) <= 63
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", name)
+    assert name.startswith("cua-live-pool-warm-published-package-")
+
+
+@pytest.mark.parametrize(
+    ("error", "missing"),
+    [
+        (SdkError.Status("get pool", 404, b"not found"), True),
+        (SdkError.Status("get pool", 403, b"forbidden"), True),
+        (SdkError.Status("get pool", 500, b"failure"), False),
+        (RuntimeError("transport down"), False),
+    ],
+)
+def test_is_pool_missing_error_mirrors_reconcile_semantics(
+    error: BaseException, missing: bool
+) -> None:
+    assert is_pool_missing_error(error) is missing
+
+
+def test_support_has_oauth_credentials_requires_both_values(monkeypatch) -> None:
+    monkeypatch.delenv("CUA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CUA_CLIENT_SECRET", raising=False)
+    assert not has_oauth_credentials()
+    monkeypatch.setenv("CUA_CLIENT_ID", "client")
+    assert not has_oauth_credentials()
+    monkeypatch.setenv("CUA_CLIENT_SECRET", "secret")
+    assert has_oauth_credentials()
 
 
 def test_assert_template_contract_accepts_server_port_8000() -> None:
@@ -164,10 +215,13 @@ async def test_wait_claims_absent_propagates_non_404_sdk_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collect_resource_inventory_returns_empty_for_public_sdk_404() -> None:
+@pytest.mark.parametrize("status", [403, 404])
+async def test_collect_resource_inventory_returns_empty_for_missing_namespace(
+    status: int,
+) -> None:
     class FakeClient:
         async def list_templates(self, name: str):
-            raise SdkError.Status("list templates", 404, b"not found")
+            raise SdkError.Status("list templates", status, b"missing")
 
     assert await collect_resource_inventory(FakeClient(), "demo") == {
         "templates": [],
@@ -258,9 +312,7 @@ def test_selected_namespace_rejects_unsafe_override(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
-    monkeypatch, tmp_path
-) -> None:
+async def test_owned_ephemeral_namespace_is_empty_after_cleanup(monkeypatch, tmp_path) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
     calls: list[str] = []
@@ -287,6 +339,11 @@ async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
             async def run(command: str):
                 return SimpleNamespace(success=True, stdout="Linux\n", stderr="")
 
+        class services:
+            @staticmethod
+            async def request(name: str, *, method: str, path: str, **_):
+                return SimpleNamespace(status_code=200)
+
     class FakeEphemeral:
         async def __aenter__(self):
             return FakeSandbox()
@@ -306,7 +363,7 @@ async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
         return True
 
     async def collect_resource_inventory(fleet, namespace: str):
-        return {"templates": [namespace], "pools": [namespace], "claims": []}
+        return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-existing")
     monkeypatch.setenv("CUA_LIVE_E2E_ARTIFACT_DIR", str(tmp_path))
@@ -321,8 +378,8 @@ async def test_existing_safe_namespace_is_reused_without_explicit_deletion(
 
     assert calls == ["provision", "close"]
     assert summaries[-1]["persistent_resources"] == {
-        "templates": ["cua-live-existing"],
-        "pools": ["cua-live-existing"],
+        "templates": [],
+        "pools": [],
         "claims": [],
     }
 
@@ -486,6 +543,11 @@ async def test_claim_leak_records_persistent_inventory_without_deletion(
             async def run(command: str):
                 return SimpleNamespace(success=True, stdout="Linux\n", stderr="")
 
+        class services:
+            @staticmethod
+            async def request(name: str, *, method: str, path: str, **_):
+                return SimpleNamespace(status_code=200)
+
     class FakeEphemeral:
         async def __aenter__(self):
             return FakeSandbox()
@@ -567,7 +629,7 @@ async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_pre_yield_claim_leak_is_recorded_without_masking_provisioning_error(
+async def test_pre_yield_failure_records_no_inventory_without_pool_identity(
     monkeypatch, tmp_path
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
@@ -605,13 +667,13 @@ async def test_pre_yield_claim_leak_is_recorded_without_masking_provisioning_err
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
         await live_test.run_fleet_ephemeral_live()
 
-    assert summaries[-1]["claim_leak"] is True
-    assert summaries[-1]["persistent_resources"]["claims"] == ["claim-a"]
-    assert summaries[-1]["cleanup_error"] == {"type": "Failed"}
+    assert summaries[-1]["provisioning"] == {"attempted": True, "sandbox_yielded": False}
+    assert "persistent_resources" not in summaries[-1]
+    assert "cleanup_error" not in summaries[-1]
 
 
 @pytest.mark.asyncio
-async def test_pre_yield_missing_namespace_records_empty_inventory_without_cleanup_failure(
+async def test_pre_yield_missing_namespace_skips_inventory_without_pool_identity(
     monkeypatch, tmp_path
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
@@ -650,7 +712,7 @@ async def test_pre_yield_missing_namespace_records_empty_inventory_without_clean
         await live_test.run_fleet_ephemeral_live()
 
     assert summaries[-1]["provisioning"] == {"attempted": True, "sandbox_yielded": False}
-    assert summaries[-1]["persistent_resources"] == {"templates": [], "pools": [], "claims": []}
+    assert "persistent_resources" not in summaries[-1]
     assert "cleanup_error" not in summaries[-1]
 
 
@@ -694,18 +756,22 @@ async def test_live_runner_uses_pinned_ephemeral_configuration(monkeypatch) -> N
         "memory_mb": 4096,
         "server_port": 8000,
         "time_to_start": 900,
-        "request_timeout": 60,
         "telemetry_enabled": False,
+        "local": False,
     }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("sandbox_name", "message"),
-    [("", "non-empty string"), ("cua-live-unexpected", "must equal namespace")],
+    ("sandbox_name", "sandbox_pool_name", "message"),
+    [
+        ("", "cua-live-identity", "non-empty string"),
+        ("cua-live-unexpected", "cua-live-identity", "claim name"),
+        ("cua-live-identity", "cua-live-unexpected", "pool name"),
+    ],
 )
 async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup(
-    monkeypatch, tmp_path, sandbox_name: str, message: str
+    monkeypatch, tmp_path, sandbox_name: str, sandbox_pool_name: str, message: str
 ) -> None:
     from tests.live import test_fleet_ephemeral as live_test
 
@@ -713,6 +779,8 @@ async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup
 
     class FakeSandbox:
         name = sandbox_name
+        claim_name = sandbox_name
+        pool_name = sandbox_pool_name
 
     class FakeEphemeral:
         async def __aenter__(self):
@@ -789,6 +857,11 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
             async def run(command: str):
                 return SimpleNamespace(success=True, stdout="Linux\n", stderr="")
 
+        class services:
+            @staticmethod
+            async def request(name: str, *, method: str, path: str, **_):
+                return SimpleNamespace(status_code=200)
+
     class FakeEphemeral:
         async def __aenter__(self):
             return FakeSandbox()
@@ -833,3 +906,87 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
         assert summaries[-1]["close_error"] == {"type": "CloseFailure"}
     if summary_fails:
         assert summaries[-1]["summary_error"] == {"type": "SummaryFailure"}
+
+
+@pytest.mark.asyncio
+async def test_live_runner_env_lane_uses_the_env_image_and_default_services(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    class StopProvisioning(Exception):
+        pass
+
+    captured = {}
+
+    class FailingEphemeral:
+        async def __aenter__(self):
+            raise StopProvisioning("stop after capturing arguments")
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    def ephemeral(image, **kwargs):
+        captured["image"] = image
+        captured["kwargs"] = kwargs
+        return FailingEphemeral()
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-e2e-env-lane")
+    monkeypatch.setenv("CUA_LIVE_E2E_ENV_IMAGE", "registry.example/linux:pr-1")
+    monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
+    monkeypatch.setattr(live_test.Sandbox, "ephemeral", ephemeral)
+    monkeypatch.setattr(live_test, "write_summary", lambda path, summary: None)
+
+    with pytest.raises(StopProvisioning):
+        await live_test.run_fleet_ephemeral_live()
+
+    assert captured["image"] == Image.from_registry("registry.example/linux:pr-1")
+    assert "server_port" not in captured["kwargs"], "the env lane is daemon-agnostic"
+    assert captured["kwargs"]["name"] == "cua-e2e-env-lane"
+
+
+def test_assert_env_template_contract() -> None:
+    from tests.live.fleet_e2e_support import assert_env_template_contract
+
+    def template(services, probes=None):
+        return SimpleNamespace(
+            spec=SimpleNamespace(
+                vm_template=SimpleNamespace(
+                    services=[SimpleNamespace(name=n, target_port=p) for n, p in services],
+                    probes=probes,
+                )
+            )
+        )
+
+    assert_env_template_contract(template([("env", 3211), ("port-3000", 3000)]))
+    with pytest.raises(AssertionError, match="3211"):
+        assert_env_template_contract(template([("server", 8000)]))
+    with pytest.raises(AssertionError, match="probe"):
+        assert_env_template_contract(template([("env", 3211)], probes=object()))
+
+
+@pytest.mark.asyncio
+async def test_check_service_reachable_is_daemon_agnostic() -> None:
+    from tests.live.fleet_e2e_support import check_service_reachable
+
+    def sandbox(status):
+        async def request(name, *, method, path, **_):
+            assert (name, method, path) == ("server", "GET", "/")
+            return SimpleNamespace(status_code=status)
+
+        return SimpleNamespace(services=SimpleNamespace(request=request))
+
+    summary: dict = {}
+    await check_service_reachable(sandbox(404), "server", summary)
+    assert summary["service"] == {"name": "server", "status": 404}
+    with pytest.raises(AssertionError, match="502"):
+        await check_service_reachable(sandbox(502), "server", {})
+
+
+def test_selected_namespace_accepts_ad_hoc_cua_e2e_names(monkeypatch) -> None:
+    from tests.live import test_fleet_ephemeral as live_test
+
+    monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-e2e-live-abc123")
+    assert live_test.selected_namespace() == "cua-e2e-live-abc123"

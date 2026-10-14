@@ -1,0 +1,119 @@
+---
+title: Cua SDK
+description: Build agentic applications and workflows on isolated Linux, Windows and macOS desktops on your machine, or on any machine that runs cua-spacesd.
+landing:
+  summary: 'Create and drive computers from your own code. Python, TypeScript, Swift and Rust.'
+  cta: Explore Cua SDK
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Build agentic apps and workflows on real desktops. Cua SDK gives your
+application isolated Linux, Windows and macOS machines on your own computer,
+runs the agents you already use inside them, and streams everything back so
+your users can watch, take over or teleport work in and out.
+[Cua Driver](/cua-driver) is how the agents drive each desktop.
+
+Sandboxes run on this machine by default: leave out `local=` (or `on`) and the
+SDK uses Docker or Podman (gVisor when installed), QEMU, or Lume on Apple
+silicon. Any OCI image works.
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python test="container" id="local-ephemeral" session="local"
+from cua_sandbox import Image, Sandbox, http
+
+async with Sandbox.ephemeral(
+    Image.from_registry("python:3.12-slim"),
+    command=["python", "-m", "http.server", "8000"],
+    services={"web": 8000},
+    wait_for=http("web", "/"),
+) as sb:
+    print((await sb.service("web").request("GET", "/")).status_code)  # 200
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="container" id="local-ephemeral-ts"
+import { embedded, http, SandboxCreateOptions } from '@trycua/cua';
+
+const sb = await embedded().sandboxes().create(
+  SandboxCreateOptions.create({
+    image: 'python:3.12-slim',
+    command: ['python', '-m', 'http.server', '8000'],
+    services: new Map([['web', 8000]]),
+    waitFor: [http('web', '/')],
+  })
+);
+console.log((await sb.service('web').request('GET', '/', undefined, undefined, undefined)).status); // 200
+await sb.delete_();
+```
+
+  </Tab>
+</Tabs>
+
+Setup: `cua runtime doctor` shows what this host has and `cua runtime setup`
+installs what is missing ([Local runtimes](/cua-sdk/guides/local-runtimes)).
+Containers run the host's architecture (others run emulated); macOS runs in
+Lume VMs on Apple silicon.
+
+## Reach another machine
+
+Any machine that runs [cua-spacesd](/cua-sdk/guides/spacesd), such as a spare
+Mac, a server on your LAN or [Tailscale](/start-here/host-spaces-on-your-spare-mac),
+or a container you started, connects directly by address and env token.
+Nothing is created or deleted:
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python test="docs" id="direct-connect" session="direct-connect" prelude="space-url"
+from cua_sandbox import Sandbox
+
+async with Sandbox.connect(url="http://10.0.0.5:3211", token="TOKEN") as sb:
+    print((await sb.shell.run("uname -a")).stdout)
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="docs" id="direct-connect-ts" prelude="space-url"
+import { embedded } from '@trycua/cua';
+
+const sb = await embedded().sandboxes().connectUrl("http://10.0.0.5:3211", "TOKEN", undefined);
+const guest = await sb.spacesd(undefined);
+console.log(new TextDecoder().decode((await guest.sh('uname -a', undefined)).stdout));
+```
+
+  </Tab>
+</Tabs>
+
+The CLI does the same with `cua sb create --on direct:10.0.0.5:3211 --token
+"$CUA_ENV_TOKEN"`. To share machines across a team, join the
+[Teams waitlist](https://cua.ai/teams).
+
+## Packages
+
+| Language | Package |
+| --- | --- |
+| Python | `cua-sandbox` (`from cua_sandbox import Sandbox`), over the `cua` SDK (`import cua`) |
+| TypeScript | `@trycua/cua` |
+| Rust | `cua-sdk` crate (git dependency), see [Rust crates](/cua-sdk/reference/rust) |
+| Swift | `Cua` (SwiftPM) |
+| CLI | `cua sb ...`, see [Cua CLI](/cua-cli) |
+
+## How it fits together
+
+The SDK is one Rust core with generated bindings, running in your process or
+in `cua daemon`. It starts local runtimes itself and connects to other
+machines directly. Nothing needs to run inside the image; images that ship
+[cua-spacesd](/cua-sdk/reference/protocol) (such as `Image.linux()`) also get the
+computer interfaces: `sb.shell`, `sb.files`, `sb.screen`, `sb.mouse`,
+`sb.keyboard`. See [How sandboxes work](/cua-sdk/concepts/how-sandboxes-work).
+
+To control the machine you are on instead of a sandbox, use
+[Cua Driver](/cua-driver).
+
+Next: [Your first sandbox](/cua-sdk/quickstart).

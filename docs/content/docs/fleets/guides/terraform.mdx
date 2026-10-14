@@ -1,0 +1,133 @@
+---
+title: Manage pools with Terraform
+description: Declare Linux and Windows Fleet pools as fleets_pool resources, apply them, and export existing pools to Terraform.
+---
+
+Each pool is a `fleets_pool` resource of the public `trycua/fleets` provider.
+Claim from it with `cua sb create --on cloud --pool NAME` or
+`Sandbox.create(cloud=CloudOptions(pool=NAME))`. The examples pin provider
+`0.2.0`; for OpenTofu, run the same commands with `tofu`.
+
+## Authentication
+
+The provider has its own variables; `cua auth login`, `CUA_CLIENT_ID` and
+`FLEETS_TOKEN` do not configure it. Use an API key from
+`cua auth keys create NAME` ([credentials](/cua-sdk/guides/cloud#credentials)):
+
+```bash skip="placeholder"
+export CYCLOPS_ENDPOINT="https://run.cua.ai"
+export CYCLOPS_CLIENT_ID="<your-client-id>"
+export CYCLOPS_CLIENT_SECRET="<your-client-secret>"
+export CYCLOPS_TOKEN_URL="https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+unset CYCLOPS_ACCESS_TOKEN
+```
+
+`CYCLOPS_ACCESS_TOKEN` (a short-lived access token) takes precedence over the
+client credentials and cannot renew itself.
+
+## Sizing
+
+Configure exactly one sizing mode per pool: `replicas` for a static warm size,
+or an `autoscaling` block (`min_pool_size`, `initial_pool_size`,
+`max_pool_size`) for claim-driven scaling. In autoscaling mode, `replicas`
+reports the current target after refresh. See
+[Keep sandboxes warm](/fleets/guides/warm-pools).
+
+## A Linux pool
+
+This KubeVirt pool runs the canonical desktop disk and publishes cua-spacesd as
+the `env` service, which the SDK and CLI use for shell, files and screen:
+
+```hcl title="main.tf" test="terraform" id="main-tf"
+terraform {
+  required_providers {
+    fleets = {
+      source  = "trycua/fleets"
+      version = "0.2.0"
+    }
+  }
+}
+
+provider "fleets" {
+  endpoint = "https://run.cua.ai"
+}
+
+resource "fleets_pool" "linux" {
+  name                 = "linux-pool"
+  cpu_cores            = 4
+  memory               = "8Gi"
+  container_disk_image = "ghcr.io/trycua/linux:24.04-disk"
+  runtime              = "kubevirt"
+  firmware             = "bios"
+
+  service {
+    name        = "env"
+    target_port = 3211
+    protocol    = "TCP"
+  }
+
+  autoscaling {
+    min_pool_size     = 0
+    initial_pool_size = 1
+    max_pool_size     = 5
+  }
+}
+
+output "linux_pool" {
+  value = {
+    name             = fleets_pool.linux.name
+    namespace        = fleets_pool.linux.namespace
+    target_replicas  = fleets_pool.linux.replicas
+    current_replicas = fleets_pool.linux.current_replicas
+    ready_replicas   = fleets_pool.linux.ready_replicas
+  }
+}
+```
+For a Windows pool, use a distinct `name`, `firmware = "efi"`, and a
+`readiness_probe_json` that waits for the port your image serves (for example
+`tcpSocket = { port = 3211 }` with a long `failureThreshold`).
+
+## Apply and destroy
+
+```bash skip="third-party-cli"
+terraform init
+terraform plan
+terraform apply
+terraform output
+terraform destroy      # deletes the pool and its namespace
+```
+
+Commit `.terraform.lock.hcl`. The provider reports the pool's `namespace`, its
+`replicas` target and the `current_replicas` and `ready_replicas` counts.
+
+## Export an existing pool
+
+`cua fleet pool export NAME --terraform` (Python:
+`Pool.export(name, terraform=True)`) prints a pool made with `Sandbox.create`
+or `Pool.apply` as a `fleets_pool` block: `command`, `args`, `env`,
+`process_mode`, `claim_secrets`, TTLs, services, autoscaling and one `sidecar`
+block per sidecar. A private-registry pool also gets a `fleets_registry_secret`
+resource whose username and password are Terraform variables.
+
+```hcl skip="pseudo"
+  sidecar {
+    name   = "db"
+    image  = "redis:7-alpine"
+    ports  = [6379]
+    cpu    = "250m"
+    memory = "256Mi"
+  }
+```
+
+The process fields, TTLs and `sidecar` blocks need a `trycua/fleets` provider
+newer than 0.3.0.
+
+## Troubleshoot
+
+- `name` is a lowercase DNS label of at most 63 characters. Changing it
+  replaces the pool and its namespace.
+- `403` on create: check the image reference and pull policy
+  (`image_pull_secret` defaults to `ecr-credentials`).
+- Firmware must match the disk: `bios` or `efi` for amd64 Linux, `efi` for
+  Windows.
+- Terraform state and shell history hold secrets; protect them.

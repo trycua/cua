@@ -1,0 +1,12 @@
+# OSWorld eval-parity set: a scripted solve (tasks/osworld/oracles.py) must
+# score 1.0 and a no-op 0.0 on BOTH variants (VM and container). Each task's
+# evaluator reads file state with a shell command (vm_command_line) or the
+# task's own eval.sh; none needs the web, Google Drive, GUI timing, systemd or
+# an LLM, so the result depends only on the files the solve writes.
+# Run: CUA_BENCH_OSWORLD_SPLIT=parity cb run dataset libs/cua-bench/tasks/osworld --oracle [--runtime vm|container]
+#
+# id                                    domain  evaluator                                  why deterministic
+e0df059f-28a6-4169-924f-b9623e7184cc  # os      exact_match on `[ -d ~/Desktop/todo_list_Jan_2 ]`   setup mkdir, solve mv; one directory test
+5ced85fc-fa1a-4217-95fd-0fb530545ce2  # os      check_include_exclude on eval.sh (cat output.txt)   solve writes the exact bytes compared
+4d117223-a354-47fb-8b45-62ab1390a95f  # os      check_include_exclude on eval.sh (find -perm)       setup.sh creates 3 files with fixed modes; solve chmods them
+6f56bf42-85b8-4fbb-8e06-6c44960184ba  # os      check_include_exclude on eval.sh (test -f dir*/file1) setup.sh makes file1 + 3 dirs; solve copies

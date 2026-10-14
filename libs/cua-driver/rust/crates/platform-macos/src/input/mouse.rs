@@ -1329,7 +1329,6 @@ pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyho
     middle_click_at_xy_inner(pid, x, y, None, None, modifiers)
 }
 
-/// Like `middle_click_at_xy` but stamps the window-local point and window ID.
 pub fn middle_click_at_xy_with_window_local(
     pid: i32,
     x: f64,
@@ -1369,7 +1368,12 @@ fn middle_click_at_xy_inner(
     )
     .map_err(|_| anyhow::anyhow!("middle mouse down failed"))?;
     set_explicit_flags(&down, flags);
-    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 2, 3);
+    let mode = if wid.is_some() {
+        MousePostMode::SkyLightPreferred
+    } else {
+        MousePostMode::Both
+    };
+    post_mouse_event_with_mode(pid, &down, window_local, wid, click_group_id, 1, 2, 3, mode);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     let up = CGEvent::new_mouse_event(
@@ -1380,7 +1384,7 @@ fn middle_click_at_xy_inner(
     )
     .map_err(|_| anyhow::anyhow!("middle mouse up failed"))?;
     set_explicit_flags(&up, flags);
-    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 2, 3);
+    post_mouse_event_with_mode(pid, &up, window_local, wid, click_group_id, 1, 2, 3, mode);
 
     Ok(())
 }
@@ -1802,7 +1806,6 @@ mod post_sink {
         posted: Vec<Posted>,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
-        /// Window number, under-pointer windows, and shared gesture ID.
         window_routing: Vec<[i64; 4]>,
     }
 
@@ -1912,8 +1915,21 @@ mod tests {
         assert_eq!(
             capture.posted(),
             [
-                Posted::new("OtherMouseDown", PostRoute::SkyLightAndPublic, 2),
-                Posted::new("OtherMouseUp", PostRoute::SkyLightAndPublic, 2),
+                Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn background_middle_click_uses_public_fallback_once() {
+        let capture = Capture::start(false);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("OtherMouseDown", PostRoute::PublicPid, 2),
+                Posted::new("OtherMouseUp", PostRoute::PublicPid, 2),
             ]
         );
     }

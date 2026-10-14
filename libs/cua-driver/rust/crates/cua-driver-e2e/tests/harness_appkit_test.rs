@@ -681,25 +681,30 @@ fn harness_appkit_middle_click_px_background_reaches_exact_window() {
                 );
                 assert_eq!(response.action_delivery_mode(), Some("background"));
                 let deadline = Instant::now() + Duration::from_secs(3);
-                let events = loop {
+                loop {
                     let events = read_events();
                     if events.iter().any(|event| event["kind"] == "middle_up") {
-                        break events;
+                        break;
                     }
                     assert!(
                         Instant::now() < deadline,
                         "middle-click did not arrive: {events:?}"
                     );
                     std::thread::sleep(Duration::from_millis(50));
-                };
-                assert!(events.iter().any(|event| event["kind"] == "middle_down"));
+                }
+                std::thread::sleep(Duration::from_millis(750));
+                let events = read_events();
+                let received = &events[1..];
+                assert_eq!(
+                    received.len(),
+                    2,
+                    "one request must deliver one native middle down/up pair: {received:?}"
+                );
+                assert_eq!(received[0]["kind"], "middle_down");
+                assert_eq!(received[1]["kind"], "middle_up");
                 let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
                 let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
-                for event in &events[1..] {
-                    assert!(matches!(
-                        event["kind"].as_str(),
-                        Some("middle_down" | "middle_up")
-                    ));
+                for event in received {
                     assert_eq!(event["window_id"].as_u64(), Some(wid));
                     assert!((event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0);
                     assert!((event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0);

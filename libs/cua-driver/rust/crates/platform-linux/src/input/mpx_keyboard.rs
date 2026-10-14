@@ -674,15 +674,20 @@ pub fn send_virtual_keyboard_text(
     // would come out with all the in-map characters first, reordering the
     // typed text relative to what was asked for.
     let mut guards = Vec::new();
+    let mut remap_mapping = keymap.mapping.clone();
     let (steps, skipped) =
         plan_text_with_fallback(
             &keymap.mapping,
             keymap.shift,
             text,
-            |ch| match remap_spare_keycode(&keymap.conn, &keymap.mapping, keysym_for_char(ch)) {
-                Ok(guard) => {
-                    let keycode = guard.keycode;
-                    guards.push(guard);
+            |ch| match keycode_for_keysym(
+                &keymap.conn,
+                &mut remap_mapping,
+                keysym_for_char(ch),
+                &ch.to_string(),
+            ) {
+                Ok((keycode, guard)) => {
+                    guards.extend(guard);
                     Some(keycode)
                 }
                 Err(_) => None,
@@ -706,12 +711,13 @@ pub fn send_virtual_keyboard_key(
     key: &str,
     modifiers: &[&str],
 ) -> Result<KeyboardDeliveryReport> {
-    let keymap = Keymap::load()?;
+    let mut keymap = Keymap::load()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::with_capacity(modifiers.len());
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, modifier)?;
+        let (keycode, guard) =
+            keycode_for_keysym(&keymap.conn, &mut keymap.mapping, keysym, modifier)?;
         guards.extend(guard);
         modifier_keycodes.push(keycode);
     }
@@ -719,7 +725,8 @@ pub fn send_virtual_keyboard_key(
     let (keycode, needs_shift) = match char_to_keycode_shift(&keymap.mapping, keysym) {
         Some(found) => found,
         None => {
-            let (keycode, guard) = keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, key)?;
+            let (keycode, guard) =
+                keycode_for_keysym(&keymap.conn, &mut keymap.mapping, keysym, key)?;
             guards.extend(guard);
             (keycode, false)
         }

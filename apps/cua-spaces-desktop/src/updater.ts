@@ -10,7 +10,9 @@
 //
 // Opt-in: nothing checks on its own unless the user turns automatic checks
 // on (Settings → About, `"autoUpdate": true` in settings.json, or
-// CUA_SPACES_AUTO_UPDATE=1). The beta channel (prereleases, `beta*.yml`) is
+// CUA_SPACES_AUTO_UPDATE=1). Someone who moved over from the Swift app keeps
+// Sparkle's choices instead (update-prefs.ts): checks on unless they had
+// turned them off there. The beta channel (prereleases, `beta*.yml`) is
 // served everywhere. The stable channel (`latest*.yml`) is served on Windows
 // and Linux, where stable releases ship the Electron app. On macOS stable
 // releases still ship the Swift app, updated by Sparkle; Check Now on Stable
@@ -23,18 +25,18 @@ import { electronUpdater } from "./electron-updater";
 import { recordUpdateChannel } from "./mesh-channel";
 import type { UpdaterDriving } from "./model/updates";
 import { readSettings, writeSettings } from "./settings";
+import { autoCheckPref, autoInstallPref, channelPref, type UpdateChannel } from "./update-prefs";
+
+export type { UpdateChannel } from "./update-prefs";
 
 const POLL_MS = 4 * 60 * 60 * 1000;
 
 /** macOS only: off until stable releases publish the Electron macOS feed (the cutover). */
 export const STABLE_FEED = false;
 
-export type UpdateChannel = "stable" | "beta";
-
 /** The channel a version was cut for: X.Y.Z-suffix is a beta. */
 export const buildChannel = (version = app.getVersion()): UpdateChannel => (/^\d+\.\d+\.\d+-/.test(version) ? "beta" : "stable");
 
-export const updateChannel = (): UpdateChannel => readSettings().updateChannel ?? buildChannel();
 
 /** The feed file electron-updater reads: `beta*.yml` or `latest*.yml`. */
 export const feedChannel = (channel: UpdateChannel) => (channel === "beta" ? "beta" : "latest");
@@ -46,11 +48,13 @@ export const channelServed = (
   platform: NodeJS.Platform = process.platform,
 ) => channel === "beta" || stableFeed || platform === "win32" || platform === "linux";
 
+export const updateChannel = (): UpdateChannel => channelPref(readSettings(), buildChannel(), (c) => channelServed(c));
+
 /** A packaged build with a feed (electron-builder's app-update.yml); a development run has no updater. */
 export const hasFeed = () => app.isPackaged && existsSync(path.join(process.resourcesPath, "app-update.yml"));
 
 export const updatesEnabled = () =>
-  app.isPackaged && (process.env.CUA_SPACES_AUTO_UPDATE === "1" || readSettings().autoUpdate === true) && channelServed(updateChannel());
+  app.isPackaged && autoCheckPref(readSettings(), process.env) && channelServed(updateChannel());
 
 type AutoUpdater = (typeof import("electron-updater"))["autoUpdater"];
 
@@ -88,7 +92,7 @@ export class ElectronUpdater implements UpdaterDriving {
   }
 
   get automaticallyChecks(): boolean {
-    return process.env.CUA_SPACES_AUTO_UPDATE === "1" || readSettings().autoUpdate === true;
+    return autoCheckPref(readSettings(), process.env);
   }
   set automaticallyChecks(on: boolean) {
     writeSettings({ autoUpdate: on });
@@ -97,7 +101,7 @@ export class ElectronUpdater implements UpdaterDriving {
   }
 
   get automaticallyInstalls(): boolean {
-    return readSettings().autoInstall === true;
+    return autoInstallPref(readSettings());
   }
   set automaticallyInstalls(on: boolean) {
     writeSettings({ autoInstall: on });
@@ -117,8 +121,9 @@ export class ElectronUpdater implements UpdaterDriving {
     return updateChannel();
   }
   set channel(channel: UpdateChannel) {
-    if (readSettings().updateChannel === channel) return;
-    writeSettings({ updateChannel: channel });
+    // The model sets the channel it shows at launch: only a change is the user's choice.
+    if (channel === updateChannel()) return;
+    writeSettings({ updateChannel: channel, updateChannelChosen: true });
     recordUpdateChannel(channel);
     this.loaded = null;
     this.schedule();

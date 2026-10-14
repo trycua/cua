@@ -79,9 +79,15 @@ Those are the rehearsal below.
    beta feed has worked end to end: a beta updated to the next beta.
 2. `STABLE_FEED = true` in `src/updater.ts`. The workflow refuses the
    cutover otherwise.
-3. Migrated users update on their own. The updater counts as enabled when
+3. Migrated users update on their own (`src/update-prefs.ts`, done). Until
+   the user chooses in Settings → About, automatic checks are on when
    `swiftMigration.found` is true and `sparkleAutomaticChecks !== false`
-   (Sparkle's default was on). Everyone else stays opt-in.
+   (the Swift app's Info.plist turns Sparkle's checks on, so the key is only
+   saved when the user changed it), and automatic installs follow
+   `sparkleAutomaticDownloads`. A channel carried over from the Swift app
+   that isn't served to the Electron app on macOS (Stable, before
+   `STABLE_FEED`) falls back to the build's channel. Everyone else stays
+   opt-in.
 4. electron-builder sets `generateUpdatesFilesForAllChannels: true` from the
    cutover on. Stable releases then also write `beta*.yml`, so betas move
    on to the stable release.

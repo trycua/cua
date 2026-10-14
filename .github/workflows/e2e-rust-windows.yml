@@ -49,6 +49,9 @@ env:
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_TIMEOUT: "120"
   CARGO_HTTP_MULTIPLEXING: "false"
+  # Failed cases are rerun once inside the gate; a pass on the rerun is
+  # reported as flaky, two failures fail. See scripts/ci/lib/e2e-retry-once.sh.
+  CUA_E2E_RETRY_ONCE: "1"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -411,9 +414,11 @@ jobs:
               artifact_link="Artifact link unavailable"
             fi
 
-            echo "## $artifact" >> "$summary_path"
-            echo >> "$summary_path"
-            echo "The lane did not produce \`summary.md\`. Results recovered from \`results.jsonl\`: $artifact_link." >> "$summary_path"
+            {
+              echo "## $artifact"
+              echo
+              echo "The lane did not produce \`summary.md\`. Results recovered from \`results.jsonl\`: $artifact_link."
+            } >> "$summary_path"
             echo >> "$summary_path"
             result_count=$(jq -s 'length' "$results")
             pass_count=$(jq -s '[.[] | select(.test_status == "pass")] | length' "$results")
@@ -483,6 +488,7 @@ jobs:
           {
             echo
             echo "Each evidence link opens its owning lane artifact; the row text is the exact \`recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4\` path, with an adjacent \`trajectory.json\`."
+            scripts/ci/summarize-flaky-cases.sh artifacts
           } >> "$summary_path"
           cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload matrix summary

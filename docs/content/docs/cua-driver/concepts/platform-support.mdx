@@ -80,7 +80,8 @@ Browser mutation always starts from an exact native `(pid, window_id)` binding.
 | Surface | Proven | Limit |
 | --- | --- | --- |
 | Chrome and Edge on Windows | Snapshot, navigate, type, trusted background click, DOM pointer actions, dialogs, file assignment, downloads, frames, multi-tab | Elevated-integrity targets refuse. |
-| Chrome on macOS; Chrome and Edge on Linux X11 | The same, except trusted pointer input | Trusted pointer returns `browser_input_trust_unavailable`; Linux dialogs need foreground. |
+| Chrome on macOS | The same | Trusted pointer input stays in the background, including inactive tabs. |
+| Chrome and Edge on Linux X11 | The same, except trusted pointer input | Trusted pointer returns `browser_input_trust_unavailable`; dialogs need foreground. |
 | Chrome on Sway | Exact binding when compositor identity and geometry agree | Generic GNOME or KDE Wayland is read-only. |
 | Electron (Windows, macOS, X11, Sway) | Typed mutation while one native window maps to one page | A second page or window invalidates the route. |
 | Brave, Vivaldi, Opera, Arc | Detected, not release-accepted | Use at your own risk. |

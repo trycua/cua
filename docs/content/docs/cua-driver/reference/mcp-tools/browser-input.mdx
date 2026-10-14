@@ -23,7 +23,7 @@ Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for
 
 ## `browser_click`
 
-Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route="dom_event" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.
 
 Effect: mutating. Platforms: macOS, Linux, Windows.
 

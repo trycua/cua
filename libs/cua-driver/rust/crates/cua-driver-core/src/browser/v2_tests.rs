@@ -2680,7 +2680,38 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         "{public}"
     );
     assert!(public.get("status").is_none(), "{public}");
-    assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+    let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
+    let click_sequence = dispatches
+        .iter()
+        .filter_map(|(_, params)| params["functionDeclaration"].as_str())
+        .find(|declaration| declaration.contains("'pointerdown'"))
+        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+    // Apps that open rows from pointer/mouse down+up ignore a bare click(),
+    // so the synthetic route must replay the whole primary-button sequence
+    // at the element's center, in order.
+    let order = [
+        "'pointermove'",
+        "'pointerdown'",
+        "'mousedown'",
+        "'pointerup'",
+        "'mouseup'",
+        "'click'",
+    ];
+    let positions: Vec<usize> = order
+        .iter()
+        .map(|event| {
+            click_sequence
+                .find(event)
+                .unwrap_or_else(|| panic!("missing {event}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "{click_sequence}"
+    );
+    assert!(click_sequence.contains("clientX: x"), "{click_sequence}");
+    assert!(!click_sequence.contains("this.click()"), "{click_sequence}");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }

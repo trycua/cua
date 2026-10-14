@@ -430,8 +430,6 @@ fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {
     Ok(())
 }
 
-/// Makes the focused input window take `_NET_WM_PING` and names it in
-/// `_NET_ACTIVE_WINDOW`; returns the root and the two protocol atoms.
 fn ping_window(conn: &RustConnection, screen: usize) -> Result<(Window, Atom, Atom)> {
     let root = conn.setup().roots[screen].root;
     let window = focused_input_window(conn, screen)?;
@@ -488,8 +486,6 @@ struct Typed {
     elapsed: Duration,
 }
 
-/// Types `text` through XTest while `on_ping` handles each `_NET_WM_PING` the
-/// driver sends, given its data and the keycodes pressed so far.
 fn type_with_pings(
     conn: &RustConnection,
     text: &'static str,
@@ -537,10 +533,6 @@ fn type_with_pings(
 
 const NI: u32 = 0x0100_4f60;
 
-/// A borrowed keycode is restored only after the focused client answers a
-/// `_NET_WM_PING` sent after its keys, so a client that is slow to read its
-/// events still translates them under the borrowed binding. Each ping carries
-/// its own serial.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping() -> Result<()> {
@@ -578,8 +570,6 @@ fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping()
     Ok(())
 }
 
-/// A late reply to an earlier ping must not count as the reply to the current
-/// one: the keycode stays bound until the current ping is answered.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_ignores_a_late_reply_to_an_earlier_ping() -> Result<()> {
@@ -648,7 +638,6 @@ fn xtest_text_restores_the_keycode_of_a_client_that_never_answers() -> Result<()
     Ok(())
 }
 
-/// Makes `window` take `_NET_WM_PING`.
 fn take_ping(conn: &RustConnection, window: Window, protocols: Atom, ping: Atom) -> Result<()> {
     conn.change_property32(
         PropMode::REPLACE,
@@ -661,9 +650,6 @@ fn take_ping(conn: &RustConnection, window: Window, protocols: Atom, ping: Atom)
     Ok(())
 }
 
-/// Keys go to the window that has the input focus when they are sent, so a
-/// focus change after the first binding moves the next binding's ping and the
-/// restore's ping to the window that gets the keys.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_syncs_with_the_window_that_got_the_keys_after_a_focus_change() -> Result<()> {
@@ -699,9 +685,6 @@ fn xtest_text_syncs_with_the_window_that_got_the_keys_after_a_focus_change() -> 
     Ok(())
 }
 
-/// With the input focus on a child window and no `_NET_ACTIVE_WINDOW`, the
-/// ping goes to the closest ancestor of the same client that takes
-/// `_NET_WM_PING`.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_pings_the_ancestor_of_a_focused_child_window() -> Result<()> {

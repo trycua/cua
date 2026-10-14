@@ -51,10 +51,7 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
-/// The longest [`sync_client`] waits for a client's `_NET_WM_PING` reply.
 const PING_TIMEOUT: Duration = Duration::from_secs(1);
-/// Identifies each `_NET_WM_PING` in its timestamp field, so a late reply to an
-/// earlier ping cannot confirm a later one.
 static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug)]
@@ -4474,9 +4471,6 @@ fn keycode_for_keysym<'a>(
     Ok((keycode, Some(guard)))
 }
 
-/// Keycode for `ch` while typing one text. A new binding is used once the
-/// client that gets its keys has seen it: Chrome drops keys on a keycode bound
-/// after the last mapping change it handled.
 fn text_keycode<'a>(
     conn: &'a RustConnection,
     mapping: &mut GetKeyboardMappingReply,
@@ -4491,26 +4485,16 @@ fn text_keycode<'a>(
     Ok((keycode, guard))
 }
 
-/// How a client answered [`sync_client`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClientSync {
-    /// The client answered this ping, so it has handled every earlier event.
     Confirmed,
-    /// There is no client window, or it does not take `_NET_WM_PING`.
     Unsupported,
-    /// The client takes `_NET_WM_PING` but did not answer this ping in time.
     Unanswered,
 }
 
-/// The clients that read one text's keys.
 struct TextClient {
-    /// The window [`send_type_text`] sends the keys to; `None` for XTest, whose
-    /// keys go to the input focus.
     target: Option<Window>,
-    /// Each window a key of a borrowed keycode went to.
     sent: Vec<Window>,
-    /// Windows that left a ping unanswered. They are not pinged again for this
-    /// text, so a stalled client costs at most one [`PING_TIMEOUT`].
     unanswered: Vec<Window>,
 }
 
@@ -4523,8 +4507,6 @@ impl TextClient {
         }
     }
 
-    /// The window that gets the key sent next. For XTest it is the input focus
-    /// captured right before the key is sent.
     fn recipient(&self, conn: &RustConnection) -> Option<Window> {
         self.target.or_else(|| {
             let cookie = conn.get_input_focus().ok()?;
@@ -4532,7 +4514,6 @@ impl TextClient {
         })
     }
 
-    /// Records the window that gets the next key of a borrowed keycode.
     fn record_recipient(&mut self, conn: &RustConnection) {
         if let Some(window) = self.recipient(conn) {
             if !self.sent.contains(&window) {
@@ -4552,16 +4533,12 @@ impl TextClient {
         sync
     }
 
-    /// Lets the recipient handle a new binding before its key arrives.
     fn notice(&mut self, conn: &RustConnection) {
         if let Some(window) = self.recipient(conn) {
             self.ping(conn, window);
         }
     }
 
-    /// Restores the text's borrowed keycodes once the clients have read their
-    /// keys. A client without the protocol gets the restore at once; one that
-    /// does not answer gets it after its ping times out.
     fn release(mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
         for window in std::mem::take(&mut self.sent) {
             self.ping(conn, window);
@@ -4570,13 +4547,6 @@ impl TextClient {
     }
 }
 
-/// Waits until `window`'s client has handled the events sent before this call,
-/// so a borrowed keycode can be restored without changing keys the client has
-/// not translated yet. The ping goes to `window` or its closest ancestor of the
-/// same client that takes it. Clients answer an EWMH `_NET_WM_PING` in event
-/// order, echoing its timestamp field, which carries a fresh serial so only the
-/// reply to this ping counts. No client is waited for longer than
-/// [`PING_TIMEOUT`].
 fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
     let atom = |name: &str| {
         conn.intern_atom(false, name.as_bytes())
@@ -4622,9 +4592,6 @@ fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
     ClientSync::Unanswered
 }
 
-/// `focus`, or its closest ancestor of the same client, that takes
-/// `_NET_WM_PING`. A client's windows share the resource id bits outside
-/// `resource_id_mask`.
 fn ping_window(
     conn: &RustConnection,
     focus: Window,

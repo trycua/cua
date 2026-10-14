@@ -3559,7 +3559,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, _) = connect_x11_for_input()?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
 
     // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
     // until after the events are delivered (drop at end of fn).
@@ -3567,7 +3567,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     let mut mod_keycodes = Vec::new();
     for m in modifiers {
         let ks = key_name_to_keysym(m)?;
-        let (kc, guard) = keycode_for_keysym(&conn, &mapping, ks, m)?;
+        let (kc, guard) = keycode_for_keysym_mut(&conn, &mut mapping, ks, m)?;
         if let Some(g) = guard {
             guards.push(g);
         }
@@ -3585,7 +3585,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, keysym) {
         Some(found) => found,
         None => {
-            let (kc, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+            let (kc, guard) = keycode_for_keysym_mut(&conn, &mut mapping, keysym, key)?;
             if let Some(g) = guard {
                 guards.push(g);
             }
@@ -3674,12 +3674,12 @@ pub fn send_click_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym_mut(&conn, &mut mapping, keysym, modifier)?;
         if let Some(guard) = guard {
             guards.push(guard);
         }
@@ -3818,12 +3818,12 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym_mut(&conn, &mut mapping, keysym, modifier)?;
         if let Some(guard) = guard {
             guards.push(guard);
         }
@@ -3959,8 +3959,8 @@ fn send_key_to_target(
     // `keycode_for_keysym` instead borrows a spare keycode and hands back a guard
     // that restores the original mapping once the event has been delivered.
     let keysym = key_name_to_keysym(key)?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let (keycode, remap_guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let (keycode, remap_guard) = keycode_for_keysym_mut(&conn, &mut mapping, keysym, key)?;
 
     // XSendEvent's state mask describes modifiers for one key event, but does
     // not update Chromium's internal modifier state by itself. Emit the
@@ -3972,7 +3972,7 @@ fn send_key_to_target(
     for modifier in modifiers {
         let modifier_keysym = key_name_to_keysym(modifier)?;
         let (modifier_keycode, guard) =
-            keycode_for_keysym(&conn, &mapping, modifier_keysym, modifier)?;
+            keycode_for_keysym_mut(&conn, &mut mapping, modifier_keysym, modifier)?;
         if let Some(guard) = guard {
             remap_guards.push(guard);
         }
@@ -4338,10 +4338,8 @@ impl Drop for RemappedKeycode<'_> {
     }
 }
 
-/// Temporarily bind `keysym` onto a spare (fully unused) keycode so it can be
-/// injected even when no existing keycode emits it. Returns a guard that
-/// restores the original mapping on drop. Errors only if the keymap has no free
-/// keycode left to borrow.
+/// Reserve a fully unused keycode for `keysym`, calling `bind` before updating
+/// the local mapping. Returns the keycode and the value produced by `bind`.
 fn reserve_spare_keycode<G>(
     mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
@@ -4375,17 +4373,24 @@ fn reserve_spare_keycode<G>(
     Ok((spare, guard))
 }
 
-/// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
-/// the existing keyboard mapping; if no keycode emits the keysym (common on
-/// sparse headless keymaps like a minimal Xwayland) it borrows a spare keycode
-/// and remaps it, returning a guard that restores the original mapping on drop.
-/// The guard is `None` when the keysym was already present (no cleanup needed).
 fn remap_spare_keycode<'a>(
     conn: &'a RustConnection,
     mapping: &GetKeyboardMappingReply,
     keysym: u32,
 ) -> Result<RemappedKeycode<'a>> {
-    bind_spare_keycode(conn, &mut mapping.clone(), keysym)
+    let (_, guard) =
+        reserve_spare_keycode(&mut mapping.clone(), keysym, |spare, per, original, new| {
+            conn.change_keyboard_mapping(1, spare, per, new)?;
+            let guard = RemappedKeycode {
+                conn,
+                keycode: spare,
+                keysyms_per_keycode: per,
+                original_keysyms: original.to_vec(),
+            };
+            let _ = conn.get_input_focus()?.reply();
+            Ok(guard)
+        })?;
+    Ok(guard)
 }
 
 fn keycode_for_keysym<'a>(
@@ -4394,28 +4399,24 @@ fn keycode_for_keysym<'a>(
     keysym: u32,
     key: &str,
 ) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per > 0 {
+        if let Some(i) = mapping
+            .keysyms
+            .chunks(per)
+            .position(|syms| syms.contains(&keysym))
+        {
+            return Ok(((8 + i) as u8, None));
+        }
+    }
     keycode_for_keysym_mut(conn, &mut mapping.clone(), keysym, key)
 }
 
-fn bind_spare_keycode<'a>(
-    conn: &'a RustConnection,
-    mapping: &mut GetKeyboardMappingReply,
-    keysym: u32,
-) -> Result<RemappedKeycode<'a>> {
-    let (_, guard) = reserve_spare_keycode(mapping, keysym, |spare, per, original, new| {
-        conn.change_keyboard_mapping(1, spare, per, new)?;
-        let guard = RemappedKeycode {
-            conn,
-            keycode: spare,
-            keysyms_per_keycode: per,
-            original_keysyms: original.to_vec(),
-        };
-        let _ = conn.get_input_focus()?.reply();
-        Ok(guard)
-    })?;
-    Ok(guard)
-}
-
+/// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
+/// the existing keyboard mapping; if no keycode emits the keysym (common on
+/// sparse headless keymaps like a minimal Xwayland) it borrows a spare keycode
+/// and remaps it, returning a guard that restores the original mapping on drop.
+/// The guard is `None` when the keysym was already present (no cleanup needed).
 fn keycode_for_keysym_mut<'a>(
     conn: &'a RustConnection,
     mapping: &mut GetKeyboardMappingReply,
@@ -4432,10 +4433,12 @@ fn keycode_for_keysym_mut<'a>(
     }
 
     // Not in the map — fall back to remapping a spare keycode.
-    let guard = bind_spare_keycode(conn, mapping, keysym).with_context(|| {
+    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
     let keycode = guard.keycode;
+    let idx = (keycode as usize - 8) * per;
+    mapping.keysyms[idx..idx + per].fill(keysym);
     Ok((keycode, Some(guard)))
 }
 

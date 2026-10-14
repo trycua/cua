@@ -1149,8 +1149,6 @@ fn prevent_console_window(command: &mut Command) {
     unsafe extern "system" {
         fn GetConsoleCP() -> u32;
     }
-    // SAFETY: GetConsoleCP takes no arguments and returns 0 when the calling
-    // process has no console.
     if unsafe { GetConsoleCP() } == 0 {
         command.creation_flags(CREATE_NO_WINDOW);
     }
@@ -1562,7 +1560,6 @@ mod tests {
 
         match std::env::var(ROLE).as_deref() {
             Ok("probe-without-console") => {
-                // SAFETY: a parameterless query of this process's console.
                 let window = unsafe { GetConsoleWindow() };
                 assert!(
                     window.is_null(),
@@ -1572,7 +1569,6 @@ mod tests {
             Ok("probe-with-console") => {
                 let host: u32 = std::env::var(HOST_PID).unwrap().parse().unwrap();
                 let mut attached = [0u32; 64];
-                // SAFETY: the buffer holds the 64 process IDs the call may write.
                 let count = unsafe { GetConsoleProcessList(attached.as_mut_ptr(), 64) } as usize;
                 assert!(
                     attached[..count.min(64)].contains(&host),

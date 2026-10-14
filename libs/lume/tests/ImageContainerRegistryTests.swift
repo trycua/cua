@@ -63,6 +63,9 @@ func acceptsValidRawDiskParts() throws {
           [rawPart("-1", of: "1")],
           [rawPart("x", of: "1")],
           [rawPart("1", of: "99999999999999999999")],
+          [rawPart("0 1", of: "1")],
+          [rawPart("1", of: "0 1")],
+          [tarLayer(";=;part.number=1;part.total=1")],
           [tarLayer(";part.total=1")],
           [tarLayer("")],
           [

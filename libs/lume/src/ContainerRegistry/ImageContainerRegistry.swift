@@ -292,17 +292,21 @@ enum OCIMediaType {
     }
 
     static func rawDiskPart(_ layer: Layer) -> (number: Int, total: Int)? {
-        let fields = layer.mediaType.lowercased().filter { !$0.isWhitespace }.split(separator: ";")
-        guard fields.first.map(String.init) == standardTarLayer,
+        let fields = layer.mediaType.lowercased().split(separator: ";").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        guard fields.first == standardTarLayer,
             layer.annotations?["org.opencontainers.image.title"]?.hasPrefix("disk.img.part.")
                 == true
         else {
             return nil
         }
-        var parameters: [Substring: Int] = [:]
+        var parameters: [String: Int] = [:]
         for field in fields.dropFirst() {
-            let pair = field.split(separator: "=", maxSplits: 1)
-            parameters[pair[0]] = pair.count == 2 ? Int(pair[1]) : nil
+            let pair = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            guard pair.count == 2, !pair[0].isEmpty else { return (0, 0) }
+            parameters[pair[0]] = Int(pair[1])
         }
         return (parameters["part.number"] ?? 0, parameters["part.total"] ?? 0)
     }

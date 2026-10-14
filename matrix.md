@@ -1,4 +1,4 @@
-# Hyprland plugin requalification, 2026-10-13T07:07:20Z
+# Hyprland plugin requalification, 2026-10-14T07:00:17Z
 
 CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.
 

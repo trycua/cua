@@ -77,4 +77,8 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   experiments: { status: "run", screen: "settings/experiments" },
   "placement-picker": { status: "run", screen: "new-space" },
   machines: { status: "run", screen: "machines" },
+  checklist: {
+    status: "skip",
+    reason: "The host app keeps the checklist and reads what it shows (checklist.observeFrom); the page only draws checklist.view of the host's copy (bridge/__tests__/checklist.test.ts)",
+  },
 };

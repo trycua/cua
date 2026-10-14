@@ -50,6 +50,7 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
     "agents.runs": async (args) => {
       const runs = model.agents.runs(string(args, "spaceId"));
       await runs.refresh();
+      if (runs.load.kind === "ready") model.sawAgentRuns(runs.load.rows.length);
       switch (runs.load.kind) {
         case "ready":
           return encode(runs.load.rows);

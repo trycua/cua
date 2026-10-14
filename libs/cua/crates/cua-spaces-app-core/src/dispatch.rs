@@ -227,6 +227,7 @@ pub const METHODS: &[&str] = &[
     "paths.displayPaths",
     "devices.view",
     "machines.merge",
+    "machines.pageRows",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -275,6 +276,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.checklist",
     "checklist.reduce",
     "checklist.view",
+    "checklist.observeFrom",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -837,6 +839,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<machines::MachinesInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "machines.pageRows" => out(machines::page_rows(
+            &a.get::<Option<machines::MachinesPageInput>>("input")?
+                .unwrap_or_default(),
+        )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?
                 .unwrap_or_default(),
@@ -1053,6 +1059,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "checklist.view" => out(checklist::view(
             &a.get::<checklist::ChecklistState>("state")?,
+        )),
+        "checklist.observeFrom" => out(checklist::observe_from(
+            &a.get::<Option<checklist::ChecklistSeen>>("seen")?
+                .unwrap_or_default(),
         )),
         "palette.keybindings" => out(palette::keybindings()),
         "palette.rank" => out(palette::rank(

@@ -9055,6 +9055,75 @@ pub enum AppTelemetrySignal {
     },
 }
 
+/// One of the account's devices.
+pub type AppDeviceIn = core::machines::DeviceIn;
+#[uniffi::remote(Record)]
+pub struct AppDeviceIn {
+    /// `dev_…`.
+    pub id: String,
+    /// Its name (by default its hostname).
+    pub name: String,
+    /// `macos`, `windows`, `linux` (any case), or empty.
+    pub platform: String,
+    /// Last session (Unix seconds).
+    pub last_seen: Option<u64>,
+    /// This device.
+    pub current: bool,
+    /// `pending`, `enrolled`, `expired`, `revoked`, or empty.
+    pub state: String,
+}
+
+/// What [`page_rows`] reads: what a shell knows of its machines.
+pub type AppMachinesPageInput = core::machines::MachinesPageInput;
+#[uniffi::remote(Record)]
+pub struct AppMachinesPageInput {
+    /// The system this app runs on (names the first row "This Mac").
+    pub host_os: AppSpaceOs,
+    /// The Spaces list as the shell has it (registry rows as Spaces).
+    pub spaces: Vec<AppSpace>,
+    /// The account's devices (none while signed out).
+    pub devices: Vec<AppDeviceIn>,
+    /// The hostname each machine's cua-spacesd reported, by machine id.
+    pub hostnames: std::collections::HashMap<String, String>,
+    /// Whether the relay sees each machine connected now, by machine id.
+    pub presence: std::collections::HashMap<String, bool>,
+    /// Unix seconds.
+    pub now: u64,
+}
+
+/// One row of the Machines page.
+pub type AppMachinePageRow = core::machines::MachinePageRow;
+#[uniffi::remote(Record)]
+pub struct AppMachinePageRow {
+    /// The machine's id (`this-mac`, a relay machine id), or the device's
+    /// id for a device of its own.
+    pub id: String,
+    /// What the page calls it.
+    pub name: String,
+    /// Reached, connected to the relay, or (a device of its own) in a
+    /// session in the last [`DEVICE_ONLINE_SECS`].
+    pub online: bool,
+    /// `macos`, `linux`, `windows`, or empty when unknown.
+    pub os: String,
+    /// `local` (this machine) or `relay`.
+    pub via: String,
+    /// The machine this app runs on.
+    pub current: bool,
+    /// The device listed in this row, if any.
+    pub device: Option<String>,
+    /// A device that is none of the machines: listed, never a "Run on"
+    /// choice, and it has no Spaces or desktop of its own here.
+    pub device_only: bool,
+    /// The Spaces list's row that is this machine's own desktop
+    /// (`this-mac`, `relay:<machine>`), when there is one: the classic
+    /// UI's detail for it.
+    pub space_id: Option<String>,
+    /// Online, but its owner stopped sharing it.
+    pub stopped_sharing: bool,
+    /// The device's last session (Unix seconds), when it has a device.
+    pub last_seen: Option<u64>,
+}
+
 /// One step, in the order the checklist lists them
 /// ([`telemetry::CHECKLIST_STEPS`]).
 pub type AppChecklistStep = core::checklist::ChecklistStep;
@@ -9108,6 +9177,28 @@ pub enum AppChecklistAction {
         /// An agent exists or has run.
         agent_ran: bool,
     },
+    /// Progress kept elsewhere before (the web UI's own storage, another
+    /// copy of the file): its steps are ticked, and it stays closed or
+    /// shown if it was. Its events were recorded where it was ticked, so
+    /// none are recorded again.
+    Merge {
+        /// The other copy.
+        state: AppChecklistState,
+    },
+}
+
+/// What the app knows, for [`observe_from`].
+pub type AppChecklistSeen = core::checklist::ChecklistSeen;
+#[uniffi::remote(Record)]
+pub struct AppChecklistSeen {
+    /// The Machines page's rows ([`crate::machines::page_rows`]).
+    pub machines: Vec<AppMachinePageRow>,
+    /// The Spaces list.
+    pub spaces: Vec<AppSpace>,
+    /// Persistent agents listed.
+    pub agents: u32,
+    /// Agent runs listed in any Space.
+    pub runs: u32,
 }
 
 /// The state after an action and the usage events it means.

@@ -124,6 +124,10 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
     switch (row) {
+      case "team-current":
+        // Settings, Teams: the team to work in (saved; the option is its id).
+        save({ currentTeamId: option });
+        return;
       case "notch":
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });

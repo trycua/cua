@@ -24,6 +24,8 @@ export interface TeamsDeps {
   };
   account: () => AccountRunning | null;
   identity: () => string | null;
+  /** The saved current team (`AppSettings.currentTeamId`). */
+  currentTeamId?: () => string | undefined;
 }
 
 /** A read this recent is not repeated by opening Settings again. */
@@ -43,7 +45,7 @@ export class TeamsModel {
     const { native } = this.deps;
     const signedOut = this.deps.identity() === null;
     const state = signedOut ? new native.AppTeamsState.SignedOut() : (this.state ?? new native.AppTeamsState.Loading());
-    return { accountAppUrl: native.appAccountAppUrl(), state };
+    return { accountAppUrl: native.appAccountAppUrl(), state, currentTeamId: this.deps.currentTeamId?.() };
   }
 
   /** The account changed (signed in, out, or another one): forget the last read. */

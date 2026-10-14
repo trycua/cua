@@ -27376,6 +27376,10 @@ public struct AppSettings: Equatable, Hashable {
      * ([`crate::spaces::cover`]).
      */
     public var autoConnect: Bool
+    /**
+     * Settings, Teams: the team (organization id) the account works in.
+     */
+    public var currentTeamId: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -27432,7 +27436,10 @@ public struct AppSettings: Equatable, Hashable {
          * Settings, General: a running Space's desktop streams as soon as it
          * is opened (on by default); off, it waits for Connect
          * ([`crate::spaces::cover`]).
-         */autoConnect: Bool) {
+         */autoConnect: Bool,
+        /**
+         * Settings, Teams: the team (organization id) the account works in.
+         */currentTeamId: String?) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -27447,6 +27454,7 @@ public struct AppSettings: Equatable, Hashable {
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.teleportChoices = teleportChoices
         self.autoConnect = autoConnect
+        self.currentTeamId = currentTeamId
     }
 
 
@@ -27478,7 +27486,8 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
-                autoConnect: FfiConverterBool.read(from: &buf)
+                autoConnect: FfiConverterBool.read(from: &buf),
+                currentTeamId: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -27497,6 +27506,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into: &buf)
         FfiConverterBool.write(value.autoConnect, into: &buf)
+        FfiConverterOptionString.write(value.currentTeamId, into: &buf)
     }
 }
 
@@ -31979,6 +31989,10 @@ public struct AppTeamsInput: Equatable, Hashable {
      */
     public var accountAppUrl: String
     public var state: AppTeamsState
+    /**
+     * The saved current team (`AppSettings::current_team_id`).
+     */
+    public var currentTeamId: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31986,9 +32000,13 @@ public struct AppTeamsInput: Equatable, Hashable {
         /**
          * The account app for this environment (`https://app.cua.ai`, or
          * `https://app.staging.cua.ai` under `CUA_ENV=staging`).
-         */accountAppUrl: String, state: AppTeamsState) {
+         */accountAppUrl: String, state: AppTeamsState,
+        /**
+         * The saved current team (`AppSettings::current_team_id`).
+         */currentTeamId: String?) {
         self.accountAppUrl = accountAppUrl
         self.state = state
+        self.currentTeamId = currentTeamId
     }
 
 
@@ -32008,13 +32026,15 @@ public struct FfiConverterTypeAppTeamsInput: FfiConverterRustBuffer {
         return
             try AppTeamsInput(
                 accountAppUrl: FfiConverterString.read(from: &buf),
-                state: FfiConverterTypeAppTeamsState.read(from: &buf)
+                state: FfiConverterTypeAppTeamsState.read(from: &buf),
+                currentTeamId: FfiConverterOptionString.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppTeamsInput, into buf: inout [UInt8]) {
         FfiConverterString.write(value.accountAppUrl, into: &buf)
         FfiConverterTypeAppTeamsState.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.currentTeamId, into: &buf)
     }
 }
 

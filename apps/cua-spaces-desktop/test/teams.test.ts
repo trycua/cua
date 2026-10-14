@@ -20,7 +20,7 @@ const READ = {
   state: { tag: "Ready", inner: { teams: [{ id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3, members: [], invites: ["cy@example.com"] }] } },
 } as unknown as AppTeamsInput;
 
-function context(o: { signedIn?: boolean; fail?: string } = {}) {
+function context(o: { signedIn?: boolean; fail?: string; current?: string } = {}) {
   let clock = 1_000;
   const accessToken = vi.fn(async () => "acct-token");
   const appTeams = vi.fn(async (_token: string) => {
@@ -35,6 +35,7 @@ function context(o: { signedIn?: boolean; fail?: string } = {}) {
     },
     account: () => ({ accessToken }),
     identity: () => (o.signedIn === false ? null : "ada@example.com"),
+    currentTeamId: () => o.current,
   } as unknown as TeamsDeps;
   const model = new TeamsModel(deps, () => clock);
   const changed = vi.fn();
@@ -52,6 +53,13 @@ describe("Settings, Teams", () => {
     expect(appTeams).toHaveBeenCalledWith("acct-token");
     expect(model.input()).toMatchObject({ accountAppUrl: "https://app.cua.ai", state: { tag: "Ready" } });
     expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the saved current team to the core's page", async () => {
+    const { model } = context({ current: "o2" });
+    await model.reload();
+    expect(model.input()).toMatchObject({ currentTeamId: "o2" });
+    expect(context().model.input().currentTeamId).toBeUndefined();
   });
 
   it("does not read again within 30 s, unless forced", async () => {

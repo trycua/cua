@@ -6416,6 +6416,8 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in.
+    pub current_team_id: Option<String>,
 }
 
 /// A pressed key combination.
@@ -9227,6 +9229,8 @@ pub struct AppTeamsInput {
     /// `https://app.staging.cua.ai` under `CUA_ENV=staging`).
     pub account_app_url: String,
     pub state: AppTeamsState,
+    /// The saved current team (`AppSettings::current_team_id`).
+    pub current_team_id: Option<String>,
 }
 
 /// The team whose allowance is pooled.

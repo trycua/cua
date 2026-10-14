@@ -497,6 +497,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.menuBar).toBe(true);
     await call("settings.choose", { row: "auto-connect", option: "off" });
     expect(model.settings.autoConnect).toBe(false);
+    await call("settings.choose", { row: "team-current", option: "org-2" });
+    expect(model.settings.currentTeamId).toBe("org-2");
     await call("settings.choose", { row: "default-location", option: "cloud" });
     expect(model.settings.defaultLocation).toBe(native.AppLocation.Cloud);
     await call("settings.choose", { row: "telemetry", option: "off" });

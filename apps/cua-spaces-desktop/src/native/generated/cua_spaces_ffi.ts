@@ -31852,7 +31852,11 @@ export type AppSettings = {
      * is opened (on by default); off, it waits for Connect
      * ([`crate::spaces::cover`]).
      */
-    autoConnect: boolean
+    autoConnect: boolean,
+    /**
+     * Settings, Teams: the team (organization id) the account works in.
+     */
+    currentTeamId?: string
 }
 
 /**
@@ -31889,7 +31893,8 @@ const FfiConverterTypeAppSettings = (() => {
                 dismissedAccess: FfiConverterSequenceString.read(from),
                 keyvaultSiteIcons: FfiConverterBool.read(from),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
-                autoConnect: FfiConverterBool.read(from)
+                autoConnect: FfiConverterBool.read(from),
+                currentTeamId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -31907,6 +31912,7 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterBool.write(value.keyvaultSiteIcons, into);
             FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into);
             FfiConverterBool.write(value.autoConnect, into);
+            FfiConverterOptionalString.write(value.currentTeamId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -31922,7 +31928,8 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterSequenceString.allocationSize(value.dismissedAccess) +
              FfiConverterBool.allocationSize(value.keyvaultSiteIcons) +
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
-             FfiConverterBool.allocationSize(value.autoConnect);
+             FfiConverterBool.allocationSize(value.autoConnect) +
+             FfiConverterOptionalString.allocationSize(value.currentTeamId);
 
         }
     };
@@ -32537,7 +32544,11 @@ export type AppTeamsInput = {
      * `https://app.staging.cua.ai` under `CUA_ENV=staging`).
      */
     accountAppUrl: string,
-    state: AppTeamsState
+    state: AppTeamsState,
+    /**
+     * The saved current team (`AppSettings::current_team_id`).
+     */
+    currentTeamId?: string
 }
 
 /**
@@ -32562,16 +32573,19 @@ const FfiConverterTypeAppTeamsInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 accountAppUrl: FfiConverterString.read(from),
-                state: FfiConverterTypeAppTeamsState.read(from)
+                state: FfiConverterTypeAppTeamsState.read(from),
+                currentTeamId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.accountAppUrl, into);
             FfiConverterTypeAppTeamsState.write(value.state, into);
+            FfiConverterOptionalString.write(value.currentTeamId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.accountAppUrl) +
-             FfiConverterTypeAppTeamsState.allocationSize(value.state);
+             FfiConverterTypeAppTeamsState.allocationSize(value.state) +
+             FfiConverterOptionalString.allocationSize(value.currentTeamId);
 
         }
     };

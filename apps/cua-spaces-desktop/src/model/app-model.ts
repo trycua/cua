@@ -174,6 +174,7 @@ export class AppModel {
       native: d.native as unknown as ConstructorParameters<typeof TeamsModel>[0]["native"],
       account: () => this.account,
       identity: () => this.identity,
+      currentTeamId: () => this.settings.currentTeamId,
     });
     this.teams.onChange = () => this.changed("settings");
     this.cloud = d.cloud;

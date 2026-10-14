@@ -276,10 +276,9 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         .find(|tool| tool["name"] == "browser_click")
         .expect("browser_click not found in tools/list");
     assert!(
-        browser_click["description"]
-            .as_str()
-            .is_some_and(|description| description
-                .contains("including Linux Chromium configurations")),
+        browser_click["description"].as_str().is_some_and(
+            |description| description.contains("including Linux Chromium configurations")
+        ),
         "browser_click description should name Linux: {}",
         browser_click["description"]
     );

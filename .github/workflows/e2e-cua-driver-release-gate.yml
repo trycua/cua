@@ -86,6 +86,11 @@ jobs:
               && grep -qx 'libs/cua-driver/rust/VERSION' <<< "$files"; then
             emit true release-pr "release-please PR for cua-driver-rs"; exit 0
           fi
+          if [[ ! -f .github/scripts/cua_driver_e2e_gate_paths.py ]]; then
+            # Bootstrap: the base branch does not carry the path script until
+            # this workflow merges. Label, schedule and release PRs still gate.
+            emit false pr "path script not on the default branch yet"; exit 0
+          fi
           matched=$(python3 .github/scripts/cua_driver_e2e_gate_paths.py <<< "$files" | head -n 5)
           if [[ -n "$matched" ]]; then
             emit true pr "gated paths, e.g. $(head -n 1 <<< "$matched")"; exit 0

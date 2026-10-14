@@ -1,0 +1,193 @@
+name: "CI: Cua Spaces desktop install smoke"
+
+# Installs the built Cua Spaces Electron app on GitHub-hosted Windows and Linux
+# runners, launches it, checks that a window opens, screenshots it, and
+# uninstalls. The artifacts come from an existing "CD: Cua Spaces" run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "trycua/cua workflow run id holding the electron-windows and electron-linux artifacts"
+        default: "38501026143"
+  pull_request:
+    paths:
+      - ".github/workflows/ci-cua-spaces-desktop-install-smoke.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RUN_ID: ${{ inputs.run_id || '38501026143' }}
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  windows:
+    name: Windows x64 install, launch, uninstall
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download electron-windows
+        run: gh run download $env:RUN_ID -n electron-windows -D dl
+
+      - name: Silent install and Authenticode check
+        run: |
+          $setup = Get-ChildItem dl -Recurse -Filter 'Cua-Spaces-Setup-*-x64.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'x64 setup.exe not found' }
+          Write-Host "setup: $($setup.Name)"
+          $sig = Get-AuthenticodeSignature $setup.FullName
+          Write-Host "status=$($sig.Status) subject=$($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "Authenticode status $($sig.Status)" }
+          if ($sig.SignerCertificate.Subject -notmatch 'Cua AI, Inc\.') { throw 'unexpected publisher' }
+          $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          Write-Host "installer exit code $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw 'installer failed' }
+          Start-Sleep 5
+          Get-ChildItem "$env:LOCALAPPDATA\Programs" | Format-Table Name
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'Cua Spaces.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'Cua Spaces.exe not installed' }
+          Write-Host "installed exe: $($exe.FullName)"
+          $s2 = Get-AuthenticodeSignature $exe.FullName
+          Write-Host "installed exe signature: $($s2.Status) $($s2.SignerCertificate.Subject)"
+          "APP_EXE=$($exe.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Get-Process | Where-Object { $_.Name -match 'Cua' } | ForEach-Object { "auto-started after install: $($_.Name) $($_.Id)" }
+
+      - name: Launch, wait for window, screenshot
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Get-Process | Where-Object { $_.Name -match '^Cua' } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep 3
+          $env:CUA_SPACES_LOG_STARTUP = '1'
+          $proc = Start-Process $env:APP_EXE -PassThru -RedirectStandardOutput out\stdout.log -RedirectStandardError out\stderr.log
+          $title = $null
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep 1
+            $w = Get-Process | Where-Object { $_.MainWindowTitle -like '*Cua Spaces*' } | Select-Object -First 1
+            if ($w) { $title = $w.MainWindowTitle; break }
+          }
+          Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object Name, Id, MainWindowTitle | Format-Table | Out-String | Write-Host
+          Start-Sleep 8
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+          $bmp.Save("$PWD\out\gh-windows-desktop.png")
+          Get-Process | Where-Object { $_.Name -match '^Cua|cua' } | Select-Object Name, Id | Format-Table | Out-String | Write-Host
+          # App data and any logs the app wrote.
+          foreach ($d in "$env:APPDATA\Cua Spaces", "$env:LOCALAPPDATA\Cua Spaces", "$env:USERPROFILE\.cua") {
+            if (Test-Path $d) { Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 300 | Write-Host }
+          }
+          Get-ChildItem "$env:APPDATA\Cua Spaces" -Recurse -Include *.log -ErrorAction SilentlyContinue | Copy-Item -Destination out -ErrorAction SilentlyContinue
+          Write-Host '--- stdout'; Get-Content out\stdout.log -ErrorAction SilentlyContinue | Select-Object -First 60
+          Write-Host '--- stderr'; Get-Content out\stderr.log -ErrorAction SilentlyContinue | Select-Object -First 60
+          if (-not $title) { throw 'no window titled Cua Spaces within 90s' }
+          Write-Host "window title: $title"
+          if ($proc.HasExited) { throw "app exited with code $($proc.ExitCode)" }
+
+      - name: Uninstall and check clean
+        if: always()
+        run: |
+          Get-Process | Where-Object { $_.Name -match '^Cua' } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep 3
+          $dir = Split-Path $env:APP_EXE
+          $un = Join-Path $dir 'Uninstall Cua Spaces.exe'
+          if (-not (Test-Path $un)) { throw "uninstaller missing at $un" }
+          $p = Start-Process $un -ArgumentList '/S' -Wait -PassThru
+          Write-Host "uninstaller exit code $($p.ExitCode)"
+          Start-Sleep 8
+          if (Test-Path $env:APP_EXE) { throw 'Cua Spaces.exe still present after uninstall' }
+          Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue | Format-Table Name
+          if (Test-Path $dir) { Write-Host "note: $dir still exists:"; Get-ChildItem $dir -Recurse | Select-Object -First 20 FullName }
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*Cua*' } | ForEach-Object { throw "uninstall registry key remains: $($_.DisplayName)" }
+          Write-Host 'uninstall clean'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gh-windows
+          path: out
+          if-no-files-found: warn
+
+  linux:
+    name: Linux x64 deb and AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Download electron-linux
+        run: gh run download "$RUN_ID" -n electron-linux -D dl
+
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xdotool wmctrl imagemagick x11-apps dbus-x11 openbox
+
+      - name: Install the .deb
+        run: |
+          ls -la dl
+          sudo apt-get install -y ./dl/cua-spaces_*_amd64.deb
+          test -x /usr/bin/cua-spaces
+          test -f /usr/share/applications/cua-spaces.desktop
+          ls -la "/opt/Cua Spaces/chrome-sandbox" || true
+
+      - name: Launch the deb app, window, screenshot
+        run: |
+          mkdir -p out
+          cat > launch.sh <<'SH'
+          #!/usr/bin/env bash
+          # usage: launch.sh <label> <cmd...>
+          label=$1; shift
+          export CUA_SPACES_LOG_STARTUP=1 NO_AT_BRIDGE=1 CUA_SPACES_USER_DATA=/tmp/profile-$label
+          export DISPLAY=:99
+          openbox >/dev/null 2>&1 &
+          dbus-launch --exit-with-session "$@" >out/$label.log 2>&1 &
+          wid=""
+          for _ in $(seq 1 90); do
+            wid=$(xdotool search --onlyvisible --class cua-spaces 2>/dev/null | head -1)
+            [ -n "$wid" ] && break
+            sleep 1
+          done
+          if [ -z "$wid" ]; then echo "no window for $label"; tail -40 out/$label.log; exit 1; fi
+          sleep 8
+          xprop -id "$wid" WM_CLASS _NET_WM_NAME | tee out/$label-wm.txt
+          wmctrl -l | tee out/$label-wmctrl.txt
+          pgrep -af cua-spaces | head -5
+          import -window root out/gh-linux-$label.png
+          tail -30 out/$label.log
+          pkill -f cua-spaces; pkill openbox; sleep 2
+          SH
+          sed -i 's/^          //' launch.sh; chmod +x launch.sh
+          Xvfb :99 -screen 0 1440x900x24 -nolisten tcp >/dev/null 2>&1 &
+          sleep 2
+          # Stock Ubuntu 24.04 restricts unprivileged user namespaces, so the
+          # non-setuid chrome-sandbox may need --no-sandbox. Record both.
+          if ./launch.sh deb-sandbox cua-spaces; then echo "deb starts with sandbox: yes"; else echo "deb starts with sandbox: NO"; pkill -f cua-spaces || true; sleep 2; ./launch.sh deb cua-spaces --no-sandbox; fi
+
+      - name: Remove the .deb
+        run: |
+          sudo apt-get remove -y cua-spaces
+          test ! -e /usr/bin/cua-spaces
+          test ! -e "/opt/Cua Spaces/cua-spaces"
+          test ! -f /usr/share/applications/cua-spaces.desktop
+          echo 'remove clean'
+
+      - name: AppImage
+        run: |
+          cp dl/Cua-Spaces-*-x86_64.AppImage /tmp/app.AppImage
+          chmod +x /tmp/app.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          Xvfb :99 -screen 0 1440x900x24 -nolisten tcp >/dev/null 2>&1 &
+          sleep 2
+          ./launch.sh appimage /tmp/app.AppImage --no-sandbox
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gh-linux
+          path: out
+          if-no-files-found: warn

@@ -1105,11 +1105,21 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
+    slug: 'spaces/machines-app-core',
+    title: 'Machines page',
+    description: 'The Machines page\'s rows: this machine, your machines and your devices, each computer once.',
+    intro:
+      '`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.',
+    items: ['AppDeviceIn'],
+    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'app_machines_'],
+    spaces: true,
+  },
+  {
     slug: 'spaces/app-checklist-palette',
     title: 'Getting started and the command palette',
     description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
     intro:
-      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, or what the app shows now) and returns the new `AppChecklistState` with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
+      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. The host app keeps the one `AppChecklistState`. `app_checklist_observe_from` reads what the app shows (the [Machines page](/cua-sdk/reference/spaces/machines-app-core) rows, the Spaces, the agents) as the same `Observe` action in every UI. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, what the app shows now, or progress merged from another copy) and returns the new state with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
     items: [],
     prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
     spaces: true,

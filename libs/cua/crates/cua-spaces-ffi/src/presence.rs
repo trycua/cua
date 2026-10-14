@@ -5,7 +5,8 @@
 //! make (approving a device for the account), the system's own prompt the
 //! daemon's Keyvault asks for too: on macOS LocalAuthentication (Touch ID,
 //! an Apple Watch or the login password, as the SwiftUI app's
-//! `LivePresence`), on Windows Windows Hello (face, fingerprint or PIN), on
+//! `LivePresence`), on Windows Windows Hello (face, fingerprint or PIN) or, where that is not set up,
+//! the account password in Windows' own credential prompt, on
 //! Linux polkit's `ai.cua.spaces.devices` (the user's password or
 //! fingerprint through the session's agent). The Electron app calls it from
 //! its main process, so the prompt is for Cua Spaces.
@@ -40,7 +41,7 @@ fn presence_error(e: AuthError) -> CuaError {
             CuaError::PermissionDenied("Touch ID and the login password are not available".into())
         }
         AuthError::Unavailable if cfg!(target_os = "windows") => CuaError::Unsupported(
-            "Windows Hello is not set up (a PIN, fingerprint or face in Settings, Accounts, Sign-in options)".into(),
+            "Windows could not confirm it is you: set up Windows Hello, or give this account a password (Settings, Accounts, Sign-in options)".into(),
         ),
         AuthError::Unavailable if cfg!(target_os = "linux") => CuaError::Unsupported(
             "polkit cannot ask (no authentication agent in this session, or the ai.cua.spaces.devices action is not installed)".into(),

@@ -165,7 +165,12 @@ impl SpaceAppTeleport for Space {
         };
         let manifest = match (options.moves, &entry.provider_id) {
             (MoveKind::AppWithState, Some(provider)) => {
-                let provider = provider.clone();
+                // Microsoft Edge reads its own profile through the Chrome provider.
+                let provider = if cua_teleport::layout::chrome::is_edge(&entry.id) {
+                    entry.id.clone()
+                } else {
+                    provider.clone()
+                };
                 let scope = options.scope;
                 Some(
                     tokio::task::spawn_blocking(move || {
@@ -304,7 +309,11 @@ impl SpaceAppTeleport for Space {
                     cua_teleport::TransferScope::FullProfile => TeleportScope::Full,
                 };
                 let s2 = sessions.clone();
-                let pid = provider_id.clone();
+                let pid = if cua_teleport::layout::chrome::is_edge(&plan.app.id) {
+                    plan.app.id.clone()
+                } else {
+                    provider_id.clone()
+                };
                 let manifest = tokio::task::spawn_blocking(move || s2.manifest(&pid, scope))
                     .await
                     .map_err(|e| Error::Transfer(e.to_string()))??;

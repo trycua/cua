@@ -557,8 +557,18 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_checklist_observe_from": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_checklist_reduce": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_checklist_state_from_json": {
+      args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -959,6 +969,16 @@ const DEFINITIONS = {
     },
     "uniffi_cua_spaces_ffi_fn_func_app_machine_access_notice": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_machines_page_input_from_json": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_machines_page_rows": {
+      args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -2217,7 +2237,17 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_checklist_observe_from": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_checklist_reduce": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_checklist_state_from_json": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -2618,6 +2648,16 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_machine_access_notice": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_machines_page_input_from_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_machines_page_rows": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3937,7 +3977,9 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_billing_status(status: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_catalog_entries_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_catalog_entry(entry: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_checklist_observe_from(seen: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_checklist_reduce(state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_checklist_state_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_checklist_view(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_chrome_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_cloud_connect_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4018,6 +4060,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_launch_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_login_item_launch_plan(choice: Uint8Array, onboarded: number, serves: number, status: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_machine_access_notice(kind: Uint8Array, pendingCode: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_machines_page_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_machines_page_rows(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_main_chrome(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_menu(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_menu_bar(spaces: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4269,7 +4313,9 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_billing_status(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_catalog_entries_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_catalog_entry(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_checklist_observe_from(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_checklist_reduce(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_checklist_state_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_checklist_view(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_chrome_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_cloud_connect_action_from_json(): number;
@@ -4350,6 +4396,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_launch_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_login_item_launch_plan(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_machine_access_notice(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_machines_page_input_from_json(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_machines_page_rows(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_main_chrome(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_menu(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_menu_bar(): number;

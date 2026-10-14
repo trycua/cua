@@ -155,8 +155,8 @@ inst -- --yes --no-onboarding --prefix "$work/p1"
 check "linux x64: exits 0" [ "$status" = 0 ]
 check "linux x64: installs cua under --prefix/bin" exists "$work/p1/bin/cua"
 check "linux x64: installed cua runs and is the x64 build" sh -c "'$work/p1/bin/cua' --version | grep -q linux-x64"
-check "linux default: no AppImage" absent "$work/p1/bin/cua-spaces"
-check "linux default: no desktop entry" absent "$work/p1/share/applications/cua-spaces.desktop"
+check "linux default: installs the Electron AppImage" sh -c "[ -x '$work/p1/bin/cua-spaces' ] && '$work/p1/bin/cua-spaces' | grep -q 'cua-spaces x64'"
+check "linux default: writes the desktop entry" exists "$work/p1/share/applications/cua-spaces.desktop"
 check "linux default: no cua-driver" absent "$home/driver.log"
 check "linux x64: uses the rolling latest manifest" has_out "cua-install-latest/release-artifacts.json"
 check "non-interactive: prints next steps, no login" sh -c "grep -q 'cua auth login' '$work/out' && [ ! -e '$home/cua.log' ]"
@@ -165,19 +165,20 @@ check "no --modify-path: profile untouched" absent "$home/.profile"
 
 # ------------------------------------------------------------ selection
 
-# Cua Spaces ships for macOS only for now: Linux skips it with a note (the
-# manifest still lists Linux app artifacts; they are never downloaded).
+# Cua Spaces ships for macOS and Linux; the manifest also lists Windows.
 inst -- --yes --no-onboarding --select spaces --prefix "$work/s1"
-check "--select spaces (Linux): skips the app with a note" sh -c "[ $status = 0 ] && grep -q 'Cua Spaces is macOS-only for now' '$work/out' && ! grep -q 'cua-spaces-$version-linux' '$work/out'"
-check "--select spaces (Linux): no AppImage" absent "$work/s1/bin/cua-spaces"
-check "--select spaces (Linux): no desktop entry" absent "$work/s1/share/applications/cua-spaces.desktop"
+check "--select spaces (Linux): installs the AppImage" sh -c "[ $status = 0 ] && [ -x '$work/s1/bin/cua-spaces' ] && grep -q 'cua-spaces-$version-linux-x64.AppImage' '$work/out'"
+check "--select spaces (Linux): desktop entry" exists "$work/s1/share/applications/cua-spaces.desktop"
 check "--select spaces (Linux): still installs the CLI" exists "$work/s1/bin/cua"
 
 inst -- --no-onboarding --only spaces --prefix "$work/s2"
-check "--only spaces (Linux): installs the CLI, skips the app" sh -c "[ $status = 0 ] && [ -e '$work/s2/bin/cua' ] && [ ! -e '$work/s2/bin/cua-spaces' ] && grep -q 'Cua Spaces is macOS-only for now' '$work/out'"
+check "--only spaces (Linux): installs the CLI and the app" sh -c "[ $status = 0 ] && [ -x '$work/s2/bin/cua-spaces' ] && [ -e '$work/s2/bin/cua' ]"
+
+inst CUA_INSTALL_ARCH=aarch64 -- --yes --no-onboarding --select spaces --prefix "$work/s2b"
+check "--select spaces (Linux arm64): installs the arm64 AppImage" sh -c "[ $status = 0 ] && grep -q 'cua-spaces-$version-linux-arm64.AppImage' '$work/out' && '$work/s2b/bin/cua-spaces' | grep -q 'cua-spaces arm64'"
 
 inst -- --no-onboarding --prefix "$work/s3"
-check "no tty, no --yes (Linux): CLI only, no hang" sh -c "[ $status = 0 ] && [ -e '$work/s3/bin/cua' ] && [ ! -e '$work/s3/bin/cua-spaces' ]"
+check "no tty, no --yes (Linux): installs with the defaults, no hang" sh -c "[ $status = 0 ] && [ -e '$work/s3/bin/cua' ] && [ -x '$work/s3/bin/cua-spaces' ]"
 
 inst CUA_INSTALL_OS=Darwin -- --dry-run --no-onboarding --prefix "$work/s4"
 check "no tty (macOS dry run): plans the CLI and the app" sh -c "grep -q 'cua-cli-$version-darwin-x64.tar.gz' '$work/out' && grep -q 'cua-spaces-$version-darwin-universal.dmg' '$work/out'"
@@ -260,13 +261,13 @@ check "darwin x86_64 maps to darwin-x64" has_out "cua-cli-$version-darwin-x64.ta
 check "--dry-run installs nothing" absent "$work/p4"
 
 inst -- --yes --app-only --mode host --prefix "$work/p5"
-check "--app-only (Linux): exits 0 with a note" sh -c "[ $status = 0 ] && grep -q 'Cua Spaces is macOS-only for now' '$work/out'"
+check "--app-only (Linux): exits 0" [ "$status" = 0 ]
 check "--app-only skips the CLI" absent "$work/p5/bin/cua"
-check "--app-only (Linux): no app" absent "$work/p5/bin/cua-spaces"
-check "--mode host (Linux): no install-mode file" absent "$home/.cua/spaces-install-mode"
+check "--app-only (Linux): installs the app" sh -c "[ -x '$work/p5/bin/cua-spaces' ]"
+check "--mode host (Linux): writes the install-mode file" sh -c "grep -q host '$home/.cua/spaces-install-mode'"
 
 inst -- --yes --no-onboarding --mode client --prefix "$work/p5b"
-check "--mode client (Linux): installs the CLI, skips the app" sh -c "[ $status = 0 ] && [ -e '$work/p5b/bin/cua' ] && [ ! -e '$work/p5b/bin/cua-spaces' ] && [ ! -e '$home/.cua/spaces-install-mode' ]"
+check "--mode client (Linux): installs the CLI and the app" sh -c "[ $status = 0 ] && [ -e '$work/p5b/bin/cua' ] && [ -x '$work/p5b/bin/cua-spaces' ] && grep -q client '$home/.cua/spaces-install-mode'"
 
 inst CUA_INSTALL_OS=Darwin -- --yes --dry-run --app-only --mode host --prefix "$work/p5c"
 check "--mode host (macOS dry run): plans the app and the install-mode file" sh -c "[ $status = 0 ] && grep -q 'cua-spaces-$version-darwin-universal.dmg' '$work/out' && grep -q 'spaces-install-mode (host)' '$work/out'"
@@ -387,7 +388,7 @@ fi
 # Root with apt-get and no --prefix: the .deb path (dry run only).
 if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then
     inst -- --yes --app-only --dry-run
-    check "root + apt: the app is skipped, no .deb" sh -c "[ $status = 0 ] && ! grep -q 'apt-get install' '$work/out' && grep -q 'Cua Spaces is macOS-only for now' '$work/out'"
+    check "root + apt: the app is the .deb" sh -c "[ $status = 0 ] && grep -q 'apt-get install' '$work/out' && grep -q 'cua-spaces-$version-linux-x64.deb' '$work/out'"
 fi
 
 inst -- --help
@@ -427,21 +428,21 @@ if script --version 2>/dev/null | grep -q util-linux; then
     logged() { grep -q -- "$1" "$home/cua.log" 2>/dev/null; }
     if command -v bash >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
         tty_inst '\r' --prefix "$work/t1"
-        check "checklist: shows the rows, Linux hides Spaces" sh -c "grep -q 'Choose what to install' '$work/out' && grep -q 'cua CLI (required)' '$work/out' && grep -q 'cua-driver MCP and skill for your agents' '$work/out' && ! grep -q 'Cua Spaces app' '$work/out'"
-        check "checklist: Enter accepts the defaults (CLI only)" sh -c "[ $status = 0 ] && [ -e '$work/t1/bin/cua' ] && [ ! -e '$work/t1/bin/cua-driver' ] && [ ! -e '$work/t1/bin/cua-spaces' ]"
+        check "checklist: shows the rows, Linux includes Spaces" sh -c "grep -q 'Choose what to install' '$work/out' && grep -q 'cua CLI (required)' '$work/out' && grep -q 'Cua Spaces app' '$work/out' && grep -q 'cua-driver MCP and skill for your agents' '$work/out'"
+        check "checklist: Enter accepts the defaults (CLI and the app)" sh -c "[ $status = 0 ] && [ -e '$work/t1/bin/cua' ] && [ ! -e '$work/t1/bin/cua-driver' ] && [ -x '$work/t1/bin/cua-spaces' ]"
         check "checklist: no per-item prompt afterwards" sh -c "! grep -q 'Install the cua CLI to' '$work/out'"
-        tty_inst '2\r' --prefix "$work/t2"
+        tty_inst '3\r' --prefix "$work/t2"
         check "checklist: number key toggles cua-driver on" sh -c "[ $status = 0 ] && [ -e '$work/t2/bin/cua-driver' ] && grep -q 'agents setup --cua-driver' '$home/cua.log'"
-        tty_inst '\033[B\033[B \r' --prefix "$work/t3"
+        tty_inst '\033[B\033[B\033[B \r' --prefix "$work/t3"
         check "checklist: arrows + space select host" sh -c "[ $status = 0 ] && grep -qx 'host setup' '$home/cua.log' && [ ! -e '$work/t3/bin/cua-driver' ]"
         tty_inst '1 \033[A\r' --prefix "$work/t4"
         check "checklist: the CLI row is locked" sh -c "[ $status = 0 ] && [ -e '$work/t4/bin/cua' ] && [ ! -e '$work/t4/bin/cua-driver' ]"
         tty_inst '\r' --select cua-driver --prefix "$work/t5"
         check "checklist: --select cua-driver is preselected" sh -c "[ $status = 0 ] && [ -e '$work/t5/bin/cua-driver' ] && grep -q '\\[x\\] cua-driver' '$work/out'"
-        tty_inst '2\r' --select cua-driver --prefix "$work/t6"
+        tty_inst '3\r' --select cua-driver --prefix "$work/t6"
         check "checklist: a preselected item can be turned off" sh -c "[ $status = 0 ] && [ -e '$work/t6/bin/cua' ] && [ ! -e '$work/t6/bin/cua-driver' ]"
         tty_inst '\r' --select spaces --prefix "$work/t7"
-        check "checklist: --select spaces on Linux: no Spaces row, not installed" sh -c "[ $status = 0 ] && ! grep -q 'Cua Spaces app' '$work/out' && [ ! -e '$work/t7/bin/cua-spaces' ] && [ -e '$work/t7/bin/cua' ]"
+        check "checklist: --select spaces on Linux: installed" sh -c "[ $status = 0 ] && grep -q 'Cua Spaces app' '$work/out' && [ -x '$work/t7/bin/cua-spaces' ] && [ -e '$work/t7/bin/cua' ]"
         tty_inst '' --prefix "$work/t8"
         check "checklist: no input (EOF) accepts defaults, no hang" sh -c "[ $status = 0 ] && [ -e '$work/t8/bin/cua' ]"
         tty_inst '\r' --yes --select host --prefix "$work/t9"
@@ -449,10 +450,10 @@ if script --version 2>/dev/null | grep -q util-linux; then
         tty_inst '\r' --only cua-driver --prefix "$work/t10"
         check "checklist: --only skips it" sh -c "[ $status = 0 ] && ! grep -q 'Choose what to install' '$work/out' && [ -e '$work/t10/bin/cua-driver' ]"
         tty_term=dumb
-        tty_inst '3\n\n' --prefix "$work/t11"
+        tty_inst '4\n\n' --prefix "$work/t11"
         tty_term=""
         check "checklist (TERM=dumb): numbered prompt toggles host" sh -c "[ $status = 0 ] && grep -q 'Toggle numbers' '$work/out' && grep -qx 'host setup' '$home/cua.log'"
-        [ -n "${CUA_INSTALL_TRANSCRIPT:-}" ] && tty_inst '\033[B \033[B \r' --prefix "$work/t12" && cp "$work/out" "$CUA_INSTALL_TRANSCRIPT"
+        [ -n "${CUA_INSTALL_TRANSCRIPT:-}" ] && tty_inst '\033[B \033[B \033[B \r' --prefix "$work/t12" && cp "$work/out" "$CUA_INSTALL_TRANSCRIPT"
     else
         printf 'skip interactive checklist (needs bash and timeout)\n'
     fi

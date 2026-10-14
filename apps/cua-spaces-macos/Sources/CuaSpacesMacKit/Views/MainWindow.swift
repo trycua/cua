@@ -75,8 +75,6 @@ public struct MainWindow: View {
             await model.refresh()
             await model.keyvault.refresh()
         }
-        // The checklist ticks off what the app already shows.
-        .onChange(of: model.checklistSeen, initial: true) { _, seen in model.checklist.send(seen) }
         // The relay allowance: at once (and on every sign-in or out), every
         // 5 minutes, and when the app comes to the front.
         .task(id: model.devices.signedIn) {

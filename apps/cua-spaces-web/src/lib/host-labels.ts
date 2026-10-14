@@ -37,6 +37,13 @@ export function creatingLine(detail: string, platform?: string): string {
   return os === "macos" ? detail : detail.replace(/^This Mac(?= \u00b7 )/, THIS_MACHINE[os]);
 }
 
+/** The core's "12 MB leaves this Mac" review line, naming this computer in
+ * the words of its system ("leaves this PC"). */
+export function leavesLine(text: string, platform?: string): string {
+  const os = osOf(platform);
+  return os === "macos" ? text : text.replace(/ leaves this Mac$/, ` leaves ${thisComputerText(platform)}`);
+}
+
 /** What keeps the Keyvault's key besides a passphrase: "Touch ID",
  * "Windows Hello", "the system keyring" (Linux). */
 export function keyvaultUnlockWay(platform?: string): string {

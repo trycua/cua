@@ -72,7 +72,9 @@ for installer in sorted(glob.glob(f"/dist/Cua-Spaces-Setup-{VERSION}*.exe")):
             check(f"[{arch}] GUI subsystem", pe.OPTIONAL_HEADER.Subsystem == 2)
             vi = version_info(pe)
             check(f"[{arch}] ProductName Cua Spaces", vi.get("ProductName") == "Cua Spaces", vi.get("ProductName"))
-            check(f"[{arch}] FileVersion {VERSION}", vi.get("FileVersion", "").startswith(VERSION), vi.get("FileVersion"))
+            # FileVersion is numeric X.Y.Z.<build>: a prerelease suffix cannot ride in it.
+            base = VERSION.split("-")[0]
+            check(f"[{arch}] FileVersion {base}.<build>", vi.get("FileVersion", "").startswith(base + "."), vi.get("FileVersion"))
             check(f"[{arch}] CompanyName set", bool(vi.get("CompanyName")), vi.get("CompanyName"))
             icons = [e for e in pe.DIRECTORY_ENTRY_RESOURCE.entries if e.id == pefile.RESOURCE_TYPE["RT_GROUP_ICON"]]
             check(f"[{arch}] icon resource", bool(icons))
@@ -83,8 +85,13 @@ for installer in sorted(glob.glob(f"/dist/Cua-Spaces-Setup-{VERSION}*.exe")):
             maps = glob.glob(os.path.join(res, "web", "**", "*.map"), recursive=True)
             check(f"[{arch}] no source maps in web/", not maps, f"{len(maps)} found")
             feed = open(os.path.join(res, "app-update.yml")).read()
-            check(f"[{arch}] update feed: GitHub placeholder, channel latest",
-                  "provider: github" in feed and "repo: cua-spaces-releases" in feed and "channel: latest" in feed)
+            # The build writes a generic feed at the repository's rolling
+            # `cua-spaces-latest` release (electron-builder.config.cjs); a prerelease
+            # version rides the `beta` channel, a stable one `latest`.
+            channel = "beta" if "-" in VERSION else "latest"
+            check(f"[{arch}] update feed: generic, cua-spaces-latest, channel {channel}",
+                  "provider: generic" in feed and "/releases/download/cua-spaces-latest" in feed and f"channel: {channel}" in feed,
+                  feed.replace("\n", " | "))
             files = asar_files(os.path.join(res, "app.asar"))
             for rel in ["package.json", "dist-electron/boot.cjs", "dist-electron/main.cjs", "dist-electron/preload.cjs"]:
                 check(f"[{arch}] app.asar has {rel}", rel in files)

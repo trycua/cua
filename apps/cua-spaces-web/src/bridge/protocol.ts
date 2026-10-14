@@ -45,6 +45,7 @@ import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import type { TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
@@ -181,6 +182,7 @@ export interface HostOperations
     StartupOps,
     StreamOps,
     RelayUsageOps,
+    ChecklistOps,
     PresenceOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
@@ -283,6 +285,7 @@ export const OPERATIONS = [
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
@@ -320,6 +323,8 @@ export type HostEvent =
   | { type: "session.changed" }
   /** A persistent agent or a run changed (paused, resumed, a turn ended): refetch. */
   | { type: "agents.changed" }
+  /** The host's copy of the getting-started checklist changed (`ops/checklist.ts`): refetch. */
+  | { type: "checklist.changed" }
   | TeleportHostEvent
   /** The native app moved on while starting (the startup screen; payload: the new state). */
   | StartupHostEvent;
@@ -337,6 +342,7 @@ export const HOST_EVENTS = [
   "session.signedOut",
   "session.changed",
   "agents.changed",
+  "checklist.changed",
   ...TELEPORT_EVENTS,
   ...STARTUP_EVENTS,
 ] as const satisfies readonly HostEventType[];

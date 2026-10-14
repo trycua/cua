@@ -95,6 +95,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.setupDriver": { agents: ["codex"] },
   "spaces.openStream": { spaceId: SPACE, tier: "tile" },
   "relay.usage": {},
+  "checklist.get": {},
+  "checklist.send": { action: { type: "done", step: "teleport" } },
   "presence.join": { spaceId: SPACE },
   "presence.publish": { handle: "p1", x: 0.5, y: 0.5, visible: true },
   "presence.leave": { handle: "p1" },
@@ -141,4 +143,6 @@ export const DEMO_REFUSES: Partial<Record<OpName, string>> = {
   "presence.join": "the demo host has no video to draw cursors over",
   "presence.publish": "the demo host has no video to draw cursors over",
   "presence.leave": "the demo host has no video to draw cursors over",
+  "checklist.get": "the demo host keeps no checklist; the page keeps its own",
+  "checklist.send": "the demo host keeps no checklist; the page keeps its own",
 };

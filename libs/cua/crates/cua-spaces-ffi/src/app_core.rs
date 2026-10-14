@@ -1737,11 +1737,21 @@ fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf
     if let Some(h) = set("CUA_HOME") {
         return PathBuf::from(h);
     }
-    set("HOME")
+    let base = set("HOME")
         .or_else(|| set("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".cua")
+        .join(".cua");
+    // A non-production `CUA_ENV` has its own home, where its daemon serves
+    // the Keyvault (`~/.cua/envs/staging`).
+    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
+        .unwrap_or_default()
+        .home_subdir()
+    {
+        Some(sub) => base.join(sub),
+        None => base,
+    }
 }
 
 #[uniffi::export]
@@ -2487,6 +2497,31 @@ pub fn app_checklist_reduce(
     core::checklist::reduce(&state, &action)
 }
 
+/// What the app shows as the checklist's `Observe` (every UI the same).
+#[uniffi::export]
+pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction {
+    core::checklist::observe_from(&seen)
+}
+
+/// The Machines page's rows: this machine, your machines, your devices of
+/// their own, each computer once.
+#[uniffi::export]
+pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePageRow> {
+    core::machines::page_rows(&input)
+}
+
+/// Machines page input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPageInput> {
+    from_json("machines page input", &json)
+}
+
+/// Checklist state from JSON, steps as words (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
+    from_json("checklist state", &json)
+}
+
 /// The getting-started checklist as drawn.
 #[uniffi::export]
 pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
@@ -2737,6 +2772,25 @@ mod keyvault_home_tests {
         assert_eq!(
             home(&[("HOME", ""), ("USERPROFILE", r"C:\Users\ada")]),
             PathBuf::from(r"C:\Users\ada").join(".cua")
+        );
+    }
+
+    /// Under `CUA_ENV=staging` the daemon (and so its Keyvault) lives in
+    /// `~/.cua/envs/staging`; the client must look there, not in the prod
+    /// home (CUA-1528).
+    #[test]
+    fn the_keyvault_follows_cua_env() {
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua").join("envs/staging")
+        );
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua")
+        );
+        assert_eq!(
+            home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
+            PathBuf::from("/srv/cua")
         );
     }
 }

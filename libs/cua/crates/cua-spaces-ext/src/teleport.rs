@@ -476,9 +476,13 @@ impl AppSessions {
                     self.providers().join(", ")
                 ))
             })?;
+        // Keep the variant the caller named (Microsoft Edge is a Chromium
+        // variant of the Chrome provider): its own profile is the source.
         let app_id = provider
             .app_ids()
-            .first()
+            .iter()
+            .find(|id| id.eq_ignore_ascii_case(app))
+            .or_else(|| provider.app_ids().first())
             .map(|s| s.to_string())
             .unwrap_or_else(|| app.to_string());
         let app_ref = AppRef {
@@ -497,13 +501,25 @@ impl AppSessions {
         self.resolve(app).map(|_| ())
     }
 
+    /// The provider id `app` resolves to (`chrome` for Microsoft Edge), or
+    /// `None` when no provider handles it.
+    pub fn provider_id(&self, app: &str) -> Option<String> {
+        self.resolve(app).ok().map(|(p, _)| p.id().to_string())
+    }
+
     /// The manifest for `app` on this host.
     pub fn manifest(&self, app: &str, scope: TeleportScope) -> Result<TeleportManifest> {
         let (provider, app_ref) = self.resolve(app)?;
         let m = provider
             .manifest(&app_ref, None, scope.transfer())
             .map_err(|e| Error::TeleportRefused(format!("{app}: {e}")))?;
-        Ok(TeleportManifest::from_transfer(provider.id(), scope, m))
+        let mut tm = TeleportManifest::from_transfer(provider.id(), scope, m);
+        // Microsoft Edge goes through the Chrome provider but keeps its own
+        // name, so the approval, the capture and the export read Edge's profile.
+        if cua_teleport::layout::chrome::is_edge(app) {
+            tm.app = app.to_ascii_lowercase();
+        }
+        Ok(tm)
     }
 
     /// Writes the approved items as a session bundle (through the provider's
@@ -702,7 +718,12 @@ impl SpaceTeleport for Space {
                 self.id()
             )));
         }
-        self.require(&format!("teleport.{}", approval.app))?;
+        self.require(&format!(
+            "teleport.{}",
+            sessions
+                .provider_id(&approval.app)
+                .unwrap_or_else(|| approval.app.clone())
+        ))?;
         // Local, read-only pre-check: a clear "no such provider" error
         // before the network round trip, not a second capture path.
         sessions.resolve_checked(&approval.app)?;

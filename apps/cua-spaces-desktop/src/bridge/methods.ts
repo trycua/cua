@@ -41,6 +41,7 @@ export const METHODS = [
   "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
   "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
   "window.setBackgroundColor", "window.setDragRegions", "window.setDropTargets",
+  "window.showContextMenu",
   "startup.get", "startup.act",
   "relay.usage",
   "checklist.get", "checklist.send",

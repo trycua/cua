@@ -145,6 +145,7 @@ export const WEBKIT_METHODS = [
   "window.setBackgroundColor",
   "window.setDragRegions",
   "window.setDropTargets",
+  "window.showContextMenu",
   "startup.get",
   "startup.act",
   "relay.usage",
@@ -153,6 +154,32 @@ export const WEBKIT_METHODS = [
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
+
+/** One entry of a context menu the host draws natively
+ * (`window.showContextMenu`): an action by its stable `id`, or a separator. */
+export interface WkMenuItem {
+  /** The action's stable id (`space.open`, `machine.copyName`); the host answers it back when chosen. */
+  id: string;
+  label: string;
+  /** Absent: true. */
+  enabled?: boolean;
+  /** Drawn as destructive where the host has a style for it. */
+  destructive?: boolean;
+  /** A line between groups; `id` and `label` are then ignored. */
+  separator?: boolean;
+  /** Chosen: the host also puts this text on the clipboard itself (the
+   * page's own clipboard write could fail after the menu's round trip). */
+  copy?: string;
+}
+
+/** `window.showContextMenu`'s arguments: the items, and where (CSS pixels
+ * from the page's top left). Answer: `{ id }` of the chosen item, or
+ * `{ id: null }` when the menu closed without one. */
+export interface WkContextMenuRequest {
+  items: WkMenuItem[];
+  x: number;
+  y: number;
+}
 
 /** What only the Electron host answers: it draws a Space's video in the
  * page (WebCodecs), so the page asks it for a media ticket

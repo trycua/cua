@@ -1181,6 +1181,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "window.setBackgroundColor": nul,
   "window.setDragRegions": nul,
   "window.setDropTargets": nul,
+  "window.showContextMenu": object({ id: nullable(str) }),
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],

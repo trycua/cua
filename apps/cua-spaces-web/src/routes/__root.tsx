@@ -6,6 +6,7 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge";
 
+import { ContextMenuHost } from "@/components/context-menu";
 import { ChecklistTracker } from "@/components/getting-started";
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
@@ -45,6 +46,7 @@ function RootLayout() {
     return (
       <Suspense fallback={<div className="h-full bg-background" />}>
         <StartupScreen state={startup.data} onAct={startup.act} />
+        <ContextMenuHost />
       </Suspense>
     );
   }
@@ -56,6 +58,7 @@ function RootLayout() {
         <main className="min-h-0 flex-1">
           <Outlet />
         </main>
+        <ContextMenuHost />
       </div>
     );
   }
@@ -76,6 +79,7 @@ function RootLayout() {
       <ChecklistTracker />
       <NewSpace />
       <SpaceSheets />
+      <ContextMenuHost />
     </div>
   );
 }

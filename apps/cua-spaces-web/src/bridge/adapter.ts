@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { HostEvent, OpArgs, OpName, OpResult } from "./protocol";
+import type { WkContextMenuRequest } from "./webkit-protocol";
 
 export type BridgeMode = "tauri" | "electron" | "webkit" | "demo";
 
@@ -38,6 +39,13 @@ export interface DataAdapter {
    * and this app uses it). Undefined: the host has none.
    */
   hostNotice?(): string | null;
+  /**
+   * Shows a context menu natively (the Mac app's NSMenu, Electron's
+   * `Menu.popup`) and resolves with the chosen item's id, or null when it
+   * closed without one. Undefined: the host has no native menus, and the
+   * page draws its own (`components/context-menu.tsx`).
+   */
+  showContextMenu?(menu: WkContextMenuRequest): Promise<string | null>;
   /** Releases timers and listeners. */
   dispose?(): void;
 }

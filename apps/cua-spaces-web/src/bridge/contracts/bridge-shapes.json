@@ -6631,6 +6631,20 @@
     },
     "window.setDropTargets": {
       "type": "null"
+    },
+    "window.showContextMenu": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
     }
   },
   "webkitUnshaped": {}

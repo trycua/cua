@@ -25,7 +25,8 @@
  * the window's background (`window.setBackgroundColor`). The page tells the
  * window where it drags (`window.setDragRegions`, `../drag-regions.ts`), and
  * where its Space tiles are for a real window dragged onto one
- * (`window.setDropTargets`, `../window-drop.ts`).
+ * (`window.setDropTargets`, `../window-drop.ts`). Context menus are the
+ * host's own (`window.showContextMenu`).
  */
 
 import { Emitter, HostError, type DataAdapter } from "../adapter";
@@ -706,6 +707,12 @@ export function createWebkitAdapter(
     subscribe: (l) => events.subscribe(l),
     listNotice: () => rosterError,
     hostNotice: () => daemonNotice,
+    // Both hosts draw context menus natively (`window.showContextMenu`).
+    async showContextMenu(menu) {
+      // Open for as long as the person keeps it open.
+      const r = await request<{ id?: unknown } | null>("window.showContextMenu", { items: menu.items, x: menu.x, y: menu.y }, null);
+      return typeof r?.id === "string" ? r.id : null;
+    },
     dispose() {
       for (const fail of [...pending]) fail(new HostError("the bridge was closed", "closed"));
       events.clear();

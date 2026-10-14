@@ -8,6 +8,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useBridge, useExperiments, useMachines, useSpaces, type Machine, type Space, type SpaceDetailView } from "@/bridge";
 import { spaceDetail } from "@/bridge/space-detail";
 import { AddMachineDialog } from "@/components/add-machine-dialog";
+import { useMachineContextMenu, type MachineOwnSpace } from "@/components/machine-context-menu";
+import { useSpaceContextMenu } from "@/components/space-context-menu";
 import { ThisMachine } from "@/components/this-machine";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -97,6 +99,8 @@ function MachinesPage() {
                 <li key={m.id}>
                   <MachineRow
                     machine={m}
+                    own={detailOf(m)}
+                    onRemoved={() => setSelectedId(null)}
                     reach={reachWord(m)}
                     spaces={realSpaces(spaces).filter((s) => m.spaceIds.includes(s.id)).length}
                     selected={m.id === selected?.id}
@@ -142,9 +146,27 @@ function PresenceDot({ online, notSharing }: { online: boolean; notSharing?: boo
   return <span className={cn("size-1.5 shrink-0 rounded-full", tone)} aria-hidden />;
 }
 
-function MachineRow({ machine: m, reach, spaces, selected, onSelect }: { machine: Machine; reach: string | null; spaces: number; selected: boolean; onSelect: () => void }) {
+function MachineRow({
+  machine: m,
+  own,
+  onRemoved,
+  reach,
+  spaces,
+  selected,
+  onSelect,
+}: {
+  machine: Machine;
+  own: MachineOwnSpace;
+  onRemoved: () => void;
+  reach: string | null;
+  spaces: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const menu = useMachineContextMenu(m, own, { onOpen: onSelect, onRemoved });
   return (
     <button
+      {...menu}
       type="button"
       data-machine-id={m.id}
       data-online={m.online ? "true" : "false"}
@@ -265,21 +287,27 @@ function MachineDetail({
             {m.online ? "No Spaces on this machine." : "No Spaces listed. Spaces show again when the machine is back online."}
           </p>
         ) : (
-          spaces.map((s) => (
-            <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
-              <OsIcon os={s.os} className="size-3.5 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px]">{s.name}</div>
-                <div className="truncate text-xs text-muted-foreground">{osLabel(s)}</div>
-              </div>
-              <StateLabel state={spaceState(s)} space={s} className="shrink-0" />
-            </div>
-          ))
+          spaces.map((s) => <MachineSpaceRow key={s.id} space={s} />)
         )}
       </Group>
 
       {m.panel ? <ThisMachine panel={m.panel} progress={m.hostProgress} /> : null}
     </section>
+  );
+}
+
+/** One of the machine's Spaces, with the Space's context menu. */
+function MachineSpaceRow({ space: s }: { space: Space }) {
+  const menu = useSpaceContextMenu(s);
+  return (
+    <div {...menu} data-space-row={s.id} className="flex items-center gap-3 px-4 py-2.5">
+      <OsIcon os={s.os} className="size-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px]">{s.name}</div>
+        <div className="truncate text-xs text-muted-foreground">{osLabel(s)}</div>
+      </div>
+      <StateLabel state={spaceState(s)} space={s} className="shrink-0" />
+    </div>
   );
 }
 

@@ -13,6 +13,7 @@ import type { TeleportCache } from "../model/teleport";
 import type { BridgeEvents } from "./host";
 import type { SystemServices } from "./system";
 import type { DropTargetRect } from "../window-drop";
+import type { ContextMenuRequest } from "../context-menu";
 
 /** What the bridge asks the shell's windows to do (Electron owns them). */
 export interface BridgeUi {
@@ -24,6 +25,8 @@ export interface BridgeUi {
   activate(): void;
   /** Where the calling window's Space tiles are, for a real window dragged onto one (macOS; none elsewhere). */
   setDropTargets?(window: unknown, targets: DropTargetRect[]): void;
+  /** A context menu at the page's point over the calling window; the chosen item's id, null when none. */
+  showContextMenu?(window: unknown, menu: ContextMenuRequest): Promise<string | null>;
   /** "Send file…": the native file picker over the calling window (files and folders, several); null when cancelled. */
   chooseFiles?(window: unknown): Promise<string[] | null>;
   /** A Space's picture-in-picture panels (floating windows). */

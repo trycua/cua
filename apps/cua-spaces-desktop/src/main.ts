@@ -32,7 +32,7 @@ import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
-import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
+import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, popupContextMenu, setWindowBackground } from "./window";
 import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
@@ -171,6 +171,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
           console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
         }
       },
+      showContextMenu: async (win, menu) => (win instanceof BrowserWindow ? popupContextMenu(win, menu) : null),
       chooseFiles: async (win) => {
         // Files and folders at once where the picker allows it (macOS); Windows and Linux pick files.
         const properties: ("openFile" | "openDirectory" | "multiSelections")[] =

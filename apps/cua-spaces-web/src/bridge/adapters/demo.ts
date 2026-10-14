@@ -213,6 +213,19 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     state.agents = state.agents.map((a) => (a.name === name ? { ...a, ...patch } : a));
   };
 
+  /** Stops a live run: what was not written yet never will be. */
+  const stopRun = (rec: (typeof state.runs)[number]) => {
+    if (!rec.live || rec.stoppedAt !== undefined || writtenEvents(rec, now()).length >= rec.events.length) return;
+    const t = now();
+    const written = writtenEvents(rec, t);
+    const last = written[written.length - 1];
+    rec.events = [
+      ...written,
+      { seq: (last?.seq ?? 0) + 1, ts_ms: t, turn: last?.turn ?? 0, kind: "turn_ended", stop_reason: "cancelled", category: "activity", summary: `Turn ${last?.turn ?? 0} ended (cancelled)` },
+    ];
+    rec.stoppedAt = t;
+  };
+
   const ctx = { state, now, wait, emit, findRow, stepMs: step };
   const handlers: { [K in OpName]: Handler<K> } = {
     "spaces.list": () => state.rows.map((r) => ({ ...r })),
@@ -428,18 +441,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "agents.pause": async ({ name }) => {
       const agent = findAgent(name);
       await wait(step);
+      // Pausing stops the run.
       const rec = state.runs.find((r) => r.run.runId === agent.runId);
-      if (rec && rec.live && rec.stoppedAt === undefined && writtenEvents(rec, now()).length < rec.events.length) {
-        // Pausing stops the run: what was not written yet never will be.
-        const t = now();
-        const written = writtenEvents(rec, t);
-        const last = written[written.length - 1];
-        rec.events = [
-          ...written,
-          { seq: (last?.seq ?? 0) + 1, ts_ms: t, turn: last?.turn ?? 0, kind: "turn_ended", stop_reason: "cancelled", category: "activity", summary: `Turn ${last?.turn ?? 0} ended (cancelled)` },
-        ];
-        rec.stoppedAt = t;
-      }
+      if (rec) stopRun(rec);
       const local = agent.space.startsWith("local:");
       replaceAgent(name, { paused: true, runId: null, spaceState: local ? "suspended" : "released", savedMs: now() });
       emit({ type: "agents.changed" });
@@ -449,6 +453,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       findAgent(name);
       await wait(step);
       replaceAgent(name, { paused: false, spaceState: "running" });
+      emit({ type: "agents.changed" });
+      return null;
+    },
+    "agents.remove": async ({ name }) => {
+      const agent = findAgent(name);
+      await wait(step);
+      // Removing stops its run; the home stays in the Volume.
+      const rec = state.runs.find((r) => r.run.runId === agent.runId);
+      if (rec) stopRun(rec);
+      state.agents = state.agents.filter((a) => a.name !== name);
+      emit({ type: "agents.changed" });
+      return null;
+    },
+    "agents.stop": async ({ spaceId, runId }) => {
+      const rec = state.runs.find((r) => r.space === spaceId && r.run.runId === runId);
+      if (!rec) throw new HostError(`no run ${runId} in ${spaceId}`, "not_found");
+      await wait(step);
+      stopRun(rec);
       emit({ type: "agents.changed" });
       return null;
     },

@@ -17,9 +17,11 @@ import {
   type AgentTab,
   type AgentTimeline,
 } from "@/bridge";
+import { useAgentContextMenu, useRunContextMenu } from "@/components/agent-context-menu";
 import { AgentPanel } from "@/components/agents/agent-panels";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { Timeline } from "@/components/agents/timeline";
+import type { ContextMenuProps } from "@/components/context-menu";
 import { EmptyState, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -160,21 +162,7 @@ function AgentList({
           {data.agents.length === 0 ? (
             <p className="px-4 py-2 text-xs text-muted-foreground">None yet. Ask an agent to create one, or run cua agent create.</p>
           ) : (
-            data.agents.map((a) => (
-              <ListRow
-                key={a.name}
-                selected={selected.agent?.name === a.name}
-                onClick={() => onSelect({ agent: a.name })}
-                agent={a.name}
-                mark={monogram(a.harnessName)}
-                title={a.name}
-                subtitle={a.detail}
-                tone={agentTone(a.state)}
-                state={AGENT_STATE_LABEL[a.state]}
-                age={a.state === "running" ? "now" : shortAge(a.lastActivityMs, now)}
-                ageTitle={a.lastActivityMs ? `Last saved ${relativeTime(a.lastActivityMs, now)}` : undefined}
-              />
-            ))
+            data.agents.map((a) => <AgentRow key={a.name} agent={a} selected={selected.agent?.name === a.name} onSelect={onSelect} now={now} />)
           )}
         </Section>
       ) : null}
@@ -182,20 +170,7 @@ function AgentList({
         {data.runs.length === 0 ? (
           <p className="px-4 py-2 text-xs text-muted-foreground">No runs in your running Spaces.</p>
         ) : (
-          data.runs.map((r) => (
-            <ListRow
-              key={`${r.spaceId}/${r.runId}`}
-              selected={isRunSelected(r)}
-              onClick={() => onSelect({ space: r.spaceId, run: r.runId })}
-              mark={monogram(r.harnessName)}
-              title={r.summary || r.harnessName}
-              subtitle={`${r.agentName ? `${r.agentName}, ` : ""}${r.harnessName} in ${spaceLabel(r.spaceName)}`}
-              tone={runTone(r.status)}
-              state={RUN_STATUS_LABEL[r.status]}
-              age={shortAge(r.startedMs, now)}
-              ageTitle={r.startedMs ? `Started ${relativeTime(r.startedMs, now)}` : undefined}
-            />
-          ))
+          data.runs.map((r) => <RunRow key={`${r.spaceId}/${r.runId}`} run={r} selected={isRunSelected(r)} onSelect={onSelect} now={now} />)
         )}
       </Section>
       {data.unread.length ? (
@@ -208,6 +183,46 @@ function AgentList({
         </div>
       ) : null}
     </nav>
+  );
+}
+
+/** A persistent agent's row, with its context menu. */
+function AgentRow({ agent: a, selected, onSelect, now }: { agent: AgentSummary; selected: boolean; onSelect: (s: AgentsSelection) => void; now: number }) {
+  const menu = useAgentContextMenu(a);
+  return (
+    <ListRow
+      menu={menu}
+      selected={selected}
+      onClick={() => onSelect({ agent: a.name })}
+      agent={a.name}
+      mark={monogram(a.harnessName)}
+      title={a.name}
+      subtitle={a.detail}
+      tone={agentTone(a.state)}
+      state={AGENT_STATE_LABEL[a.state]}
+      age={a.state === "running" ? "now" : shortAge(a.lastActivityMs, now)}
+      ageTitle={a.lastActivityMs ? `Last saved ${relativeTime(a.lastActivityMs, now)}` : undefined}
+    />
+  );
+}
+
+/** A run's row, with its context menu. */
+function RunRow({ run: r, selected, onSelect, now }: { run: AgentRunSummary; selected: boolean; onSelect: (s: AgentsSelection) => void; now: number }) {
+  const menu = useRunContextMenu(r);
+  return (
+    <ListRow
+      menu={menu}
+      selected={selected}
+      onClick={() => onSelect({ space: r.spaceId, run: r.runId })}
+      run={r.runId}
+      mark={monogram(r.harnessName)}
+      title={r.summary || r.harnessName}
+      subtitle={`${r.agentName ? `${r.agentName}, ` : ""}${r.harnessName} in ${spaceLabel(r.spaceName)}`}
+      tone={runTone(r.status)}
+      state={RUN_STATUS_LABEL[r.status]}
+      age={shortAge(r.startedMs, now)}
+      ageTitle={r.startedMs ? `Started ${relativeTime(r.startedMs, now)}` : undefined}
+    />
   );
 }
 
@@ -241,6 +256,10 @@ function StatusDot({ tone, className }: { tone: Tone; className?: string }) {
 function ListRow(props: {
   /** A persistent agent's row (the parity harness reads it). */
   agent?: string;
+  /** A run's row (its id). */
+  run?: string;
+  /** Its context menu. */
+  menu: ContextMenuProps;
   selected: boolean;
   onClick: () => void;
   mark: string;
@@ -254,9 +273,11 @@ function ListRow(props: {
   return (
     <li>
       <button
+        {...props.menu}
         type="button"
         aria-current={props.selected ? "true" : undefined}
         data-agent-row={props.agent}
+        data-run-row={props.run}
         onClick={props.onClick}
         className={cn(
           "flex w-full cursor-default items-start gap-2.5 rounded-lg px-2 py-2 text-left outline-none transition-colors hover:bg-foreground/[0.04] focus-visible:ring-2 focus-visible:ring-ring/60",
@@ -336,33 +357,37 @@ function AgentDetail({ agent, run, runRef }: { agent: AgentSummary | null; run: 
       .finally(() => setBusy(false));
   };
 
+  const headerContent = (
+    <>
+      <HarnessMark mark={monogram(harness)} large />
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-[14px] font-semibold">{title}</h2>
+        <p className="truncate text-xs text-muted-foreground" title={subtitle}>
+          {subtitle}
+        </p>
+      </div>
+      {agent ? (
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <StatusDot tone={agentTone(agent.state)} />
+          {AGENT_STATE_LABEL[agent.state]}
+        </span>
+      ) : status ? (
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <StatusDot tone={runTone(status)} />
+          {RUN_STATUS_LABEL[status]}
+        </span>
+      ) : null}
+      {agent ? (
+        <Button size="sm" variant="outline" disabled={busy} onClick={act}>
+          {busy ? (agent.state === "paused" ? "Resuming…" : "Pausing…") : agent.actionLabel}
+        </Button>
+      ) : null}
+    </>
+  );
+
   return (
     <>
-      <header className="flex items-center gap-3 border-b bg-card px-5 py-3">
-        <HarnessMark mark={monogram(harness)} large />
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-[14px] font-semibold">{title}</h2>
-          <p className="truncate text-xs text-muted-foreground" title={subtitle}>
-            {subtitle}
-          </p>
-        </div>
-        {agent ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <StatusDot tone={agentTone(agent.state)} />
-            {AGENT_STATE_LABEL[agent.state]}
-          </span>
-        ) : status ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <StatusDot tone={runTone(status)} />
-            {RUN_STATUS_LABEL[status]}
-          </span>
-        ) : null}
-        {agent ? (
-          <Button size="sm" variant="outline" disabled={busy} onClick={act}>
-            {busy ? (agent.state === "paused" ? "Resuming…" : "Pausing…") : agent.actionLabel}
-          </Button>
-        ) : null}
-      </header>
+      {agent ? <AgentHeader agent={agent}>{headerContent}</AgentHeader> : <header className={HEADER_CLASS}>{headerContent}</header>}
       {agent?.lastError ? (
         <div className="flex items-center gap-3 border-b bg-destructive/5 px-5 py-2" data-agent-last-error>
           <p className="min-w-0 flex-1 text-xs text-destructive">{agent.lastError}</p>
@@ -385,6 +410,18 @@ function AgentDetail({ agent, run, runRef }: { agent: AgentSummary | null; run: 
         <DetailBody agent={agent} run={run} hasRun={runRef !== null} timeline={timeline} onOpenLink={(url) => void openExternal(url)} />
       )}
     </>
+  );
+}
+
+const HEADER_CLASS = "flex items-center gap-3 border-b bg-card px-5 py-3";
+
+/** A persistent agent's detail header, with the agent's context menu (no Open: it is open). */
+function AgentHeader({ agent, children }: { agent: AgentSummary; children: React.ReactNode }) {
+  const menu = useAgentContextMenu(agent, { open: false });
+  return (
+    <header {...menu} className={HEADER_CLASS} data-agent-header={agent.name}>
+      {children}
+    </header>
   );
 }
 

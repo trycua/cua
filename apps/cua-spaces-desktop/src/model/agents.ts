@@ -116,6 +116,18 @@ export class PersistentAgents {
     return agents;
   }
 
+  /** Removes a persistent agent (its home stays in Cua Volume), then reads the list again. */
+  async remove(name: string): Promise<void> {
+    await this.call("persistent_agent_remove", { name });
+    await this.load();
+  }
+
+  /** Stops one run in a Space, then reads the list again. */
+  async stopRun(space: string, runId: string): Promise<void> {
+    await this.call("agent_stop", { space, run_id: runId });
+    await this.load();
+  }
+
   /** One run's events after `cursor`: the `agent_events` tool's answer as is. */
   async runEvents(space: string, runId: string, cursor: number, max: number | null): Promise<Json> {
     const args: Record<string, unknown> = { space, run_id: runId, cursor };

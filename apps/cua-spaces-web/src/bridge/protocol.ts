@@ -233,6 +233,10 @@ export interface HostOperations
   /** Stops the run, saves the home, holds routines, suspends a local Space (`agent_pause`). */
   "agents.pause": { args: { name: string }; result: null };
   "agents.resume": { args: { name: string }; result: null };
+  /** Removes a persistent agent; its home stays in Cua Volume (`persistent_agent_remove`). */
+  "agents.remove": { args: { name: string }; result: null };
+  /** Stops one run in a Space (`agent_stop`). */
+  "agents.stop": { args: { spaceId: string; runId: string }; result: null };
   /** The coding agents on this machine and what cua set up for each (`agent_setup_detect`). */
   "agents.setup": { args: Record<string, never>; result: AgentSetupRow[] };
   /** Adds the cua skills and MCP server to `agents`, or every installed one (`agent_setup_configure`). */
@@ -273,6 +277,8 @@ export const OPERATIONS = [
   "agents.events",
   "agents.pause",
   "agents.resume",
+  "agents.remove",
+  "agents.stop",
   "agents.setup",
   "agents.configure",
   ...AGENT_DETAIL_OPERATIONS,

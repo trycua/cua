@@ -64,6 +64,8 @@ export const WEBKIT_METHODS = [
   "agents.events",
   "agents.pause",
   "agents.resume",
+  "agents.remove",
+  "agents.stop",
   "agents.setup",
   "agents.configure",
   ...AGENT_DETAIL_WEBKIT_METHODS,

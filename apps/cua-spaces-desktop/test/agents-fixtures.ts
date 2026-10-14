@@ -19,6 +19,8 @@ export class FakeAgentsTools {
   calls: string[] = [];
   args: Record<string, unknown>[] = [];
   paused = false;
+  /** Agents `persistent_agent_remove` took out of the list. */
+  removed = new Set<string>();
   grants: Record<string, unknown>[] = [];
   readonly now = 1_790_000_000_000;
 
@@ -31,8 +33,16 @@ export class FakeAgentsTools {
           agents: [
             { name: "ada", harness: "hermes", space: "local:dev", paused: this.paused, run_id: this.paused ? null : "run-1", saved_ms: this.now - 120_000 },
             { name: "scout", harness: "claude-code", space: "cloud:scout", paused: true, space_state: "released", saved_ms: this.now - 7_200_000 },
-          ],
+          ].filter((a) => !this.removed.has(a.name)),
         };
+      case "persistent_agent_remove": {
+        const name = String(args.name ?? "");
+        if (!["ada", "scout"].includes(name) || this.removed.has(name)) throw new Error(`no persistent agent named ${name}`);
+        this.removed.add(name);
+        return { removed: { name } };
+      }
+      case "agent_stop":
+        return { run_id: args.run_id, stopped: true, alive: false };
       case "agent_pause":
         this.paused = true;
         return {};
@@ -167,7 +177,7 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
 /** The methods test/agents.test.ts checks (their answers need a daemon's tools, which the shared bridge test has none of). */
 export const AGENT_METHODS = [
-  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.setupDriver",
+  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.remove", "agents.stop", "agents.setup", "agents.configure", "agents.setupDriver",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",

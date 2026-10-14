@@ -14,7 +14,7 @@ export const METHODS = [
   "spaces.createOptions", "spaces.create",
   "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
   "machines.list", "host.status",
-  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
+  "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.remove", "agents.stop",
   "agents.setup", "agents.configure",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
   "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",

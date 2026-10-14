@@ -70,7 +70,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-        "agents.setup", "agents.configure",
+        "agents.remove", "agents.stop", "agents.setup", "agents.configure",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -284,7 +284,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return hostStatus()
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure":
+             "agents.remove", "agents.stop", "agents.setup", "agents.configure":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -642,6 +642,21 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard !persistent.agentsState.busy else { throw Failure(code: "failed", message: "Another change is still running") }
             await persistent.send(method == "agents.pause" ? .pause(name: name) : .resume(name: name))
             if let error = persistent.agentsState.error { throw Failure(code: "failed", message: error) }
+            return NSNull()
+        case "agents.remove":
+            // The home stays in Cua Volume (`persistent_agent_remove`).
+            let name = try string(args, "name")
+            guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+            do { _ = try await persistent.daemonTool("persistent_agent_remove", ["name": name]) }
+            catch { throw Failure(code: "failed", message: error.localizedDescription) }
+            await persistent.loadAgents()
+            return NSNull()
+        case "agents.stop":
+            let space = try string(args, "spaceId"), runId = try string(args, "runId")
+            guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+            do { _ = try await persistent.daemonTool("agent_stop", ["space": space, "run_id": runId]) }
+            catch { throw Failure(code: "failed", message: error.localizedDescription) }
+            await persistent.loadAgents()
             return NSNull()
         case "agents.setup":
             guard model.agentSetup != nil else { throw Failure.unsupported("Agent setup is not available in this build") }

@@ -285,6 +285,10 @@ export interface AgentsHook extends Resource<AgentsData> {
   /** Stops the run, saves the agent's home and holds its routines. */
   pauseAgent(name: string): Promise<void>;
   resumeAgent(name: string): Promise<void>;
+  /** Removes a persistent agent; its home stays in Cua Volume. */
+  removeAgent(name: string): Promise<void>;
+  /** Stops one run in a Space. */
+  stopRun(spaceId: string, runId: string): Promise<void>;
   /** The coding agents on this machine and what cua set up for each. */
   agentSetup(): Promise<AgentSetupRow[]>;
   /** Adds the cua skills and MCP server to `agents`, or to every installed agent. */
@@ -299,6 +303,8 @@ export function useAgents(): AgentsHook {
     ...r,
     pauseAgent: (name) => run((s) => s.pauseAgent(name)),
     resumeAgent: (name) => run((s) => s.resumeAgent(name)),
+    removeAgent: (name) => run((s) => s.removeAgent(name)),
+    stopRun: (spaceId, runId) => run((s) => s.stopRun(spaceId, runId)),
     agentSetup: () => run((s) => s.agentSetup()),
     configureAgents: (agents) => run((s) => s.configureAgents(agents ?? null)),
   };

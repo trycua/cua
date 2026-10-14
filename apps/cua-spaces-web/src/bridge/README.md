@@ -36,7 +36,7 @@ import { BridgeProvider, useSpaces } from "@/bridge";
 | `useSettings()` | `{ values, telemetry, defaultLocation, page }`, where `page` is the core's Settings layout. Action: `updateSetting(key, value)` for `theme`, `menuBar`, `hotkey`, `telemetry`, `defaultLocation`, `launchAtLogin` or `updateChannel`. The last two are `null` when the host can't offer them, and the Settings page hides their rows. `globalShortcut` is the host's ⌘⇧Space (macOS) with whether the system gave it to the app; absent or `null` where the host has none. |
 | `useKeyvault()` | `{ overview, groups, views, vaultState }`. `views` holds the core's `page`, `sidebar` and `vault` (the list grouped by app, then site). Actions: `unlock(passphrase?)`, `lockItem(id)`, `lockItems(ids)`, `unlockItems(ids)`, `setDisabled`, `approve`, `deny`, `revokeGrant`, `vaultAction(action)` (search, select, open), and `pane(selection)`. |
 | `useSession()` | `{ fleet, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
-| `useAgents()` | `{ agents, runs, unread, canList }`: persistent agents (state `running`, `paused` or `idle`, the core's row line and action label, the run the detail opens) and the runs in every running Space, in the core's order. Actions: `pauseAgent(name)`, `resumeAgent(name)`, `agentSetup()`, `configureAgents(agents?)`. |
+| `useAgents()` | `{ agents, runs, unread, canList }`: persistent agents (state `running`, `paused` or `idle`, the core's row line and action label, the run the detail opens) and the runs in every running Space, in the core's order. Actions: `pauseAgent(name)`, `resumeAgent(name)`, `removeAgent(name)`, `stopRun(spaceId, runId)`, `agentSetup()`, `configureAgents(agents?)`. |
 | `useAgentDetail(agent)` | A persistent agent's Memory, Routines and Access to this computer (`agent-detail.ts`): `{ view, busy, error, unsupported, thisMachine, act(action) }`. The page runs the core's `agents.pageReduce` / `agents.pageView`, as `PersistentModel` does natively, and the host runs each command (`ops/agent-detail.ts`). |
 | `useAgentTimeline(run)` | One run's conversation while mounted: `{ items, status, phase, caughtUp, isLoading, error, unsupported, lastEventMs }`. It reads `agents.events` with a cursor (every 500 ms while a turn runs, 4 s otherwise) and folds the events like cua-agents' `Transcript` (`transcript.ts`). Items are immutable, so a row memoized by item re-renders only when its item changed. |
 | `useOnboarding()` | The first run from the core (`onboarding.initial/reduce/view/copy`): `{ state, view, copy, signInText, permissions, hostConfigured, images }`. Actions: `send(action)`, `skip()`, `finish()`, `restart()`. See below. |
@@ -275,6 +275,8 @@ under a host-neutral name; nothing here is a new mechanism. Types are in
 | `agents.runs` | `{ spaceId }` | `SpaceAgentRun[]` | `agent_list` (`list_space_agents`) |
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `AgentEventsPage` (`{ run_id, status, phase, events, cursor, caught_up }`) | `agent_events` |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `agent_pause` / `agent_resume` |
+| `agents.remove` | `{ name }` | `null` | `persistent_agent_remove` (the home stays in Cua Volume) |
+| `agents.stop` | `{ spaceId, runId }` | `null` | `agent_stop` |
 | `agents.setup` | `{}` | `AgentSetupRow[]` | `agent_setup_detect` (`cua agents status`) |
 | `agents.configure` | `{ agents: string[] \| null }` | `AgentSetupRow[]` | `agent_setup_configure` (`cua agents setup`) |
 
@@ -305,6 +307,7 @@ which is the `agent_events` result as is):
 | `agents.runs` | `{ spaceId }` | `SpaceAgentRun[]` | `AgentRunsModel.refresh` |
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `agent_events` result | the `agent_events` tool (`AgentRun.events(cursor:)` in the SDK) |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `PersistentModel.send(.pause/.resume)` |
+| `agents.remove` / `agents.stop` | `{ name }` / `{ spaceId, runId }` | `null` | `PersistentModel.daemonTool` (`persistent_agent_remove` / `agent_stop`) |
 | `agents.setup` / `agents.configure` | `{}` / `{ agents }` | `AgentSettingsRow[]` | the Settings "AI agents" rows |
 
 The host sends `agents.changed` when the persistent agents or the AI agents

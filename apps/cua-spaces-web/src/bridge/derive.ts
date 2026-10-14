@@ -36,6 +36,7 @@ import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRo
 import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
+import { hostOs, type HostOs } from "./host-os";
 
 /* ---- Spaces --------------------------------------------------------------- */
 
@@ -591,12 +592,13 @@ export function keyvaultViews(
   overview: KeyvaultOverview,
   now: number,
   state: VaultState = INITIAL_VAULT_STATE,
+  os: HostOs = hostOs(),
 ): KeyvaultViews | null {
   if (core.status !== "ready") return null;
   return {
-    page: core.call<KvPage>("keyvault.page", { overview, now }),
+    page: core.call<KvPage>("keyvault.page", { overview, now, hostOs: os }),
     sidebar: core.call<KvSidebar>("keyvault.sidebar", { overview, now }),
-    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now }),
+    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now, hostOs: os }),
   };
 }
 

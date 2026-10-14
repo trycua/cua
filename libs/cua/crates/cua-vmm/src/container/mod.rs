@@ -204,7 +204,7 @@ impl ContainerRuntime {
             }
             _ => {}
         }
-        let docker = connect_uri(&endpoint.uri)?;
+        let docker = connect_uri(&endpoint.uri).await?;
         docker.ping().await.map_err(|e| match check {
             // Something accepts on the socket but does not speak the
             // Docker API as expected: an engine error, not a stopped one.
@@ -332,12 +332,17 @@ impl ContainerRuntime {
         // dockerd restarts; wait for it to come back with runsc registered.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
         while tokio::time::Instant::now() < deadline {
-            if let Ok(rts) = connect_uri(&self.endpoint.uri)?.info().await.map(|i| {
-                i.runtimes
-                    .unwrap_or_default()
-                    .into_keys()
-                    .collect::<Vec<_>>()
-            }) && rts.iter().any(|r| r == "runsc")
+            if let Ok(rts) = connect_uri(&self.endpoint.uri)
+                .await?
+                .info()
+                .await
+                .map(|i| {
+                    i.runtimes
+                        .unwrap_or_default()
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                })
+                && rts.iter().any(|r| r == "runsc")
             {
                 return Ok(());
             }
@@ -782,18 +787,42 @@ fn registry_credentials(_reference: &str) -> Option<bollard::auth::DockerCredent
     })
 }
 
-fn connect_uri(uri: &str) -> Result<Docker> {
+fn connect_uri_once(uri: &str) -> std::result::Result<Docker, bollard::errors::Error> {
     let v = bollard::API_DEFAULT_VERSION;
-    let r = if uri.starts_with("unix://") || uri.starts_with("npipe://") || uri.starts_with('/') {
+    if uri.starts_with("unix://") || uri.starts_with("npipe://") || uri.starts_with('/') {
         Docker::connect_with_socket(uri, 120, v)
-    } else if uri.starts_with("tcp://") || uri.starts_with("http://") {
-        Docker::connect_with_http(uri, 120, v)
     } else {
+        Docker::connect_with_http(uri, 120, v)
+    }
+}
+
+async fn connect_uri(uri: &str) -> Result<Docker> {
+    if !(uri.starts_with("unix://")
+        || uri.starts_with("npipe://")
+        || uri.starts_with('/')
+        || uri.starts_with("tcp://")
+        || uri.starts_with("http://"))
+    {
         return Err(VmmError::invalid(format!(
             "unsupported engine endpoint '{uri}'"
         )));
-    };
-    r.map_err(engine_err)
+    }
+    // Docker Desktop's pipe has one listening instance at a time: a client
+    // that opens it in the same instant as another gets ERROR_PIPE_BUSY, which
+    // bollard reports as "Socket not found" (CUA-1523). The pipe is there:
+    // ask again a moment later.
+    let mut tries = 0;
+    loop {
+        match connect_uri_once(uri) {
+            Err(bollard::errors::Error::SocketNotFoundError(_))
+                if cfg!(windows) && uri.starts_with("npipe://") && tries < 40 =>
+            {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            r => return r.map_err(engine_err),
+        }
+    }
 }
 
 #[async_trait]

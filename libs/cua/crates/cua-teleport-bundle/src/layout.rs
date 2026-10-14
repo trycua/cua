@@ -75,7 +75,41 @@ pub mod chrome {
         // these an obviously-teleportable window reads as unsupported.
         "Google Chrome",
         "Google Chrome Canary",
+        // Microsoft Edge (Chromium): the default browser on Windows. Same
+        // profile layout and cookie store as Chrome, in its own user-data dir.
+        "edge",
+        "msedge",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "com.microsoft.edgemac",
+        "Microsoft Edge",
     ];
+
+    /// The subset of [`APP_IDS`] that names Microsoft Edge.
+    pub const EDGE_APP_IDS: &[&str] = &[
+        "edge",
+        "msedge",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "com.microsoft.edgemac",
+        "Microsoft Edge",
+    ];
+
+    /// Whether `app_id` names Microsoft Edge (case-insensitive).
+    pub fn is_edge(app_id: &str) -> bool {
+        EDGE_APP_IDS.iter().any(|e| e.eq_ignore_ascii_case(app_id))
+    }
+
+    /// Edge's user-data dir on `platform`, relative to that platform's home.
+    /// Only the *source* side reads it; the bundle stays in the canonical
+    /// Chrome layout and the receiver opens it in the Space's Chrome.
+    pub fn edge_user_data_dir_for(platform: Platform) -> &'static str {
+        match platform {
+            Platform::MacOS => "Library/Application Support/Microsoft Edge",
+            Platform::Linux => ".config/microsoft-edge",
+            Platform::Windows => "AppData/Local/Microsoft/Edge/User Data",
+        }
+    }
 
     /// Curated files copied for a full-profile transfer, with sensitivity flags.
     /// Caches, GPU, and code-cache directories are intentionally excluded.

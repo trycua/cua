@@ -35,9 +35,15 @@ use crate::{Error, Result};
 /// `ERROR_PIPE_BUSY`: every instance is serving someone; try again shortly.
 const ERROR_PIPE_BUSY: i32 = 231;
 
+/// The path as both ends hash it: lower case, with `/` and `\` the same
+/// (`envs/staging\keyvault.sock` is `envs\staging\keyvault.sock`).
+fn normalize(path: &Path) -> String {
+    path.to_string_lossy().to_lowercase().replace('/', "\\")
+}
+
 /// The pipe that stands for the socket at `path`.
 pub fn pipe_name(path: &Path) -> String {
-    let digest = crate::crypto::sha256(path.to_string_lossy().to_lowercase().as_bytes());
+    let digest = crate::crypto::sha256(normalize(path).as_bytes());
     format!(r"\\.\pipe\cua-keyvault-{}", &hex::encode(digest)[..16])
 }
 
@@ -148,6 +154,15 @@ mod tests {
         // Case does not make another home on Windows.
         assert_eq!(a, pipe_name(Path::new(r"c:\users\ADA\.cua\keyvault.sock")));
         assert_ne!(a, pipe_name(Path::new(r"C:\Users\bob\.cua\keyvault.sock")));
+    }
+
+    #[test]
+    fn mixed_separators_name_the_same_pipe() {
+        // The daemon joined `envs/staging` onto the home (CUA-1528).
+        assert_eq!(
+            pipe_name(Path::new(r"C:\Users\ada\.cua\envs/staging\keyvault.sock")),
+            pipe_name(Path::new(r"C:\Users\ada\.cua\envs\staging\keyvault.sock"))
+        );
     }
 
     #[test]

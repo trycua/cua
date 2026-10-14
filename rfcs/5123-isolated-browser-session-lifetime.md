@@ -57,7 +57,7 @@ to continue a long run without weakening cleanup on revocation or disconnect.
 
 ## Goals
 
-- Publish session ownership and remaining idle lifetime when preparing a
+- Explain session ownership and publish remaining idle lifetime when preparing a
   driver-owned isolated browser.
 - Make named-profile persistence and process cleanup discoverable.
 - Define a bounded renewal path that does not extend authorization.
@@ -77,14 +77,20 @@ Add an optional `lifecycle` object to successful `browser_prepare` output only
 for a driver-owned isolated process associated with the current session. Its
 proposed fields are:
 
-| Field                            | Meaning                                                                             |
-| -------------------------------- | ----------------------------------------------------------------------------------- |
-| `owner`                          | The constant `session`; no runtime-private identifier.                              |
-| `idle_expires_in_seconds`        | The current session's remaining idle duration, sampled after preparation completes. |
-| `process_ends_with_session`      | `true`; the prepared process remains subject to session cleanup.                    |
-| `profile_persists_after_session` | `false` for `isolated_new`, `true` for `isolated_named`.                            |
+| Field                            | Meaning                                                                                                              |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `expires_in_seconds`             | The current session's remaining idle duration, with the same meaning and integer-second conversion as `get_session`. |
+| `profile_persists_after_session` | `false` for `isolated_new`, `true` for `isolated_named`.                                                             |
+
+Do not publish `owner` or `process_ends_with_session`: this scope has only
+session-owned browsers and both values would be constants. Explain ownership
+and cleanup in the tool description and browser guide. A future ownership mode
+would need its own contract decision rather than speculative fields now.
 
 Use the same owner visibility and runtime TTL authority as `get_session`.
+Keep the exact field name `expires_in_seconds` so clients do not need a second
+name or infer a different kind of expiry. It measures remaining idle time,
+not the maximum remaining authorization lifetime, just as `get_session` does.
 Account for the registry's activity refresh at admitted dispatch completion;
 the response must not report a stale countdown from before the prepare call.
 The value is a sample of remaining idle time, not a new lease or an absolute
@@ -108,6 +114,25 @@ and its in-memory page state do not survive.
 
 ## Proposal: explicit renewal in a separate implementation
 
+An agent can already keep its session active by making an authorized,
+session-requiring call that reaches dispatch on the same live transport and
+session: the registry's `SessionDispatchGuard` refreshes the idle clock when
+dispatch completes. This includes a useful browser read such as
+`get_browser_state`; an ordinary read does not need to mutate the page to
+count as activity. The agent must actually make the call before its session
+expires. Health reads such as `get_session`, denied calls, and raw DevTools
+traffic do not have that effect.
+
+`renew_session` is therefore not needed when the QA loop already makes such
+calls at intervals shorter than its effective TTL. Its possible added value
+is an explicit liveness-only operation while the agent waits on work outside
+the driver, without inventing a browser action or taking an unnecessary
+snapshot just to reset the clock. That need has not been established by #5123.
+Lifetime discovery plus meaningful admitted calls may suffice; a trusted host
+may also select a longer lifecycle TTL where its policy allows it. A capability
+manifest's authorization idle timeout is not automatically the lifecycle TTL:
+the latter's override is selected by the trusted host context.
+
 Subject to maintainer approval, add a lifecycle tool named `renew_session`.
 It refreshes an already-live session's activity timestamp under its existing
 effective TTL and returns the existing session status output. It does not
@@ -125,7 +150,9 @@ must stop renewing when their task finishes and call `end_session` normally.
 
 If maintainers prefer only trusted launch-time configuration of a longer TTL,
 ship the lifetime publication first and defer this tool. The initial response
-improvement is independently reviewable and does not depend on renewal.
+improvement is independently reviewable and does not depend on renewal. The
+reporter should confirm why meaningful admitted calls or a suitable trusted
+TTL cannot cover the QA run before a new tool is selected for implementation.
 
 ## Alternatives considered
 
@@ -170,14 +197,17 @@ After the decision is recorded:
 1. Add the optional preparation metadata from the existing session snapshot
    authority and document both profile modes and cleanup events.
 2. Add hermetic public-boundary tests for default and trusted overridden TTL,
-   named versus new profiles, missing metadata for unowned endpoints, and
+   named versus new profiles, parity with `get_session`'s field name, meaning,
+   and rounding, omission of the constant ownership fields, missing metadata
+   for unowned endpoints, and
    preparation racing session end. Use owned fake browser processes and an
    isolated test home; no real browser belongs in plain unit tests.
 3. Mutation-check the lifetime source and ownership condition. Hard-coding a
    duration or publishing ownership for an unowned endpoint must fail tests.
 4. If renewal is accepted, test a live owner, a foreign transport, an ended
    session, revoked authority, absolute expiry, and denied policy. Verify health
-   reads and raw endpoint activity still do not refresh the session.
+   reads and raw endpoint activity still do not refresh the session, while an
+   admitted browser read on that session does refresh it at completion.
 5. Add canonical desktop evidence that an owned process is cleaned up at
    session end, new-profile files are removed, and named-profile files remain.
    Record the final candidate and affected platform lanes before readiness.

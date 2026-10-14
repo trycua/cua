@@ -3279,6 +3279,9 @@ mod tests {
         use crate::session::{SessionClientKind, SessionTransport};
         let engine = launching_engine();
         let (session, owner) = start_lifecycle_session(None);
+        let live =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(live["lifecycle"]["owner"], "session", "{live}");
         let guard = crate::session::begin_session_dispatch(
             &session,
             None,

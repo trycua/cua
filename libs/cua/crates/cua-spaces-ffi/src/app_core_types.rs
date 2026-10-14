@@ -2262,6 +2262,40 @@ pub struct AppVaultSource {
     pub selected: Vec<String>,
     /// The app's saved passwords (ids), sent only when ticked.
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value), for
+    /// the review to list.
+    #[uniffi(default = [])]
+    pub passwords: Vec<AppVaultPassword>,
+}
+
+/// One saved password of the Keyvault, as a review lists it: its site and
+/// username, never its value.
+pub type AppVaultPassword = core::teleport::review::VaultPassword;
+#[uniffi::remote(Record)]
+pub struct AppVaultPassword {
+    /// The item's id.
+    pub id: String,
+    /// Its site (`github.com`); empty when not known.
+    pub site: String,
+    /// Its username; empty when not known or hidden.
+    pub username: String,
+}
+
+/// One saved password choice in the review: a site of the browser or one
+/// saved password. Sites and usernames only, never a value.
+pub type AppReviewPassword = core::teleport::review::ReviewPassword;
+#[uniffi::remote(Record)]
+pub struct AppReviewPassword {
+    /// What picking it toggles: the site, or the saved item's id.
+    pub key: String,
+    /// The site, or "Saved password" when not known.
+    pub site: String,
+    /// The username, when known.
+    pub username: String,
+    /// "2 passwords" (a site of the browser); empty for one saved item.
+    pub counts: String,
+    /// Chosen to send.
+    pub selected: bool,
 }
 
 /// The review's choices.
@@ -2287,6 +2321,18 @@ pub struct AppReviewChoice {
     /// The saved passwords are ticked to send (off unless the user ticks
     /// them; never remembered).
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send (reading the app).
+    #[uniffi(default = [])]
+    pub password_domains: Vec<String>,
+    /// The saved passwords to send (ids, from the Keyvault).
+    #[uniffi(default = [])]
+    pub password_items: Vec<String>,
+    /// The passwords list's search text.
+    #[uniffi(default = "")]
+    pub password_query: String,
+    /// The password choice was made.
+    #[uniffi(default = false)]
+    pub passwords_picked: bool,
 }
 
 /// What teleport can do with an app.
@@ -2528,6 +2574,10 @@ pub struct AppTeleportConsent {
     pub from_vault: Option<Vec<String>>,
     /// Also send the saved passwords (ticked in the review).
     pub include_passwords: bool,
+    /// Reading the app: the sites whose saved passwords to send; `None`
+    /// when no password is sent this way.
+    #[uniffi(default = None)]
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -2748,11 +2798,31 @@ pub enum AppPickerEvent {
         selected: Vec<String>,
         /// The app's saved passwords (ids): sent only when ticked.
         password_ids: Vec<String>,
+        /// The same passwords with their site and username (never a
+        /// value).
+        #[uniffi(default = [])]
+        passwords: Vec<AppVaultPassword>,
     },
     /// Tick or untick "Also send saved passwords".
     TogglePasswords {
         /// Ticked.
         value: bool,
+    },
+    /// Pick or drop one saved password choice (a site, or a saved item's
+    /// id).
+    TogglePassword {
+        /// The choice.
+        key: String,
+    },
+    /// Pick or drop every saved password choice the search shows.
+    SelectShownPasswords {
+        /// Pick (true) or drop.
+        value: bool,
+    },
+    /// The passwords list's search text.
+    PasswordQuery {
+        /// Text.
+        text: String,
     },
     /// The chosen saved items changed.
     VaultSelection {
@@ -2849,6 +2919,13 @@ pub struct AppReviewView {
     pub include_passwords: bool,
     /// "Also send 14 saved passwords".
     pub passwords_label: String,
+    /// Ticked: the saved passwords to pick from (sites with counts, or each
+    /// saved password's site and username; never a value).
+    pub passwords: Vec<AppReviewPassword>,
+    /// "2 of 5 sites", "2 of 5 passwords".
+    pub password_summary: String,
+    /// The passwords search text.
+    pub password_query: String,
     /// What the Keychain will do for this source, in a line.
     pub source_note: String,
 }
@@ -3204,6 +3281,10 @@ pub struct AppWizardEnv {
     /// `gpu_support`), when known. A runtime not listed has none: the
     /// Resources step shows no GPU row for it.
     pub gpus: Option<Vec<AppGpuChoice>>,
+    /// Picks the name an unnamed Space gets; `None`: the core's own
+    /// randomness.
+    #[uniffi(default = None)]
+    pub name_seed: Option<u64>,
 }
 
 /// Create or connect by address.
@@ -3279,6 +3360,47 @@ pub struct AppWizardState {
     pub gpu: bool,
     /// The address form.
     pub address: AppAddressForm,
+    /// The name the Space gets when Name is left empty (chosen when the
+    /// wizard opens).
+    #[uniffi(default = "")]
+    pub generated_name: String,
+    /// A slider's value being typed (its number was clicked).
+    #[uniffi(default = None)]
+    pub resource_edit: Option<AppResourceEdit>,
+}
+
+/// A Resources slider whose value can be typed.
+pub type AppResourceField = core::wizard::ResourceField;
+#[uniffi::remote(Enum)]
+pub enum AppResourceField {
+    /// CPU cores.
+    Cpus,
+    /// Memory, GB.
+    Memory,
+    /// Disk, GB.
+    Disk,
+}
+
+/// A slider's value as typed.
+pub type AppResourceEdit = core::wizard::ResourceEdit;
+#[uniffi::remote(Record)]
+pub struct AppResourceEdit {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
+}
+
+/// A slider's value being typed, as drawn.
+pub type AppResourceEditView = core::wizard::ResourceEditView;
+#[uniffi::remote(Record)]
+pub struct AppResourceEditView {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
+    /// Why it cannot be used, in one line (the slider's limits).
+    pub error: Option<String>,
 }
 
 /// An input to the wizard.
@@ -3363,6 +3485,21 @@ pub enum AppWizardAction {
     },
     /// The disk slider's Reset: back to the image's own disk.
     ResetDisk,
+    /// A slider's number clicked: its value can be typed.
+    EditResource {
+        /// Which slider.
+        field: AppResourceField,
+    },
+    /// The typed value's text.
+    SetResourceText {
+        /// Text.
+        text: String,
+    },
+    /// Return (or leaving the field): the typed value is used when it is
+    /// within the slider's limits.
+    CommitResource,
+    /// Escape: the slider's value stays.
+    CancelResource,
     /// The GPU checkbox.
     SetGpu {
         /// Checked.
@@ -3748,8 +3885,12 @@ pub struct AppWizardView {
     pub resources_error: Option<String>,
     /// The GPU row (Resources), where the runtime offers a GPU.
     pub gpu: Option<AppGpuRow>,
+    /// A slider's value being typed: the field shows instead of its number.
+    pub resource_edit: Option<AppResourceEditView>,
     /// Name as typed.
     pub name: String,
+    /// The name the Space gets: the one typed, else the generated one.
+    pub space_name: String,
     /// The name breaks the DNS-label rule.
     pub name_invalid: bool,
     /// Why, in one line.
@@ -4750,6 +4891,8 @@ pub struct KvVaultSource {
     /// The app's saved passwords (ids), never part of `ids`: they are sent
     /// only when ticked in the review.
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value).
+    pub passwords: Vec<AppVaultPassword>,
 }
 
 /// A sidebar category.

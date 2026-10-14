@@ -240,6 +240,10 @@ pub struct ImportSpec {
     /// the destination browser's own key.
     #[serde(default)]
     pub passwords: bool,
+    /// The registrable domains whose saved passwords to read (the review's
+    /// own per-site choice of passwords); `None`: those of `domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// One domain a browser holds secrets for, as the inventory shows it:

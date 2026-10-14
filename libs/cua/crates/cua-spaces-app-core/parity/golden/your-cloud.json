@@ -38,7 +38,7 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": []
@@ -81,7 +81,7 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": []
@@ -537,7 +537,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -578,7 +578,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -622,7 +622,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -663,7 +663,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -708,7 +708,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -753,7 +753,7 @@
           "Runtime: Container on 2 CPU, 4 GiB",
           "Cost: About $0.10/hour",
           "Deletes itself: After 2 hours",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -797,7 +797,7 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: 2.8 GB–6.8 GB initially; grows with use",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
         "systemsOff": []

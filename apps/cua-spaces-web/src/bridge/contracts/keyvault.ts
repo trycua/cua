@@ -431,6 +431,8 @@ export interface VaultSource {
   newestMs: number;
   ids: string[];
   passwordIds: string[];
+  /** The same passwords with their site and username, never a value. */
+  passwords?: { id: string; site: string; username: string }[];
 }
 
 /* ---- The approval sheet (approval.rs) ------------------------------------- */

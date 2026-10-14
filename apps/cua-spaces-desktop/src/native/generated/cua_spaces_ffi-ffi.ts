@@ -1147,6 +1147,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_picker_event_from_json": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_picker_grid_primary": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2837,6 +2842,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary": {
       args: [],
       ret: FfiType.UInt16,
@@ -4115,6 +4125,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_picker_app_grid(state: Uint8Array, windows: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_can_plan(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_picker_consent(state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_picker_event_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_grid_primary(tab: Uint8Array, spaceName: Uint8Array, grid: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_grid_step(grid: Uint8Array, selected: Uint8Array, delta: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_picker_grid_tabs(spaceName: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4453,6 +4464,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_picker_app_grid(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_can_plan(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_consent(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_step(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_tabs(): number;

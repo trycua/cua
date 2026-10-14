@@ -3173,6 +3173,27 @@ export function appPickerConsent(state: AppPickerState): AppTeleportConsent {
     }
 
 /**
+ * A teleport picker event from JSON (fixtures, parity).
+ */
+export function appPickerEventFromJson(json: string): AppPickerEvent /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppPickerEvent.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_picker_event_from_json(
+        FfiConverterString.lower(json, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The picker grid's primary button for a tab ("Continue", "Teleport to
  * <Space>", "Stream to This Mac"), live with a choosable tile selected.
  */
@@ -29964,6 +29985,62 @@ const FfiConverterTypeKvDomainCount = (() => {
     return new FFIConverter();
 })();
 
+export type AppVaultPassword = {
+    /**
+     * The item's id.
+     */
+    id: string,
+    /**
+     * Its site (`github.com`); empty when not known.
+     */
+    site: string,
+    /**
+     * Its username; empty when not known or hidden.
+     */
+    username: string
+}
+
+/**
+ * Generated factory for {@link AppVaultPassword} record objects.
+ */
+export const AppVaultPassword = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppVaultPassword, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppVaultPassword>,
+    });
+})();
+
+const FfiConverterTypeAppVaultPassword = (() => {
+    type TypeName = AppVaultPassword;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                site: FfiConverterString.read(from),
+                username: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.site, into);
+            FfiConverterString.write(value.username, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.site) +
+             FfiConverterString.allocationSize(value.username);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppVaultSource = {
     /**
      * The app has saved items that can be sent (passwords never are).
@@ -29984,7 +30061,12 @@ export type AppVaultSource = {
     /**
      * The app's saved passwords (ids), sent only when ticked.
      */
-    passwordIds: Array<string>
+    passwordIds: Array<string>,
+    /**
+     * The same passwords with their site and username (never a value), for
+     * the review to list.
+     */
+    passwords: Array<AppVaultPassword>
 }
 
 /**
@@ -29992,6 +30074,7 @@ export type AppVaultSource = {
  */
 export const AppVaultSource = (() => {
     const defaults = () => ({
+        passwords: []
     });
     const create = (() => {
         return uniffiCreateRecord<AppVaultSource, ReturnType<typeof defaults>>(defaults);
@@ -30012,7 +30095,8 @@ const FfiConverterTypeAppVaultSource = (() => {
                 items: FfiConverterUInt32.read(from),
                 saved: FfiConverterString.read(from),
                 selected: FfiConverterSequenceString.read(from),
-                passwordIds: FfiConverterSequenceString.read(from)
+                passwordIds: FfiConverterSequenceString.read(from),
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -30021,13 +30105,15 @@ const FfiConverterTypeAppVaultSource = (() => {
             FfiConverterString.write(value.saved, into);
             FfiConverterSequenceString.write(value.selected, into);
             FfiConverterSequenceString.write(value.passwordIds, into);
+            FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.available) +
              FfiConverterUInt32.allocationSize(value.items) +
              FfiConverterString.allocationSize(value.saved) +
              FfiConverterSequenceString.allocationSize(value.selected) +
-             FfiConverterSequenceString.allocationSize(value.passwordIds);
+             FfiConverterSequenceString.allocationSize(value.passwordIds) +
+             FfiConverterSequenceTypeAppVaultPassword.allocationSize(value.passwords);
 
         }
     };
@@ -30069,7 +30155,23 @@ export type AppReviewChoice = {
      * The saved passwords are ticked to send (off unless the user ticks
      * them; never remembered).
      */
-    includePasswords: boolean
+    includePasswords: boolean,
+    /**
+     * The sites whose saved passwords to send (reading the app).
+     */
+    passwordDomains: Array<string>,
+    /**
+     * The saved passwords to send (ids, from the Keyvault).
+     */
+    passwordItems: Array<string>,
+    /**
+     * The passwords list's search text.
+     */
+    passwordQuery: string,
+    /**
+     * The password choice was made.
+     */
+    passwordsPicked: boolean
 }
 
 /**
@@ -30077,6 +30179,10 @@ export type AppReviewChoice = {
  */
 export const AppReviewChoice = (() => {
     const defaults = () => ({
+        passwordDomains: [],
+        passwordItems: [],
+        passwordQuery: "",
+        passwordsPicked: false
     });
     const create = (() => {
         return uniffiCreateRecord<AppReviewChoice, ReturnType<typeof defaults>>(defaults);
@@ -30100,7 +30206,11 @@ const FfiConverterTypeAppReviewChoice = (() => {
                 excluded: FfiConverterSequenceString.read(from),
                 vault: FfiConverterTypeAppVaultSource.read(from),
                 loaded: FfiConverterBool.read(from),
-                includePasswords: FfiConverterBool.read(from)
+                includePasswords: FfiConverterBool.read(from),
+                passwordDomains: FfiConverterSequenceString.read(from),
+                passwordItems: FfiConverterSequenceString.read(from),
+                passwordQuery: FfiConverterString.read(from),
+                passwordsPicked: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -30112,6 +30222,10 @@ const FfiConverterTypeAppReviewChoice = (() => {
             FfiConverterTypeAppVaultSource.write(value.vault, into);
             FfiConverterBool.write(value.loaded, into);
             FfiConverterBool.write(value.includePasswords, into);
+            FfiConverterSequenceString.write(value.passwordDomains, into);
+            FfiConverterSequenceString.write(value.passwordItems, into);
+            FfiConverterString.write(value.passwordQuery, into);
+            FfiConverterBool.write(value.passwordsPicked, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppSendSource.allocationSize(value.source) +
@@ -30121,7 +30235,11 @@ const FfiConverterTypeAppReviewChoice = (() => {
              FfiConverterSequenceString.allocationSize(value.excluded) +
              FfiConverterTypeAppVaultSource.allocationSize(value.vault) +
              FfiConverterBool.allocationSize(value.loaded) +
-             FfiConverterBool.allocationSize(value.includePasswords);
+             FfiConverterBool.allocationSize(value.includePasswords) +
+             FfiConverterSequenceString.allocationSize(value.passwordDomains) +
+             FfiConverterSequenceString.allocationSize(value.passwordItems) +
+             FfiConverterString.allocationSize(value.passwordQuery) +
+             FfiConverterBool.allocationSize(value.passwordsPicked);
 
         }
     };
@@ -31406,6 +31524,152 @@ const FfiConverterTypeAppRemoteWindowGroup = (() => {
     return new FFIConverter();
 })();
 
+export enum AppResourceField {
+    /**
+     * CPU cores.
+     */
+    Cpus = "cpus",
+    /**
+     * Memory, GB.
+     */
+    Memory = "memory",
+    /**
+     * Disk, GB.
+     */
+    Disk = "disk"
+}
+
+const FfiConverterTypeAppResourceField = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppResourceField;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return AppResourceField.Cpus;
+                case 2: return AppResourceField.Memory;
+                case 3: return AppResourceField.Disk;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case AppResourceField.Cpus: return ordinalConverter.write(1, into);
+                case AppResourceField.Memory: return ordinalConverter.write(2, into);
+                case AppResourceField.Disk: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type AppResourceEdit = {
+    /**
+     * Which slider.
+     */
+    field: AppResourceField,
+    /**
+     * The text as typed.
+     */
+    text: string
+}
+
+/**
+ * Generated factory for {@link AppResourceEdit} record objects.
+ */
+export const AppResourceEdit = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppResourceEdit, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppResourceEdit>,
+    });
+})();
+
+const FfiConverterTypeAppResourceEdit = (() => {
+    type TypeName = AppResourceEdit;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                field: FfiConverterTypeAppResourceField.read(from),
+                text: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeAppResourceField.write(value.field, into);
+            FfiConverterString.write(value.text, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeAppResourceField.allocationSize(value.field) +
+             FfiConverterString.allocationSize(value.text);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppResourceEditView = {
+    /**
+     * Which slider.
+     */
+    field: AppResourceField,
+    /**
+     * The text as typed.
+     */
+    text: string,
+    /**
+     * Why it cannot be used, in one line (the slider's limits).
+     */
+    error?: string
+}
+
+/**
+ * Generated factory for {@link AppResourceEditView} record objects.
+ */
+export const AppResourceEditView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppResourceEditView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppResourceEditView>,
+    });
+})();
+
+const FfiConverterTypeAppResourceEditView = (() => {
+    type TypeName = AppResourceEditView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                field: FfiConverterTypeAppResourceField.read(from),
+                text: FfiConverterString.read(from),
+                error: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeAppResourceField.write(value.field, into);
+            FfiConverterString.write(value.text, into);
+            FfiConverterOptionalString.write(value.error, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeAppResourceField.allocationSize(value.field) +
+             FfiConverterString.allocationSize(value.text) +
+             FfiConverterOptionalString.allocationSize(value.error);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppReviewDomain = {
     /**
      * The site (`github.com`).
@@ -31499,6 +31763,76 @@ const FfiConverterTypeAppReviewDomain = (() => {
              FfiConverterBool.allocationSize(value.selectable) +
              FfiConverterUInt32.allocationSize(value.unavailable) +
              FfiConverterString.allocationSize(value.unavailableNote);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppReviewPassword = {
+    /**
+     * What picking it toggles: the site, or the saved item's id.
+     */
+    key: string,
+    /**
+     * The site, or "Saved password" when not known.
+     */
+    site: string,
+    /**
+     * The username, when known.
+     */
+    username: string,
+    /**
+     * "2 passwords" (a site of the browser); empty for one saved item.
+     */
+    counts: string,
+    /**
+     * Chosen to send.
+     */
+    selected: boolean
+}
+
+/**
+ * Generated factory for {@link AppReviewPassword} record objects.
+ */
+export const AppReviewPassword = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppReviewPassword, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppReviewPassword>,
+    });
+})();
+
+const FfiConverterTypeAppReviewPassword = (() => {
+    type TypeName = AppReviewPassword;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                key: FfiConverterString.read(from),
+                site: FfiConverterString.read(from),
+                username: FfiConverterString.read(from),
+                counts: FfiConverterString.read(from),
+                selected: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.key, into);
+            FfiConverterString.write(value.site, into);
+            FfiConverterString.write(value.username, into);
+            FfiConverterString.write(value.counts, into);
+            FfiConverterBool.write(value.selected, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.key) +
+             FfiConverterString.allocationSize(value.site) +
+             FfiConverterString.allocationSize(value.username) +
+             FfiConverterString.allocationSize(value.counts) +
+             FfiConverterBool.allocationSize(value.selected);
 
         }
     };
@@ -31698,6 +32032,19 @@ export type AppReviewView = {
      */
     passwordsLabel: string,
     /**
+     * Ticked: the saved passwords to pick from (sites with counts, or each
+     * saved password's site and username; never a value).
+     */
+    passwords: Array<AppReviewPassword>,
+    /**
+     * "2 of 5 sites", "2 of 5 passwords".
+     */
+    passwordSummary: string,
+    /**
+     * The passwords search text.
+     */
+    passwordQuery: string,
+    /**
      * What the Keychain will do for this source, in a line.
      */
     sourceNote: string
@@ -31751,6 +32098,9 @@ const FfiConverterTypeAppReviewView = (() => {
                 offersPasswords: FfiConverterBool.read(from),
                 includePasswords: FfiConverterBool.read(from),
                 passwordsLabel: FfiConverterString.read(from),
+                passwords: FfiConverterSequenceTypeAppReviewPassword.read(from),
+                passwordSummary: FfiConverterString.read(from),
+                passwordQuery: FfiConverterString.read(from),
                 sourceNote: FfiConverterString.read(from)
             };
         }
@@ -31782,6 +32132,9 @@ const FfiConverterTypeAppReviewView = (() => {
             FfiConverterBool.write(value.offersPasswords, into);
             FfiConverterBool.write(value.includePasswords, into);
             FfiConverterString.write(value.passwordsLabel, into);
+            FfiConverterSequenceTypeAppReviewPassword.write(value.passwords, into);
+            FfiConverterString.write(value.passwordSummary, into);
+            FfiConverterString.write(value.passwordQuery, into);
             FfiConverterString.write(value.sourceNote, into);
         }
         allocationSize(value: TypeName): number {
@@ -31812,6 +32165,9 @@ const FfiConverterTypeAppReviewView = (() => {
              FfiConverterBool.allocationSize(value.offersPasswords) +
              FfiConverterBool.allocationSize(value.includePasswords) +
              FfiConverterString.allocationSize(value.passwordsLabel) +
+             FfiConverterSequenceTypeAppReviewPassword.allocationSize(value.passwords) +
+             FfiConverterString.allocationSize(value.passwordSummary) +
+             FfiConverterString.allocationSize(value.passwordQuery) +
              FfiConverterString.allocationSize(value.sourceNote);
 
         }
@@ -35610,7 +35966,12 @@ export type AppTeleportConsent = {
     /**
      * Also send the saved passwords (ticked in the review).
      */
-    includePasswords: boolean
+    includePasswords: boolean,
+    /**
+     * Reading the app: the sites whose saved passwords to send; `None`
+     * when no password is sent this way.
+     */
+    passwordDomains?: Array<string>
 }
 
 /**
@@ -35618,6 +35979,7 @@ export type AppTeleportConsent = {
  */
 export const AppTeleportConsent = (() => {
     const defaults = () => ({
+        passwordDomains: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<AppTeleportConsent, ReturnType<typeof defaults>>(defaults);
@@ -35641,7 +36003,8 @@ const FfiConverterTypeAppTeleportConsent = (() => {
                 cookieDomains: FfiConverterOptionalSequenceString.read(from),
                 exclude: FfiConverterSequenceString.read(from),
                 fromVault: FfiConverterOptionalSequenceString.read(from),
-                includePasswords: FfiConverterBool.read(from)
+                includePasswords: FfiConverterBool.read(from),
+                passwordDomains: FfiConverterOptionalSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -35653,6 +36016,7 @@ const FfiConverterTypeAppTeleportConsent = (() => {
             FfiConverterSequenceString.write(value.exclude, into);
             FfiConverterOptionalSequenceString.write(value.fromVault, into);
             FfiConverterBool.write(value.includePasswords, into);
+            FfiConverterOptionalSequenceString.write(value.passwordDomains, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.approved) +
@@ -35662,7 +36026,8 @@ const FfiConverterTypeAppTeleportConsent = (() => {
              FfiConverterOptionalSequenceString.allocationSize(value.cookieDomains) +
              FfiConverterSequenceString.allocationSize(value.exclude) +
              FfiConverterOptionalSequenceString.allocationSize(value.fromVault) +
-             FfiConverterBool.allocationSize(value.includePasswords);
+             FfiConverterBool.allocationSize(value.includePasswords) +
+             FfiConverterOptionalSequenceString.allocationSize(value.passwordDomains);
 
         }
     };
@@ -36097,7 +36462,12 @@ export type AppWizardEnv = {
      * `gpu_support`), when known. A runtime not listed has none: the
      * Resources step shows no GPU row for it.
      */
-    gpus?: Array<AppGpuChoice>
+    gpus?: Array<AppGpuChoice>,
+    /**
+     * Picks the name an unnamed Space gets; `None`: the core's own
+     * randomness.
+     */
+    nameSeed?: bigint
 }
 
 /**
@@ -36105,6 +36475,7 @@ export type AppWizardEnv = {
  */
 export const AppWizardEnv = (() => {
     const defaults = () => ({
+        nameSeed: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<AppWizardEnv, ReturnType<typeof defaults>>(defaults);
@@ -36136,7 +36507,8 @@ const FfiConverterTypeAppWizardEnv = (() => {
                 clouds: FfiConverterSequenceTypeAppConnectedCloud.read(from),
                 hosts: FfiConverterSequenceTypeAppSpaceHost.read(from),
                 experiments: FfiConverterTypeAppExperiments.read(from),
-                gpus: FfiConverterOptionalSequenceTypeAppGpuChoice.read(from)
+                gpus: FfiConverterOptionalSequenceTypeAppGpuChoice.read(from),
+                nameSeed: FfiConverterOptionalUInt64.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -36156,6 +36528,7 @@ const FfiConverterTypeAppWizardEnv = (() => {
             FfiConverterSequenceTypeAppSpaceHost.write(value.hosts, into);
             FfiConverterTypeAppExperiments.write(value.experiments, into);
             FfiConverterOptionalSequenceTypeAppGpuChoice.write(value.gpus, into);
+            FfiConverterOptionalUInt64.write(value.nameSeed, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppLocation.allocationSize(value.defaultLocation) +
@@ -36173,7 +36546,8 @@ const FfiConverterTypeAppWizardEnv = (() => {
              FfiConverterSequenceTypeAppConnectedCloud.allocationSize(value.clouds) +
              FfiConverterSequenceTypeAppSpaceHost.allocationSize(value.hosts) +
              FfiConverterTypeAppExperiments.allocationSize(value.experiments) +
-             FfiConverterOptionalSequenceTypeAppGpuChoice.allocationSize(value.gpus);
+             FfiConverterOptionalSequenceTypeAppGpuChoice.allocationSize(value.gpus) +
+             FfiConverterOptionalUInt64.allocationSize(value.nameSeed);
 
         }
     };
@@ -36496,7 +36870,16 @@ export type AppWizardState = {
     /**
      * The address form.
      */
-    address: AppAddressForm
+    address: AppAddressForm,
+    /**
+     * The name the Space gets when Name is left empty (chosen when the
+     * wizard opens).
+     */
+    generatedName: string,
+    /**
+     * A slider's value being typed (its number was clicked).
+     */
+    resourceEdit?: AppResourceEdit
 }
 
 /**
@@ -36504,6 +36887,8 @@ export type AppWizardState = {
  */
 export const AppWizardState = (() => {
     const defaults = () => ({
+        generatedName: "",
+        resourceEdit: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<AppWizardState, ReturnType<typeof defaults>>(defaults);
@@ -36539,7 +36924,9 @@ const FfiConverterTypeAppWizardState = (() => {
                 cloud: FfiConverterOptionalString.read(from),
                 host: FfiConverterOptionalString.read(from),
                 gpu: FfiConverterBool.read(from),
-                address: FfiConverterTypeAppAddressForm.read(from)
+                address: FfiConverterTypeAppAddressForm.read(from),
+                generatedName: FfiConverterString.read(from),
+                resourceEdit: FfiConverterOptionalTypeAppResourceEdit.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -36563,6 +36950,8 @@ const FfiConverterTypeAppWizardState = (() => {
             FfiConverterOptionalString.write(value.host, into);
             FfiConverterBool.write(value.gpu, into);
             FfiConverterTypeAppAddressForm.write(value.address, into);
+            FfiConverterString.write(value.generatedName, into);
+            FfiConverterOptionalTypeAppResourceEdit.write(value.resourceEdit, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppWizardMode.allocationSize(value.mode) +
@@ -36584,7 +36973,9 @@ const FfiConverterTypeAppWizardState = (() => {
              FfiConverterOptionalString.allocationSize(value.cloud) +
              FfiConverterOptionalString.allocationSize(value.host) +
              FfiConverterBool.allocationSize(value.gpu) +
-             FfiConverterTypeAppAddressForm.allocationSize(value.address);
+             FfiConverterTypeAppAddressForm.allocationSize(value.address) +
+             FfiConverterString.allocationSize(value.generatedName) +
+             FfiConverterOptionalTypeAppResourceEdit.allocationSize(value.resourceEdit);
 
         }
     };
@@ -36758,9 +37149,17 @@ export type AppWizardView = {
      */
     gpu?: AppGpuRow,
     /**
+     * A slider's value being typed: the field shows instead of its number.
+     */
+    resourceEdit?: AppResourceEditView,
+    /**
      * Name as typed.
      */
     name: string,
+    /**
+     * The name the Space gets: the one typed, else the generated one.
+     */
+    spaceName: string,
     /**
      * The name breaks the DNS-label rule.
      */
@@ -36871,7 +37270,9 @@ const FfiConverterTypeAppWizardView = (() => {
                 resourceFacts: FfiConverterSequenceTypeAppWizardFact.read(from),
                 resourcesError: FfiConverterOptionalString.read(from),
                 gpu: FfiConverterOptionalTypeAppGpuRow.read(from),
+                resourceEdit: FfiConverterOptionalTypeAppResourceEditView.read(from),
                 name: FfiConverterString.read(from),
+                spaceName: FfiConverterString.read(from),
                 nameInvalid: FfiConverterBool.read(from),
                 nameError: FfiConverterOptionalString.read(from),
                 openWhenReady: FfiConverterBool.read(from),
@@ -36926,7 +37327,9 @@ const FfiConverterTypeAppWizardView = (() => {
             FfiConverterSequenceTypeAppWizardFact.write(value.resourceFacts, into);
             FfiConverterOptionalString.write(value.resourcesError, into);
             FfiConverterOptionalTypeAppGpuRow.write(value.gpu, into);
+            FfiConverterOptionalTypeAppResourceEditView.write(value.resourceEdit, into);
             FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.spaceName, into);
             FfiConverterBool.write(value.nameInvalid, into);
             FfiConverterOptionalString.write(value.nameError, into);
             FfiConverterBool.write(value.openWhenReady, into);
@@ -36980,7 +37383,9 @@ const FfiConverterTypeAppWizardView = (() => {
              FfiConverterSequenceTypeAppWizardFact.allocationSize(value.resourceFacts) +
              FfiConverterOptionalString.allocationSize(value.resourcesError) +
              FfiConverterOptionalTypeAppGpuRow.allocationSize(value.gpu) +
+             FfiConverterOptionalTypeAppResourceEditView.allocationSize(value.resourceEdit) +
              FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.spaceName) +
              FfiConverterBool.allocationSize(value.nameInvalid) +
              FfiConverterOptionalString.allocationSize(value.nameError) +
              FfiConverterBool.allocationSize(value.openWhenReady) +
@@ -42120,7 +42525,11 @@ export type KvVaultSource = {
      * The app's saved passwords (ids), never part of `ids`: they are sent
      * only when ticked in the review.
      */
-    passwordIds: Array<string>
+    passwordIds: Array<string>,
+    /**
+     * The same passwords with their site and username (never a value).
+     */
+    passwords: Array<AppVaultPassword>
 }
 
 /**
@@ -42147,7 +42556,8 @@ const FfiConverterTypeKvVaultSource = (() => {
                 count: FfiConverterUInt32.read(from),
                 newestMs: FfiConverterInt64.read(from),
                 ids: FfiConverterSequenceString.read(from),
-                passwordIds: FfiConverterSequenceString.read(from)
+                passwordIds: FfiConverterSequenceString.read(from),
+                passwords: FfiConverterSequenceTypeAppVaultPassword.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -42155,12 +42565,14 @@ const FfiConverterTypeKvVaultSource = (() => {
             FfiConverterInt64.write(value.newestMs, into);
             FfiConverterSequenceString.write(value.ids, into);
             FfiConverterSequenceString.write(value.passwordIds, into);
+            FfiConverterSequenceTypeAppVaultPassword.write(value.passwords, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.count) +
              FfiConverterInt64.allocationSize(value.newestMs) +
              FfiConverterSequenceString.allocationSize(value.ids) +
-             FfiConverterSequenceString.allocationSize(value.passwordIds);
+             FfiConverterSequenceString.allocationSize(value.passwordIds) +
+             FfiConverterSequenceTypeAppVaultPassword.allocationSize(value.passwords);
 
         }
     };
@@ -42911,7 +43323,12 @@ export type TeleportConsent = {
     /**
      * Also send the saved passwords: only when ticked in the review.
      */
-    includePasswords: boolean
+    includePasswords: boolean,
+    /**
+     * The sites whose saved passwords to send (the review's own
+     * choice; `None`: those of `cookie_domains`).
+     */
+    passwordDomains?: Array<string>
 }
 
 /**
@@ -42925,7 +43342,8 @@ export const TeleportConsent = (() => {
         cookieDomains: undefined,
         exclude: [],
         fromVault: undefined,
-        includePasswords: false
+        includePasswords: false,
+        passwordDomains: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<TeleportConsent, ReturnType<typeof defaults>>(defaults);
@@ -42949,7 +43367,8 @@ const FfiConverterTypeTeleportConsent = (() => {
                 cookieDomains: FfiConverterOptionalSequenceString.read(from),
                 exclude: FfiConverterSequenceString.read(from),
                 fromVault: FfiConverterOptionalSequenceString.read(from),
-                includePasswords: FfiConverterBool.read(from)
+                includePasswords: FfiConverterBool.read(from),
+                passwordDomains: FfiConverterOptionalSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -42961,6 +43380,7 @@ const FfiConverterTypeTeleportConsent = (() => {
             FfiConverterSequenceString.write(value.exclude, into);
             FfiConverterOptionalSequenceString.write(value.fromVault, into);
             FfiConverterBool.write(value.includePasswords, into);
+            FfiConverterOptionalSequenceString.write(value.passwordDomains, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.approved) +
@@ -42970,7 +43390,8 @@ const FfiConverterTypeTeleportConsent = (() => {
              FfiConverterOptionalSequenceString.allocationSize(value.cookieDomains) +
              FfiConverterSequenceString.allocationSize(value.exclude) +
              FfiConverterOptionalSequenceString.allocationSize(value.fromVault) +
-             FfiConverterBool.allocationSize(value.includePasswords);
+             FfiConverterBool.allocationSize(value.includePasswords) +
+             FfiConverterOptionalSequenceString.allocationSize(value.passwordDomains);
 
         }
     };
@@ -51067,6 +51488,9 @@ export enum AppPickerEvent_Tags {
     SendFrom = "SendFrom",
     VaultItems = "VaultItems",
     TogglePasswords = "TogglePasswords",
+    TogglePassword = "TogglePassword",
+    SelectShownPasswords = "SelectShownPasswords",
+    PasswordQuery = "PasswordQuery",
     VaultSelection = "VaultSelection",
     Confirm = "Confirm",
     Progress = "Progress",
@@ -51814,7 +52238,7 @@ inner: {source: AppSendSource }): SendFrom_ {
     type VaultItems__interface = {
         tag: AppPickerEvent_Tags.VaultItems;
         inner:
-Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>}>
+Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>}>
     };
     /**
      * The app's saved Keyvault items (what the Keyvault holds for it).
@@ -51827,17 +52251,22 @@ Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string
         readonly [uniffiTypeNameSymbol] = "AppPickerEvent";
         readonly tag = AppPickerEvent_Tags.VaultItems;
         readonly inner:
-Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>}>;
+Readonly<{count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>}>;
         constructor(
-inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string> }) {
+inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword> }) {
             super("AppPickerEvent", "VaultItems");
 
             this.inner = Object.freeze(inner);
         }
-        static new(
-inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string> }): VaultItems_ {
-            return new VaultItems_(inner);
-        }
+        static new = (() => {
+            type Inner = {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword> };
+            const defaults = () => ({
+                passwords: []
+            });
+            const create = uniffiCreateRecord<Inner, ReturnType<typeof defaults>>(defaults);
+            return (partial: Parameters<typeof create>[0]): VaultItems_ =>
+                new VaultItems_(create(partial));
+        })();
 
         static instanceOf(obj: any): obj is VaultItems_ {
             return obj.tag === AppPickerEvent_Tags.VaultItems;
@@ -51875,6 +52304,109 @@ inner: {value: boolean }): TogglePasswords_ {
 
         static instanceOf(obj: any): obj is TogglePasswords_ {
             return obj.tag === AppPickerEvent_Tags.TogglePasswords;
+        }
+
+    }
+
+    type TogglePassword__interface = {
+        tag: AppPickerEvent_Tags.TogglePassword;
+        inner:
+Readonly<{key: string}>
+    };
+    /**
+     * Pick or drop one saved password choice (a site, or a saved item's
+     * id).
+     */
+    class TogglePassword_ extends UniffiEnum implements TogglePassword__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppPickerEvent";
+        readonly tag = AppPickerEvent_Tags.TogglePassword;
+        readonly inner:
+Readonly<{key: string}>;
+        constructor(
+inner: {key: string }) {
+            super("AppPickerEvent", "TogglePassword");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {key: string }): TogglePassword_ {
+            return new TogglePassword_(inner);
+        }
+
+        static instanceOf(obj: any): obj is TogglePassword_ {
+            return obj.tag === AppPickerEvent_Tags.TogglePassword;
+        }
+
+    }
+
+    type SelectShownPasswords__interface = {
+        tag: AppPickerEvent_Tags.SelectShownPasswords;
+        inner:
+Readonly<{value: boolean}>
+    };
+    /**
+     * Pick or drop every saved password choice the search shows.
+     */
+    class SelectShownPasswords_ extends UniffiEnum implements SelectShownPasswords__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppPickerEvent";
+        readonly tag = AppPickerEvent_Tags.SelectShownPasswords;
+        readonly inner:
+Readonly<{value: boolean}>;
+        constructor(
+inner: {value: boolean }) {
+            super("AppPickerEvent", "SelectShownPasswords");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: boolean }): SelectShownPasswords_ {
+            return new SelectShownPasswords_(inner);
+        }
+
+        static instanceOf(obj: any): obj is SelectShownPasswords_ {
+            return obj.tag === AppPickerEvent_Tags.SelectShownPasswords;
+        }
+
+    }
+
+    type PasswordQuery__interface = {
+        tag: AppPickerEvent_Tags.PasswordQuery;
+        inner:
+Readonly<{text: string}>
+    };
+    /**
+     * The passwords list's search text.
+     */
+    class PasswordQuery_ extends UniffiEnum implements PasswordQuery__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppPickerEvent";
+        readonly tag = AppPickerEvent_Tags.PasswordQuery;
+        readonly inner:
+Readonly<{text: string}>;
+        constructor(
+inner: {text: string }) {
+            super("AppPickerEvent", "PasswordQuery");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {text: string }): PasswordQuery_ {
+            return new PasswordQuery_(inner);
+        }
+
+        static instanceOf(obj: any): obj is PasswordQuery_ {
+            return obj.tag === AppPickerEvent_Tags.PasswordQuery;
         }
 
     }
@@ -52065,6 +52597,9 @@ inner: {report: AppTeleportRunReport }): Finished_ {
   SendFrom: SendFrom_,
   VaultItems: VaultItems_,
   TogglePasswords: TogglePasswords_,
+  TogglePassword: TogglePassword_,
+  SelectShownPasswords: SelectShownPasswords_,
+  PasswordQuery: PasswordQuery_,
   VaultSelection: VaultSelection_,
   Confirm: Confirm_,
   Progress: Progress_,
@@ -52074,7 +52609,7 @@ inner: {report: AppTeleportRunReport }): Finished_ {
 
 })();
 export type AppPickerEvent = InstanceType<
-    typeof AppPickerEvent['Loaded' | 'Failed' | 'Query' | 'Select' | 'Choose' | 'Preselect' | 'Move' | 'Files' | 'RemoveFile' | 'Sensitive' | 'Plan' | 'Planned' | 'Acknowledge' | 'SaveToKeyvault' | 'AcknowledgeRelayPlaintext' | 'DomainsLoaded' | 'DomainsFailed' | 'ToggleDomain' | 'SelectShownDomains' | 'DomainQuery' | 'ToggleItem' | 'SendFrom' | 'VaultItems' | 'TogglePasswords' | 'VaultSelection' | 'Confirm' | 'Progress' | 'Finished' | 'Back']
+    typeof AppPickerEvent['Loaded' | 'Failed' | 'Query' | 'Select' | 'Choose' | 'Preselect' | 'Move' | 'Files' | 'RemoveFile' | 'Sensitive' | 'Plan' | 'Planned' | 'Acknowledge' | 'SaveToKeyvault' | 'AcknowledgeRelayPlaintext' | 'DomainsLoaded' | 'DomainsFailed' | 'ToggleDomain' | 'SelectShownDomains' | 'DomainQuery' | 'ToggleItem' | 'SendFrom' | 'VaultItems' | 'TogglePasswords' | 'TogglePassword' | 'SelectShownPasswords' | 'PasswordQuery' | 'VaultSelection' | 'Confirm' | 'Progress' | 'Finished' | 'Back']
 >;
 
 // FfiConverter for enum AppPickerEvent
@@ -52106,13 +52641,16 @@ const FfiConverterTypeAppPickerEvent = (() => {
                 case 20: return new AppPickerEvent.DomainQuery({text: FfiConverterString.read(from) });
                 case 21: return new AppPickerEvent.ToggleItem({key: FfiConverterString.read(from) });
                 case 22: return new AppPickerEvent.SendFrom({source: FfiConverterTypeAppSendSource.read(from) });
-                case 23: return new AppPickerEvent.VaultItems({count: FfiConverterUInt32.read(from), newestMs: FfiConverterInt64.read(from), nowMs: FfiConverterInt64.read(from), selected: FfiConverterSequenceString.read(from), passwordIds: FfiConverterSequenceString.read(from) });
+                case 23: return new AppPickerEvent.VaultItems({count: FfiConverterUInt32.read(from), newestMs: FfiConverterInt64.read(from), nowMs: FfiConverterInt64.read(from), selected: FfiConverterSequenceString.read(from), passwordIds: FfiConverterSequenceString.read(from), passwords: FfiConverterSequenceTypeAppVaultPassword.read(from) });
                 case 24: return new AppPickerEvent.TogglePasswords({value: FfiConverterBool.read(from) });
-                case 25: return new AppPickerEvent.VaultSelection({selected: FfiConverterSequenceString.read(from) });
-                case 26: return new AppPickerEvent.Confirm();
-                case 27: return new AppPickerEvent.Progress({event: FfiConverterTypeAppTeleportRunEvent.read(from) });
-                case 28: return new AppPickerEvent.Finished({report: FfiConverterTypeAppTeleportRunReport.read(from) });
-                case 29: return new AppPickerEvent.Back();
+                case 25: return new AppPickerEvent.TogglePassword({key: FfiConverterString.read(from) });
+                case 26: return new AppPickerEvent.SelectShownPasswords({value: FfiConverterBool.read(from) });
+                case 27: return new AppPickerEvent.PasswordQuery({text: FfiConverterString.read(from) });
+                case 28: return new AppPickerEvent.VaultSelection({selected: FfiConverterSequenceString.read(from) });
+                case 29: return new AppPickerEvent.Confirm();
+                case 30: return new AppPickerEvent.Progress({event: FfiConverterTypeAppTeleportRunEvent.read(from) });
+                case 31: return new AppPickerEvent.Finished({report: FfiConverterTypeAppTeleportRunReport.read(from) });
+                case 32: return new AppPickerEvent.Back();
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -52259,6 +52797,7 @@ const FfiConverterTypeAppPickerEvent = (() => {
                     FfiConverterInt64.write(inner.nowMs, into);
                     FfiConverterSequenceString.write(inner.selected, into);
                     FfiConverterSequenceString.write(inner.passwordIds, into);
+                    FfiConverterSequenceTypeAppVaultPassword.write(inner.passwords, into);
                     return;
                 }
                 case AppPickerEvent_Tags.TogglePasswords: {
@@ -52267,30 +52806,48 @@ const FfiConverterTypeAppPickerEvent = (() => {
                     FfiConverterBool.write(inner.value, into);
                     return;
                 }
-                case AppPickerEvent_Tags.VaultSelection: {
+                case AppPickerEvent_Tags.TogglePassword: {
                     ordinalConverter.write(25, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.key, into);
+                    return;
+                }
+                case AppPickerEvent_Tags.SelectShownPasswords: {
+                    ordinalConverter.write(26, into);
+                    const inner = value.inner;
+                    FfiConverterBool.write(inner.value, into);
+                    return;
+                }
+                case AppPickerEvent_Tags.PasswordQuery: {
+                    ordinalConverter.write(27, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.text, into);
+                    return;
+                }
+                case AppPickerEvent_Tags.VaultSelection: {
+                    ordinalConverter.write(28, into);
                     const inner = value.inner;
                     FfiConverterSequenceString.write(inner.selected, into);
                     return;
                 }
                 case AppPickerEvent_Tags.Confirm: {
-                    ordinalConverter.write(26, into);
+                    ordinalConverter.write(29, into);
                     return;
                 }
                 case AppPickerEvent_Tags.Progress: {
-                    ordinalConverter.write(27, into);
+                    ordinalConverter.write(30, into);
                     const inner = value.inner;
                     FfiConverterTypeAppTeleportRunEvent.write(inner.event, into);
                     return;
                 }
                 case AppPickerEvent_Tags.Finished: {
-                    ordinalConverter.write(28, into);
+                    ordinalConverter.write(31, into);
                     const inner = value.inner;
                     FfiConverterTypeAppTeleportRunReport.write(inner.report, into);
                     return;
                 }
                 case AppPickerEvent_Tags.Back: {
-                    ordinalConverter.write(29, into);
+                    ordinalConverter.write(32, into);
                     return;
                 }
                 default:
@@ -52439,6 +52996,7 @@ const FfiConverterTypeAppPickerEvent = (() => {
                     size += FfiConverterInt64.allocationSize(inner.nowMs);
                     size += FfiConverterSequenceString.allocationSize(inner.selected);
                     size += FfiConverterSequenceString.allocationSize(inner.passwordIds);
+                    size += FfiConverterSequenceTypeAppVaultPassword.allocationSize(inner.passwords);
                     return size;
                 }
                 case AppPickerEvent_Tags.TogglePasswords: {
@@ -52447,29 +53005,47 @@ const FfiConverterTypeAppPickerEvent = (() => {
                     size += FfiConverterBool.allocationSize(inner.value);
                     return size;
                 }
-                case AppPickerEvent_Tags.VaultSelection: {
+                case AppPickerEvent_Tags.TogglePassword: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(25);
+                    size += FfiConverterString.allocationSize(inner.key);
+                    return size;
+                }
+                case AppPickerEvent_Tags.SelectShownPasswords: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(26);
+                    size += FfiConverterBool.allocationSize(inner.value);
+                    return size;
+                }
+                case AppPickerEvent_Tags.PasswordQuery: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(27);
+                    size += FfiConverterString.allocationSize(inner.text);
+                    return size;
+                }
+                case AppPickerEvent_Tags.VaultSelection: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(28);
                     size += FfiConverterSequenceString.allocationSize(inner.selected);
                     return size;
                 }
                 case AppPickerEvent_Tags.Confirm: {
-                    return ordinalConverter.allocationSize(26);
+                    return ordinalConverter.allocationSize(29);
                 }
                 case AppPickerEvent_Tags.Progress: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(27);
+                    let size = ordinalConverter.allocationSize(30);
                     size += FfiConverterTypeAppTeleportRunEvent.allocationSize(inner.event);
                     return size;
                 }
                 case AppPickerEvent_Tags.Finished: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(28);
+                    let size = ordinalConverter.allocationSize(31);
                     size += FfiConverterTypeAppTeleportRunReport.allocationSize(inner.report);
                     return size;
                 }
                 case AppPickerEvent_Tags.Back: {
-                    return ordinalConverter.allocationSize(29);
+                    return ordinalConverter.allocationSize(32);
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
@@ -53726,6 +54302,10 @@ export enum AppWizardAction_Tags {
     SetMemory = "SetMemory",
     SetDisk = "SetDisk",
     ResetDisk = "ResetDisk",
+    EditResource = "EditResource",
+    SetResourceText = "SetResourceText",
+    CommitResource = "CommitResource",
+    CancelResource = "CancelResource",
     SetGpu = "SetGpu",
     SetName = "SetName",
     SetOpenWhenReady = "SetOpenWhenReady",
@@ -54321,6 +54901,129 @@ inner: {diskGb: number }): SetDisk_ {
 
     }
 
+    type EditResource__interface = {
+        tag: AppWizardAction_Tags.EditResource;
+        inner:
+Readonly<{field: AppResourceField}>
+    };
+    /**
+     * A slider's number clicked: its value can be typed.
+     */
+    class EditResource_ extends UniffiEnum implements EditResource__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppWizardAction";
+        readonly tag = AppWizardAction_Tags.EditResource;
+        readonly inner:
+Readonly<{field: AppResourceField}>;
+        constructor(
+inner: {field: AppResourceField }) {
+            super("AppWizardAction", "EditResource");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {field: AppResourceField }): EditResource_ {
+            return new EditResource_(inner);
+        }
+
+        static instanceOf(obj: any): obj is EditResource_ {
+            return obj.tag === AppWizardAction_Tags.EditResource;
+        }
+
+    }
+
+    type SetResourceText__interface = {
+        tag: AppWizardAction_Tags.SetResourceText;
+        inner:
+Readonly<{text: string}>
+    };
+    /**
+     * The typed value's text.
+     */
+    class SetResourceText_ extends UniffiEnum implements SetResourceText__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppWizardAction";
+        readonly tag = AppWizardAction_Tags.SetResourceText;
+        readonly inner:
+Readonly<{text: string}>;
+        constructor(
+inner: {text: string }) {
+            super("AppWizardAction", "SetResourceText");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {text: string }): SetResourceText_ {
+            return new SetResourceText_(inner);
+        }
+
+        static instanceOf(obj: any): obj is SetResourceText_ {
+            return obj.tag === AppWizardAction_Tags.SetResourceText;
+        }
+
+    }
+
+    type CommitResource__interface = {
+        tag: AppWizardAction_Tags.CommitResource
+    };
+    /**
+     * Return (or leaving the field): the typed value is used when it is
+     * within the slider's limits.
+     */
+    class CommitResource_ extends UniffiEnum implements CommitResource__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppWizardAction";
+        readonly tag = AppWizardAction_Tags.CommitResource;
+        constructor() {
+            super("AppWizardAction", "CommitResource");
+        }
+
+        static new(): CommitResource_ {
+            return new CommitResource_();
+        }
+
+        static instanceOf(obj: any): obj is CommitResource_ {
+            return obj.tag === AppWizardAction_Tags.CommitResource;
+        }
+
+    }
+
+    type CancelResource__interface = {
+        tag: AppWizardAction_Tags.CancelResource
+    };
+    /**
+     * Escape: the slider's value stays.
+     */
+    class CancelResource_ extends UniffiEnum implements CancelResource__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppWizardAction";
+        readonly tag = AppWizardAction_Tags.CancelResource;
+        constructor() {
+            super("AppWizardAction", "CancelResource");
+        }
+
+        static new(): CancelResource_ {
+            return new CancelResource_();
+        }
+
+        static instanceOf(obj: any): obj is CancelResource_ {
+            return obj.tag === AppWizardAction_Tags.CancelResource;
+        }
+
+    }
+
     type SetGpu__interface = {
         tag: AppWizardAction_Tags.SetGpu;
         inner:
@@ -54719,6 +55422,10 @@ inner: {error: string }): AddressFailed_ {
   SetMemory: SetMemory_,
   SetDisk: SetDisk_,
   ResetDisk: ResetDisk_,
+  EditResource: EditResource_,
+  SetResourceText: SetResourceText_,
+  CommitResource: CommitResource_,
+  CancelResource: CancelResource_,
   SetGpu: SetGpu_,
   SetName: SetName_,
   SetOpenWhenReady: SetOpenWhenReady_,
@@ -54735,7 +55442,7 @@ inner: {error: string }): AddressFailed_ {
 
 })();
 export type AppWizardAction = InstanceType<
-    typeof AppWizardAction['SyncDefault' | 'ChooseOs' | 'ChooseImage' | 'SetImageText' | 'OpenImageSuggestions' | 'MoveImageSuggestion' | 'PickImageSuggestion' | 'DismissImageSuggestions' | 'SetPlacement' | 'ChooseCloud' | 'ChoosePlacement' | 'ToggleAdvanced' | 'ChooseKind' | 'SetRuntime' | 'SetCpus' | 'SetMemory' | 'SetDisk' | 'ResetDisk' | 'SetGpu' | 'SetName' | 'SetOpenWhenReady' | 'Next' | 'Back' | 'ShowAddress' | 'HideAddress' | 'SetAddress' | 'SetToken' | 'SetAddressName' | 'SubmitAddress' | 'AddressFailed']
+    typeof AppWizardAction['SyncDefault' | 'ChooseOs' | 'ChooseImage' | 'SetImageText' | 'OpenImageSuggestions' | 'MoveImageSuggestion' | 'PickImageSuggestion' | 'DismissImageSuggestions' | 'SetPlacement' | 'ChooseCloud' | 'ChoosePlacement' | 'ToggleAdvanced' | 'ChooseKind' | 'SetRuntime' | 'SetCpus' | 'SetMemory' | 'SetDisk' | 'ResetDisk' | 'EditResource' | 'SetResourceText' | 'CommitResource' | 'CancelResource' | 'SetGpu' | 'SetName' | 'SetOpenWhenReady' | 'Next' | 'Back' | 'ShowAddress' | 'HideAddress' | 'SetAddress' | 'SetToken' | 'SetAddressName' | 'SubmitAddress' | 'AddressFailed']
 >;
 
 // FfiConverter for enum AppWizardAction
@@ -54763,18 +55470,22 @@ const FfiConverterTypeAppWizardAction = (() => {
                 case 16: return new AppWizardAction.SetMemory({memoryGb: FfiConverterUInt32.read(from) });
                 case 17: return new AppWizardAction.SetDisk({diskGb: FfiConverterUInt32.read(from) });
                 case 18: return new AppWizardAction.ResetDisk();
-                case 19: return new AppWizardAction.SetGpu({on: FfiConverterBool.read(from) });
-                case 20: return new AppWizardAction.SetName({name: FfiConverterString.read(from) });
-                case 21: return new AppWizardAction.SetOpenWhenReady({on: FfiConverterBool.read(from) });
-                case 22: return new AppWizardAction.Next();
-                case 23: return new AppWizardAction.Back();
-                case 24: return new AppWizardAction.ShowAddress();
-                case 25: return new AppWizardAction.HideAddress();
-                case 26: return new AppWizardAction.SetAddress({url: FfiConverterString.read(from) });
-                case 27: return new AppWizardAction.SetToken({token: FfiConverterString.read(from) });
-                case 28: return new AppWizardAction.SetAddressName({name: FfiConverterString.read(from) });
-                case 29: return new AppWizardAction.SubmitAddress();
-                case 30: return new AppWizardAction.AddressFailed({error: FfiConverterString.read(from) });
+                case 19: return new AppWizardAction.EditResource({field: FfiConverterTypeAppResourceField.read(from) });
+                case 20: return new AppWizardAction.SetResourceText({text: FfiConverterString.read(from) });
+                case 21: return new AppWizardAction.CommitResource();
+                case 22: return new AppWizardAction.CancelResource();
+                case 23: return new AppWizardAction.SetGpu({on: FfiConverterBool.read(from) });
+                case 24: return new AppWizardAction.SetName({name: FfiConverterString.read(from) });
+                case 25: return new AppWizardAction.SetOpenWhenReady({on: FfiConverterBool.read(from) });
+                case 26: return new AppWizardAction.Next();
+                case 27: return new AppWizardAction.Back();
+                case 28: return new AppWizardAction.ShowAddress();
+                case 29: return new AppWizardAction.HideAddress();
+                case 30: return new AppWizardAction.SetAddress({url: FfiConverterString.read(from) });
+                case 31: return new AppWizardAction.SetToken({token: FfiConverterString.read(from) });
+                case 32: return new AppWizardAction.SetAddressName({name: FfiConverterString.read(from) });
+                case 33: return new AppWizardAction.SubmitAddress();
+                case 34: return new AppWizardAction.AddressFailed({error: FfiConverterString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -54878,64 +55589,84 @@ const FfiConverterTypeAppWizardAction = (() => {
                     ordinalConverter.write(18, into);
                     return;
                 }
-                case AppWizardAction_Tags.SetGpu: {
+                case AppWizardAction_Tags.EditResource: {
                     ordinalConverter.write(19, into);
+                    const inner = value.inner;
+                    FfiConverterTypeAppResourceField.write(inner.field, into);
+                    return;
+                }
+                case AppWizardAction_Tags.SetResourceText: {
+                    ordinalConverter.write(20, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.text, into);
+                    return;
+                }
+                case AppWizardAction_Tags.CommitResource: {
+                    ordinalConverter.write(21, into);
+                    return;
+                }
+                case AppWizardAction_Tags.CancelResource: {
+                    ordinalConverter.write(22, into);
+                    return;
+                }
+                case AppWizardAction_Tags.SetGpu: {
+                    ordinalConverter.write(23, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.on, into);
                     return;
                 }
                 case AppWizardAction_Tags.SetName: {
-                    ordinalConverter.write(20, into);
+                    ordinalConverter.write(24, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.name, into);
                     return;
                 }
                 case AppWizardAction_Tags.SetOpenWhenReady: {
-                    ordinalConverter.write(21, into);
+                    ordinalConverter.write(25, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.on, into);
                     return;
                 }
                 case AppWizardAction_Tags.Next: {
-                    ordinalConverter.write(22, into);
+                    ordinalConverter.write(26, into);
                     return;
                 }
                 case AppWizardAction_Tags.Back: {
-                    ordinalConverter.write(23, into);
+                    ordinalConverter.write(27, into);
                     return;
                 }
                 case AppWizardAction_Tags.ShowAddress: {
-                    ordinalConverter.write(24, into);
+                    ordinalConverter.write(28, into);
                     return;
                 }
                 case AppWizardAction_Tags.HideAddress: {
-                    ordinalConverter.write(25, into);
+                    ordinalConverter.write(29, into);
                     return;
                 }
                 case AppWizardAction_Tags.SetAddress: {
-                    ordinalConverter.write(26, into);
+                    ordinalConverter.write(30, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.url, into);
                     return;
                 }
                 case AppWizardAction_Tags.SetToken: {
-                    ordinalConverter.write(27, into);
+                    ordinalConverter.write(31, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.token, into);
                     return;
                 }
                 case AppWizardAction_Tags.SetAddressName: {
-                    ordinalConverter.write(28, into);
+                    ordinalConverter.write(32, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.name, into);
                     return;
                 }
                 case AppWizardAction_Tags.SubmitAddress: {
-                    ordinalConverter.write(29, into);
+                    ordinalConverter.write(33, into);
                     return;
                 }
                 case AppWizardAction_Tags.AddressFailed: {
-                    ordinalConverter.write(30, into);
+                    ordinalConverter.write(34, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.error, into);
                     return;
@@ -55040,60 +55771,78 @@ const FfiConverterTypeAppWizardAction = (() => {
                 case AppWizardAction_Tags.ResetDisk: {
                     return ordinalConverter.allocationSize(18);
                 }
-                case AppWizardAction_Tags.SetGpu: {
+                case AppWizardAction_Tags.EditResource: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(19);
+                    size += FfiConverterTypeAppResourceField.allocationSize(inner.field);
+                    return size;
+                }
+                case AppWizardAction_Tags.SetResourceText: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(20);
+                    size += FfiConverterString.allocationSize(inner.text);
+                    return size;
+                }
+                case AppWizardAction_Tags.CommitResource: {
+                    return ordinalConverter.allocationSize(21);
+                }
+                case AppWizardAction_Tags.CancelResource: {
+                    return ordinalConverter.allocationSize(22);
+                }
+                case AppWizardAction_Tags.SetGpu: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(23);
                     size += FfiConverterBool.allocationSize(inner.on);
                     return size;
                 }
                 case AppWizardAction_Tags.SetName: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(20);
+                    let size = ordinalConverter.allocationSize(24);
                     size += FfiConverterString.allocationSize(inner.name);
                     return size;
                 }
                 case AppWizardAction_Tags.SetOpenWhenReady: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(21);
+                    let size = ordinalConverter.allocationSize(25);
                     size += FfiConverterBool.allocationSize(inner.on);
                     return size;
                 }
                 case AppWizardAction_Tags.Next: {
-                    return ordinalConverter.allocationSize(22);
+                    return ordinalConverter.allocationSize(26);
                 }
                 case AppWizardAction_Tags.Back: {
-                    return ordinalConverter.allocationSize(23);
+                    return ordinalConverter.allocationSize(27);
                 }
                 case AppWizardAction_Tags.ShowAddress: {
-                    return ordinalConverter.allocationSize(24);
+                    return ordinalConverter.allocationSize(28);
                 }
                 case AppWizardAction_Tags.HideAddress: {
-                    return ordinalConverter.allocationSize(25);
+                    return ordinalConverter.allocationSize(29);
                 }
                 case AppWizardAction_Tags.SetAddress: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(26);
+                    let size = ordinalConverter.allocationSize(30);
                     size += FfiConverterString.allocationSize(inner.url);
                     return size;
                 }
                 case AppWizardAction_Tags.SetToken: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(27);
+                    let size = ordinalConverter.allocationSize(31);
                     size += FfiConverterString.allocationSize(inner.token);
                     return size;
                 }
                 case AppWizardAction_Tags.SetAddressName: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(28);
+                    let size = ordinalConverter.allocationSize(32);
                     size += FfiConverterString.allocationSize(inner.name);
                     return size;
                 }
                 case AppWizardAction_Tags.SubmitAddress: {
-                    return ordinalConverter.allocationSize(29);
+                    return ordinalConverter.allocationSize(33);
                 }
                 case AppWizardAction_Tags.AddressFailed: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(30);
+                    let size = ordinalConverter.allocationSize(34);
                     size += FfiConverterString.allocationSize(inner.error);
                     return size;
                 }
@@ -59123,6 +59872,9 @@ const FfiConverterOptionalTypeAppTeleportPlan = new FfiConverterOptional(FfiConv
 // FfiConverter for Array<KvDomainCount>
 const FfiConverterSequenceTypeKvDomainCount = new FfiConverterArray(FfiConverterTypeKvDomainCount);
 
+// FfiConverter for Array<AppVaultPassword>
+const FfiConverterSequenceTypeAppVaultPassword = new FfiConverterArray(FfiConverterTypeAppVaultPassword);
+
 // FfiConverter for Array<AppTeleportRunEvent>
 const FfiConverterSequenceTypeAppTeleportRunEvent = new FfiConverterArray(FfiConverterTypeAppTeleportRunEvent);
 
@@ -59152,6 +59904,9 @@ const FfiConverterSequenceTypeAppReviewToggle = new FfiConverterArray(FfiConvert
 
 // FfiConverter for Array<AppReviewDomain>
 const FfiConverterSequenceTypeAppReviewDomain = new FfiConverterArray(FfiConverterTypeAppReviewDomain);
+
+// FfiConverter for Array<AppReviewPassword>
+const FfiConverterSequenceTypeAppReviewPassword = new FfiConverterArray(FfiConverterTypeAppReviewPassword);
 
 // FfiConverter for AppNotice | undefined
 const FfiConverterOptionalTypeAppNotice = new FfiConverterOptional(FfiConverterTypeAppNotice);
@@ -59255,6 +60010,9 @@ const FfiConverterSequenceTypeAppGpuChoice = new FfiConverterArray(FfiConverterT
 // FfiConverter for Array<AppGpuChoice> | undefined
 const FfiConverterOptionalSequenceTypeAppGpuChoice = new FfiConverterOptional(FfiConverterSequenceTypeAppGpuChoice);
 
+// FfiConverter for AppResourceEdit | undefined
+const FfiConverterOptionalTypeAppResourceEdit = new FfiConverterOptional(FfiConverterTypeAppResourceEdit);
+
 // FfiConverter for Array<AppStepView>
 const FfiConverterSequenceTypeAppStepView = new FfiConverterArray(FfiConverterTypeAppStepView);
 
@@ -59275,6 +60033,9 @@ const FfiConverterSequenceTypeAppWizardFact = new FfiConverterArray(FfiConverter
 
 // FfiConverter for AppGpuRow | undefined
 const FfiConverterOptionalTypeAppGpuRow = new FfiConverterOptional(FfiConverterTypeAppGpuRow);
+
+// FfiConverter for AppResourceEditView | undefined
+const FfiConverterOptionalTypeAppResourceEditView = new FfiConverterOptional(FfiConverterTypeAppResourceEditView);
 
 // FfiConverter for Array<AppWizardField>
 const FfiConverterSequenceTypeAppWizardField = new FfiConverterArray(FfiConverterTypeAppWizardField);
@@ -59972,6 +60733,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_picker_consent() !== 47226) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_picker_consent");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json() !== 64995) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_picker_event_from_json");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary() !== 24894) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_picker_grid_primary");
@@ -60814,8 +61578,12 @@ export default Object.freeze({
     FfiConverterTypeAppRememberedChoice,
     FfiConverterTypeAppRemoteWindow,
     FfiConverterTypeAppRemoteWindowGroup,
+    FfiConverterTypeAppResourceEdit,
+    FfiConverterTypeAppResourceEditView,
+    FfiConverterTypeAppResourceField,
     FfiConverterTypeAppReviewChoice,
     FfiConverterTypeAppReviewDomain,
+    FfiConverterTypeAppReviewPassword,
     FfiConverterTypeAppReviewToggle,
     FfiConverterTypeAppReviewView,
     FfiConverterTypeAppRoleOption,
@@ -60913,6 +61681,7 @@ export default Object.freeze({
     FfiConverterTypeAppUnconfirmedMachine,
     FfiConverterTypeAppUpdateChannel,
     FfiConverterTypeAppUsageToggle,
+    FfiConverterTypeAppVaultPassword,
     FfiConverterTypeAppVaultSource,
     FfiConverterTypeAppWindowMode,
     FfiConverterTypeAppWizardAction,

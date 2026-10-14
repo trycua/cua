@@ -131,6 +131,44 @@ pub struct VaultSource {
     /// The app's saved passwords (ids), sent only when ticked.
     #[serde(default)]
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value), for
+    /// the review to list.
+    #[serde(default)]
+    pub passwords: Vec<VaultPassword>,
+}
+
+/// One saved password of the Keyvault, as a review lists it: its site and
+/// username, never its value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultPassword {
+    /// The item's id.
+    pub id: String,
+    /// Its site (`github.com`); empty when not known.
+    #[serde(default)]
+    pub site: String,
+    /// Its username; empty when not known or hidden.
+    #[serde(default)]
+    pub username: String,
+}
+
+/// One saved password choice in the review: a site of the browser (reading
+/// it now) or one saved password (from the Keyvault). Sites and usernames
+/// only: a password's value is never shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPassword {
+    /// What picking it toggles: the site (reading the app) or the item id
+    /// (from the Keyvault).
+    pub key: String,
+    /// The site (`github.com`), or "Saved password" when not known.
+    pub site: String,
+    /// The username, when known (a saved item).
+    pub username: String,
+    /// "2 passwords" (a site of the browser); empty for one saved item.
+    pub counts: String,
+    /// Chosen to send.
+    pub selected: bool,
 }
 
 /// The review's choices.
@@ -158,6 +196,19 @@ pub struct ReviewChoice {
     /// them; never remembered).
     #[serde(default)]
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send (reading the app).
+    #[serde(default)]
+    pub password_domains: Vec<String>,
+    /// The saved passwords to send (ids, from the Keyvault).
+    #[serde(default)]
+    pub password_items: Vec<String>,
+    /// The passwords list's search text.
+    #[serde(default)]
+    pub password_query: String,
+    /// The password choice was made (the default is picked the first time
+    /// the box is ticked).
+    #[serde(default)]
+    pub passwords_picked: bool,
 }
 
 /// The sites the minimal default picks: those that look like they keep a
@@ -281,6 +332,146 @@ pub fn set_shown_domains(c: &mut ReviewChoice, value: bool) {
         c.selected_domains.extend(shown);
     }
     sort_selected(c);
+}
+
+/// The browser's sites that hold saved passwords (reading it now).
+fn password_sites(c: &ReviewChoice) -> impl Iterator<Item = &KvDomainCount> {
+    c.domains.iter().filter(|d| d.passwords > 0)
+}
+
+/// The saved passwords of the Keyvault, with what is known of each (a host
+/// that sends only ids lists them unnamed).
+fn vault_passwords(c: &ReviewChoice) -> Vec<VaultPassword> {
+    c.vault
+        .password_ids
+        .iter()
+        .map(|id| {
+            c.vault
+                .passwords
+                .iter()
+                .find(|p| &p.id == id)
+                .cloned()
+                .unwrap_or_else(|| VaultPassword {
+                    id: id.clone(),
+                    ..Default::default()
+                })
+        })
+        .collect()
+}
+
+/// The passwords the first tick picks: from the Keyvault, every saved one;
+/// reading the app, those of the sites chosen to keep you signed in.
+pub fn default_passwords(c: &ReviewChoice) -> (Vec<String>, Vec<String>) {
+    let domains = password_sites(c)
+        .filter(|d| c.selected_domains.contains(&d.domain))
+        .map(|d| d.domain.clone())
+        .collect();
+    (domains, c.vault.password_ids.clone())
+}
+
+/// The saved passwords as the review lists them (filtered by the search):
+/// sites with counts when reading the app, else each saved password with
+/// its site and username.
+pub fn password_rows(c: &ReviewChoice) -> Vec<ReviewPassword> {
+    let words: Vec<String> = c
+        .password_query
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+    let shown = |text: String| words.iter().all(|w| text.to_lowercase().contains(w));
+    match c.source {
+        SendSource::Live => password_sites(c)
+            .filter(|d| shown(d.domain.clone()))
+            .map(|d| ReviewPassword {
+                key: d.domain.clone(),
+                site: d.domain.clone(),
+                username: String::new(),
+                counts: format!(
+                    "{} password{}",
+                    d.passwords,
+                    if d.passwords == 1 { "" } else { "s" }
+                ),
+                selected: c.password_domains.contains(&d.domain),
+            })
+            .collect(),
+        SendSource::Vault => vault_passwords(c)
+            .into_iter()
+            .map(|p| ReviewPassword {
+                selected: c.password_items.contains(&p.id),
+                key: p.id,
+                site: if p.site.is_empty() {
+                    "Saved password".into()
+                } else {
+                    site_of(&p.site)
+                },
+                username: p.username,
+                counts: String::new(),
+            })
+            .filter(|r| shown(format!("{} {}", r.site, r.username)))
+            .collect(),
+    }
+}
+
+/// "2 of 5 sites" (reading the app) or "2 of 5 passwords" (saved).
+pub fn password_summary(c: &ReviewChoice) -> String {
+    let (picked, all, what) = match c.source {
+        SendSource::Live => (
+            password_sites(c)
+                .filter(|d| c.password_domains.contains(&d.domain))
+                .count(),
+            password_sites(c).count(),
+            "site",
+        ),
+        SendSource::Vault => (
+            c.vault
+                .password_ids
+                .iter()
+                .filter(|id| c.password_items.contains(id))
+                .count(),
+            c.vault.password_ids.len(),
+            "password",
+        ),
+    };
+    format!(
+        "{picked} of {all} {what}{}",
+        if all == 1 { "" } else { "s" }
+    )
+}
+
+/// Picks or drops one saved password choice ([`ReviewPassword::key`]).
+pub fn toggle_password(c: &mut ReviewChoice, key: &str) {
+    if !password_rows(&ReviewChoice {
+        password_query: String::new(),
+        ..c.clone()
+    })
+    .iter()
+    .any(|r| r.key == key)
+    {
+        return;
+    }
+    let list = match c.source {
+        SendSource::Live => &mut c.password_domains,
+        SendSource::Vault => &mut c.password_items,
+    };
+    match list.iter().position(|k| k == key) {
+        Some(n) => {
+            list.remove(n);
+        }
+        None => list.push(key.into()),
+    }
+}
+
+/// Picks or drops every saved password choice the search shows.
+pub fn set_shown_passwords(c: &mut ReviewChoice, value: bool) {
+    let shown: Vec<String> = password_rows(c).into_iter().map(|r| r.key).collect();
+    let list = match c.source {
+        SendSource::Live => &mut c.password_domains,
+        SendSource::Vault => &mut c.password_items,
+    };
+    list.retain(|k| !shown.contains(k));
+    if value {
+        list.extend(shown);
+    }
 }
 
 fn sort_selected(c: &mut ReviewChoice) {

@@ -40,4 +40,21 @@ struct TeleportConsentTests {
             cookieDomains: nil, exclude: [], fromVault: ["a", "b"], includePasswords: true))
         #expect(v.fromVault == ["a", "b"] && v.cookieDomains == nil && v.includePasswords)
     }
+
+    /// The sites picked for saved passwords reach the SDK, apart from the
+    /// sites whose cookies go (CUA-1641), from the native review and from
+    /// the page's consent alike.
+    @MainActor @Test func thePasswordSitesReachTheSdkConsent() {
+        let c = sdkConsent(AppTeleportConsent(
+            approved: true, acknowledgeSensitive: true, saveToKeyvault: false, acknowledgeRelayPlaintext: false,
+            cookieDomains: ["github.com"], exclude: [], fromVault: nil, includePasswords: true,
+            passwordDomains: ["bank.example", "github.com"]))
+        #expect(c.cookieDomains == ["github.com"])
+        #expect(c.passwordDomains == ["bank.example", "github.com"] && c.includePasswords)
+        let page = WebUIBridge.teleportConsent([
+            "approved": true, "acknowledgeSensitive": true, "includePasswords": true,
+            "cookieDomains": ["github.com"], "passwordDomains": ["bank.example"],
+        ])
+        #expect(page.passwordDomains == ["bank.example"] && page.includePasswords)
+    }
 }

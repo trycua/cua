@@ -396,7 +396,7 @@ public final class TeleportModel {
             reviewVault = KvVaultState(query: "", selected: source.ids, expanded: [provider], app: provider)
             send(.vaultItems(count: source.count, newestMs: source.newestMs,
                              nowMs: Int64(keyvault.clock().timeIntervalSince1970 * 1000), selected: source.ids,
-                             passwordIds: source.passwordIds))
+                             passwordIds: source.passwordIds, passwords: source.passwords))
         }
         guard review.needsDomains else { return }
         guard let client = keyvault?.client else { send(.domainsFailed); return }
@@ -515,5 +515,6 @@ func sdkConsent(_ consent: AppTeleportConsent) -> TeleportConsent {
                     cookieDomains: consent.cookieDomains,
                     exclude: consent.exclude,
                     fromVault: consent.fromVault,
-                    includePasswords: consent.includePasswords)
+                    includePasswords: consent.includePasswords,
+                    passwordDomains: consent.passwordDomains)
 }

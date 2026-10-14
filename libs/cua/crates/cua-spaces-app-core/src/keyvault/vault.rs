@@ -831,6 +831,10 @@ pub struct KvVaultSource {
     /// only when ticked in the review.
     #[serde(default)]
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value),
+    /// for the review to list and pick from.
+    #[serde(default)]
+    pub passwords: Vec<crate::teleport::review::VaultPassword>,
 }
 
 /// The saved items of `provider_id` a teleport can send.
@@ -840,17 +844,23 @@ pub fn vault_source(o: &KeyvaultOverview, provider_id: &str) -> KvVaultSource {
         ..Default::default()
     };
     let all = shown(o, &state);
-    let password_ids: Vec<String> = all
+    let passwords: Vec<crate::teleport::review::VaultPassword> = all
         .iter()
         .filter(|i| KvKind::from_wire(&i.kind) == KvKind::Password)
-        .map(|i| i.id.clone())
+        .map(|i| crate::teleport::review::VaultPassword {
+            id: i.id.clone(),
+            site: i.domain.as_deref().map(site_of).unwrap_or_default(),
+            username: i.key.clone(),
+        })
         .collect();
+    let password_ids: Vec<String> = passwords.iter().map(|p| p.id.clone()).collect();
     let items: Vec<&KvItem> = all
         .into_iter()
         .filter(|i| KvKind::from_wire(&i.kind) != KvKind::Password)
         .collect();
     KvVaultSource {
         password_ids,
+        passwords,
         count: items.len() as u32,
         newest_ms: items.iter().map(|i| i.updated_ms as i64).max().unwrap_or(0),
         ids: items.iter().map(|i| i.id.clone()).collect(),

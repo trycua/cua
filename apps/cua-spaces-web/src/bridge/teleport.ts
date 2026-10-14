@@ -420,6 +420,7 @@ export class TeleportStore {
         nowMs: Date.now(),
         selected: source.ids,
         passwordIds: source.passwordIds,
+        passwords: source.passwords ?? [],
       });
     } catch {
       /* no Keyvault: nothing saved to send from */

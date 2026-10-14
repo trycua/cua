@@ -124,7 +124,7 @@ pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, Sp
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,
-    expects_spacesd, pool_key, sanitize_label, sized_pool_key,
+    expects_spacesd, is_generated_name, pool_key, sanitize_label, sized_pool_key,
 };
 
 /// The Spaces tool contract (manifest, input types).

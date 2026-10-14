@@ -105,9 +105,16 @@ struct KeyvaultReviewTests {
         t.send(.togglePasswords(value: true))
         #expect(appPickerConsent(state: t.state).includePasswords)
         #expect(sdkConsent(appPickerConsent(state: t.state)).includePasswords, "carried over to the SDK consent")
-        // Dropping the only site that has passwords takes the offer away.
+        // Ticked, they are listed by site to pick (CUA-1641), starting from
+        // the sites kept signed in; never a value.
+        #expect(t.review?.passwords.map(\.site) == ["github.com"])
+        #expect(appPickerConsent(state: t.state).passwordDomains == ["github.com"])
+        #expect(sdkConsent(appPickerConsent(state: t.state)).passwordDomains == ["github.com"])
+        // The password choice is its own: dropping the site's cookies keeps it.
         t.send(.toggleDomain(domain: "github.com"))
-        #expect(t.review?.offersPasswords == false)
+        #expect(appPickerConsent(state: t.state).passwordDomains == ["github.com"])
+        // Dropping it from the passwords sends none.
+        t.send(.togglePassword(key: "github.com"))
         #expect(!appPickerConsent(state: t.state).includePasswords)
         // From the Keyvault: its saved passwords, only when ticked.
         let (v, _) = try await reviewModel(vault: true)

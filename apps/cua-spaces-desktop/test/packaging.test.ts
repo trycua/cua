@@ -69,6 +69,22 @@ describe("the Linux install tree", () => {
     expect(mode(path.join(root, "resources.pak"))).toBe(0o644);
   });
 
+  it("ships chrome-sandbox setuid (4755) for electron-builder's after-install to settle per host", () => {
+    const root = groupWritableApp();
+    writeFileSync(path.join(root, "chrome-sandbox"), "x");
+    chmodSync(path.join(root, "chrome-sandbox"), 0o775);
+    normalizeModes(root);
+    expect(mode(path.join(root, "chrome-sandbox"))).toBe(0o4755);
+    // Stable on a second pass, and nothing else gets the setuid bit.
+    normalizeModes(root);
+    expect(mode(path.join(root, "chrome-sandbox"))).toBe(0o4755);
+    expect(mode(path.join(root, "cua-spaces"))).toBe(0o755);
+  });
+
+  it("keeps electron-builder's own after-install script (its userns-aware chrome-sandbox chmod)", () => {
+    expect(config.linux.afterInstall ?? config.deb.afterInstall).toBeUndefined();
+  });
+
   it("is fixed by afterPack before the deb and the AppImage are made", async () => {
     const root = groupWritableApp();
     await config.afterPack({ electronPlatformName: "linux", appOutDir: root, packager: { appInfo: { productFilename: "Cua Spaces" } } });

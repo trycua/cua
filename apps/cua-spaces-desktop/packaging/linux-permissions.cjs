@@ -17,16 +17,20 @@ function packedMode(mode, isDirectory) {
   return mode & 0o111 ? 0o755 : 0o644;
 }
 
+/** The mode Chromium's setuid sandbox helper ships with. */
+const SANDBOX_MODE = 0o4755;
+
 /** Sets the packed modes under `root` (symlinks are left as they are). */
 function normalizeModes(root) {
+  const sandbox = path.join(root, "chrome-sandbox");
   const visit = (p) => {
     const st = fs.lstatSync(p);
     if (st.isSymbolicLink()) return;
-    const mode = packedMode(st.mode, st.isDirectory());
+    const mode = p === sandbox ? SANDBOX_MODE : packedMode(st.mode, st.isDirectory());
     if ((st.mode & 0o7777) !== mode) fs.chmodSync(p, mode);
     if (st.isDirectory()) for (const name of fs.readdirSync(p)) visit(path.join(p, name));
   };
   visit(root);
 }
 
-module.exports = { normalizeModes, packedMode };
+module.exports = { normalizeModes, packedMode, SANDBOX_MODE };

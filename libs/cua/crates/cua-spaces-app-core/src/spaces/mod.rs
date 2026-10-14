@@ -384,13 +384,24 @@ pub fn is_machine_desktop(space: &Space) -> bool {
         .is_some_and(|own| !own.is_empty() && !own.contains('/') && !own.starts_with("space-"))
 }
 
-/// The Spaces the user can open: every Space but the machines' own
-/// desktops ([`is_machine_desktop`]): not This machine, even while it
-/// provides Spaces, and not one of your machines on the relay. A Space a
-/// machine provides counts. The notch tab and the menu bar item both show
-/// this number.
+/// The Spaces the user can open, in `spaces`' order: every Space but the
+/// machines' own desktops ([`is_machine_desktop`]): not This machine, even
+/// while it provides Spaces, and not one of your machines on the relay. A
+/// Space a machine provides is listed. The notch's tiles list these, and
+/// its tab and the menu bar item count them ([`openable_count`]), so the
+/// list and the count always agree.
+pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
+    spaces
+        .iter()
+        .filter(|s| !is_machine_desktop(s))
+        .cloned()
+        .collect()
+}
+
+/// How many [`openable_spaces`] there are: the notch tab's and the menu bar
+/// item's number.
 pub fn openable_count(spaces: &[Space]) -> u32 {
-    spaces.iter().filter(|s| !is_machine_desktop(s)).count() as u32
+    openable_spaces(spaces).len() as u32
 }
 
 /// The three ambient status dots.
@@ -470,7 +481,8 @@ mod tests {
     fn unknown_os_stays_neutral_across_the_roster_and_details() {
         let space = row_to_space(
             &SpaceRow {
-                id: "relay:mac-host".into(),
+                // A Space a machine provides (the machine itself is no tile).
+                id: "relay:space-0a1b2c3d".into(),
                 provider: "relay".into(),
                 os: None,
                 // Neither stale names nor a known image may invent an OS.

@@ -763,6 +763,31 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
   });
 
+  it("the notch lists the Spaces, never a machine that only provides them (CUA-1619)", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    backend.rowsNow = [
+      ...backend.rowsNow,
+      { ...backend.rowsNow[2]!, id: "relay:m1", name: "studio-mac", provider: "relay", host: undefined },
+      { ...backend.rowsNow[2]!, id: "relay:m1/space-1", name: "on-studio", provider: "relay", host: "m1" },
+    ];
+    await model.refresh();
+    // What the notch helper draws (NotchModel.view): the core's view of the
+    // app's Spaces (feedNotch hands it model.spaces, machines included).
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+    const opened = core.appNotchReduce(shown.state, { tag: "Click" });
+    const view = wireView(core.appNotchView(opened.state, model.spaces));
+    const ids = view.tiles.map((t) => t.id);
+    expect(ids).toContain("relay:m1/space-1");
+    expect(ids).not.toContain("relay:m1");
+    expect(ids).not.toContain("this-mac");
+    expect(ids.some((id) => isMachineDesktop(model.spaces.find((s) => s.id === id)!))).toBe(false);
+    // The list and the menu's count are the same Spaces.
+    expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
+    expect(view.tab.count).toBe(String(ids.length));
+  });
+
   it("says the launch is still waiting first", async () => {
     model.startup.phase = { kind: "starting" };
     const items = menuItems(bridge.context);

@@ -34,6 +34,12 @@ struct TeleportReview: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            // What happens, when there is nothing to choose (the core's).
+            if !review.steps.isEmpty {
+                Section("What happens") {
+                    ForEach(Array(review.steps.enumerated()), id: \.offset) { _, s in Text(s.summary) }
+                }
+            }
             Section { summary }
             if review.needsAcknowledgement {
                 Toggle("Send the secrets listed above", isOn: Binding(

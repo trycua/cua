@@ -602,6 +602,58 @@ struct WebUIHostTests {
         #expect(second.window?.frame.origin == frame.origin)
     }
 
+    /// A context menu from the page: its items in an NSMenu, in order, with
+    /// their enabled state; the chosen id answers the page, and a chosen
+    /// item's `copy` goes on the pasteboard. A bad request is refused, and
+    /// without a window the page is told to draw its own.
+    @Test func thePagesContextMenusAreNative() async throws {
+        _ = NSApplication.shared
+        let (_, model) = bridge()
+        let c = WebUIWindowController(model: model)
+        defer { c.window?.close() }
+        let board = NSPasteboard(name: .init("cua-test-menu-\(UUID().uuidString)"))
+        c.bridge.menuPasteboard = { board }
+        var shown: [([WebUIMenuItem], CGPoint)] = []
+        c.bridge.pickMenuItem = { items, at in
+            shown.append((items, at))
+            return "space.copyId"
+        }
+        let args: [String: Any] = ["items": [["id": "space.open", "label": "Open"], ["id": "", "label": "", "separator": true],
+                                             ["id": "space.stop", "label": "Turn off…", "enabled": false, "destructive": true],
+                                             ["id": "space.copyId", "label": "Copy ID", "copy": "local:aurora"]],
+                                   "x": 40, "y": 80]
+        let answer = try await c.bridge.handle("window.showContextMenu", args) as? [String: Any]
+        #expect(answer?["id"] as? String == "space.copyId")
+        #expect(board.string(forType: .string) == "local:aurora")
+        #expect(shown.first?.1 == CGPoint(x: 40, y: 80))
+
+        let picker = WebUIMenuPicker()
+        let menu = WebUIWindowController.contextMenu(try #require(shown.first?.0), picker: picker)
+        #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == ["Open", "-", "Turn off…", "Copy ID"])
+        #expect(menu.items.map(\.isEnabled) == [true, true, false, true])
+        menu.performActionForItem(at: 0)
+        #expect(picker.chosen == "space.open")
+
+        c.bridge.pickMenuItem = { _, _ in nil }
+        let none = try await c.bridge.handle("window.showContextMenu", args) as? [String: Any]
+        #expect(none?["id"] is NSNull)
+
+        c.webView.pageZoom = 1.25
+        let p = c.viewPoint(CGPoint(x: 40, y: 80))
+        #expect(p.x == 50)
+        #expect(p.y == (c.webView.isFlipped ? 100 : c.webView.bounds.height - 100))
+
+        await #expect(throws: (any Error).self) {
+            _ = try await c.bridge.handle("window.showContextMenu", ["items": [["id": "a"]], "x": 1, "y": 1])
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await c.bridge.handle("window.showContextMenu", ["items": [["id": "a", "label": "A"]], "x": "1", "y": 1])
+        }
+        // No window to draw over: unimplemented, and the page draws its own.
+        let (bare, _) = bridge()
+        #expect(await failure(bare, "window.showContextMenu", args) == "unimplemented")
+    }
+
     /// The page's Space tiles become the window-drag targets of its window
     /// (CSS pixels at the page's zoom), and a targeted tile is named back to
     /// the page; a new page starts with none.

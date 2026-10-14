@@ -191,6 +191,9 @@ struct BridgeContractTests {
         bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
+        // A context menu picks its first item instead of showing an NSMenu.
+        bridge.pickMenuItem = { items, _ in items.first { !$0.separator }?.id }
+        bridge.menuPasteboard = { NSPasteboard(name: .init("cua-contract-menu-\(UUID().uuidString)")) }
         let space = try #require(model.spaces.first?.id)
         return (bridge, model, space)
     }
@@ -248,6 +251,8 @@ struct BridgeContractTests {
             ("window.setBackgroundColor", ["color": "#16181c"]),
             ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 38]]]),
             ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
+            ("window.showContextMenu", ["items": [["id": "space.open", "label": "Open"], ["id": "", "label": "", "separator": true],
+                                                  ["id": "space.copyId", "label": "Copy ID", "copy": space]], "x": 40, "y": 80]),
             ("startup.get", [:]),
         ]
     }

@@ -47,6 +47,8 @@ export interface TestHost {
   answer?: (op: string, out: unknown) => unknown;
   /** Answers `op` itself instead of the demo host (undefined: the demo's). */
   intercept?: (op: string, args: unknown) => unknown;
+  /** The host draws context menus natively (absent: the page draws them). */
+  showContextMenu?: DataAdapter["showContextMenu"];
 }
 
 export async function mountApp(path: string, host: TestHost = { failsCreates: true, listsGhost: true }) {
@@ -55,6 +57,7 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {
     mode: demo.mode,
+    ...(host.showContextMenu ? { showContextMenu: host.showContextMenu } : {}),
     subscribe: (l) => {
       listeners.add(l);
       const off = demo.subscribe(l);

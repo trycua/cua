@@ -13,6 +13,7 @@ import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
+import { useSpaceContextMenu } from "@/components/space-context-menu";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -355,15 +356,7 @@ function MachineSpaces({ note, listSpaces, spaces }: { note: string; listSpaces:
             <ul className="divide-y rounded-xl border">
               {spaces.map((s) => (
                 <li key={s.id}>
-                  <Link
-                    to="/spaces/$spaceId"
-                    params={{ spaceId: s.id }}
-                    className="flex h-10 items-center gap-2.5 px-4 text-[13px] outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
-                  >
-                    <OsIcon os={s.os} className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{s.name}</span>
-                    <StateLabel state={spaceState(s)} space={s} />
-                  </Link>
+                  <HostedSpaceRow space={s} />
                 </li>
               ))}
             </ul>
@@ -371,6 +364,23 @@ function MachineSpaces({ note, listSpaces, spaces }: { note: string; listSpaces:
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** A Space the machine provides: a link to its page, with its context menu. */
+function HostedSpaceRow({ space: s }: { space: Space }) {
+  const menu = useSpaceContextMenu(s);
+  return (
+    <Link
+      {...menu}
+      to="/spaces/$spaceId"
+      params={{ spaceId: s.id }}
+      className="flex h-10 items-center gap-2.5 px-4 text-[13px] outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+    >
+      <OsIcon os={s.os} className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{s.name}</span>
+      <StateLabel state={spaceState(s)} space={s} />
+    </Link>
   );
 }
 

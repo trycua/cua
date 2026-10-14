@@ -104,6 +104,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "window.setBackgroundColor", "window.setDragRegions",
         // Where the page's Space tiles are, for a real window dragged onto one.
         "window.setDropTargets",
+        // A context menu, drawn natively (WebUIBridge+ContextMenu.swift).
+        "window.showContextMenu",
         // The launch (WebUIBridge+Startup.swift).
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
@@ -146,6 +148,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// A context menu's choice: the window's NSMenu (a test sets its own).
+    var pickMenuItem: (@MainActor ([WebUIMenuItem], CGPoint) async -> String?)?
+    /// Where a chosen item's `copy` goes (a test sets its own).
+    var menuPasteboard: @MainActor () -> NSPasteboard = { .general }
     /// The pasteboard of the last drag onto the window (a test sets its own).
     var dragPasteboard: @MainActor () -> NSPasteboard = { NSPasteboard(name: .drag) }
     /// Origins allowed to call (the bundled UI, and the dev server in a
@@ -373,6 +379,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "window.setDropTargets":
             host?.setDropTargets(try Self.dropTargets(args))
             return NSNull()
+        case "window.showContextMenu":
+            return try await showContextMenu(args)
 
         default:
             if let result = try routeStartup(method, args) { return result }

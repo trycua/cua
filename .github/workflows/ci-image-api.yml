@@ -42,6 +42,10 @@ env:
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest

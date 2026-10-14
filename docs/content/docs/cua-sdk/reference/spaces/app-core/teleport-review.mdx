@@ -27,7 +27,7 @@ Returned by [`app_picker_review`](/cua-sdk/reference/spaces/app-core/teleport#ap
 | --- | --- | --- | --- |
 | `title` | `String` |  | "Teleport Slack to Aurora". |
 | `items` | [`Vec<AppConsentItem>`](#appconsentitem-record) |  | The consent lines. |
-| `steps` | [`Vec<AppPlanStepView>`](#appplanstepview-record) |  | Plan steps. |
+| `steps` | [`Vec<AppPlanStepView>`](#appplanstepview-record) |  | What happens, in plan steps, when the review has nothing to choose (no files, state, secrets or sites; e.g. "Just the app" for an app the Space's image already has), so the review is never blank. Empty otherwise: the lines below say what is sent, and a step's counts would not follow what is turned off. The installs are in `items`. |
 | `needs_acknowledgement` / `needsAcknowledgement` | `bool` |  | The secrets checkbox shows. |
 | `acknowledged` | `bool` |  | Checked. |
 | `offers_save_to_keyvault` / `offersSaveToKeyvault` | `bool` |  | The "Save to Keyvault" checkbox shows (a sensitive plan only: there is nothing to keep sealed otherwise). |

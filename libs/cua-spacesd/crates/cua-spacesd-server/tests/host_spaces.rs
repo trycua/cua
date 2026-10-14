@@ -327,7 +327,10 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
     assert_eq!(got.name, "Mac mini (spare)");
     // What each Space is doing reaches the caller as the daemon said it.
     assert_eq!(
-        (got.spaces[0].state.as_str(), got.spaces[0].state_reason.as_str()),
+        (
+            got.spaces[0].state.as_str(),
+            got.spaces[0].state_reason.as_str()
+        ),
         ("failed", "its sandbox is gone")
     );
     let who: serde_json::Value = serde_json::from_str(&daemon.callers.lock().unwrap()[0]).unwrap();
@@ -558,7 +561,10 @@ async fn a_direct_host_serves_host_spaces_to_its_token_holder() {
     assert_eq!(got.name, "Mac mini (spare)");
     // What each Space is doing reaches the caller as the daemon said it.
     assert_eq!(
-        (got.spaces[0].state.as_str(), got.spaces[0].state_reason.as_str()),
+        (
+            got.spaces[0].state.as_str(),
+            got.spaces[0].state_reason.as_str()
+        ),
         ("failed", "its sandbox is gone")
     );
     let who: serde_json::Value =

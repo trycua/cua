@@ -4,6 +4,7 @@ use cua_sdk::CuaError;
 use std::{
     io::{IsTerminal, Write},
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -246,6 +247,47 @@ mod secret_tests {
         // A scheme-less value with spaces is masked whole.
         assert_eq!(mask_secret("a/b c"), "****");
     }
+
+    #[test]
+    fn program_status_reports_are_osc_7501() {
+        let report = program_status_report;
+        assert_eq!(
+            report(ProgramState::Working, None, "Installing updates"),
+            "\x1b]7501;state=working:app=cua:msg=SW5zdGFsbGluZyB1cGRhdGVz\x1b\\"
+        );
+        assert_eq!(
+            report(ProgramState::Working, Some(42), "x"),
+            "\x1b]7501;state=working:progress=42:app=cua:msg=eA==\x1b\\"
+        );
+        assert_eq!(
+            report(ProgramState::Working, Some(250), "x"),
+            "\x1b]7501;state=working:progress=100:app=cua:msg=eA==\x1b\\"
+        );
+        assert_eq!(
+            report(ProgramState::Done, Some(42), "x"),
+            "\x1b]7501;state=done:app=cua:msg=eA==\x1b\\"
+        );
+    }
+
+    #[test]
+    fn program_status_messages_fit_the_limits() {
+        use base64::Engine;
+        let msg = |report: &str| {
+            let b64 = report
+                .strip_prefix("\x1b]7501;state=error:app=cua:msg=")
+                .and_then(|r| r.strip_suffix("\x1b\\"))
+                .unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap();
+            String::from_utf8(bytes).unwrap()
+        };
+        let long = program_status_report(ProgramState::Error, None, &"é".repeat(3000));
+        assert!(long.len() <= 4096, "{}", long.len());
+        assert_eq!(msg(&long), "é".repeat(1024));
+        let control = program_status_report(ProgramState::Error, None, "a\x1bb\u{85}c\n");
+        assert_eq!(msg(&control), "a b c");
+    }
 }
 
 /// Test helper: a private `CUA_HOME` and no `CUA_DEFAULT_*` in the
@@ -307,7 +349,41 @@ pub mod test_env {
 pub fn exit_on_ctrl_c() {
     tokio::spawn(async {
         if tokio::signal::ctrl_c().await.is_ok() {
+            clear_program_status();
             std::process::exit(130);
         }
     });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramState {
+    Idle,
+    Working,
+    Done,
+    Error,
+}
+
+static PROGRAM_STATUS_REPORTED: AtomicBool = AtomicBool::new(false);
+
+pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
+    if std::io::stderr().is_terminal() {
+        eprint!("{}", program_status_report(state, progress, msg));
+        PROGRAM_STATUS_REPORTED.store(true, Ordering::Relaxed);
+    }
+}
+
+pub fn clear_program_status() {
+    if PROGRAM_STATUS_REPORTED.load(Ordering::Relaxed) {
+        eprint!("\x1b]7501;state=clear\x1b\\");
+    }
+}
+
+fn program_status_report(state: ProgramState, progress: Option<u8>, msg: &str) -> String {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let name = format!("{state:?}").to_lowercase();
+    let progress = progress.filter(|_| state == ProgramState::Working);
+    let progress = progress.map_or(String::new(), |p| format!(":progress={}", p.min(100)));
+    let msg = msg.replace(char::is_control, " ");
+    let msg = STANDARD.encode(&msg.trim()[..msg.trim().floor_char_boundary(2048)]);
+    format!("\x1b]7501;state={name}{progress}:app=cua:msg={msg}\x1b\\")
 }

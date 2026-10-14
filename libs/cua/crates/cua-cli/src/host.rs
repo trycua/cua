@@ -3,7 +3,7 @@
 //! machines; `add` / `rm`: register or forget a Space).
 
 use crate::auth;
-use crate::util::line;
+use crate::util::{ProgramState, line, program_status};
 use clap::Subcommand;
 use cua_host::{
     AccountTokens, DeviceAuth, Host, HostStatus, MachinePatch, RelayClient, RunnerKind,
@@ -783,6 +783,7 @@ pub async fn run_spaces_sdk(
                 r = &mut all => r,
                 _ = tokio::signal::ctrl_c() => {
                     // Ctrl-C: stop every create and remove what it made.
+                    crate::util::clear_program_status();
                     eprintln!("\nCancelling...");
                     let mut messages = Vec::new();
                     for n in 1..=count {
@@ -813,6 +814,10 @@ pub async fn run_spaces_sdk(
                         let Some(info) = created.space else {
                             continue;
                         };
+                        if show {
+                            let msg = format!("Created {} ({})", info.id, info.name);
+                            program_status(ProgramState::Done, None, &msg);
+                        }
                         if !json {
                             line(
                                 out,
@@ -832,6 +837,9 @@ pub async fn run_spaces_sdk(
                     }
                     Err(e) => {
                         failed += 1;
+                        if show {
+                            program_status(ProgramState::Error, None, &e.to_string());
+                        }
                         if !json {
                             eprintln!("cua: {e}");
                         }
@@ -1999,6 +2007,8 @@ impl cua_sdk::SpaceCreateListener for ProgressLine {
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
         if *last != text {
             eprint!("\r\x1b[2K{}", text.trim_end());
+            let progress = p.fraction.map(|f| (f * 100.0) as u8);
+            program_status(ProgramState::Working, progress, &text);
             *last = text;
         }
     }

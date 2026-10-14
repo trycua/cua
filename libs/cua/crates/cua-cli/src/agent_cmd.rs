@@ -11,7 +11,7 @@
 //! ```
 
 use crate::sandbox::{Narrow, env_of};
-use crate::util::line;
+use crate::util::{ProgramState, line, program_status};
 use clap::Subcommand;
 use cua_sdk::{AgentFile, AgentRun, AgentRunMcpServer, AgentRunOptions, Cua, CuaError};
 use std::collections::HashMap;
@@ -210,11 +210,20 @@ async fn follow(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<u64, CuaError> {
+    let label = format!("{} {}", run.harness(), run.run_id());
+    let report = |(state, msg): &(ProgramState, String)| {
+        if until_turn_end && !json {
+            program_status(*state, None, &format!("{label}: {msg}"));
+        }
+    };
+    let mut shown = (ProgramState::Working, "working".to_string());
+    report(&shown);
     // Bounded: at most 24 h of polling at 500 ms.
     for _ in 0..172_800 {
         let page = run.events(cursor, Some(500)).await?;
         cursor = page.cursor;
         let mut done = false;
+        let before = shown.clone();
         for e in &page.events {
             if json || raw {
                 line(out, &e.json);
@@ -224,6 +233,13 @@ async fn follow(
             if matches!(e.kind.as_str(), "turn_ended" | "exited") {
                 done = true;
             }
+            let detail = e.stop_reason.as_deref().or(e.text.as_deref());
+            if let Some(s) = run_state(&e.kind, detail, shown.0 == ProgramState::Working) {
+                shown = s;
+            }
+        }
+        if shown != before {
+            report(&shown);
         }
         if !until_turn_end || (done && page.caught_up) {
             break;
@@ -231,12 +247,29 @@ async fn follow(
         if page.caught_up {
             let s = run.status().await?;
             if s.status != "running" && !done {
+                if let Some(s) = run_state(&s.status, Some(&s.reason), true) {
+                    report(&s);
+                }
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
     Ok(cursor)
+}
+
+fn run_state(kind: &str, detail: Option<&str>, working: bool) -> Option<(ProgramState, String)> {
+    use ProgramState::*;
+    let detail = detail.unwrap_or_default();
+    Some(match (kind, detail) {
+        ("turn_started", _) => (Working, "working".into()),
+        ("turn_ended", "" | "end_turn") => (Done, "turn done".into()),
+        ("turn_ended", "cancelled") | ("idle", _) => (Idle, detail.into()),
+        ("turn_ended", _) => (Error, format!("turn ended ({detail})")),
+        ("exited", _) if !working => return None,
+        ("error" | "exited" | "failed" | "crashed", _) => (Error, format!("{kind}: {detail}")),
+        _ => return None,
+    })
 }
 
 /// The harnesses with the readiness the Spaces server reports
@@ -706,6 +739,49 @@ mod tests {
             "the value is never quoted: {e}"
         );
         assert!(e.to_string().contains("not a provider key variable"));
+    }
+
+    #[test]
+    fn turn_events_and_run_statuses_map_to_program_states() {
+        use ProgramState::*;
+        assert_eq!(
+            run_state("turn_started", Some("fix it"), false),
+            Some((Working, "working".into()))
+        );
+        assert_eq!(
+            run_state("turn_ended", Some("end_turn"), true),
+            Some((Done, "turn done".into()))
+        );
+        assert_eq!(
+            run_state("turn_ended", None, true),
+            Some((Done, "turn done".into()))
+        );
+        assert_eq!(
+            run_state("turn_ended", Some("cancelled"), true),
+            Some((Idle, "cancelled".into()))
+        );
+        assert_eq!(
+            run_state("turn_ended", Some("max_tokens"), true),
+            Some((Error, "turn ended (max_tokens)".into()))
+        );
+        assert_eq!(
+            run_state("error", Some("boom"), true),
+            Some((Error, "error: boom".into()))
+        );
+        assert_eq!(run_state("exited", Some("code 1"), false), None);
+        assert_eq!(
+            run_state("exited", Some("code 1"), true),
+            Some((Error, "exited: code 1".into()))
+        );
+        assert_eq!(
+            run_state("crashed", Some("oom"), true),
+            Some((Error, "crashed: oom".into()))
+        );
+        assert_eq!(
+            run_state("idle", Some("waiting for a follow-up"), true),
+            Some((Idle, "waiting for a follow-up".into()))
+        );
+        assert_eq!(run_state("message", Some("hi"), true), None);
     }
 
     #[test]

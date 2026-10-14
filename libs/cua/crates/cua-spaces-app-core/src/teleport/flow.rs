@@ -1358,7 +1358,15 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
             plan.steps
                 .iter()
                 .filter(|st| st.kind != "install")
-                .cloned()
+                .map(|st| PlanStepView {
+                    // The app's own name ("Open Firefox"), not its program's.
+                    summary: if st.kind == "launch" {
+                        format!("Open {app}")
+                    } else {
+                        st.summary.clone()
+                    },
+                    ..st.clone()
+                })
                 .collect()
         },
         toggles: plan
@@ -1752,7 +1760,7 @@ mod tests {
         );
         let rv = review(&s).unwrap();
         assert!(rv.items.is_empty() && rv.toggles.is_empty() && rv.warnings.is_empty());
-        assert_eq!(rv.steps, vec![step("launch", "Open google-chrome")]);
+        assert_eq!(rv.steps, vec![step("launch", "Open Google Chrome")]);
         assert!(rv.can_confirm);
 
         // An install is listed in `items` already, not again as a step.
@@ -1773,7 +1781,7 @@ mod tests {
         };
         let s2 = reduce(&reduce(&s, &PickerEvent::Back), &PickerEvent::Plan);
         let rv = review(&reduce(&s2, &PickerEvent::Planned { plan: installs })).unwrap();
-        assert_eq!(rv.steps, vec![step("launch", "Open google-chrome")]);
+        assert_eq!(rv.steps, vec![step("launch", "Open Google Chrome")]);
 
         // Something to choose: the lines say what is sent, not the steps.
         let files = Plan {

@@ -58,6 +58,6 @@ describe.skipIf(!wasmBuilt)("teleport review", () => {
     const teleport = { send: vi.fn(), sendFrom: vi.fn(), bytes: (n: number) => `${n} B` } as unknown as TeleportStore;
     const { container } = render(<TeleportReview review={review} readingSites={false} vault={null} teleport={teleport} />);
     expect(container.textContent).toContain("What happens");
-    expect([...container.querySelectorAll("[data-review-step]")].map((li) => li.textContent)).toEqual(["Open firefox"]);
+    expect([...container.querySelectorAll("[data-review-step]")].map((li) => li.textContent)).toEqual(["Open Firefox"]);
   });
 });

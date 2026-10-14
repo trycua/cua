@@ -1142,10 +1142,6 @@ async fn terminate_startup_child(child: &mut Child, liveness: &mut ChildStdin) {
     }
 }
 
-/// A host without a console, such as a GUI application, makes Windows open a
-/// visible console window for the console-subsystem daemon. Request a console
-/// without a window only then: a host that owns a console keeps sharing it,
-/// since an inherited console stderr handle only works in its own console.
 #[cfg(target_os = "windows")]
 fn prevent_console_window(command: &mut Command) {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -1536,9 +1532,6 @@ mod tests {
             .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
     }
 
-    /// Re-runs this test binary as a host without a console, as a GUI application
-    /// is, and as a host with a windowless console; each starts a probe the way
-    /// `perform_start` starts the daemon.
     #[cfg(target_os = "windows")]
     #[tokio::test]
     async fn daemon_console_window_follows_the_host_console() {

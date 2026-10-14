@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { BellIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNotifications, type NotificationInput, type NotificationLine } from "@/bridge";
+import { useContextMenu } from "@/components/context-menu";
+import { notificationMenuEntries } from "@/components/notification-context-menu";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
@@ -66,6 +68,7 @@ function NotificationsPage() {
               entry={data?.feed.find((n) => n.id === row.id)}
               open={open.has(row.id)}
               onToggle={() => toggle(row)}
+              onMarkRead={() => void markRead(row.id).catch(toastError("Couldn't mark it read"))}
             />
           ))}
         </div>
@@ -74,12 +77,33 @@ function NotificationsPage() {
   );
 }
 
-function NotificationRow({ row, entry, open, onToggle }: { row: NotificationLine; entry: NotificationInput | undefined; open: boolean; onToggle: () => void }) {
+function NotificationRow({
+  row,
+  entry,
+  open,
+  onToggle,
+  onMarkRead,
+}: {
+  row: NotificationLine;
+  entry: NotificationInput | undefined;
+  open: boolean;
+  onToggle: () => void;
+  onMarkRead: () => void;
+}) {
   const detailId = `notification-${row.id}`;
   const body = entry?.body.trim() ?? "";
+  const navigate = useNavigate();
+  const menu = useContextMenu(() =>
+    notificationMenuEntries(row, entry, open, {
+      toggle: onToggle,
+      markRead: onMarkRead,
+      openSpace: (spaceId) => void navigate({ to: "/spaces/$spaceId", params: { spaceId } }),
+    }),
+  );
   return (
     <div data-notification={row.id} data-unread={String(Boolean(row.on))} data-open={String(open)}>
       <button
+        {...menu}
         type="button"
         aria-expanded={open}
         aria-controls={open ? detailId : undefined}

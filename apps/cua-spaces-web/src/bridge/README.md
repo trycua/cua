@@ -203,6 +203,10 @@ speaks it as is:
   change calls `window.setBackgroundColor`. The host registers ⌘⇧Space
   itself; `settings.get` carries `globalShortcut: {label, registered}`, and
   each read tries the registration again when the system refused it.
+- `settings.get` also carries `accountUrl`, the host's account app
+  (`app_account_app_url`: `CUA_ENV`, `CUA_ACCOUNT_APP_URL`). The page's wasm
+  core has no environment, so the relay notice's Upgrade falls back to that
+  app's billing page (`relayUsage.view {usage, accountApp}`).
 - Touch ID and the unlock prompt stay native.
 - Launch at login is the core's `launch-at-login` row. The adapter reads it
   from the page and sets it with `settings.choose {row: "launch-at-login"}`,

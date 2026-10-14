@@ -233,6 +233,7 @@ const SettingsShape = ref(
       }),
     ),
     globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
+    accountUrl: optNull(str),
   }),
 );
 
@@ -974,6 +975,7 @@ const WkSettingsShape = ref(
     }),
     updateChannel: optNull(oneOf("stable", "beta")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
+    accountUrl: optNull(str),
   }),
 );
 

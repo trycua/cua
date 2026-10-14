@@ -159,8 +159,14 @@ pub fn notice_text(u: &RelayUsage) -> String {
 }
 
 /// The row and the notice; none when the relay meters nothing (the apps
-/// show nothing about it).
+/// show nothing about it). Upgrade opens the relay's page, else the account
+/// app's billing page.
 pub fn view(u: &RelayUsage) -> Option<RelayUsageView> {
+    view_for(u, &cua_home::env::account_app_url())
+}
+
+/// [`view`] with Upgrade falling back to `account_app`'s billing page.
+pub fn view_for(u: &RelayUsage, account_app: &str) -> Option<RelayUsageView> {
     if !u.metered {
         return None;
     }
@@ -182,7 +188,9 @@ pub fn view(u: &RelayUsage) -> Option<RelayUsageView> {
         notice: u.soft_limit_reached.then(|| RelayAllowanceNotice {
             text: notice_text(u),
             upgrade: UPGRADE.into(),
-            upgrade_url: checked(u.clone()).upgrade_url,
+            upgrade_url: checked(u.clone())
+                .upgrade_url
+                .or_else(|| Some(format!("{}/billing", account_app.trim_end_matches('/')))),
             dismiss: DISMISS.into(),
             dismiss_key: dismiss_key(u),
         }),
@@ -284,6 +292,29 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_falls_back_to_the_account_app_billing_page() {
+        let mut u = free();
+        u.soft_limit_reached = true;
+        u.reasons = vec!["hours".into()];
+        // The relay's page wins.
+        let n = view_for(&u, "https://app.staging.cua.ai")
+            .unwrap()
+            .notice
+            .unwrap();
+        assert_eq!(n.upgrade_url.as_deref(), Some("https://cua.ai/pricing"));
+        // None from the relay: the account app's billing page.
+        u.upgrade_url = None;
+        let n = view_for(&u, "https://app.staging.cua.ai/")
+            .unwrap()
+            .notice
+            .unwrap();
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.staging.cua.ai/billing")
+        );
+    }
+
+    #[test]
     fn only_https_upgrade_links_are_kept() {
         for bad in ["http://cua.ai/pricing", "javascript:alert(1)", ""] {
             let u = RelayUsage {
@@ -292,7 +323,17 @@ mod tests {
                 ..free()
             };
             assert_eq!(checked(u.clone()).upgrade_url, None, "{bad}");
-            assert_eq!(view(&u).unwrap().notice.unwrap().upgrade_url, None);
+            // A link that is not https is dropped; Upgrade opens the
+            // account app's billing page instead.
+            assert_eq!(
+                view_for(&u, "https://app.cua.ai")
+                    .unwrap()
+                    .notice
+                    .unwrap()
+                    .upgrade_url
+                    .as_deref(),
+                Some("https://app.cua.ai/billing")
+            );
         }
     }
 

@@ -93,11 +93,13 @@ describe("updater channels", () => {
     expect(feedChannel("stable")).toBe("latest");
   });
 
-  it("serves only the beta channel until the cutover", () => {
+  it("serves stable on Windows and Linux, and on macOS only after the cutover", () => {
     expect(STABLE_FEED).toBe(false);
-    expect(channelServed("beta")).toBe(true);
-    expect(channelServed("stable")).toBe(false);
-    expect(channelServed("stable", true)).toBe(true);
+    for (const platform of ["darwin", "win32", "linux"] as const) expect(channelServed("beta", false, platform)).toBe(true);
+    expect(channelServed("stable", false, "darwin")).toBe(false);
+    expect(channelServed("stable", true, "darwin")).toBe(true);
+    expect(channelServed("stable", false, "win32")).toBe(true);
+    expect(channelServed("stable", false, "linux")).toBe(true);
   });
 });
 

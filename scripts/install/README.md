@@ -19,7 +19,7 @@ In a terminal, install.sh shows a checklist (arrow or number keys to move and to
 | Item | What it does | Default |
 |---|---|---|
 | `cli` | The `cua` CLI | Always (not with `--app-only`) |
-| `spaces` | The Cua Spaces app | On for macOS. macOS only for now: on Linux and Windows it is hidden, and selecting it (`--select`/`--only spaces`, `--app-only`, `--mode`) skips the app with a note. `--app-only` and `--mode` imply it |
+| `spaces` | The Cua Spaces app | On for macOS (the SwiftUI app) and Linux (the Electron app). On Windows (the Electron app) it is off by default: pick it in the checklist or use `-Select spaces`. `--app-only` and `--mode` imply it |
 | `cua-driver` | Installs cua-driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | Off |
 | `host` | Runs `cua host setup` after sign-in so others on your account can reach this machine | Off |
 
@@ -46,7 +46,7 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 | `--require-signature` | `-RequireSignature` | Fail unless minisign or cosign verifies |
 | `--dry-run` | `-DryRun` | Print the plan, change nothing |
 | `--yes` | `-Yes` | Accept the current selection and every prompt |
-| | `-Installer msi\|nsis` | Windows app installer (default msi) |
+| | `-Installer msi\|nsis` | Windows app installer (default nsis, the Electron app; msi only when a release has one) |
 
 Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`. `--only` and `--select` cannot be combined, nor can `--cli-only` with other items. Set `CUA_INSTALL_NONINTERACTIVE=1` to never prompt.
 
@@ -55,14 +55,14 @@ Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsS
 | | CLI | App |
 |---|---|---|
 | macOS | `~/.local/bin/cua` (`/usr/local/bin` as root) | `/Applications` if writable, else `~/Applications` (from the .dmg; the SwiftUI app, macOS 26 or later, skipped on older macOS) |
-| Linux | same as macOS | Not offered for now (macOS only). When re-enabled: AppImage at `~/.local/bin/cua-spaces` plus a desktop entry; the .deb via apt-get when run as root |
-| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | Not offered for now (macOS only). When re-enabled: silent MSI (`CUA_SPACES_MODE=`) or NSIS (`/S /MODE=`) |
+| Linux | same as macOS | The Electron app: on Debian/Ubuntu (x64, arm64) the .deb via apt-get when run as root or with passwordless sudo; otherwise the AppImage at `~/.local/bin/cua-spaces` plus a desktop entry |
+| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | The Electron app's NSIS `setup.exe` for the machine's architecture (sha256 and cosign checked), run silently (`/S /MODE=`); a silent MSI (`CUA_SPACES_MODE=`) only if a release has one |
 
 cua-driver lands where its own installer puts it: `~/.local/bin/cua-driver` (or `DIR/bin` with `--prefix`), `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` on Windows.
 
 The scripts never edit shell profiles unless you pass `--modify-path`. `--mode` writes `~/.cua/spaces-install-mode`, which the app reads on first launch.
 
-MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows (Tauri) bundles, not released for now, carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
+MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows Electron app (`apps/cua-spaces-desktop`) bundles it itself, and the Tauri bundles (disabled) carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
 
 ## Release manifest
 
@@ -78,7 +78,7 @@ The copies of `install.sh` / `install.ps1` on a repository's `cua-install-latest
 | Component | File |
 |---|---|
 | CLI | `cua-cli-<ver>-<platform>.tar.gz` (macOS, Linux), `cua-cli-<ver>-windows-<arch>.zip` |
-| App | `cua-spaces-<ver>-darwin-universal.dmg` / `.pkg`, `cua-spaces-<ver>-linux-<arch>.AppImage` / `.deb`, `cua-spaces-<ver>-windows-<arch>.msi` / `-setup.exe` |
+| App | `cua-spaces-<ver>-darwin-universal.dmg` / `.pkg`, `cua-spaces-<ver>-linux-<arch>.AppImage` / `.deb`, `cua-spaces-<ver>-windows-<arch>.msi` / `-setup.exe`. A stable release's Linux and Windows files are copies of the Electron installers (`Cua-Spaces-<ver>-x86_64.AppImage`, `cua-spaces_<ver>_amd64.deb`, `Cua-Spaces-Setup-<ver>-x64.exe`, ...) under these names; the electron-builder names stay on the release too, because the updater feed (`latest*.yml`) references them, and are listed with kinds `electron-*` |
 
 `<platform>` is `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `windows-x64` or `windows-arm64`. Each entry carries `url`, `sha256` and, when present next to the file, `minisig` and `cosign_bundle` URLs. Every artifact sits on one line so install.sh can read it without jq.
 

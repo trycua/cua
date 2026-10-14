@@ -158,9 +158,12 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
       send({ type: "hello", v: NOTCH_PROTOCOL_VERSION, ...model.motion() });
       model.resend();
       for (const [id, image] of thumbnails) send({ type: "thumbnail", id, image });
+      // Connected (or reconnected): follow window drags if they are not followed yet.
+      model.recheckPermission();
     },
   });
   helper.start();
+  // Also when the helper did not start (it restarts later).
   model.recheckPermission();
 
   return {

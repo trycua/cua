@@ -485,6 +485,39 @@ struct NotchTests {
         #expect(c.isShown && !m.notch.view.hidden)
         c.setShown(false)
     }
+
+    /// CUA-1618: the setting off at launch, the SDK in, then the setting
+    /// turned on while the app runs: window drags are followed (onto the
+    /// notch and the New UI's tiles) without a relaunch, stop when it turns
+    /// off and start again when it turns back on.
+    @Test func turningTheNotchOnLiveStartsWindowDragsAndOffStopsThem() async {
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend())
+        let c = NotchController(model: m.notch)
+        c.makesPanel = false
+        m.settings.menuBar = true
+        AppDelegate.followNotchSetting(m, c)
+        #expect(!c.isShown)
+        // The SDK comes in after the launch (`followWindowDrags`).
+        var started = 0
+        c.permitted = { true }
+        c.startDrags = { started += 1 }
+        c.recheckPermission()
+        #expect(started == 0 && !c.dragsRunning, "no drag monitor while hidden")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(c.isShown)
+        #expect(started == 1 && c.dragsRunning, "turned on live: window drags are followed")
+        await m.choose(row: "notch", option: "hide")
+        for _ in 0..<20 where c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(!c.isShown && !c.dragsRunning, "turned off: the monitor stops")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(started == 2 && c.dragsRunning, "on again: it starts again")
+        // Showing an already shown notch keeps the one monitor.
+        c.show()
+        #expect(started == 2)
+        c.setShown(false)
+    }
 }
 
 @Suite("Launch")

@@ -95,6 +95,17 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// Cmd+V and its paste variants (Cmd+Shift+V, Cmd+Opt+Shift+V).
+fn is_paste_combo(modifiers: &[String], key: &str) -> bool {
+    key.eq_ignore_ascii_case("v")
+        && modifiers.iter().any(|m| {
+            matches!(
+                m.to_ascii_lowercase().as_str(),
+                "cmd" | "command" | "meta" | "super"
+            )
+        })
+}
+
 /// Modifier key names — split the keys array into modifiers + base key.
 fn is_modifier(k: &str) -> bool {
     matches!(
@@ -323,6 +334,35 @@ impl Tool for HotkeyTool {
                         super::invoke_menu::MenuRequest::KeyEquivalent(key_display),
                     )
                     .await;
+                }
+            }
+        }
+
+        // ── Paste must not land in browser chrome ──
+        // A background Cmd+V goes to the window's first responder. In a
+        // browser that can be the omnibox rather than the page field the
+        // caller meant, which pastes (possibly secret) clipboard content into
+        // the address bar. With no element/pixel target, refuse when the
+        // window's focused field is positively browser chrome.
+        if !fg && px.is_none() && element_index.is_none() && is_paste_combo(&modifiers, &key) {
+            if let Some(wid) = window_id {
+                let chrome = tokio::task::spawn_blocking(move || {
+                    super::type_text::is_browser_pid(pid)
+                        && super::type_text::window_focus_is_browser_chrome_field(pid, wid)
+                })
+                .await
+                .unwrap_or(false);
+                if chrome {
+                    return ToolResult::error(
+                        "hotkey: the browser's focused field is its own address/search bar, \
+                         not a page field, so the paste was not sent. Focus the page field \
+                         first (type_text with x,y, or a snapshot element_token), or use \
+                         browser_type for page text.",
+                    )
+                    .with_structured(serde_json::json!({
+                        "code": "paste_target_is_browser_chrome",
+                        "delivered": false
+                    }));
                 }
             }
         }
@@ -601,6 +641,15 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         let structured = result.structured_content.expect("structured refusal");
         assert_eq!(structured["refusal"]["code"], "stale_element_token");
+    }
+
+    #[test]
+    fn paste_combo_detection() {
+        let m = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(is_paste_combo(&m(&["cmd"]), "v"));
+        assert!(is_paste_combo(&m(&["Command", "shift"]), "V"));
+        assert!(!is_paste_combo(&m(&["ctrl"]), "v"));
+        assert!(!is_paste_combo(&m(&["cmd"]), "c"));
     }
 
     #[test]

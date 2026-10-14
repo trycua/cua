@@ -124,6 +124,11 @@ public final class AppModel {
     public private(set) var billingStatus: AppBillingStatus?
     /// Cua Cloud billing (nil: no Billing row).
     let billing: BillingRunning?
+    /// Reads the account's Teams from the Spaces API (nil: Settings shows
+    /// the account app's links only). Set by `AppEnvironment`.
+    public var teamsReader: TeamsReading?
+    /// Where Settings' Teams stand: not read yet, read, or failed.
+    public private(set) var teamsState: AppTeamsState = .signedOut
     /// This app as a login item (nil: no Launch at login row).
     let loginItem: LoginItemControlling?
     /// What the system reports for it (nil until read).
@@ -1197,6 +1202,7 @@ public final class AppModel {
             // Relay sharing paused while signed out comes back for its
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
+            await reloadTeams()
         } catch {
             guard signInAttempt == current, signIn != .idle else { return }
             signInFailed(LiveSpacesBackend.words(error))
@@ -1229,6 +1235,7 @@ public final class AppModel {
         host.identity = nil
         onboarding.host.identity = nil
         devices.signedIn = false
+        teamsState = .signedOut
         // Signed out: relay sharing stops (the setup stays to resume).
         await host.reconcileAccount()
         await devices.refresh()
@@ -1242,11 +1249,36 @@ public final class AppModel {
             identity: identity, apiKeyClient: nil, signIn: signIn, canSignOut: account != nil && identity != nil,
             menuBar: settings.menuBar, defaultLocation: settings.defaultLocation, locationLockedBy: nil,
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
+            teams: teamsSettingsInput,
             billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
             autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource))
+    }
+
+    /// Teams for Settings: the account's organizations with their people
+    /// (the Spaces API), and the account app's address for this environment.
+    var teamsSettingsInput: AppTeamsInput {
+        AppTeamsInput(accountAppUrl: appAccountAppUrl(), state: identity == nil ? .signedOut : teamsState,
+                      currentTeamId: settings.currentTeamId)
+    }
+
+    /// Reads the account's Teams (Settings, Teams). A failure says so in the
+    /// row; the account app's links stay.
+    func reloadTeams() async {
+        guard identity != nil, let teamsReader else {
+            teamsState = .signedOut
+            return
+        }
+        if case .ready = teamsState {} else { teamsState = .loading }
+        do {
+            let input = try await teamsReader.teams()
+            guard identity != nil else { return }
+            teamsState = input.state
+        } catch {
+            teamsState = .failed(message: LiveSpacesBackend.words(error))
+        }
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -1366,6 +1398,7 @@ public final class AppModel {
         readLoginItem()
         await storage.load()
         await reloadBilling()
+        await reloadTeams()
         await reloadAgents()
         await keyvault.refresh()
     }
@@ -1378,7 +1411,7 @@ public final class AppModel {
         billingStatus = try? await billing.status()
     }
 
-    /// Opens a website page (Manage billing, Add credit, the Teams waitlist).
+    /// Opens a website page (Manage billing, Add credit, the account app's Teams page).
     public func openBillingPage(_ raw: String) {
         guard let url = URL(string: raw), url.scheme == "https" || url.scheme == "http" else { return }
         BillingBrowser.open(url)
@@ -1402,6 +1435,10 @@ public final class AppModel {
     /// A choice row changed.
     public func choose(row: String, option: String) async {
         switch row {
+        case "team-current":
+            // Settings, Teams: the team to work in (saved; the option is its id).
+            settings.currentTeamId = option
+            saveSettings()
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()
@@ -1459,9 +1496,9 @@ public final class AppModel {
         case "welcome": onboarding.restart()
         case "launch-at-login-approve":
             loginItem?.openSystemSettings()
-        case "billing", "teams":
-            // A website page: billing (hidden while the apps do not offer
-            // Cua Cloud) or the Teams waitlist.
+        case "billing", "teams-manage", "teams-billing":
+            // The account app (app.cua.ai): invites, roles and plans for
+            // teams, billing.
             if let url = settingsPage.sections.flatMap(\.rows).first(where: { $0.id == row })?.linkUrl {
                 openBillingPage(url)
             }

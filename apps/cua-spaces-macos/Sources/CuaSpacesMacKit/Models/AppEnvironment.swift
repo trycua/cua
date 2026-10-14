@@ -124,6 +124,7 @@ public enum AppEnvironment {
                              // Fixtures (UI tests, captures) keep the classic UI
                              // unless they turn the New UI on.
                              appVersion: fixtures ? nil : info.version)
+        if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
             LiveLocalNetworkPermission().request()
             // Signed out is nil (setup signs in first); anything else (no
@@ -139,6 +140,7 @@ public enum AppEnvironment {
             }
             onboarding.accountToken = token
             model.host.accountToken = token
+            model.teamsReader = LiveTeams(token: token)
             // The keychain check first (the bundled `cua`, without a prompt),
             // then the daemon and the SDK, all off the main thread.
             startup.keychain = bundledCua.map { BundledCuaKeychain(cua: $0) }

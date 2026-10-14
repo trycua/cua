@@ -59,7 +59,7 @@ const APPEARANCE: { value: ThemePreference; label: React.ReactNode }[] = [
 const fail = toastError;
 
 /** Settings, General: the core's page as the SwiftUI app draws it when the
- * core is loaded (Account with Teams, General, Runtimes, Privacy, the
+ * core is loaded (Account, Teams, General, Runtimes, Privacy, the
  * Keyvault, AI agents), with this UI's own rows (appearance, keyboard shortcuts);
  * without the core, the same settings drawn by hand. */
 function SettingsPage() {
@@ -75,6 +75,7 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
   const { preference, setPreference } = useTheme();
   const section = (id: string): CoreSection | undefined => page.sections.find((x) => x.id === id);
   const account = section("account");
+  const teams = section("teams");
   const general = section("general");
   const runtimes = section("runtimes");
   const privacy = section("privacy");
@@ -107,7 +108,9 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         return void signIn().catch(fail("Couldn't start sign-in"));
       case "sign-in-code":
         return cancelSignIn();
-      case "teams":
+      // The account app (app.cua.ai): invites, roles and plans, billing.
+      case "teams-manage":
+      case "teams-billing":
       case "billing":
         return row.linkUrl ? void openExternal(row.linkUrl) : undefined;
       case "welcome":
@@ -127,6 +130,12 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         <SettingsGroup title={account.title}>
           {rows(account)}
           <RelayUsageRow />
+        </SettingsGroup>
+      ) : null}
+
+      {teams ? (
+        <SettingsGroup title={teams.title}>
+          {rows(teams)}
         </SettingsGroup>
       ) : null}
 

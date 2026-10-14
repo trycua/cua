@@ -509,15 +509,15 @@ describe("MainWindow", () => {
     expect(screen.getByRole("radiogroup", { name: "Spaces tab in the notch" })).toBeInTheDocument();
   });
 
-  it("Settings has no default-location choice and opens the Teams waitlist", async () => {
+  it("Settings has no default-location choice and opens the account app for Teams", async () => {
     const openExternal = vi.fn(async () => {});
     setup({ openExternal });
     await screen.findByRole("option", { name: /aurora/ });
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     await screen.findByRole("radiogroup", { name: "Spaces tab in the notch" });
     expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Join the waitlist" }));
-    expect(openExternal).toHaveBeenCalledWith("https://cua.ai/teams");
+    fireEvent.click(screen.getByRole("button", { name: "Manage team" }));
+    expect(openExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
 });
 

@@ -198,7 +198,10 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
                     .collect();
                 out.push(pick);
             }
-            for t in teams.iter().filter(|t| teams.len() == 1 || cur.is_some_and(|c| c.id == t.id)) {
+            for t in teams
+                .iter()
+                .filter(|t| teams.len() == 1 || cur.is_some_and(|c| c.id == t.id))
+            {
                 let seats = match t.seats {
                     0 => String::new(),
                     1 => " \u{b7} 1 seat".into(),
@@ -375,7 +378,11 @@ mod tests {
 
     #[test]
     fn the_current_team_is_the_saved_one_else_the_first_owned_else_the_first() {
-        let teams = vec![named("a", "member"), named("b", "owner"), named("c", "owner")];
+        let teams = vec![
+            named("a", "member"),
+            named("b", "owner"),
+            named("c", "owner"),
+        ];
         assert_eq!(current(&teams, Some("c")).unwrap().id, "c");
         assert_eq!(current(&teams, None).unwrap().id, "b");
         // A saved team the account left falls back.
@@ -398,7 +405,11 @@ mod tests {
         let r = rows(&i);
         let pick = r.iter().find(|r| r.id == CURRENT_TEAM_ROW).unwrap();
         assert_eq!(pick.kind, Choice);
-        let opts: Vec<(&str, bool)> = pick.options.iter().map(|o| (o.id.as_str(), o.active)).collect();
+        let opts: Vec<(&str, bool)> = pick
+            .options
+            .iter()
+            .map(|o| (o.id.as_str(), o.active))
+            .collect();
         // Default: the first owned team.
         assert_eq!(opts, [("a", true), ("b", false)]);
         assert!(r.iter().any(|r| r.id == "team:a"));

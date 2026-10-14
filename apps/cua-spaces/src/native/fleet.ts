@@ -239,9 +239,9 @@ export interface BillingStatus {
 export interface FleetBridge {
   readonly isNative: boolean;
   status(probe?: boolean): Promise<FleetStatus>;
-  /** This account's Cua Cloud rates; null when unknown (no estimate). */
+  /** This account's Cua Cloud rates; null when unknown (no estimate; always null in the native app). */
   cloudPricing?(): Promise<CloudPricing | null>;
-  /** The account's Cua Cloud billing (null: no Fleet client). */
+  /** Always null in the native app: the Fleets billing API is retired. */
   billingStatus?(): Promise<BillingStatus | null>;
   daemonStatus(): Promise<DaemonStatus>;
   ensureDaemon(): Promise<DaemonStatus>;

@@ -4,21 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Legacy package (Cua Driver, Lume, and Sandbox use Release Please)"
+        description: "Legacy package (Cua Driver, Lume, and Sandbox use Release Please, as do Spaces, the SDK and the Python and npm packages)"
         required: true
         type: choice
         options:
-          - pypi/agent
-          - pypi/bench
-          - pypi/bench-ui
-          - pypi/core
-          - pypi/sandbox-apps
-          - pypi/som
-          - pypi/train
-          - npm/core
           - npm/fleet
-          - npm/playground
-          - npm/cuabot
           - docker/cuabot
           - docker/kasm
           - docker/xfce-cua
@@ -73,48 +63,8 @@ jobs:
         id: package
         run: |
           case "${{ inputs.service }}" in
-            "pypi/agent")
-              echo "directory=libs/python/agent" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/bench")
-              echo "directory=libs/cua-bench" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/bench-ui")
-              echo "directory=libs/python/bench-ui" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/core")
-              echo "directory=libs/python/core" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/sandbox-apps")
-              echo "directory=libs/python/cua-sandbox-apps" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/som")
-              echo "directory=libs/python/som" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/train")
-              echo "directory=libs/python/cua-train" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "npm/core")
-              echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
-              echo "type=npm" >> $GITHUB_OUTPUT
-              ;;
             "npm/fleet")
               echo "directory=libs/typescript/fleet" >> $GITHUB_OUTPUT
-              echo "type=npm" >> $GITHUB_OUTPUT
-              ;;
-            "npm/playground")
-              echo "directory=libs/typescript/playground" >> $GITHUB_OUTPUT
-              echo "type=npm" >> $GITHUB_OUTPUT
-              ;;
-            "npm/cuabot")
-              echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
             "docker/cuabot")
@@ -211,93 +161,6 @@ jobs:
           ALL_TAGS=$(git tag --points-at HEAD | tr '\n' ' ' | xargs)
           echo "Tags to push: $ALL_TAGS"
           echo "tags=$ALL_TAGS" >> $GITHUB_OUTPUT
-
-      - name: Capture bumped agent version
-        if: ${{ inputs.service == 'pypi/agent' }}
-        id: agent_version
-        run: |
-          cd libs/python/agent
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Agent version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped bench version
-        if: ${{ inputs.service == 'pypi/bench' }}
-        id: bench_version
-        run: |
-          cd libs/cua-bench
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Bench version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped bench-ui version
-        if: ${{ inputs.service == 'pypi/bench-ui' }}
-        id: bench_ui_version
-        run: |
-          cd libs/python/bench-ui
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Bench-ui version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped core version
-        if: ${{ inputs.service == 'pypi/core' }}
-        id: core_version
-        run: |
-          cd libs/python/core
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Core version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped sandbox-apps version
-        if: ${{ inputs.service == 'pypi/sandbox-apps' }}
-        id: sandbox_apps_version
-        run: |
-          cd libs/python/cua-sandbox-apps
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Sandbox-apps version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped som version
-        if: ${{ inputs.service == 'pypi/som' }}
-        id: som_version
-        run: |
-          cd libs/python/som
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "SOM version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped train version
-        if: ${{ inputs.service == 'pypi/train' }}
-        id: train_version
-        run: |
-          cd libs/python/cua-train
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Train version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped npm/core version
-        if: ${{ inputs.service == 'npm/core' }}
-        id: npm_core_version
-        run: |
-          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/core/package.json)
-          echo "npm/core version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped npm/playground version
-        if: ${{ inputs.service == 'npm/playground' }}
-        id: npm_playground_version
-        run: |
-          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/playground/package.json)
-          echo "npm/playground version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped cuabot version
-        if: ${{ inputs.service == 'npm/cuabot' }}
-        id: cuabot_version
-        run: |
-          VERSION=$(grep -oP '"version": "\K[^"]+' libs/cuabot/package.json)
-          echo "cuabot version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Generate GitHub App token
         id: app-token

@@ -69,8 +69,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's "New UI (preview)": this app is the web UI, so its switch (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:web_ui", "experiment:web_ui-note"]);
+/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
+export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
 
 export function experimentsPage(model: AppModel) {
   const page = model.native.appExperimentsPage(model.settings.experiments);

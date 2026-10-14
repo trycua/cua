@@ -1140,6 +1140,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "keyvault.revokeGrant": num,
   "window.setBackgroundColor": nul,
   "window.setDragRegions": nul,
+  "window.setDropTargets": nul,
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],

@@ -1096,6 +1096,31 @@ fn classify_target_web_area(
     }
 }
 
+/// True when the window's own focused element is an editable field that sits
+/// OUTSIDE the page's `AXWebArea` — the browser's native chrome (omnibox,
+/// find bar). A paste or typed chord aimed at "the page" would land there.
+/// Conservative: unknown focus, a non-editable role, or any AX failure is
+/// `false`, so an unprobeable browser is never refused.
+pub(super) fn window_focus_is_browser_chrome_field(pid: i32, window_id: u32) -> bool {
+    unsafe {
+        let Some(el) = crate::ax::exact_target::focused_element_in_window(pid, window_id) else {
+            return false;
+        };
+        let role = copy_string_attr(el, "AXRole");
+        CFRelease(el as _);
+        if !matches!(
+            role.as_deref(),
+            Some("AXTextField") | Some("AXComboBox") | Some("AXSearchField")
+        ) {
+            return false;
+        }
+    }
+    matches!(
+        classify_target_web_area(pid, None, Some(window_id)),
+        WebAreaClassification::NonWebContent
+    )
+}
+
 /// Whether `pid` is a web browser whose omnibox and pages the foreground
 /// typing rung must activate fully (see the browser branch of the rung).
 pub(super) fn is_browser_pid(pid: i32) -> bool {

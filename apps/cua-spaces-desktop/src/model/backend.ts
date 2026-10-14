@@ -396,10 +396,13 @@ export class LiveSpacesBackend implements SpacesBackend {
     return runningMacosVms(answer);
   }
 
+  /**
+   * No estimate: the rates came from the retired Fleets API
+   * (`fleet().usagePricing()` on run.cua.ai), and the app does not offer new
+   * cloud Spaces. New Space never waits on it.
+   */
   async cloudPricing(): Promise<AppCloudPricing | null> {
-    if (!(await this.cloudAvailable())) return null;
-    const p = await bounded(PROBE_SECONDS, () => this.cua.fleet().usagePricing());
-    return p ? { vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd } : null;
+    return null;
   }
 
   async usage(id: string): Promise<AppSpaceUsage | null> {

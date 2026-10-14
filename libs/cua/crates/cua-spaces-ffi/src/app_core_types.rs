@@ -6360,7 +6360,8 @@ pub struct AppExperiments {
     pub your_cloud: bool,
     /// Sharing a Space with other accounts.
     pub sharing: bool,
-    /// The shared web UI, previewed in its own window.
+    /// The New UI (the shared web UI) is the main window: the user's choice
+    /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
     pub web_ui: bool,
 }
 
@@ -6400,8 +6401,16 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]).
+    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// "on" there, the value older builds read.
     pub experiments: AppExperiments,
+    /// The New UI as the user chose it (Settings, Experiments, "Use classic
+    /// UI"); `None`: never chosen, so
+    /// [`crate::experiments::new_ui_default`] decides. An older build's
+    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
+    /// saved default, so it reads as never chosen ([`load`]).
+    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).

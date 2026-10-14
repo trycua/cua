@@ -513,12 +513,14 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(settingsEvents).toBeGreaterThan(0);
   });
 
-  it("offers every experiment but the New UI preview, which this app is", async () => {
+  it("offers every experiment but the New UI switch (Use classic UI), which this app is", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
     expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"]));
     expect(rows).not.toContain("experiment:web_ui");
+    expect(rows).not.toContain("experiment:classic_ui");
     expect(await code("settings.choose", { row: "experiment:web_ui", option: "off" })).toBe("unsupported");
+    expect(await code("settings.choose", { row: "experiment:classic_ui", option: "on" })).toBe("unsupported");
   });
 
   it("New Space's \u201cUse built-in Lume\u201d and \u201cUse built-in runtime\u201d change the Runtimes rows", async () => {

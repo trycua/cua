@@ -48,6 +48,11 @@ def verify_execution(root: Path, task_index: int, execution_id: str, *, require_
             and cleanup.get("task_id") == execution_id
             and isinstance(resources, dict)
             and {"agent_container", "env_container", "network", "overlay"} <= resources.keys()
+            and resources["agent_container"].get("name") == f"cua-agent-{execution_id}"
+            and resources["env_container"].get("name") == f"cua-env-{execution_id}"
+            and resources["network"].get("name") == f"cua-task-{execution_id}"
+            and isinstance(resources["overlay"].get("name"), str)
+            and Path(resources["overlay"]["name"]).name == execution_id
             and all(isinstance(v, dict) and v.get("absent") is True for v in resources.values())
             and cleanup.get("verified") is True
         )

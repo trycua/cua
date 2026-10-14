@@ -17,8 +17,7 @@
 //!   `shell:AppsFolder` enumeration depends on `LOCALAPPDATA` (a redirected
 //!   value makes Microsoft Edge unresolvable, `0x80070002`), and the shell
 //!   expands per-user known folders through `%USERPROFILE%`. The driver's
-//!   `USERPROFILE`-derived state goes through its own `CUA_DRIVER_RS_HOME`
-//!   override instead.
+//!   `USERPROFILE`-derived state goes through its own `CUA_DRIVER_RS_HOME` override instead.
 //! - Linux pins `XDG_DATA_HOME` to the host data directory so user `.desktop`
 //!   entries remain discoverable after `HOME` moves.
 //!

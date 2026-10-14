@@ -289,8 +289,8 @@ Describe 'install.ps1' {
         { Invoke-Installer @{ DryRun = $true; CliOnly = $true; Select = 'spaces' } } | Should -Throw '*use -Only spaces*'
     }
 
-    It 'dry run: -Mode writes no install-mode file while the app is skipped' {
+    It 'dry run: -Mode writes the install-mode file when the app is installed' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'host' }
-        $out | Should -Not -Match 'spaces-install-mode'
+        $out | Should -Match 'spaces-install-mode'
     }
 }

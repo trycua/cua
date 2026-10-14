@@ -428,21 +428,21 @@ if script --version 2>/dev/null | grep -q util-linux; then
     logged() { grep -q -- "$1" "$home/cua.log" 2>/dev/null; }
     if command -v bash >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
         tty_inst '\r' --prefix "$work/t1"
-        check "checklist: shows the rows, Linux hides Spaces" sh -c "grep -q 'Choose what to install' '$work/out' && grep -q 'cua CLI (required)' '$work/out' && grep -q 'cua-driver MCP and skill for your agents' '$work/out' && ! grep -q 'Cua Spaces app' '$work/out'"
-        check "checklist: Enter accepts the defaults (CLI only)" sh -c "[ $status = 0 ] && [ -e '$work/t1/bin/cua' ] && [ ! -e '$work/t1/bin/cua-driver' ] && [ ! -e '$work/t1/bin/cua-spaces' ]"
+        check "checklist: shows the rows, Linux includes Spaces" sh -c "grep -q 'Choose what to install' '$work/out' && grep -q 'cua CLI (required)' '$work/out' && grep -q 'Cua Spaces app' '$work/out' && grep -q 'cua-driver MCP and skill for your agents' '$work/out'"
+        check "checklist: Enter accepts the defaults (CLI and the app)" sh -c "[ $status = 0 ] && [ -e '$work/t1/bin/cua' ] && [ ! -e '$work/t1/bin/cua-driver' ] && [ -x '$work/t1/bin/cua-spaces' ]"
         check "checklist: no per-item prompt afterwards" sh -c "! grep -q 'Install the cua CLI to' '$work/out'"
-        tty_inst '2\r' --prefix "$work/t2"
+        tty_inst '3\r' --prefix "$work/t2"
         check "checklist: number key toggles cua-driver on" sh -c "[ $status = 0 ] && [ -e '$work/t2/bin/cua-driver' ] && grep -q 'agents setup --cua-driver' '$home/cua.log'"
-        tty_inst '\033[B\033[B \r' --prefix "$work/t3"
+        tty_inst '\033[B\033[B\033[B \r' --prefix "$work/t3"
         check "checklist: arrows + space select host" sh -c "[ $status = 0 ] && grep -qx 'host setup' '$home/cua.log' && [ ! -e '$work/t3/bin/cua-driver' ]"
         tty_inst '1 \033[A\r' --prefix "$work/t4"
         check "checklist: the CLI row is locked" sh -c "[ $status = 0 ] && [ -e '$work/t4/bin/cua' ] && [ ! -e '$work/t4/bin/cua-driver' ]"
         tty_inst '\r' --select cua-driver --prefix "$work/t5"
         check "checklist: --select cua-driver is preselected" sh -c "[ $status = 0 ] && [ -e '$work/t5/bin/cua-driver' ] && grep -q '\\[x\\] cua-driver' '$work/out'"
-        tty_inst '2\r' --select cua-driver --prefix "$work/t6"
+        tty_inst '3\r' --select cua-driver --prefix "$work/t6"
         check "checklist: a preselected item can be turned off" sh -c "[ $status = 0 ] && [ -e '$work/t6/bin/cua' ] && [ ! -e '$work/t6/bin/cua-driver' ]"
         tty_inst '\r' --select spaces --prefix "$work/t7"
-        check "checklist: --select spaces on Linux: no Spaces row, not installed" sh -c "[ $status = 0 ] && ! grep -q 'Cua Spaces app' '$work/out' && [ ! -e '$work/t7/bin/cua-spaces' ] && [ -e '$work/t7/bin/cua' ]"
+        check "checklist: --select spaces on Linux: installed" sh -c "[ $status = 0 ] && grep -q 'Cua Spaces app' '$work/out' && [ -x '$work/t7/bin/cua-spaces' ] && [ -e '$work/t7/bin/cua' ]"
         tty_inst '' --prefix "$work/t8"
         check "checklist: no input (EOF) accepts defaults, no hang" sh -c "[ $status = 0 ] && [ -e '$work/t8/bin/cua' ]"
         tty_inst '\r' --yes --select host --prefix "$work/t9"
@@ -450,10 +450,10 @@ if script --version 2>/dev/null | grep -q util-linux; then
         tty_inst '\r' --only cua-driver --prefix "$work/t10"
         check "checklist: --only skips it" sh -c "[ $status = 0 ] && ! grep -q 'Choose what to install' '$work/out' && [ -e '$work/t10/bin/cua-driver' ]"
         tty_term=dumb
-        tty_inst '3\n\n' --prefix "$work/t11"
+        tty_inst '4\n\n' --prefix "$work/t11"
         tty_term=""
         check "checklist (TERM=dumb): numbered prompt toggles host" sh -c "[ $status = 0 ] && grep -q 'Toggle numbers' '$work/out' && grep -qx 'host setup' '$home/cua.log'"
-        [ -n "${CUA_INSTALL_TRANSCRIPT:-}" ] && tty_inst '\033[B \033[B \r' --prefix "$work/t12" && cp "$work/out" "$CUA_INSTALL_TRANSCRIPT"
+        [ -n "${CUA_INSTALL_TRANSCRIPT:-}" ] && tty_inst '\033[B \033[B \033[B \r' --prefix "$work/t12" && cp "$work/out" "$CUA_INSTALL_TRANSCRIPT"
     else
         printf 'skip interactive checklist (needs bash and timeout)\n'
     fi

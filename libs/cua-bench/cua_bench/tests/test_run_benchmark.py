@@ -413,11 +413,11 @@ async def setup(task, session):
 
 
 class TestEvaluatorRewardFailClosed:
-
-
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("value", [[1.0, float("nan")], [1.0, "bad"], [1.0, 1.5], [1.0, True]])
-    async def test_invalid_secondary_reward_cannot_claim_success(self, tmp_path, monkeypatch, value):
+    @pytest.mark.parametrize("value", [[1.0, float("nan")], [1.0, "bad"], [1.0, 1.5]])
+    async def test_invalid_secondary_reward_cannot_claim_success(
+        self, tmp_path, monkeypatch, value
+    ):
         from types import SimpleNamespace
         import cua_bench.runners as runners
 
@@ -442,8 +442,9 @@ class TestEvaluatorRewardFailClosed:
         assert result.success is False
         assert result.reward == 0.0
         assert result.error is not None
+
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("value", [True, False, "1.0", None, float("nan"), float("inf"), -0.1, 1.1])
+    @pytest.mark.parametrize("value", ["1.0", None, float("nan"), float("inf"), -0.1, 1.1])
     async def test_invalid_reward_cannot_claim_success(self, tmp_path, monkeypatch, value):
         from types import SimpleNamespace
         import cua_bench.runners as runners
@@ -451,12 +452,16 @@ class TestEvaluatorRewardFailClosed:
         class FakeEnvironment:
             evaluate_task_fn = object()
             solve_task_fn = None
+
             async def reset(self, task_id=0):
                 return b"screen", SimpleNamespace()
+
             async def step(self, action):
                 return b"screen"
+
             async def evaluate(self):
                 return value
+
             async def close(self):
                 pass
 
@@ -465,6 +470,43 @@ class TestEvaluatorRewardFailClosed:
         assert result.success is False
         assert result.reward == 0.0
         assert result.error is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value, reward",
+        [
+            (True, 1.0),
+            (False, 0.0),
+            ([1.0, True], 1.0),
+            ({"reward": True}, 1.0),
+            (0.75, 0.75),
+            ({"reward": 1.0}, 1.0),
+        ],
+    )
+    async def test_valid_reward(self, tmp_path, monkeypatch, value, reward):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class FakeEnvironment:
+            evaluate_task_fn = object()
+
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+
+            async def step(self, action):
+                return b"screen"
+
+            async def evaluate(self):
+                return value
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(runners, "make", lambda *args, **kwargs: FakeEnvironment())
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
+        assert result.success is (reward >= 0.5)
+        assert result.reward == reward
+        assert result.error is None
 
     @pytest.mark.asyncio
     async def test_missing_evaluator_cannot_claim_success(self, tmp_path, monkeypatch):
@@ -474,10 +516,13 @@ class TestEvaluatorRewardFailClosed:
         class FakeEnvironment:
             evaluate_task_fn = None
             solve_task_fn = None
+
             async def reset(self, task_id=0):
                 return b"screen", SimpleNamespace()
+
             async def step(self, action):
                 return b"screen"
+
             async def close(self):
                 pass
 
@@ -487,7 +532,9 @@ class TestEvaluatorRewardFailClosed:
         assert result.error is not None
 
     @pytest.mark.asyncio
-    async def test_setup_only_cannot_claim_success_even_if_evaluator_would_pass(self, tmp_path, monkeypatch):
+    async def test_setup_only_cannot_claim_success_even_if_evaluator_would_pass(
+        self, tmp_path, monkeypatch
+    ):
         from types import SimpleNamespace
         import cua_bench.runners as runners
 
@@ -514,7 +561,6 @@ class TestEvaluatorRewardFailClosed:
         assert "No agent_fn" in result.error
         assert calls["evaluated"] is False
         assert calls["closed"] is True
-
 
     @pytest.mark.asyncio
     async def test_cleanup_failure_revokes_success_and_keeps_steps(self, tmp_path, monkeypatch):
@@ -578,7 +624,9 @@ class TestEvaluatorRewardFailClosed:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("budget", [0, -1, False, True, 1.5, "2"])
-    async def test_invalid_step_budget_cannot_score_initial_state(self, tmp_path, monkeypatch, budget):
+    async def test_invalid_step_budget_cannot_score_initial_state(
+        self, tmp_path, monkeypatch, budget
+    ):
         import cua_bench.runners as runners
 
         def forbidden_make(*args, **kwargs):
@@ -590,14 +638,11 @@ class TestEvaluatorRewardFailClosed:
                 tmp_path, agent_fn=lambda *_: DoneAction(), max_steps=budget
             )
 
-
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "value",
         [
             {"reward": None},
-            {"reward": True},
             {"reward": "1.0"},
             {"reward": float("nan")},
             {"reward": float("inf")},
@@ -606,9 +651,7 @@ class TestEvaluatorRewardFailClosed:
             {"score": 1.0},
         ],
     )
-    async def test_invalid_mapping_reward_cannot_claim_success(
-        self, tmp_path, monkeypatch, value
-    ):
+    async def test_invalid_mapping_reward_cannot_claim_success(self, tmp_path, monkeypatch, value):
         from types import SimpleNamespace
         import cua_bench.runners as runners
 
@@ -629,13 +672,10 @@ class TestEvaluatorRewardFailClosed:
                 pass
 
         monkeypatch.setattr(runners, "make", lambda *a, **k: FakeEnvironment())
-        result = await runners.run_single_task(
-            tmp_path, agent_fn=lambda *_: DoneAction()
-        )
+        result = await runners.run_single_task(tmp_path, agent_fn=lambda *_: DoneAction())
         assert result.success is False
         assert result.reward == 0.0
         assert result.error is not None
-
 
 
 class TestBenchmarkDiscoveryFailClosed:
@@ -643,6 +683,7 @@ class TestBenchmarkDiscoveryFailClosed:
     @pytest.mark.parametrize("parallel", [0, -1, True, 1.5, "2"])
     async def test_invalid_parallelism_rejected_before_task_discovery(self, tmp_path, parallel):
         import cua_bench.runners as runners
+
         with pytest.raises(ValueError, match="max_parallel must be a positive integer"):
             await runners.run_benchmark(tmp_path, max_parallel=parallel)
 
@@ -650,6 +691,7 @@ class TestBenchmarkDiscoveryFailClosed:
     @pytest.mark.parametrize("limit", [0, -1, True, 1.5, "2"])
     async def test_invalid_variant_limit_rejected(self, tmp_path, limit):
         import cua_bench.runners as runners
+
         with pytest.raises(ValueError, match="max_variants must be a positive integer"):
             await runners.run_benchmark(tmp_path, max_variants=limit)
 
@@ -667,7 +709,6 @@ class TestBenchmarkDiscoveryFailClosed:
         monkeypatch.setattr(runners, "make", broken_make)
         with pytest.raises(RuntimeError, match="Unable to discover variants"):
             await runners.run_benchmark(tmp_path, oracle=True)
-
 
     @pytest.mark.asyncio
     async def test_discovery_environment_is_closed_before_execution(self, tmp_path, monkeypatch):
@@ -692,8 +733,12 @@ class TestBenchmarkDiscoveryFailClosed:
         async def fake_run(*args, **kwargs):
             assert calls["closed"] == 1
             return runners.TaskResult(
-                task_path=str(task_dir), variant_id=0, success=False,
-                reward=0.0, steps=0, error="not executed"
+                task_path=str(task_dir),
+                variant_id=0,
+                success=False,
+                reward=0.0,
+                steps=0,
+                error="not executed",
             )
 
         monkeypatch.setattr(runners, "make", make_for_discovery)

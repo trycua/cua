@@ -23,9 +23,9 @@ use cua_vmm::{GuestOs, ImageSource, Runtime, StartSpec, VmmError};
 use fake_lume::{FakeLume, FakePull, PullEnd, serve, temp_home};
 
 /// One image per test: tests run in parallel and share the owned-VM records.
-const REF_FAILED: &str = "ghcr.io/trycua/macos:26-failed";
-const REF_VANISHED: &str = "ghcr.io/trycua/macos:26-vanished";
-const REF_DIED: &str = "ghcr.io/trycua/macos:26-died";
+const REF_FAILED: &str = "registry.example/test/macos:failed";
+const REF_VANISHED: &str = "registry.example/test/macos:vanished";
+const REF_DIED: &str = "registry.example/test/macos:died";
 
 /// Plenty of free disk, so the pull's disk guard never decides the test.
 struct Roomy;

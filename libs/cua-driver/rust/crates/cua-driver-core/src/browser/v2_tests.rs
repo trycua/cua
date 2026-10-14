@@ -3020,6 +3020,14 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     assert_eq!(params[4]["text"], "\r");
     assert_eq!(params[4]["unmodifiedText"], "\r");
     assert_eq!(params[5]["type"], "keyUp");
+    for (event, (code, virtual_key)) in params
+        .iter()
+        .zip([("KeyA", 65); 3].into_iter().chain([("Enter", 13); 3]))
+    {
+        assert_eq!(event["code"], code, "{event}");
+        assert_eq!(event["windowsVirtualKeyCode"], virtual_key, "{event}");
+        assert_eq!(event["nativeVirtualKeyCode"], virtual_key, "{event}");
+    }
     let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
     assert_eq!(focus_emulation.len(), 2);
     assert_eq!(focus_emulation[0].1["enabled"], true);

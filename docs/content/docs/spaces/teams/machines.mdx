@@ -43,21 +43,15 @@ The machine then appears under **Machines** at
 [app.cua.ai/machines](https://app.cua.ai/machines), where an owner or admin can
 remove it from the team. Removing a machine does not delete anything on it.
 
-<Callout type="warn">
-  macOS Spaces cannot be team machines. macOS licensing allows one user per
-  macOS copy, so a team cannot share a macOS Space. Add a Linux or Windows
-  machine, or Space, instead.
-</Callout>
-
 ## Mac, Windows and Linux
 
 | | Open team machines | Be a team machine |
 |---|---|---|
-| Mac | Cua Spaces app (macOS 26 or later) | Not for macOS Spaces |
+| Mac | Cua Spaces app (macOS 26 or later) | Yes |
 | Windows | Windows and Linux apps: see the [download page](https://cua.ai/download) | Yes |
 | Linux | Windows and Linux apps: see the [download page](https://cua.ai/download) | Yes |
 
-Windows and Linux machines join with `cua host setup`, as in
+Mac, Windows and Linux machines all join with `cua host setup`, as in
 [unattended access](/spaces/guides/unattended-access); see the
 [quickstart](/spaces/quickstart) to install the `cua` CLI.
 
@@ -89,6 +83,5 @@ with the Cua account service, and caches the answer for up to a minute.
 ## Share a Space with the team
 
 To make an existing Space a team machine, share it with the team. Every member
-then sees it and opens it as an editor from an approved device. Sharing with the
-team makes the Space a team machine, so the macOS rule above applies: share a
-Linux or Windows Space, not a macOS Space.
+then sees it and opens it as an editor from an approved device. Macs, Linux and
+Windows machines can all be team machines.

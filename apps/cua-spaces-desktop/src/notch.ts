@@ -60,8 +60,6 @@ export interface Notch {
 export interface StartNotchOptions extends NotchModelOptions {
   /** The helper's executable (`helperPath`). */
   path: string;
-  /** Logs every protocol message both ways (`CUA_SPACES_NOTCH_DEBUG`; images left out). */
-  trace?: (line: string) => void;
   /** How long a `windowUnder` question waits for the helper (ms; default 300). */
   windowUnderTimeoutMs?: number;
   /** Process options for tests (spawn, timers, backoff). */

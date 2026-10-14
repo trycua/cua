@@ -113,6 +113,8 @@ export interface NotchModelOptions {
    * (the helper's `windowUnder`); none: a tile is taken as uncovered.
    */
   windowUnder?(x: number, y: number, below: number | undefined): Promise<number | null>;
+  /** Diagnostics (`CUA_SPACES_NOTCH_DEBUG`): the protocol, and window drags over the app's own tiles. */
+  trace?: (line: string) => void;
 }
 
 /** What the helper gets: the state, and images. */
@@ -149,6 +151,7 @@ export class NotchModel {
   /** The app's own tile a dragged window is over (highlighted), and the latest hit test's number. */
   private windowTarget: string | null = null;
   private windowTargetSeq = 0;
+  private lastTrace = "";
   private cancelTimer?: () => void;
   private cancelTick?: () => void;
   private monitor?: { stop(): void };
@@ -596,6 +599,11 @@ export class NotchModel {
     const app = event.app ?? this.draggedApp;
     if (ending) this.draggedWindow = undefined;
     const hit = isMove && event.phase !== "cancel" ? targets.at(event.x, event.y) : null;
+    const seen = `${event.phase === "move" ? "move" : event.phase} ${hit ? `${hit.spaceId}@${hit.window}` : "-"}`;
+    if (this.options.trace && (event.phase !== "move" || seen !== this.lastTrace)) {
+      this.options.trace(`window drag ${event.phase} (${event.x}, ${event.y}) kind=${dragKind(this.trigger.kind)} tile=${hit ? `${hit.spaceId} in window ${hit.window}` : "none"}`);
+    }
+    this.lastTrace = seen;
     if (ending || !hit) this.setWindowTarget(null);
     if (!hit) return;
     void this.uncovered(hit, event.x, event.y, below).then((uncovered) => {

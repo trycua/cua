@@ -164,7 +164,12 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
       },
       activate: () => app.focus({ steal: true }),
       setDropTargets: (win, targets) => {
-        if (windowDrops && win instanceof BrowserWindow) windowDrops.set(dropWindow(win), targets);
+        if (!windowDrops || !(win instanceof BrowserWindow)) return;
+        windowDrops.set(dropWindow(win), targets);
+        if (process.env.CUA_SPACES_NOTCH_DEBUG) {
+          const at = win.getContentBounds();
+          console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
+        }
       },
       chooseFiles: async (win) => {
         // Files and folders at once where the picker allows it (macOS); Windows and Linux pick files.

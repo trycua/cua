@@ -499,7 +499,6 @@ struct RecordingInner {
     state_budget: Option<StateCaptureBudget>,
     next_turn: u32,
     session_start_ms: u64,
-    manifest_started_at_ms: u64,
     /// Monotonic clock anchor for the cursor sampler so its `t_ms`
     /// matches the action-timeline anchor in `action.json`.
     session_monotonic_start: Option<Instant>,
@@ -555,7 +554,6 @@ impl RecordingSession {
                 state_budget: Some(StateCaptureBudget::default()),
                 next_turn: 1,
                 session_start_ms: 0,
-                manifest_started_at_ms: 0,
                 session_monotonic_start: None,
                 last_error: None,
                 video: None,
@@ -695,7 +693,6 @@ impl RecordingSession {
         let started_at_ms = now_ms();
         let session_payload = serde_json::json!({
             "schema_version": 1,
-            // Keep the legacy epoch timestamp stable; the field name is historical.
             "started_at_monotonic_ms": started_at_ms,
             "video": video_session_payload(video_present, video_error.as_deref(), None),
             "cursor": { "present": inner.cursor.is_some(), "sample_count": 0 }
@@ -713,8 +710,7 @@ impl RecordingSession {
         inner.output_dir = Some(dir);
         inner.state_budget = state_budget;
         inner.next_turn = 1;
-        inner.session_start_ms = now_ms();
-        inner.manifest_started_at_ms = started_at_ms;
+        inner.session_start_ms = started_at_ms;
         inner.session_monotonic_start = Some(monotonic_start);
         inner.last_error = video_error;
         inner.last_video = None;
@@ -756,8 +752,7 @@ impl RecordingSession {
         }
         inner.owner = None;
         let dir = inner.output_dir.clone();
-        // Reuse the start time captured in start(); finalization must not change it.
-        let started_at_ms = inner.manifest_started_at_ms;
+        let started_at_ms = inner.session_start_ms;
         let (video_meta, stop_error) = match inner.video.take().map(|rec| rec.stop()) {
             Some(Ok(meta)) => match validate_video_metadata(meta) {
                 Ok(meta) => (Some(meta), None),
@@ -772,7 +767,6 @@ impl RecordingSession {
         inner.output_dir = None;
         inner.next_turn = 1;
         inner.session_start_ms = 0;
-        inner.manifest_started_at_ms = 0;
         inner.session_monotonic_start = None;
         if let Some(error) = &stop_error {
             inner.last_error = Some(error.clone());

@@ -1521,9 +1521,30 @@ async fn create(
         eprintln!("Starting a cloud sandbox (first start of an image can take a few minutes)");
     }
     let requested_name = o.name.clone();
+    // Each step of the create on a terminal (never in --json output).
+    let steps = {
+        use std::io::IsTerminal as _;
+        (!json && std::io::stderr().is_terminal()).then(|| {
+            let mut words = crate::util::CreateWords::for_image(
+                &o.image,
+                o.kind.as_deref().unwrap_or_default(),
+                false,
+            );
+            words.macos |= o.os.as_deref() == Some("macos");
+            words.vm |= words.macos;
+            Arc::new(crate::util::StepLines::new(words))
+        })
+    };
     let created = {
         let sandboxes = cua.sandboxes();
-        let mut create = Box::pin(sandboxes.create(o));
+        let mut create: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+            match &steps {
+                Some(steps) => {
+                    let steps = steps.clone();
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                }
+                None => Box::pin(sandboxes.create(o)),
+            };
         tokio::select! {
             r = &mut create => r,
             _ = tokio::signal::ctrl_c() => {
@@ -1542,6 +1563,9 @@ async fn create(
         }
     };
     crate::util::exit_on_ctrl_c();
+    if let Some(steps) = &steps {
+        steps.finish();
+    }
     if created.is_err()
         && a.keep_on_failure
         && let Some(n) = &requested_name

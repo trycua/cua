@@ -1,0 +1,1230 @@
+{
+  "flow": "provisioning",
+  "frames": [
+    {
+      "creates": "initial",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:mac",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 10 1%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac preparing",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 10 1%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 13
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading macOS (first time only)…",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Downloading macOS (first time only)…",
+            "progress": 13,
+            "progressText": "0.0 of 30.0 GB"
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 13 1%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 13 Downloading macOS (first time only)…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 358
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading macOS (first time only)…",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Downloading macOS (first time only)…",
+            "progress": 358,
+            "progressText": "12.4 of 30.0 GB · 85 MB/s · about 4 min"
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 358 35%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 358 Downloading macOS (first time only)…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 358
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading macOS (first time only)…",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Downloading macOS (first time only)…",
+            "progress": 358,
+            "progressText": "12.4 of 30.0 GB · 85 MB/s · about 4 min"
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 358 35%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 358 Downloading macOS (first time only)…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 847
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading macOS (first time only)…",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Downloading macOS (first time only)…",
+            "progress": 847,
+            "progressText": "30.0 of 30.0 GB · 85 MB/s · less than a minute"
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 847 84%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 847 Downloading macOS (first time only)…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac creating",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 847
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Preparing the disk… 84%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Preparing the disk…",
+            "progress": 847,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 847 84%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 847 Preparing the disk…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac booting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 861
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting macOS… 86%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Booting macOS…",
+            "progress": 861,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 861 86%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 861 Booting macOS…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 881
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting macOS… 88%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Booting macOS…",
+            "progress": 881,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 881 88%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 881 Booting macOS…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac waiting_for_services",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 902
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting Cua inside the Space… 90%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Starting Cua inside the Space…",
+            "progress": 902,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 902 90%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 902 Starting Cua inside the Space…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:mac connecting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 986
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:vm",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 10 1%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 10 Starting…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:vm pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 291
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image…",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Downloading image…",
+            "progress": 291,
+            "progressText": "240 of 480 MB · 24 MB/s · less than a minute"
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 291 29%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 291 Downloading image…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:vm creating",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 538
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Preparing the disk… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Preparing the disk…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Preparing the disk…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:vm booting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 538
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting Linux… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Booting Linux…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:box",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 3 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:box",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting Linux… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Booting Linux…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:box",
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu box [Starting] 10 1%",
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu box, Linux, This Mac, Starting 10 Starting…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:box creating",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 3 Spaces",
+          "permille": 59
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Creating the container… 5%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:box",
+            "previewText": "Creating the container…",
+            "progress": 59,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting Linux… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Booting Linux…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:box",
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu box [Starting] 59 5%",
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu box, Linux, This Mac, Starting 59 Creating the container…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:box booting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 3 Spaces",
+          "permille": 127
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting the container… 12%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:box",
+            "previewText": "Starting the container…",
+            "progress": 127,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting Linux… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Booting Linux…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:box",
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu box [Starting] 127 12%",
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu box, Linux, This Mac, Starting 127 Starting the container…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:box waiting_for_services",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 3 Spaces",
+          "permille": 172
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting Cua inside the Space… 17%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:box",
+            "previewText": "Starting Cua inside the Space…",
+            "progress": 172,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting Linux… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Booting Linux…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:box",
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu box [Starting] 172 17%",
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu box, Linux, This Mac, Starting 172 Starting Cua inside the Space…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "refreshed",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 3 Spaces",
+          "permille": 172
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting Cua inside the Space… 17%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:box",
+            "previewText": "Starting Cua inside the Space…",
+            "progress": 172,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting Linux… 53%",
+              "Image: ghcr.io/trycua/linux:24.04-slim-disk [copy ghcr.io/trycua/linux:24.04-slim-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Virtual machine",
+              "Architecture: ARM"
+            ],
+            "id": "pending:vm",
+            "previewText": "Booting Linux…",
+            "progress": 538,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: macos [copy macos doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:mac",
+            "previewText": "Connecting…",
+            "progress": 986,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:box",
+          "pending:vm",
+          "pending:mac"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu box [Starting] 172 17%",
+          "os-ubuntu New Space [Starting] 538 53%",
+          "os-macos macOS Space [Starting] 986 98%"
+        ],
+        "tiles": [
+          "os-ubuntu box, Linux, This Mac, Starting 172 Starting Cua inside the Space…",
+          "os-ubuntu New Space, Linux, This Mac, Starting 538 Booting Linux…",
+          "os-macos macOS Space, macOS, Mac mini, Starting 986 Connecting…"
+        ]
+      }
+    }
+  ]
+}

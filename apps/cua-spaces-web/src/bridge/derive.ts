@@ -104,13 +104,68 @@ export function validateImageRef(core: CoreClient, ref: string): string | null {
 
 const PHASES = ["preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting"];
 const PHASE_LABEL: Record<string, string> = {
-  preparing: "Preparing…",
-  pulling: "Downloading…",
+  preparing: "Starting…",
+  pulling: "Downloading image…",
   creating: "Creating…",
-  booting: "Starting…",
-  waiting_for_services: "Starting…",
+  booting: "Booting…",
+  waiting_for_services: "Starting Cua inside the Space…",
   connecting: "Connecting…",
 };
+
+/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text`). */
+export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">): string | null {
+  if (p.bytesDone == null) return null;
+  const unit = (n: number): [number, string] =>
+    n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"];
+  const scaled = (n: number, [size]: [number, string], below: number) => {
+    const v = n / size;
+    return size > 1 && v < below ? v.toFixed(1) : Math.round(v).toString();
+  };
+  const total = p.bytesTotal ?? 0;
+  let out: string;
+  if (total > 0) {
+    const u = unit(total);
+    out = `${scaled(Math.min(p.bytesDone, total), u, 100)} of ${scaled(total, u, 100)} ${u[1]}`;
+  } else {
+    const u = unit(p.bytesDone);
+    out = `${scaled(p.bytesDone, u, 100)} ${u[1]}`;
+  }
+  const rate = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
+  if (rate) {
+    const u = unit(Math.floor(rate));
+    out += ` · ${scaled(Math.floor(rate), u, 10)} ${u[1]}/s`;
+    if (total > 0) {
+      const secs = Math.max(0, total - p.bytesDone) / rate;
+      const mins = Math.round(secs / 60);
+      out +=
+        secs < 60
+          ? " · less than a minute"
+          : mins < 60
+            ? ` · about ${mins} min`
+            : mins % 60 === 0
+              ? ` · about ${mins / 60} h`
+              : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
+    }
+  }
+  return out;
+}
+
+/** The step a create is on, in its kind of Space's words (`creating::stage_label`). */
+function stageLabel(p: Pick<PendingCreate, "os" | "provider" | "kind" | "phase">): string {
+  const here = p.provider !== "cloud";
+  const vm = p.os === "macos" || p.os === "windows" || p.kind === "vm";
+  const container = !vm && p.kind === "container";
+  const os = p.os === "macos" ? "macOS" : p.os === "windows" ? "Windows" : p.os === "linux" ? "Linux" : "";
+  if (p.phase === "pulling" && p.os === "macos") return "Downloading macOS (first time only)…";
+  if (p.phase === "creating" && here && vm) return "Preparing the disk…";
+  if (p.phase === "creating" && here && container) return "Creating the container…";
+  if (p.phase === "booting" && here && vm && os) return `Booting ${os}…`;
+  if (p.phase === "booting" && here && container) return "Starting the container…";
+  return PHASE_LABEL[p.phase] ?? "Starting…";
+}
+
+/** [`stageLabel`] (the fallback's words), for tests. */
+export const stageLabelForTest = stageLabel;
 
 function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
   const pending = [...state.pending];
@@ -132,13 +187,17 @@ function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
         pulled: false,
         permille: 0,
         image: a.image ?? null,
+        kind: a.kind ?? null,
       });
       break;
     case "progress":
       patch(a.id, (p) => {
         const i = Math.max(0, PHASES.indexOf(a.phase));
         const permille = Math.round(((i + (a.fraction ?? 0)) / PHASES.length) * 1000);
-        return { ...p, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
+        const bytes = a.bytesDone != null
+          ? { bytesDone: a.bytesDone, bytesTotal: a.bytesTotal ?? null, bytesPerSecond: a.bytesPerSecond ?? null }
+          : a.phase === p.phase ? {} : { bytesDone: null, bytesTotal: null, bytesPerSecond: null };
+        return { ...p, ...bytes, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
       });
       break;
     case "finish":
@@ -200,7 +259,7 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       name: p.name,
       os: p.os,
       status: "provisioning",
-      detail: p.error ? "Failed" : (PHASE_LABEL[p.phase] ?? "Creating…"),
+      detail: p.error ? "Failed" : stageLabel(p),
       lastUsedAt: p.startedAt,
       startedAt: p.startedAt,
       scene: SCENES[p.os],
@@ -208,8 +267,9 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       progress: {
         phase: p.phase,
         permille: p.permille,
-        label: p.error ? "Failed" : (PHASE_LABEL[p.phase] ?? "Creating…"),
+        label: p.error ? "Failed" : stageLabel(p),
         error: p.error ?? undefined,
+        transfer: !p.error && p.phase === "pulling" ? (transferText(p) ?? undefined) : undefined,
         cancellable: !p.error && !p.cancelling,
         cancelling: p.cancelling,
       },

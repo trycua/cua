@@ -280,6 +280,12 @@ function SpaceLink({ space, machine, windowOver = false }: { space: Space; machi
           <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {spaceState(space) === "creating" && space.detail ? creatingLine(space.detail) : spacePlace(space, machine)}
           </div>
+          {/* Downloading: how far, how fast, how long is left. */}
+          {spaceState(space) === "creating" && space.progress?.transfer ? (
+            <div data-create-transfer="" className="mt-0.5 truncate text-xs tabular-nums text-muted-foreground">
+              {space.progress.transfer}
+            </div>
+          ) : null}
           {createError(space) ? (
             <p data-create-error="" title={createError(space)!} className="mt-1 line-clamp-2 text-xs text-destructive">
               {createError(space)}

@@ -60,6 +60,7 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "delete-space": { status: "run", screen: "spaces" },
   "space-power": { status: "run", screen: "spaces" },
   "create-progress": { status: "run", screen: "spaces" },
+  "create-stages": { status: "run", screen: "spaces" },
   devices: { status: "run", screen: "settings/devices" },
   "driver-card": { status: "run", screen: "settings" },
   "share-sheet": { status: "run", screen: "share" },

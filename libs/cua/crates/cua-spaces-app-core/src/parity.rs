@@ -207,6 +207,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/checklist.json"),
         include_str!("../parity/golden/checklist.json"),
     ),
+    (
+        "create-stages",
+        include_str!("../parity/create-stages.json"),
+        include_str!("../parity/golden/create-stages.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -1884,7 +1889,9 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "main-window" => run_main_window(&flow, h),
         "notch" => run_notch(&flow, h),
         "notch-drag-trigger" => run_notch_drag_trigger(&flow, h),
-        "provisioning" | "create-progress" | "create-cancel" => run_provisioning(&flow, h),
+        "provisioning" | "create-progress" | "create-cancel" | "create-stages" => {
+            run_provisioning(&flow, h)
+        }
         "stream-section" => run_stream_section(&flow, h),
         "space-facts" => run_space_facts(&flow, h),
         "picker-grid" => run_picker_grid(&flow, h),

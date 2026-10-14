@@ -250,6 +250,7 @@ describe('app core parity flows (webview)', () => {
       'placement-picker',
       'machines',
       'checklist',
+      'create-stages',
     ]);
   });
 

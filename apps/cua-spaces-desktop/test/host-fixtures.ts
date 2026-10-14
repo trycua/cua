@@ -245,7 +245,7 @@ export class FixtureDevices {
     const made: PairingCode = {
       id: `pc_fixture${n}`,
       code,
-      url: `https://spaces.cua.ai/add/${code}`,
+      url: `https://cua.ai/add/${code}`,
       installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
       installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
       state: "active",

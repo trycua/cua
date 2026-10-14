@@ -11,7 +11,7 @@
 //! | Relay         | `CUA_RELAY_URL`       | `https://relay.cua.ai`                   | `https://relay.staging.cua.ai`              |
 //! | Spaces API    | `CUA_SPACES_API_URL`  | `https://api.cua.ai`                     | `https://api.staging.cua.ai`                |
 //! | Account app   | `CUA_ACCOUNT_APP_URL` | `https://app.cua.ai`                     | `https://app.staging.cua.ai`                |
-//! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://spaces.cua.ai`                  | `https://spaces.staging.cua.ai`             |
+//! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://cua.ai`                         | `https://spaces.staging.cua.ai`             |
 //! | cua home      | `CUA_HOME`            | `~/.cua`                                 | `~/.cua/envs/staging`                       |
 //!
 //! A per-setting override always wins over `CUA_ENV`. With `CUA_ENV` unset,
@@ -125,7 +125,7 @@ impl CuaEnv {
     /// The default Spaces site (pairing links are `<site>/add/<code>`).
     pub fn spaces_site_url(self) -> &'static str {
         match self {
-            Self::Prod => "https://spaces.cua.ai",
+            Self::Prod => "https://cua.ai",
             Self::Staging => "https://spaces.staging.cua.ai",
         }
     }
@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(e.relay_url, "https://relay.cua.ai");
         assert_eq!(e.spaces_api_url, "https://api.cua.ai");
         assert_eq!(e.account_app_url, "https://app.cua.ai");
-        assert_eq!(e.spaces_site_url, "https://spaces.cua.ai");
+        assert_eq!(e.spaces_site_url, "https://cua.ai");
         assert_eq!(CuaEnv::Prod.keyring_service(), "run.cua.ai");
         assert_eq!(CuaEnv::Prod.home_subdir(), None);
         // An unknown value never selects staging.

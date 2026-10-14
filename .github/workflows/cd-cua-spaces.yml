@@ -283,6 +283,10 @@ jobs:
         with:
           workspaces: libs/cua -> target
           shared-key: swiftui-rust-${{ matrix.triple }}
+          # The repository's 10 GB Actions cache evicts oldest-first; a GB-sized
+          # dependency cache per job pushed the small compiled-output caches out
+          # within the hour. Only the default branch saves it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build the slice

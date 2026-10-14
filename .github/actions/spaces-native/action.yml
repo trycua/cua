@@ -73,6 +73,10 @@ runs:
       with:
         workspaces: libs/cua -> target
         shared-key: spaces-native-${{ inputs.label }}
+        # The repository's 10 GB Actions cache evicts oldest-first; a GB-sized
+        # dependency cache per job pushed the small compiled-output caches out
+        # within the hour. Only the default branch saves it.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
     - if: steps.cache.outputs.cache-hit != 'true'
       uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4

@@ -19,7 +19,7 @@ In a terminal, install.sh shows a checklist (arrow or number keys to move and to
 | Item | What it does | Default |
 |---|---|---|
 | `cli` | The `cua` CLI | Always (not with `--app-only`) |
-| `spaces` | The Cua Spaces app | On for macOS (the SwiftUI app) and Linux (the Electron app). On Windows (the Electron app) it is off by default: pick it in the checklist or use `-Select spaces`. `--app-only` and `--mode` imply it |
+| `spaces` | The Cua Spaces app | On for macOS (the SwiftUI app) and Linux (the Electron app). On Windows (the Electron app, a preview) it is on too; `-CliOnly` or `-Only` leave it out, and Windows may show SmartScreen on first run (More info, Run anyway). `--app-only` and `--mode` imply it |
 | `cua-driver` | Installs cua-driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | Off |
 | `host` | Runs `cua host setup` after sign-in so others on your account can reach this machine | Off |
 

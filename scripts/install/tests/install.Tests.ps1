@@ -87,10 +87,11 @@ Describe 'functions' {
 
     It 'selects defaults, -Select, -Only and the legacy switches' {
         $d = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
-        @($d.cli, $d.spaces, $d['cua-driver'], $d.host) | Should -Be @($true, $false, $false, $false)
+        @($d.cli, $d.spaces, $d['cua-driver'], $d.host) | Should -Be @($true, $true, $false, $false)
         (Get-CuaSelection -SelectList 'cua-driver' -OnlyList '' -Cli $false -App $false -InstallMode '')['cua-driver'] | Should -BeTrue
         $o = Get-CuaSelection -SelectList '' -OnlyList 'host' -Cli $false -App $false -InstallMode ''
         @($o.cli, $o.spaces, $o.host) | Should -Be @($true, $false, $true)
+        (Get-CuaSelection -SelectList '' -OnlyList '' -Cli $true -App $false -InstallMode '').spaces | Should -BeFalse
         $a = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $true -InstallMode ''
         @($a.cli, $a.spaces) | Should -Be @($false, $true)
         (Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode 'host').spaces | Should -BeTrue
@@ -106,7 +107,7 @@ Describe 'functions' {
     }
 
     It 'toggles items in the numbered checklist; the CLI row is locked' {
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1 2', '3', ''))
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1 2', '3 4', ''))
         $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
         @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $false, $true, $true)
@@ -114,9 +115,10 @@ Describe 'functions' {
         $script:Picked = $false
     }
 
-    It 'shows Spaces in the checklist only when preselected' {
+    It 'preselects Spaces in the checklist and lets you turn it off' {
         $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('2', ''))
-        $sel = Get-CuaSelection -SelectList 'spaces' -OnlyList '' -Cli $false -App $false -InstallMode ''
+        $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
+        $sel.spaces | Should -BeTrue
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
         @($sel.spaces, $sel['cua-driver']) | Should -Be @($false, $false)
         $script:Picked = $false
@@ -260,11 +262,18 @@ Describe 'install.ps1' {
         Get-Content $log | Should -Not -Match 'identity-regexp'
     }
 
-    It 'dry run: Spaces is off by default on Windows' {
+    It 'dry run: Spaces is on by default on Windows' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'msiexec'
         $out | Should -Not -Match 'cua-driver'
+    }
+
+    It 'dry run: -CliOnly skips the Spaces app' {
+        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; CliOnly = $true }
+        $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Not -Match 'cua-spaces'
     }
 
     It 'dry run: -Only spaces installs the CLI and the setup.exe' {

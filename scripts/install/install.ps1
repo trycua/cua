@@ -10,7 +10,7 @@ Cua installer for Windows: the `cua` CLI, the Cua Spaces app and agent extras.
 
 At a console it first shows a numbered checklist of what to install. Items:
     cli         the cua CLI (always installed, except with -AppOnly)
-    spaces      the Cua Spaces app (the Electron app's setup.exe; off by default here, pick it or use -Select spaces)
+    spaces      the Cua Spaces app (the Electron app's setup.exe; on by default, a preview on Windows)
     cua-driver  cua-driver MCP and skill for your agents (off by default)
     host        host this machine: `cua host setup` (off by default)
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
@@ -161,6 +161,9 @@ function Get-CuaSelection {
     if ($App -and ($extra -contains 'cua-driver' -or $extra -contains 'host')) { Stop-Install '-AppOnly skips the CLI, which cua-driver and host need' }
     $sel = [ordered]@{ cli = -not $App; spaces = $false; 'cua-driver' = $false; host = $false }
     $list = if ($OnlyList -or $Cli) { $OnlyList } else { $SelectList }
+    # The app is a default, like macOS and Linux (Windows ships it as a preview).
+    # -Only and -CliOnly name exactly what to install, so they turn it off.
+    if (-not ($OnlyList -or $Cli) -and $script:SpacesSupported) { $sel.spaces = $true }
     foreach ($item in @(ConvertTo-CuaItems $list)) { $sel[$item] = $true }
     # A pairing code adds this machine: the CLI and host setup.
     if ($Pair) {
@@ -178,10 +181,10 @@ function Test-WantsChecklist {
 }
 
 # Numbered checklist: toggle numbers, Enter to install. The CLI row is locked;
-# Spaces shows only when preselected (-Select spaces, -Mode).
+# Spaces shows wherever the app ships.
 function Read-CuaSelection($Sel, [scriptblock]$Reader = { Read-Host 'Toggle numbers (e.g. 2 3), Enter to install' }) {
     $rows = @('cli')
-    if ($Sel.spaces) { $rows += 'spaces' }
+    if ($Sel.spaces -or $script:SpacesSupported) { $rows += 'spaces' }
     $rows += 'cua-driver', 'host'
     $labels = @{ cli = 'cua CLI (required)'; spaces = 'Cua Spaces app'; 'cua-driver' = 'cua-driver MCP and skill for your agents'; host = 'Host this machine' }
     Write-Host ''

@@ -13,6 +13,10 @@ import Testing
 final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [String] = []
     var paused = false
+    /// Agents `persistent_agent_remove` took out of the list.
+    var removed: Set<String> = []
+    /// Each `agent_stop`'s arguments.
+    var stops: [[String: String]] = []
     var grants: [[String: Any]] = []
     let now: Int64 = 1_790_000_000_000
     /// The model calls this from concurrent tasks; one lock keeps the
@@ -27,11 +31,19 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
         calls.append(tool)
         switch tool {
         case "persistent_agent_list":
-            return ["agents": [
+            let all: [[String: Any]] = [
                 ["name": "ada", "harness": "hermes", "space": "local:dev", "paused": paused, "run_id": paused ? NSNull() : "run-1", "saved_ms": now - 120_000],
                 ["name": "scout", "harness": "claude-code", "space": "cloud:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
-            ]]
+            ]
+            return ["agents": all.filter { !removed.contains($0["name"] as? String ?? "") }]
         case "agent_pause": paused = true; return [:]
+        case "persistent_agent_remove":
+            let name = args["name"] as? String ?? ""
+            guard ["ada", "scout"].contains(name), !removed.contains(name) else { throw AgentsToolError(message: "no persistent agent named \(name)") }
+            removed.insert(name); return ["removed": ["name": name]]
+        case "agent_stop":
+            stops.append(["space": args["space"] as? String ?? "", "run_id": args["run_id"] as? String ?? ""])
+            return ["run_id": args["run_id"] ?? "", "stopped": true, "alive": false]
         case "volume_ls":
             let path = args["path"] as? String ?? ""
             if path == "agents/ada/" { return ["entries": [["path": "agents/ada/hermes/", "name": "hermes", "folder": true]]] }

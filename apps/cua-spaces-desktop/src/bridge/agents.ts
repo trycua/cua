@@ -69,6 +69,18 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
     },
     "agents.pause": pauseOrResume(true),
     "agents.resume": pauseOrResume(false),
+    // The Agents page's Remove and Stop (its right-click menu).
+    "agents.remove": async (args) => {
+      const name = string(args, "name");
+      await needTools().remove(name);
+      return null;
+    },
+    "agents.stop": async (args) => {
+      const space = string(args, "spaceId");
+      const runId = string(args, "runId");
+      await needTools().stopRun(space, runId);
+      return null;
+    },
     "agents.setup": async () => {
       needSetup();
       const coding = model.agents.coding;

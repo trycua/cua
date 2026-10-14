@@ -144,7 +144,7 @@ struct WebUIHostTests {
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure"] {
+                  "agents.remove", "agents.stop", "agents.setup", "agents.configure"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -262,6 +262,25 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "agents.setup", [:]) == "unsupported")
         #expect(await failure(bridge, "agents.runs", [:]) == "bad_args")
         #expect(await failure(bridge, "agents.pause", [:]) == "bad_args")
+        #expect(await failure(bridge, "agents.remove", ["name": "ada"]) == "unsupported")
+        #expect(await failure(bridge, "agents.stop", ["spaceId": "s", "runId": "r"]) == "unsupported")
+        #expect(await failure(bridge, "agents.remove", [:]) == "bad_args")
+        #expect(await failure(bridge, "agents.stop", ["spaceId": "s"]) == "bad_args")
+    }
+
+    /// The Agents page's Remove and Stop (its right-click menu): the
+    /// daemon's `persistent_agent_remove` and `agent_stop`, then the list
+    /// read again; the daemon's refusal reaches the page.
+    @Test func agentsRemoveAndStopRunTheDaemonsTools() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        let (bridge, _) = bridge(backend: backend)
+        #expect(try await bridge.handle("agents.stop", ["spaceId": "local:dev", "runId": "run-1"]) is NSNull)
+        #expect(backend.agents.stops == [["space": "local:dev", "run_id": "run-1"]])
+
+        #expect(try await bridge.handle("agents.remove", ["name": "ada"]) is NSNull)
+        let names = (try await bridge.handle("agents.list", [:]) as? [[String: Any]] ?? []).map { $0["name"] as? String }
+        #expect(names == ["scout"])
+        #expect(await failure(bridge, "agents.remove", ["name": "ada"]) == "failed")
     }
 
     @Test func agentRunsAndSetupRowsAreTheCoresRecords() async throws {

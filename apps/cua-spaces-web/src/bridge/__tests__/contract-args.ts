@@ -45,6 +45,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.events": { spaceId: SPACE, runId: "run-ada-7", cursor: 0 },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
+  "agents.remove": { name: "ada" },
+  "agents.stop": { spaceId: SPACE, runId: "run-ada-7" },
   "agents.setup": {},
   "agents.configure": { agents: null },
   "agents.detail": { name: "ada" },

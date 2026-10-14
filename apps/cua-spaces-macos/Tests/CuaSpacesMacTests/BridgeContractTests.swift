@@ -268,6 +268,8 @@ struct BridgeContractTests {
         "host.openSettings": "opens System Settings",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
+        "agents.remove": "removes the fake's agent the later cases read; WebUIHostTests covers it",
+        "agents.stop": "as agents.remove",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers
         // are checked from the records the routes encode (teleportAnswers).

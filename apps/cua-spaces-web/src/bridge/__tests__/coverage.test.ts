@@ -52,6 +52,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.events": { spaceId: "s1", runId: "r1", cursor: 0 },
   "agents.pause": { name: "ada" },
   "agents.resume": { name: "ada" },
+  "agents.remove": { name: "ada" },
+  "agents.stop": { spaceId: "s1", runId: "r1" },
   "agents.setup": {},
   "agents.configure": { agents: null },
   ...AGENT_DETAIL_ARGS,

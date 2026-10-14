@@ -120,6 +120,16 @@ export const HOST_COVERAGE = {
   },
   "agents.pause": { webkit: { methods: ["agents.pause"] }, tauri: ["agents_tool"] },
   "agents.resume": { webkit: { methods: ["agents.resume"] }, tauri: ["agents_tool"] },
+  "agents.remove": {
+    webkit: { methods: ["agents.remove"] },
+    tauri: [],
+    unsupported: { tauri: "agents_tool doesn't allow persistent_agent_remove (its pages create and delete nothing)" },
+  },
+  "agents.stop": {
+    webkit: { methods: ["agents.stop"] },
+    tauri: [],
+    unsupported: { tauri: "agents_tool doesn't allow agent_stop" },
+  },
   "agents.setup": { webkit: { methods: ["agents.setup"] }, tauri: ["agent_setup_detect"] },
   "agents.configure": { webkit: { methods: ["agents.configure"] }, tauri: ["agent_setup_configure"] },
   ...AGENT_DETAIL_COVERAGE,

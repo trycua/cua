@@ -5,6 +5,7 @@ import { LegendList } from "@legendapp/list/react";
 import { ChevronDownIcon, ChevronRightIcon, EyeOffIcon, FileIcon, FolderIcon, GlobeIcon, LockIcon, LockOpenIcon, SearchIcon, Trash2Icon } from "lucide-react";
 
 import type { KvLock, Tri, VaultAction, VaultApp, VaultRow, VaultSelection, VaultView } from "@/bridge";
+import { SEPARATOR, useContextMenu, type ContextMenuEntry } from "@/components/context-menu";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -86,7 +87,9 @@ export function VaultList({
             recycleItems={false}
             className="h-full"
             contentContainerStyle={{ maxWidth: "48rem", marginInline: "auto", paddingInline: "2rem", paddingBottom: "5rem" }}
-            renderItem={({ item: line }) => <Line line={line} send={send} actions={actions} blocked={blocked || busy} />}
+            renderItem={({ item: line }) => (
+              <Line line={line} send={send} actions={actions} blocked={blocked || busy} namesHidden={view.namesHidden} onDelete={onDelete} />
+            )}
           />
         )}
       </div>
@@ -95,7 +98,21 @@ export function VaultList({
   );
 }
 
-function Line({ line, send, actions, blocked }: { line: VaultLine; send: (a: VaultAction) => void; actions: LockActions; blocked: boolean }) {
+function Line({
+  line,
+  send,
+  actions,
+  blocked,
+  namesHidden,
+  onDelete,
+}: {
+  line: VaultLine;
+  send: (a: VaultAction) => void;
+  actions: LockActions;
+  blocked: boolean;
+  namesHidden: boolean;
+  onDelete: (ids: string[]) => void;
+}) {
   switch (line.type) {
     case "app":
       return (
@@ -152,7 +169,7 @@ function Line({ line, send, actions, blocked }: { line: VaultLine; send: (a: Vau
         />
       );
     case "item":
-      return <ItemRow row={line.row} indent={line.indent} send={send} actions={actions} blocked={blocked} />;
+      return <ItemRow row={line.row} indent={line.indent} send={send} actions={actions} blocked={blocked} namesHidden={namesHidden} onDelete={onDelete} />;
   }
 }
 
@@ -225,11 +242,52 @@ function GroupRow({
   );
 }
 
-function ItemRow({ row, indent, send, actions, blocked }: { row: VaultRow; indent: number; send: (a: VaultAction) => void; actions: LockActions; blocked: boolean }) {
+/**
+ * An item's context menu: Copy Name (never a value: the list has none, and
+ * not while names are hidden), its lock, as the row's lock button does, and
+ * Delete…, which asks first as the batch bar's Delete does (the page's
+ * dialog, or the native host's own alert). Stable action ids:
+ * `keyvault.copyName`, `keyvault.unlock`, `keyvault.lock`, `keyvault.delete`.
+ */
+export function vaultItemMenuEntries(
+  row: VaultRow,
+  { namesHidden, blocked, actions, onDelete }: { namesHidden: boolean; blocked: boolean; actions: LockActions; onDelete: (ids: string[]) => void },
+): ContextMenuEntry[] {
+  return [
+    !namesHidden && { id: "keyvault.copyName", label: "Copy Name", copy: row.title },
+    SEPARATOR,
+    row.locked
+      ? !row.identityProvider && { id: "keyvault.unlock", label: "Unlock…", disabled: blocked, run: () => actions.unlock([row.id], row.title) }
+      : { id: "keyvault.lock", label: "Lock", disabled: blocked, run: () => actions.lock([row.id]) },
+    SEPARATOR,
+    // Delete asks first itself (the core's words), as the batch bar's Delete does.
+    { id: "keyvault.delete", label: "Delete…", destructive: true, run: () => onDelete([row.id]) },
+  ];
+}
+
+function ItemRow({
+  row,
+  indent,
+  send,
+  actions,
+  blocked,
+  namesHidden,
+  onDelete,
+}: {
+  row: VaultRow;
+  indent: number;
+  send: (a: VaultAction) => void;
+  actions: LockActions;
+  blocked: boolean;
+  namesHidden: boolean;
+  onDelete: (ids: string[]) => void;
+}) {
   const Icon = KIND_ICON[row.kind] ?? FileIcon;
   const toggle = () => send({ type: "toggle", id: row.id });
+  const menu = useContextMenu(() => vaultItemMenuEntries(row, { namesHidden, blocked, actions, onDelete }));
   return (
     <div
+      {...menu}
       role="row"
       aria-selected={row.selected}
       data-vault-item={row.id}

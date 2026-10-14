@@ -1049,6 +1049,16 @@ export class BridgeStore {
     return this.agentAction(() => this.adapter.call("agents.resume", { name }));
   }
 
+  /** Removes a persistent agent; its home stays in Cua Volume. */
+  removeAgent(name: string): Promise<void> {
+    return this.agentAction(() => this.adapter.call("agents.remove", { name }));
+  }
+
+  /** Stops one run in a Space. */
+  stopRun(spaceId: string, runId: string): Promise<void> {
+    return this.agentAction(() => this.adapter.call("agents.stop", { spaceId, runId }));
+  }
+
   agentSetup(): Promise<AgentSetupRow[]> {
     return this.adapter.call("agents.setup", {});
   }

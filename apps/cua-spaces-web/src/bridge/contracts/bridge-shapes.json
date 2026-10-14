@@ -4092,6 +4092,9 @@
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
     },
+    "agents.remove": {
+      "type": "null"
+    },
     "agents.removeRoutine": {
       "type": "null"
     },
@@ -4196,6 +4199,9 @@
           "detail"
         ]
       }
+    },
+    "agents.stop": {
+      "type": "null"
     },
     "checklist.get": {
       "type": "object",
@@ -5557,6 +5563,9 @@
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
     },
+    "agents.remove": {
+      "type": "null"
+    },
     "agents.removeRoutine": {
       "type": "null"
     },
@@ -5659,6 +5668,9 @@
           "detail"
         ]
       }
+    },
+    "agents.stop": {
+      "type": "null"
     },
     "app.info": {
       "type": "object",

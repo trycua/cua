@@ -209,6 +209,22 @@ describe.skipIf(!built)("agents", () => {
     expect(await message(bridge, "agents.pause", { name: "ada" })).toBe("Another change is still running");
   });
 
+  it("removes an agent and stops a run with the daemon's tools, and says why one failed", async () => {
+    const { bridge } = makeBridge();
+    expect(await call(bridge, "agents.stop", { spaceId: "local:dev", runId: "run-1" })).toBeNull();
+    expect(daemon.calls.at(-2)).toBe("agent_stop");
+    expect(daemon.args.at(-2)).toEqual({ space: "local:dev", run_id: "run-1" });
+    expect(await call(bridge, "agents.remove", { name: "ada" })).toBeNull();
+    expect(daemon.args[daemon.calls.lastIndexOf("persistent_agent_remove")]).toEqual({ name: "ada" });
+    expect(((await call(bridge, "agents.list")) as { name: string }[]).map((a) => a.name)).toEqual(["scout"]);
+    expect(shapeProblems("agents.remove", null)).toEqual([]);
+    expect(shapeProblems("agents.stop", null)).toEqual([]);
+    expect(await code(bridge, "agents.remove", { name: "ada" })).toBe("failed");
+    expect(await message(bridge, "agents.remove", { name: "ada" })).toBe("no persistent agent named ada");
+    expect(await code(bridge, "agents.remove", {})).toBe("bad_args");
+    expect(await code(bridge, "agents.stop", { spaceId: "local:dev" })).toBe("bad_args");
+  });
+
   it("says why a pause failed", async () => {
     const { bridge } = makeBridge();
     const fail = daemon.run;
@@ -242,6 +258,8 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agents.setupDriver", { agents: ["codex"] })).toBe("unsupported");
     expect(await code(bridge, "agents.runs", {})).toBe("bad_args");
     expect(await code(bridge, "agents.pause", {})).toBe("bad_args");
+    expect(await code(bridge, "agents.remove", { name: "ada" })).toBe("unsupported");
+    expect(await code(bridge, "agents.stop", { spaceId: "s", runId: "r" })).toBe("unsupported");
   });
 
   // MARK: Coding agents on this machine (ViewModelTests, WebUIHostTests)

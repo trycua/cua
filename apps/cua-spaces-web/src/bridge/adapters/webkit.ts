@@ -618,6 +618,14 @@ export function createWebkitAdapter(
       await request("agents.resume", { name });
       return null;
     },
+    "agents.remove": async ({ name }) => {
+      await request("agents.remove", { name });
+      return null;
+    },
+    "agents.stop": async ({ spaceId, runId }) => {
+      await request("agents.stop", { spaceId, runId });
+      return null;
+    },
     "agents.setup": async () => list(await request("agents.setup")) as AgentSetupRow[],
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
     "session.openExternal": async ({ url }) => {

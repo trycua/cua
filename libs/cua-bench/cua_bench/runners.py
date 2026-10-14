@@ -107,11 +107,6 @@ async def run_single_task(
     step_count = 0
     outcome = None
 
-    def finish(**kwargs):
-        nonlocal outcome
-        outcome = TaskResult(**kwargs)
-        return outcome
-
     try:
         # Create environment using gym interface
         env = make(str(env_path), split=split)
@@ -120,16 +115,13 @@ async def run_single_task(
         # Reset environment
         screenshot, task_cfg = await env.reset(task_id=task_index)
 
-        step_count = 0
-        reward = 0.0
-
         if oracle:
             # Run oracle solver
             if env.solve_task_fn is not None:
                 await env.solve()
                 step_count = env.step_count
             else:
-                return finish(
+                outcome = TaskResult(
                     task_path=str(env_path),
                     variant_id=task_index,
                     success=False,
@@ -137,6 +129,7 @@ async def run_single_task(
                     steps=0,
                     error="No solve_task_fn defined for oracle mode",
                 )
+                return outcome
         elif agent_fn is not None:
             # Run agent
             done = False
@@ -146,8 +139,6 @@ async def run_single_task(
                 step_count += 1
                 done = isinstance(action, DoneAction)
 
-        # A setup-only run is not agent execution, even if the initial
-        # environment state already satisfies the evaluator.
         if not oracle and agent_fn is None:
             raise ValueError("No agent_fn supplied; task was not executed")
 
@@ -155,40 +146,30 @@ async def run_single_task(
         if env.evaluate_task_fn is None:
             raise ValueError("Task has no evaluator")
         result = await env.evaluate()
-        if isinstance(result, (int, float)) and not isinstance(result, bool):
-            raw_reward = result
+        if isinstance(result, dict) and "reward" in result:
+            values = [result["reward"]]
         elif isinstance(result, list) and result:
-            # Multi-criterion evaluators must not mask a malformed later
-            # reward by returning a valid first item.
-            if any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or not 0.0 <= value <= 1.0
-                for value in result
-            ):
-                raise ValueError("Evaluator reward list contains invalid values")
-            raw_reward = result[0]
-        elif isinstance(result, dict) and "reward" in result:
-            raw_reward = result["reward"]
+            values = result
         else:
-            raise ValueError("Unsupported evaluator reward")
-        if isinstance(raw_reward, bool) or not isinstance(raw_reward, (int, float)):
-            raise ValueError("Evaluator reward must be numeric")
-        reward = float(raw_reward)
-        if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
-            raise ValueError("Evaluator reward must be finite and within [0, 1]")
+            values = [result]
+        for value in values:
+            if not isinstance(value, (int, float)):
+                raise ValueError("Evaluator reward must be numeric")
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError("Evaluator reward must be finite and within [0, 1]")
+        reward = float(values[0])
 
-        return finish(
+        outcome = TaskResult(
             task_path=str(env_path),
             variant_id=task_index,
             success=reward >= 0.5,  # Common threshold
             reward=reward,
             steps=step_count,
         )
+        return outcome
 
     except Exception as e:
-        return finish(
+        outcome = TaskResult(
             task_path=str(env_path),
             variant_id=task_index,
             success=False,
@@ -196,6 +177,7 @@ async def run_single_task(
             steps=step_count,
             error=str(e),
         )
+        return outcome
     finally:
         if env is not None:
             try:
@@ -296,7 +278,6 @@ async def run_benchmark(
     task_variants: List[Tuple[Path, int]] = []
     for task_path in tasks:
         env = None
-        discovery_error = None
         try:
             env = make(str(task_path), split=split)
             if env.tasks_config_fn:
@@ -304,7 +285,7 @@ async def run_benchmark(
             else:
                 variant_count = 1
         except Exception as exc:
-            discovery_error = exc
+            raise RuntimeError(f"Unable to discover variants for {task_path}") from exc
         finally:
             if env is not None:
                 try:
@@ -313,10 +294,7 @@ async def run_benchmark(
                     raise RuntimeError(
                         f"Unable to close discovery environment for {task_path}"
                     ) from exc
-        if discovery_error is not None:
-            raise RuntimeError(f"Unable to discover variants for {task_path}") from discovery_error
-
-        if type(variant_count) is not int or variant_count < 1:
+        if variant_count < 1:
             raise ValueError(f"Invalid variant count for {task_path}: {variant_count!r}")
         if max_variants is not None:
             variant_count = min(variant_count, max_variants)

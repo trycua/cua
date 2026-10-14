@@ -814,24 +814,21 @@ pub async fn run_spaces_sdk(
                         let Some(info) = created.space else {
                             continue;
                         };
+                        let text = format!(
+                            "Created {} ({}{})",
+                            info.id,
+                            info.name,
+                            if info.host_name.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", on {}", info.host_name)
+                            }
+                        );
                         if show {
-                            let msg = format!("Created {} ({})", info.id, info.name);
-                            program_status(ProgramState::Done, None, &msg);
+                            program_status(ProgramState::Done, None, &text);
                         }
                         if !json {
-                            line(
-                                out,
-                                format!(
-                                    "Created {} ({}{})",
-                                    info.id,
-                                    info.name,
-                                    if info.host_name.is_empty() {
-                                        String::new()
-                                    } else {
-                                        format!(", on {}", info.host_name)
-                                    }
-                                ),
-                            );
+                            line(out, text);
                         }
                         rows.push(space_json(&info));
                     }

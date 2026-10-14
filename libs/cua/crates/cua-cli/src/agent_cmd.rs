@@ -213,13 +213,11 @@ async fn follow(
     let label = format!("{} {}", run.harness(), run.run_id());
     let mut reported = None;
     let mut report = |shown: &(ProgramState, String)| {
-        if until_turn_end && !json && reported.as_ref() != Some(shown) {
+        if until_turn_end && !json && reported.replace(shown.clone()).as_ref() != Some(shown) {
             program_status(shown.0, None, &format!("{label}: {}", shown.1));
-            reported = Some(shown.clone());
         }
     };
     let mut shown = (ProgramState::Working, "working".to_string());
-    report(&shown);
     // Bounded: at most 24 h of polling at 500 ms.
     for _ in 0..172_800 {
         let page = run.events(cursor, Some(500)).await?;

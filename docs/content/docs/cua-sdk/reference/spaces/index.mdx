@@ -1081,10 +1081,11 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `host` | `String` |  | For a Space one of your machines provides (created with `on="host:<machine>"`): that host's relay machine id; empty otherwise. Lists group these Spaces under their host. |
 | `host_name` / `hostName` | `String` |  | The host's display name, when known. |
 | `power` | `String` |  | How it turns off and on again (`Spaces.stop`, `Spaces.start`): `suspend` (its memory is kept), `stop` (its disk is kept), or empty when it cannot (a cloud Space, a Space added by address). |
-| `power_state` / `powerState` | `String` |  | `running`, `suspended` or `stopped` as cua last recorded it; empty when unknown (a Space one of your machines provides answers while it runs). |
+| `power_state` / `powerState` | `String` |  | `running`, `suspended` or `stopped` as cua last recorded it; empty when unknown. A Space one of your other machines provides says what that machine reports: `running`, `starting` (being created, booting, or joining the relay), `suspended`, `stopped`, or `failed` (`state_reason` says why). |
 | `cloud` | `String` |  | A Space in your own cloud: the provider (`aws`, `gcp`, `modal`); empty otherwise. |
 | `cloud_place` / `cloudPlace` | `String` |  | Where it runs ("AWS · us-west-2"). |
 | `cloud_delete` / `cloudDelete` | `String` |  | How `delete` would delete it permanently from here: `here` (this device created it), `host:<machine>` (the device that created it, through the relay) or `elsewhere` (only there; `remove` keeps it). Empty for other Spaces. |
+| `state_reason` / `stateReason` | `String` |  | For a Space on another of your machines: why it is in its state, for people (why it `failed`, or that its machine is offline). Empty otherwise. |
 
 ## `SpacePowerReport` record
 

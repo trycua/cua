@@ -73,6 +73,7 @@ pub mod host_spaces;
 pub mod id;
 pub mod mesh;
 pub mod operator;
+mod pool_roster;
 pub mod registry;
 pub mod relay;
 pub mod routines;

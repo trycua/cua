@@ -18917,7 +18917,7 @@ class SpaceInfo:
     """
     A registered Space.
 """
-    def __init__(self, *, id:str, name:str, provider:str, spacesd_version:str, features:typing.List[str], os:str, os_name:str, os_pretty_name:str, image:str, image_digest:str, kind:str, arch:str, services:typing.List[str], added_at:typing.Optional[str], host:str, host_name:str, power:str, power_state:str, cloud:str, cloud_place:str, cloud_delete:str):
+    def __init__(self, *, id:str, name:str, provider:str, spacesd_version:str, features:typing.List[str], os:str, os_name:str, os_pretty_name:str, image:str, image_digest:str, kind:str, arch:str, services:typing.List[str], added_at:typing.Optional[str], host:str, host_name:str, power:str, power_state:str, cloud:str, cloud_place:str, cloud_delete:str, state_reason:str):
         self.id = id
         self.name = name
         self.provider = provider
@@ -18939,12 +18939,13 @@ class SpaceInfo:
         self.cloud = cloud
         self.cloud_place = cloud_place
         self.cloud_delete = cloud_delete
+        self.state_reason = state_reason
 
 
 
 
     def __str__(self):
-        return "SpaceInfo(id={}, name={}, provider={}, spacesd_version={}, features={}, os={}, os_name={}, os_pretty_name={}, image={}, image_digest={}, kind={}, arch={}, services={}, added_at={}, host={}, host_name={}, power={}, power_state={}, cloud={}, cloud_place={}, cloud_delete={})".format(self.id, self.name, self.provider, self.spacesd_version, self.features, self.os, self.os_name, self.os_pretty_name, self.image, self.image_digest, self.kind, self.arch, self.services, self.added_at, self.host, self.host_name, self.power, self.power_state, self.cloud, self.cloud_place, self.cloud_delete)
+        return "SpaceInfo(id={}, name={}, provider={}, spacesd_version={}, features={}, os={}, os_name={}, os_pretty_name={}, image={}, image_digest={}, kind={}, arch={}, services={}, added_at={}, host={}, host_name={}, power={}, power_state={}, cloud={}, cloud_place={}, cloud_delete={}, state_reason={})".format(self.id, self.name, self.provider, self.spacesd_version, self.features, self.os, self.os_name, self.os_pretty_name, self.image, self.image_digest, self.kind, self.arch, self.services, self.added_at, self.host, self.host_name, self.power, self.power_state, self.cloud, self.cloud_place, self.cloud_delete, self.state_reason)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -18988,6 +18989,8 @@ class SpaceInfo:
             return False
         if self.cloud_delete != other.cloud_delete:
             return False
+        if self.state_reason != other.state_reason:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
@@ -19015,6 +19018,7 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
             cloud=_UniffiFfiConverterString.read(buf),
             cloud_place=_UniffiFfiConverterString.read(buf),
             cloud_delete=_UniffiFfiConverterString.read(buf),
+            state_reason=_UniffiFfiConverterString.read(buf),
         )
 
     @staticmethod
@@ -19040,6 +19044,7 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.cloud)
         _UniffiFfiConverterString.check_lower(value.cloud_place)
         _UniffiFfiConverterString.check_lower(value.cloud_delete)
+        _UniffiFfiConverterString.check_lower(value.state_reason)
 
     @staticmethod
     def write(value, buf):
@@ -19064,6 +19069,7 @@ class _UniffiFfiConverterTypeSpaceInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.cloud, buf)
         _UniffiFfiConverterString.write(value.cloud_place, buf)
         _UniffiFfiConverterString.write(value.cloud_delete, buf)
+        _UniffiFfiConverterString.write(value.state_reason, buf)
 
 class _UniffiFfiConverterOptionalTypeSpaceInfo(_UniffiConverterRustBuffer):
     @classmethod

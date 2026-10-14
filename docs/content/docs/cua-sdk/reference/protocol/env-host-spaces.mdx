@@ -146,6 +146,8 @@ A Space this host provides.
 | `created_at_ms` | 9 | `int64` | When it was created (Unix milliseconds). |
 | `direct_port` | 10 | `uint32` | A Space created with `CreateHostSpaceRequest.direct`: the TCP port on the host's own address that the host forwards to the Space's cua-spacesd (`direct:<host address>:<direct_port>`). 0 for a Space reached through the relay. |
 | `direct_token` | 11 | `string` | The Space's cua-spacesd token, set only in the `CreateHostSpace` response of a direct Space (the caller stores it like any direct Space's token). Empty otherwise. |
+| `state` | 12 | `string` | What the Space is doing now, as this host sees it: "running", "suspended", "stopped", "starting" (being created or booting) or "failed" (`state_reason` says why). Empty from a host that predates it. |
+| `state_reason` | 13 | `string` | Why it is "failed" (its runtime's words, or "its sandbox is gone"). Empty otherwise. |
 
 ### HostSpacesAuditEvent
 

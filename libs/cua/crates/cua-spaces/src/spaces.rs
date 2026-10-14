@@ -401,6 +401,7 @@ impl SpacesBuilder {
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
+                host_listings: Default::default(),
                 site_login: std::sync::RwLock::new(None),
             }),
         }
@@ -541,6 +542,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         } else {
             String::new()
         },
+        state_reason: String::new(),
     }
 }
 
@@ -673,6 +675,9 @@ pub(crate) struct Inner {
     relay_reported: std::sync::Mutex<HashMap<String, ReportedFacts>>,
     /// Held across a read so only one directory read runs at a time.
     relay_read: tokio::sync::Mutex<Option<std::time::Instant>>,
+    /// What each machine that provides Spaces last said about them
+    /// ([`crate::pool_roster`]).
+    pub(crate) host_listings: crate::pool_roster::HostListings,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,
@@ -776,9 +781,8 @@ impl Spaces {
             let mut info = relay_info(m);
             self.apply_reported(&mut info, m.online);
             if !info.host.is_empty() {
-                info.host_name = cache
-                    .iter()
-                    .find(|h| h.id == info.host)
+                let host = cache.iter().find(|h| h.id == info.host);
+                info.host_name = host
                     .map(|h| {
                         if h.name.is_empty() {
                             h.id.clone()
@@ -787,6 +791,14 @@ impl Spaces {
                         }
                     })
                     .unwrap_or_default();
+                // What the machine running it says it is doing.
+                crate::pool_roster::apply_host_state(
+                    &mut info,
+                    m,
+                    host,
+                    self.host_listing(&m.host.clone().unwrap_or_default())
+                        .as_ref(),
+                );
             } else if let Some((provider, place)) =
                 self.inner.sandboxes.cloud_of_relay_machine(&m.id)
             {
@@ -823,14 +835,18 @@ impl Spaces {
     /// listed without the account's machines (and any listed before the
     /// sign-out are dropped). [`Self::list`] remains the cached, local read.
     pub async fn list_all(&self) -> Result<Vec<SpaceInfo>> {
-        if let Some(account) = self.relay_account()
-            && let Err(e) = self.relay_machines().await
-        {
-            if e.tag() != "unauthenticated" || account.tokens.signed_in().await {
-                return Err(e);
+        if let Some(account) = self.relay_account() {
+            match self.relay_machines().await {
+                // What each machine that provides Spaces says they are doing.
+                Ok(_) => self.refresh_host_listings().await,
+                Err(e) => {
+                    if e.tag() != "unauthenticated" || account.tokens.signed_in().await {
+                        return Err(e);
+                    }
+                    tracing::debug!("relay directory skipped: not signed in");
+                    self.inner.relay_cache.lock().expect("relay cache").clear();
+                }
             }
-            tracing::debug!("relay directory skipped: not signed in");
-            self.inner.relay_cache.lock().expect("relay cache").clear();
         }
         self.list()
     }
@@ -1196,6 +1212,7 @@ impl Spaces {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            state_reason: String::new(),
         }))
     }
 
@@ -2985,7 +3002,10 @@ impl Spaces {
                 }) {
                     Some((m, host)) => {
                         self.drop_connection(&id).await;
-                        self.power_on_host(&m, &host, on).await
+                        let r = self.power_on_host(&m, &host, on).await;
+                        // The next list asks the machine what it is doing now.
+                        self.forget_host_listing(&host);
+                        r
                     }
                     None => Err(refuse("relay (only a Space one of your machines provides)")),
                 }

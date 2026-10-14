@@ -240,8 +240,84 @@ fn to_pb(s: &ProvidedSpace) -> pb::HostSpace {
         direct_port: u32::from(s.direct_port),
         // Only the create response carries a direct Space's token.
         direct_token: String::new(),
+        // Filled in when listed ([`with_state`]).
+        state: String::new(),
+        state_reason: String::new(),
     }
 }
+
+/// `space` with what its sandbox is doing now ([`pb::HostSpace::state`]).
+fn with_state(mut space: pb::HostSpace, states: &States) -> pb::HostSpace {
+    if let Some((state, reason)) = states.get(&space.local_space) {
+        space.state = (*state).into();
+        space.state_reason = reason.clone();
+    }
+    space
+}
+
+/// What a sandbox's status says the Space is doing, in
+/// [`pb::HostSpace::state`] words, with why for one that failed.
+pub fn space_state(status: &cua_sandbox_core::Status) -> (&'static str, String) {
+    use cua_sandbox_core::Status;
+    match status {
+        Status::Running => ("running", String::new()),
+        Status::Suspended => ("suspended", String::new()),
+        Status::Stopped => ("stopped", String::new()),
+        Status::Provisioning => ("starting", String::new()),
+        Status::Unknown(word) => {
+            let w = word.trim().to_ascii_lowercase();
+            if w == cua_sandbox_core::MISSING {
+                ("failed", "its sandbox is gone".into())
+            } else if ["creat", "start", "boot", "pull", "provision", "pending"]
+                .iter()
+                .any(|p| w.contains(p))
+            {
+                ("starting", String::new())
+            } else if ["exit", "stop", "dead", "shut", "off"]
+                .iter()
+                .any(|p| w.contains(p))
+            {
+                ("stopped", String::new())
+            } else if w.is_empty() || w == "unknown" {
+                ("", String::new())
+            } else {
+                ("failed", word.trim().to_string())
+            }
+        }
+    }
+}
+
+/// Who [`HostSpacesServer::publish_own`] records as having made a Space
+/// it publishes (this machine's own).
+pub const PUBLISHED_BY: &str = "this machine";
+
+/// How often a published Space that runs but is not on the relay is
+/// attached again.
+const REATTACH_EVERY: Duration = Duration::from_secs(120);
+
+/// The relay machine this host publishes its own Space `local_space`
+/// as: the same on every call, so a Space is published once.
+pub fn published_machine(host_id: &str, local_space: &str) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(format!("{host_id}\n{local_space}").as_bytes());
+    format!("space-{}", hex::encode(&digest[..8]))
+}
+
+/// Whether `p` is one of the host `host_id`'s own Spaces it published
+/// ([`HostSpacesServer::publish_own`]), not one it provides to a device.
+pub fn is_published(p: &ProvidedSpace, host_id: &str) -> bool {
+    !host_id.is_empty()
+        && !p.relay_machine.is_empty()
+        && p.relay_machine == published_machine(host_id, &p.local_space)
+}
+
+/// How long the host reuses its runtimes' listing for `GetHostSpaces`
+/// (each of the owner's devices asks every few seconds, and a client
+/// following a create every second).
+const STATES_MAX_AGE: Duration = Duration::from_secs(2);
+
+/// The live state of each local sandbox, by Space id (`local:<name>`).
+type States = HashMap<String, (&'static str, String)>;
 
 #[derive(Default)]
 struct Reserved {
@@ -435,6 +511,16 @@ pub struct HostSpacesServer {
     /// The ports this host forwards to the Spaces it provides directly,
     /// by the Space's `local:` id.
     forwards: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// The runtimes' last listing ([`STATES_MAX_AGE`]).
+    states: tokio::sync::Mutex<Option<(std::time::Instant, States)>>,
+    /// Creates for other devices running now: [`Self::publish_own`] waits
+    /// for them (their Space is in the registry before it is provided).
+    creates: std::sync::atomic::AtomicUsize,
+    /// When each published Space was last attached again (or its
+    /// registration refused), by relay machine ([`REATTACH_EVERY`]).
+    reattached: Mutex<HashMap<String, std::time::Instant>>,
+    /// Serializes [`Self::publish_own`].
+    publishing: tokio::sync::Mutex<()>,
 }
 
 impl Drop for HostSpacesServer {
@@ -456,6 +542,10 @@ impl HostSpacesServer {
             reserved: Mutex::default(),
             creating: Creating::default(),
             forwards: Mutex::default(),
+            states: tokio::sync::Mutex::default(),
+            creates: Default::default(),
+            reattached: Mutex::default(),
+            publishing: tokio::sync::Mutex::default(),
         })
     }
 
@@ -635,7 +725,7 @@ impl HostSpacesServer {
         let r = self.reserved.lock().expect("reserved");
         let mut out = vec![pb::HostSpacesCapacity {
             resource: "spaces".into(),
-            used: provided.len() as u32 + r.spaces,
+            used: self.provided_count(provided) + r.spaces,
             limit: settings.max_spaces,
             reason: "this host's limit (`cua host config --max-spaces`)".into(),
         }];
@@ -665,7 +755,7 @@ impl HostSpacesServer {
             0
         };
         let mut r = self.reserved.lock().expect("reserved");
-        let used = provided.len() as u32 + r.spaces;
+        let used = self.provided_count(provided) + r.spaces;
         if settings.max_spaces > 0 && used >= settings.max_spaces {
             return Err(Error::LimitExceeded(format!(
                 "{host_name} already provides {used} Spaces, its limit (on it: `cua host config \
@@ -709,6 +799,7 @@ impl HostSpacesServer {
         // open again.
         self.restore_direct_forwards().await;
         let all = provided::load_provided(&self.host_dir())?;
+        let states = self.states().await;
         let settings = policy.spaces_settings();
         let mut images = vec!["linux".to_string()];
         if cfg!(target_os = "macos") {
@@ -731,7 +822,7 @@ impl HostSpacesServer {
             spaces: all
                 .iter()
                 .filter(|s| caller.is_owner() || s.created_by_account == caller.account)
-                .map(to_pb)
+                .map(|s| with_state(to_pb(s), &states))
                 .collect(),
             audit: if caller.is_owner() {
                 provided::read_audit(&self.host_dir(), 50)
@@ -753,6 +844,277 @@ impl HostSpacesServer {
         })
     }
 
+    /// The live state of every local sandbox here, by Space id (the
+    /// runtimes' listing, reused for [`STATES_MAX_AGE`]). Empty when the
+    /// runtimes do not answer: states are then unknown, not "failed".
+    async fn states(&self) -> States {
+        let mut cached = self.states.lock().await;
+        if let Some((at, states)) = cached.as_ref()
+            && at.elapsed() < STATES_MAX_AGE
+        {
+            return states.clone();
+        }
+        let states: States = match self.spaces.sandboxes().list().await {
+            Ok(list) => list
+                .into_iter()
+                .filter(|i| i.provider == cua_sandbox_core::ProviderKind::Local)
+                .map(|i| (i.id, space_state(&i.status)))
+                .collect(),
+            Err(e) => {
+                tracing::debug!("host spaces: runtimes did not list: {e}");
+                HashMap::new()
+            }
+        };
+        *cached = Some((std::time::Instant::now(), states.clone()));
+        states
+    }
+
+    /// How many Spaces this host provides to the limit (`max_spaces`):
+    /// its own Spaces it publishes ([`Self::publish_own`]) do not count.
+    fn provided_count(&self, provided: &[ProvidedSpace]) -> u32 {
+        let host = self.spaces.this_relay_machine_id().unwrap_or_default();
+        provided.iter().filter(|p| !is_published(p, &host)).count() as u32
+    }
+
+    /// Publishes this machine's own Spaces while it provides Spaces: each
+    /// Space made here (not one it provides to another device, nor one
+    /// shared on its own) gets a relay machine under this host, so the
+    /// owner's other devices list it ("on <this machine>") with its state,
+    /// open it, and turn it off and on, as a Space this host provides. A
+    /// Space that is off is published too (listed Stopped; turning it on
+    /// from another device boots it and attaches it). Turning "Provide
+    /// Spaces" off takes them off the relay again.
+    ///
+    /// Needs this machine set up as a host on the relay and signed in to
+    /// the account (the relay machine is registered as the owner, from
+    /// this enrolled device); without either it does nothing. Each
+    /// published Space is listed once on this machine, as its local Space
+    /// ([`Spaces::list`]). Best effort: what fails is logged and tried
+    /// again on the next call. Returns the relay machines it published.
+    pub async fn publish_own(&self) -> Result<Vec<String>> {
+        let Ok(_one) = self.publishing.try_lock() else {
+            return Ok(vec![]);
+        };
+        let Ok(policy) = self.policy() else {
+            return Ok(vec![]);
+        };
+        let Some(host_id) = self.spaces.this_relay_machine_id() else {
+            return Ok(vec![]);
+        };
+        let mut all = provided::load_provided(&self.host_dir())?;
+        if !policy.provide_spaces || policy.direct.is_some() {
+            // Off: the ones it published leave the relay.
+            let gone: Vec<ProvidedSpace> = all
+                .iter()
+                .filter(|p| is_published(p, &host_id))
+                .cloned()
+                .collect();
+            if gone.is_empty() {
+                return Ok(vec![]);
+            }
+            for p in &gone {
+                if let Ok(client) = RelayClient::new(&p.relay_url) {
+                    let _ = client.delete(&p.machine_token, &p.relay_machine).await;
+                }
+                self.audit(
+                    "unpublish",
+                    &HostCaller::local(),
+                    &p.relay_machine,
+                    &p.local_space,
+                );
+            }
+            let mut keep = provided::load_provided(&self.host_dir())?;
+            keep.retain(|p| !is_published(p, &host_id));
+            provided::save_provided(&self.host_dir(), &keep)?;
+            return Ok(vec![]);
+        }
+        let Some(relay) = self.spaces.relay_account() else {
+            return Ok(vec![]);
+        };
+        if self.creates.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            return Ok(vec![]);
+        }
+        let token = relay.tokens.access_token().await?;
+        let client = relay.client().await?;
+        let directory = client.machines(&token).await?;
+        let states = self.states().await;
+        let shared = self.spaces.attached();
+        let creating: std::collections::HashSet<String> =
+            crate::creating::journals(self.spaces.home_dir())
+                .into_iter()
+                .filter(|(_, j)| !crate::creating::gone(j))
+                .map(|(_, j)| SpaceId::Local { name: j.name }.to_string())
+                .collect();
+        let mut published = vec![];
+        for info in self.spaces.list()? {
+            if info.provider != crate::Provider::Local
+                || all.iter().any(|p| p.local_space == info.id)
+                || shared.contains_key(&info.id)
+                || creating.contains(&info.id)
+            {
+                continue;
+            }
+            let machine = published_machine(&host_id, &info.id);
+            // One the relay refused (the account's machine limit) is tried
+            // again later, not on every pass.
+            if self
+                .reattached
+                .lock()
+                .expect("reattached")
+                .get(&machine)
+                .is_some_and(|at| at.elapsed() < REATTACH_EVERY)
+            {
+                continue;
+            }
+            let meta = if info.os.is_empty() {
+                Default::default()
+            } else {
+                std::collections::BTreeMap::from([(
+                    crate::share::META_SPACE_OS.to_string(),
+                    info.os.clone(),
+                )])
+            };
+            let reg = match client
+                .register(
+                    &token,
+                    &cua_host::relay::RegisterRequest {
+                        id: machine.clone(),
+                        name: if info.name.is_empty() {
+                            info.id.clone()
+                        } else {
+                            info.name.clone()
+                        },
+                        allow: vec![],
+                        host: Some(host_id.clone()),
+                        meta,
+                    },
+                )
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        space = info.id,
+                        "could not publish the Space on the relay: {e}"
+                    );
+                    self.reattached
+                        .lock()
+                        .expect("reattached")
+                        .insert(machine, std::time::Instant::now());
+                    continue;
+                }
+            };
+            let SpaceId::Local { name } = SpaceId::parse(&info.id)? else {
+                continue;
+            };
+            let record = ProvidedSpace {
+                relay_machine: machine.clone(),
+                local_space: info.id.clone(),
+                name: info.name.clone(),
+                image: info.image.clone(),
+                os: info.os.clone(),
+                kind: info.kind.clone(),
+                runtime: self
+                    .spaces
+                    .sandboxes()
+                    .get(&name)
+                    .await
+                    .map(|i| i.runtime_type)
+                    .unwrap_or_default(),
+                created_by: PUBLISHED_BY.into(),
+                created_by_account: reg.machine.owner.id.clone(),
+                created_at_ms: info
+                    .added_at
+                    .as_deref()
+                    .and_then(|t| humantime::parse_rfc3339_weak(t).ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or_else(now_ms),
+                machine_token: reg.machine_token.clone(),
+                relay_url: relay.url.clone(),
+                direct_port: 0,
+            };
+            // Recorded first: what is on the relay is never lost track of
+            // (read again: a create or delete may have written meanwhile).
+            all = provided::load_provided(&self.host_dir())?;
+            all.retain(|p| p.local_space != record.local_space);
+            all.push(record.clone());
+            provided::save_provided(&self.host_dir(), &all)?;
+            self.audit("publish", &HostCaller::local(), &machine, &info.id);
+            if states.get(&info.id).is_some_and(|s| s.0 == "running") {
+                let attach = pb::AttachRelayRequest {
+                    relay_url: relay.url.clone(),
+                    machine_token: reg.machine_token,
+                    machine_id: machine.clone(),
+                    relay_jwks_json: reg.jwks.to_string(),
+                    owner: reg.machine.owner.id.clone(),
+                    owner_email: reg.machine.owner.email.clone().unwrap_or_default(),
+                };
+                if let Err(e) = self.attach_to_relay(&info.id, &info.kind, &attach).await {
+                    tracing::warn!(space = info.id, "published Space not attached yet: {e}");
+                }
+                self.reattached
+                    .lock()
+                    .expect("reattached")
+                    .insert(machine.clone(), std::time::Instant::now());
+            }
+            published.push(machine);
+        }
+        // A published Space that runs but is not on the relay (it was
+        // started here, or this machine restarted): attached again, at
+        // most every REATTACH_EVERY.
+        for p in all.iter().filter(|p| is_published(p, &host_id)) {
+            let running = states.get(&p.local_space).is_some_and(|s| s.0 == "running");
+            let online = directory
+                .iter()
+                .any(|m| m.id == p.relay_machine && m.online);
+            if !running || online || published.contains(&p.relay_machine) {
+                continue;
+            }
+            let due = self
+                .reattached
+                .lock()
+                .expect("reattached")
+                .get(&p.relay_machine)
+                .is_none_or(|at| at.elapsed() >= REATTACH_EVERY);
+            if !due {
+                continue;
+            }
+            self.reattached
+                .lock()
+                .expect("reattached")
+                .insert(p.relay_machine.clone(), std::time::Instant::now());
+            if let Err(e) = self.reattach(p).await {
+                tracing::debug!(
+                    space = p.local_space,
+                    "published Space not attached again: {e}"
+                );
+            }
+        }
+        Ok(published)
+    }
+
+    /// Attaches the driver of the local Space `key` to the relay machine
+    /// in `attach` (the second half of `relay_register`).
+    async fn attach_to_relay(
+        &self,
+        key: &str,
+        kind: &str,
+        attach: &pb::AttachRelayRequest,
+    ) -> Result<()> {
+        let s = self.spaces.space(key).await?;
+        s.require(RELAY_ATTACH_FEATURE)?;
+        s.spacesd()?
+            .system()
+            .attach_relay(pb::AttachRelayRequest {
+                relay_url: guest_relay_url(&attach.relay_url, kind),
+                ..attach.clone()
+            })
+            .await
+            .map_err(|e| Error::Env(cua_spacesd_client::Error::from(e)))?;
+        Ok(())
+    }
+
     /// `CreateHostSpace`: creates one Space here and attaches it to the
     /// relay machine the caller registered for it.
     pub async fn create(
@@ -769,7 +1131,11 @@ impl HostSpacesServer {
             .into_iter()
             .find(|os| image.contains(os))
             .unwrap_or(if image.is_empty() { "linux" } else { "unknown" });
+        self.creates
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let r = self.create_provided(caller, req).await;
+        self.creates
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         cua_telemetry::capture(cua_telemetry::events::host_space_provided(
             &kind,
             guest,
@@ -976,20 +1342,7 @@ impl HostSpacesServer {
         }
         // Attach the new Space's own driver to the relay machine the caller
         // registered (the second half of `relay_register`).
-        let attached = async {
-            let s = self.spaces.space(&info.id).await?;
-            s.require(RELAY_ATTACH_FEATURE)?;
-            s.spacesd()?
-                .system()
-                .attach_relay(pb::AttachRelayRequest {
-                    relay_url: guest_relay_url(&attach.relay_url, &info.kind),
-                    ..attach.clone()
-                })
-                .await
-                .map_err(|e| Error::Env(cua_spacesd_client::Error::from(e)))?;
-            Ok::<_, Error>(())
-        }
-        .await;
+        let attached = self.attach_to_relay(&info.id, &info.kind, &attach).await;
         if let Err(e) = attached {
             let e = too_old_for_the_relay(e, &image);
             let _ = self.spaces.delete(&info.id).await;
@@ -1279,6 +1632,7 @@ impl HostSpacesServer {
                 }
             }
         };
+        *self.states.lock().await = None;
         let report = crate::SpacePower::new(&label, control, state);
         self.audit(
             if on { "start" } else { "stop" },
@@ -2038,7 +2392,7 @@ impl Spaces {
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
     }
 
-    async fn host_space(&self, m: &crate::relay::RelayMachine) -> Result<crate::Space> {
+    pub(crate) async fn host_space(&self, m: &crate::relay::RelayMachine) -> Result<crate::Space> {
         if !m.online {
             return Err(Error::host(
                 "host spaces",
@@ -2211,6 +2565,7 @@ impl Spaces {
             Some(m) => m,
             None => client.machine(&token, &machine).await?,
         };
+        self.forget_host_listing(&host.id);
         let mut info = crate::spaces::relay_info(&m);
         info.host_name = host_label;
         if !m.online {

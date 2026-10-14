@@ -2286,6 +2286,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            state_reason: String::new(),
         };
         let mut list = vec![
             space("local:box", ""),
@@ -2343,6 +2344,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            state_reason: String::new(),
         };
         let lines = grouped_lines(&[
             space("relay:space-1", "mini1234"),
@@ -2411,6 +2413,7 @@ mod tests {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            state_reason: String::new(),
         };
         let lines = grouped_lines(std::slice::from_ref(&s));
         let cols: Vec<&str> = lines[0].split_whitespace().collect();

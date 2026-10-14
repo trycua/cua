@@ -234,7 +234,9 @@ export class LiveSpacesBackend implements SpacesBackend {
           kind: kindOf(this.native, info.kind),
           arch: text(info.arch),
           reachable: false,
-          error: undefined,
+          // A Space on another of your machines: why it is in its state
+          // (it failed, its machine is offline).
+          error: text(info.stateReason),
           host: text(info.host),
           hostName: text(info.hostName),
           power: text(info.power),
@@ -243,8 +245,9 @@ export class LiveSpacesBackend implements SpacesBackend {
           cloudPlace: text(info.cloudPlace),
           cloudDelete: text(info.cloudDelete),
         };
-        // Turned off on purpose: no probe (it would only time out).
-        if (info.powerState === "suspended" || info.powerState === "stopped") return row;
+        // Turned off on purpose, or (on another of your machines) starting
+        // or failed there: no probe (it would only time out).
+        if (["suspended", "stopped", "starting", "failed"].includes(info.powerState)) return row;
         // Bounded connect: an unreachable Space must not stall the list.
         const probe = await withTimeout(4, () => spaces.space(info.id));
         if (!probe.ok) {

@@ -131,7 +131,7 @@ pub struct ShareAudit {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct Attached {
+pub(crate) struct Attached {
     /// The relay machine id of an attached (non-host) Space.
     machine: String,
 }
@@ -278,7 +278,7 @@ impl Spaces {
         crate::audit::AuditLog::new(self.home_dir().join("shares-audit.jsonl"))
     }
 
-    fn attached(&self) -> BTreeMap<String, Attached> {
+    pub(crate) fn attached(&self) -> BTreeMap<String, Attached> {
         std::fs::read(self.shares_path())
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())

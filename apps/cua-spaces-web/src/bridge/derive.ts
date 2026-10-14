@@ -60,14 +60,16 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
   // Not reported: unknown, never guessed (the core's `row_to_space`).
   const os = row.os ?? "unknown";
   const off = row.powerState === "suspended" || row.powerState === "stopped";
-  const status: SpaceStatus = row.reachable && !(row.power && off) ? "running" : "suspended";
+  // A Space on another of your machines that the machine says is starting.
+  const status: SpaceStatus =
+    row.reachable && !(row.power && off) ? "running" : row.powerState === "starting" ? "provisioning" : "suspended";
   const added = row.addedAt ? Date.parse(row.addedAt) : NaN;
   return {
     id: row.id,
     name: displayName(row.name || row.id),
     os,
     status,
-    detail: status === "running" ? "Running" : "Stopped",
+    detail: status === "running" ? "Running" : status === "provisioning" ? "Starting…" : "Stopped",
     lastUsedAt: Number.isFinite(added) ? added : now,
     scene: SCENES[os],
     provider: row.provider,

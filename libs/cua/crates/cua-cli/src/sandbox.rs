@@ -2410,6 +2410,17 @@ async fn ls(
     for r in rows.iter_mut() {
         portable_row(r);
     }
+    // The Spaces on your other machines (the same list the apps show).
+    if known.is_none() {
+        match tokio::time::timeout(cua_daemon::LIST_CLOUD_TIMEOUT, cua.spaces().list()).await {
+            Ok(Ok(spaces)) => rows.extend(other_machine_rows(&spaces)),
+            Ok(Err(e)) => warnings.push(format!("Spaces on your other machines not listed: {e}")),
+            Err(_) => warnings.push(format!(
+                "Spaces on your other machines not listed: no answer within {}s",
+                cua_daemon::LIST_CLOUD_TIMEOUT.as_secs()
+            )),
+        }
+    }
     // Disk used by each local sandbox (cloud and direct ones use none here).
     if sizes && rows.iter().any(|r| r["location"] == "local") {
         let by_name = cua_disk::Scanner::system(cua_disk::Layout::default())
@@ -2445,7 +2456,10 @@ async fn ls(
                 let mut row = vec![
                     s(&r["id"]),
                     s(&r["status"]),
-                    s(&r["location"]),
+                    match r["machine"].as_str() {
+                        Some(m) if !m.is_empty() => format!("on {m}"),
+                        _ => s(&r["location"]),
+                    },
                     dash(&r["kind"]),
                     dash(&r["runtime"]),
                     r["expires_in_seconds"]
@@ -2476,6 +2490,38 @@ async fn ls(
         util::table(out, &headers, &table);
     }
     Ok(0)
+}
+
+/// The rows of the Spaces your other machines run (a `relay:` Space with
+/// the machine it is on), with the state that machine reports: `running`,
+/// `starting`, `stopped` (or `suspended`), `failed` (`reason` says why), or
+/// `unknown` when the machine cannot say (it is offline: `reason`).
+pub fn other_machine_rows(spaces: &[cua_sdk::SpaceInfo]) -> Vec<serde_json::Value> {
+    spaces
+        .iter()
+        .filter(|s| s.provider == "relay" && !s.host.is_empty())
+        .map(|s| {
+            let state = if s.power_state.is_empty() {
+                "unknown"
+            } else {
+                s.power_state.as_str()
+            };
+            serde_json::json!({
+                "id": s.id,
+                "name": s.name,
+                "status": state,
+                "state": state,
+                "location": "relay",
+                "machine": if s.host_name.is_empty() { &s.host } else { &s.host_name },
+                "machine_id": s.host,
+                "kind": s.kind,
+                "runtime": "",
+                "os": s.os,
+                "image": s.image,
+                "reason": s.state_reason,
+            })
+        })
+        .collect()
 }
 
 /// `NAME:/path` -> (name, path); local paths (`./x`, `/x`, `C:\x`) -> None.

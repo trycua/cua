@@ -212,10 +212,11 @@ A registered Space.
 | `host` | 14 | `string` | For a Space a host provides (`relay:<machine>` created with `on="host:<machine>"`): the relay machine id of that host; for one a host added by its direct address created (`direct:<addr>:<port>`): that host's Space id (`direct:<addr>:<port>`); empty otherwise. Lists group these Spaces under their host. |
 | `host_name` | 15 | `string` | The display name of `host`, when known. |
 | `power` | 16 | `string` | How the Space turns off and on again (`stop_space` / `start_space`): "suspend" (its memory is kept), "stop" (its disk is kept), or empty when it cannot. Filled in when listed, not stored. |
-| `power_state` | 17 | `string` | "running", "suspended" or "stopped" as cua last recorded it; empty when unknown. Filled in when listed, not stored. |
+| `power_state` | 17 | `string` | "running", "suspended" or "stopped" as cua last recorded it; empty when unknown. A Space one of your other machines provides says what that machine reports: "running", "starting" (being created, booting, or joining the relay), "suspended", "stopped" or "failed" (`state_reason` says why). Filled in when listed, not stored. |
 | `cloud` | 18 | `string` | A Space in the owner's own cloud: the provider ("aws", "gcp", "modal"); empty otherwise. |
 | `cloud_place` | 19 | `string` | Where it runs, for people ("AWS · us-west-2"); empty otherwise. |
 | `cloud_delete` | 20 | `string` | How this device would delete it permanently: "here" (this cua home created it and records it), "host:&lt;machine&gt;" (ask the device that created it, through the relay) or "elsewhere" (only from the device that created it). Empty for other Spaces. |
+| `state_reason` | 21 | `string` | For a Space on another of your machines: why it is in its state, for people (why it "failed", or that its machine is offline). Empty otherwise. Filled in when listed, not stored. |
 
 ### AddSpaceRequest
 

@@ -1517,3 +1517,159 @@ async fn the_host_lists_a_running_create_to_its_caller_and_owner_only() {
         "gone once it ended"
     );
 }
+
+/// The Spaces made on a machine that provides Spaces show on the account's
+/// other devices (CUA-1638): the machine puts each on the relay under
+/// itself, once, and lists each once itself. Another device lists them "on"
+/// that machine with the state the machine reports (CUA-1637: starting,
+/// not "Stopped"), and turns them off and on there. Turning "Provide
+/// Spaces" off takes them off the relay again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spaces_made_on_a_providing_machine_list_on_other_devices_with_their_state() {
+    use cua_spaces::host_spaces::published_machine;
+    let f = fixture(HostProfile::Spare).await;
+    let local = |name: &str| cua_spaces::SpaceCreate {
+        image: Some("linux".into()),
+        on: Some(cua_sandbox_core::placement::On::Local),
+        name: Some(name.into()),
+        wait: Some(true),
+        spacesd: Some(true),
+        ..Default::default()
+    };
+    let up = f.spaces.create(local("dev-linux")).await.unwrap();
+    let up = up.ready().unwrap().id;
+    let off = f.spaces.create(local("old-linux")).await.unwrap();
+    let off = off.ready().unwrap().id;
+    f.spaces.stop(&off).await.unwrap();
+
+    // Not signed in here: nothing is published.
+    assert!(f.server.publish_own().await.unwrap().is_empty());
+    f.spaces.set_relay(Some(cua_spaces::RelayAccount::new(
+        &f.relay.url,
+        Arc::new(StaticToken("ada-token".into())),
+    )));
+    let host = f.spaces.this_relay_machine_id().unwrap();
+    let (up_m, off_m) = (
+        published_machine(&host, &up),
+        published_machine(&host, &off),
+    );
+    let mut published = f.server.publish_own().await.unwrap();
+    published.sort();
+    let mut want = vec![up_m.clone(), off_m.clone()];
+    want.sort();
+    assert_eq!(published, want);
+    // The running one's driver joined its relay machine (the stopped one
+    // joins when it is started).
+    let attached = f.env.state.relay_attached.lock().unwrap().clone().unwrap();
+    assert_eq!(attached.machine_id, up_m);
+    // Once: a second pass publishes nothing new.
+    assert!(f.server.publish_own().await.unwrap().is_empty());
+    let mut on_relay: Vec<String> = cua_host::RelayClient::new(&f.relay.url)
+        .unwrap()
+        .machines("ada-token")
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.host.as_deref() == Some(host.as_str()))
+        .map(|m| m.id)
+        .collect();
+    on_relay.sort();
+    assert_eq!(on_relay, want, "under this machine, as Spaces");
+    // Here each is listed once, as the local Space; and they are not
+    // Spaces it provides to someone (its limit is untouched).
+    let here: Vec<String> = f
+        .spaces
+        .list_all()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert!(here.contains(&up) && here.contains(&off), "{here:?}");
+    assert!(
+        !here.iter().any(|id| id.starts_with("relay:space-")),
+        "{here:?}"
+    );
+    let answer = f.server.get(&ada()).await.unwrap();
+    let used = answer
+        .capacity
+        .iter()
+        .find(|c| c.resource == "spaces")
+        .unwrap()
+        .used;
+    assert_eq!(used, 0);
+    let state_of = |m: &str| {
+        answer
+            .spaces
+            .iter()
+            .find(|s| s.relay_machine == m)
+            .map(|s| s.state.clone())
+    };
+    assert_eq!(state_of(&up_m).as_deref(), Some("running"));
+    assert_eq!(state_of(&off_m).as_deref(), Some("suspended"));
+
+    // Another of ada's devices.
+    let (_host, other, _dir) = client_fixture(&f).await;
+    f.relay.set_online(&up_m, true, "1.0.0");
+    let row = |list: &[cua_spaces::SpaceInfo], m: &str| {
+        list.iter()
+            .find(|s| s.id == format!("relay:{m}"))
+            .cloned()
+            .unwrap_or_else(|| panic!("relay:{m} listed: {list:?}"))
+    };
+    let listed = other.list_all().await.unwrap();
+    let r = row(&listed, &up_m);
+    assert_eq!(
+        (
+            r.host.as_str(),
+            r.host_name.as_str(),
+            r.power.as_str(),
+            r.power_state.as_str()
+        ),
+        (host.as_str(), "Mac mini (spare)", "stop", "running")
+    );
+    assert_eq!(r.name, "dev-linux");
+    assert_eq!(row(&listed, &off_m).power_state, "suspended");
+
+    // Started from this device: the machine boots it and attaches it. Until
+    // its driver is on the relay it is starting, not stopped.
+    other.start(&format!("relay:{off_m}")).await.unwrap();
+    let attached = f.env.state.relay_attached.lock().unwrap().clone().unwrap();
+    assert_eq!(attached.machine_id, off_m);
+    let listed = other.list_all().await.unwrap();
+    assert_eq!(row(&listed, &off_m).power_state, "starting");
+    f.relay.set_online(&off_m, true, "1.0.0");
+    let listed = other.list_all().await.unwrap();
+    assert_eq!(row(&listed, &off_m).power_state, "running");
+
+    // Stopped from this device.
+    other.stop(&format!("relay:{up_m}")).await.unwrap();
+    f.relay.set_online(&up_m, false, "1.0.0");
+    let listed = other.list_all().await.unwrap();
+    assert_eq!(row(&listed, &up_m).power_state, "stopped");
+
+    // The machine goes offline: its Spaces say why they cannot be reached.
+    f.relay.set_online(&host, false, "1.0.0");
+    let listed = other.list_all().await.unwrap();
+    let r = row(&listed, &up_m);
+    assert_eq!(
+        (r.power_state.as_str(), r.state_reason.as_str()),
+        ("", "Mac mini (spare) is offline")
+    );
+    f.relay.set_online(&host, true, "1.0.0");
+
+    // "Provide Spaces" off: they leave the relay; the Spaces stay here.
+    Host::new(&f.home)
+        .with_service_manager(Arc::new(FakeServiceManager::default()))
+        .configure(HostSettingsChange {
+            provide_spaces: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(f.server.publish_own().await.unwrap().is_empty());
+    assert!(provided_machines(&f).await.is_empty());
+    assert!(provided::load_provided(&f.host_dir()).unwrap().is_empty());
+    let here: Vec<String> = f.spaces.list().unwrap().into_iter().map(|s| s.id).collect();
+    assert!(here.contains(&up) && here.contains(&off), "{here:?}");
+}

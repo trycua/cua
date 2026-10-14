@@ -120,6 +120,33 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 /// once a minute after start, then hourly while no request is in flight
 /// and none arrived for five minutes. `CUA_DAEMON_MAINTENANCE=0` turns it
 /// off.
+/// How often a host publishes the Spaces it made itself
+/// ([`cua_spaces::host_spaces::HostSpacesServer::publish_own`]).
+#[cfg(feature = "spaces")]
+const PUBLISH_EVERY: Duration = Duration::from_secs(20);
+
+#[cfg(feature = "spaces")]
+async fn publish_loop(
+    host_spaces: Arc<cua_spaces::host_spaces::HostSpacesServer>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut next = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = tokio::time::sleep_until(next) => {}
+        }
+        match host_spaces.publish_own().await {
+            Ok(published) if !published.is_empty() => {
+                tracing::info!(?published, "published this machine's Spaces on the relay");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::debug!("publishing this machine's Spaces: {e}"),
+        }
+        next = tokio::time::Instant::now() + PUBLISH_EVERY;
+    }
+}
+
 async fn maintenance_loop(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) {
     use std::sync::atomic::Ordering::SeqCst;
     let Ok(vmm) = shared.runtime.vmm().cloned() else {
@@ -374,6 +401,12 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
         tasks.push(tokio::spawn(async move {
             host_spaces.restore_direct_forwards().await;
         }));
+        // While this machine provides Spaces, its own Spaces are on the
+        // relay too, so the owner's other devices list them.
+        tasks.push(tokio::spawn(publish_loop(
+            shared.host_spaces.clone(),
+            shared.shutdown.subscribe(),
+        )));
     }
     // Extension tasks (the Cua Spaces build: the persistent-agent
     // supervisor and the Keyvault socket beside `cua.sock`).

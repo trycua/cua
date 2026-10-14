@@ -14349,8 +14349,10 @@ export type SpaceInfo = {
     power: string,
     /**
      * `running`, `suspended` or `stopped` as cua last recorded it; empty
-     * when unknown (a Space one of your machines provides answers while it
-     * runs).
+     * when unknown. A Space one of your other machines provides says what
+     * that machine reports: `running`, `starting` (being created, booting,
+     * or joining the relay), `suspended`, `stopped`, or `failed`
+     * (`state_reason` says why).
      */
     powerState: string,
     /**
@@ -14368,7 +14370,13 @@ export type SpaceInfo = {
      * through the relay) or `elsewhere` (only there; `remove` keeps it).
      * Empty for other Spaces.
      */
-    cloudDelete: string
+    cloudDelete: string,
+    /**
+     * For a Space on another of your machines: why it is in its state,
+     * for people (why it `failed`, or that its machine is offline). Empty
+     * otherwise.
+     */
+    stateReason: string
 }
 
 /**
@@ -14412,7 +14420,8 @@ const FfiConverterTypeSpaceInfo = (() => {
                 powerState: FfiConverterString.read(from),
                 cloud: FfiConverterString.read(from),
                 cloudPlace: FfiConverterString.read(from),
-                cloudDelete: FfiConverterString.read(from)
+                cloudDelete: FfiConverterString.read(from),
+                stateReason: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -14437,6 +14446,7 @@ const FfiConverterTypeSpaceInfo = (() => {
             FfiConverterString.write(value.cloud, into);
             FfiConverterString.write(value.cloudPlace, into);
             FfiConverterString.write(value.cloudDelete, into);
+            FfiConverterString.write(value.stateReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -14459,7 +14469,8 @@ const FfiConverterTypeSpaceInfo = (() => {
              FfiConverterString.allocationSize(value.powerState) +
              FfiConverterString.allocationSize(value.cloud) +
              FfiConverterString.allocationSize(value.cloudPlace) +
-             FfiConverterString.allocationSize(value.cloudDelete);
+             FfiConverterString.allocationSize(value.cloudDelete) +
+             FfiConverterString.allocationSize(value.stateReason);
 
         }
     };

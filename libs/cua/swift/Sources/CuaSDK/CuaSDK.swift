@@ -30274,8 +30274,10 @@ public struct SpaceInfo: Equatable, Hashable {
     public var power: String
     /**
      * `running`, `suspended` or `stopped` as cua last recorded it; empty
-     * when unknown (a Space one of your machines provides answers while it
-     * runs).
+     * when unknown. A Space one of your other machines provides says what
+     * that machine reports: `running`, `starting` (being created, booting,
+     * or joining the relay), `suspended`, `stopped`, or `failed`
+     * (`state_reason` says why).
      */
     public var powerState: String
     /**
@@ -30294,6 +30296,12 @@ public struct SpaceInfo: Equatable, Hashable {
      * Empty for other Spaces.
      */
     public var cloudDelete: String
+    /**
+     * For a Space on another of your machines: why it is in its state,
+     * for people (why it `failed`, or that its machine is offline). Empty
+     * otherwise.
+     */
+    public var stateReason: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30363,8 +30371,10 @@ public struct SpaceInfo: Equatable, Hashable {
          */power: String,
         /**
          * `running`, `suspended` or `stopped` as cua last recorded it; empty
-         * when unknown (a Space one of your machines provides answers while it
-         * runs).
+         * when unknown. A Space one of your other machines provides says what
+         * that machine reports: `running`, `starting` (being created, booting,
+         * or joining the relay), `suspended`, `stopped`, or `failed`
+         * (`state_reason` says why).
          */powerState: String,
         /**
          * A Space in your own cloud: the provider (`aws`, `gcp`, `modal`);
@@ -30378,7 +30388,12 @@ public struct SpaceInfo: Equatable, Hashable {
          * device created it), `host:<machine>` (the device that created it,
          * through the relay) or `elsewhere` (only there; `remove` keeps it).
          * Empty for other Spaces.
-         */cloudDelete: String) {
+         */cloudDelete: String,
+        /**
+         * For a Space on another of your machines: why it is in its state,
+         * for people (why it `failed`, or that its machine is offline). Empty
+         * otherwise.
+         */stateReason: String) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -30400,6 +30415,7 @@ public struct SpaceInfo: Equatable, Hashable {
         self.cloud = cloud
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
+        self.stateReason = stateReason
     }
 
 
@@ -30438,7 +30454,8 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
                 powerState: FfiConverterString.read(from: &buf),
                 cloud: FfiConverterString.read(from: &buf),
                 cloudPlace: FfiConverterString.read(from: &buf),
-                cloudDelete: FfiConverterString.read(from: &buf)
+                cloudDelete: FfiConverterString.read(from: &buf),
+                stateReason: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -30464,6 +30481,7 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
         FfiConverterString.write(value.cloud, into: &buf)
         FfiConverterString.write(value.cloudPlace, into: &buf)
         FfiConverterString.write(value.cloudDelete, into: &buf)
+        FfiConverterString.write(value.stateReason, into: &buf)
     }
 }
 

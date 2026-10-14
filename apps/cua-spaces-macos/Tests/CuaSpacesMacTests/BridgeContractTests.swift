@@ -245,6 +245,7 @@ struct BridgeContractTests {
             ("teleport.remembered", ["providerId": "chrome", "spaceId": space]),
             ("window.setBackgroundColor", ["color": "#16181c"]),
             ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 38]]]),
+            ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
             ("startup.get", [:]),
         ]
     }

@@ -57,7 +57,7 @@
     {
       "case": "no OS name at all",
       "facts": [
-        "Status: timed out",
+        "Status: Unreachable ?timed out",
         "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Linux"
       ]

@@ -233,7 +233,7 @@
         "canStream": false,
         "confirm": "Delete their-box? | It runs in Google Cloud · us-central1 and was created on another device. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another device: delete it there, or remove it from this list.) / Remove from List / Cancel",
         "facts": [
-          "Status: offline",
+          "Status: Unreachable ?offline",
           "Location: Google Cloud · us-central1",
           "Identifier: relay:cloud-0000000000000e01 [copy relay:cloud-0000000000000e01 doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Linux"
@@ -284,7 +284,7 @@
         "canStream": false,
         "confirm": "Delete builder? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
-          "Status: timed out",
+          "Status: Unreachable ?timed out",
           "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Linux"
         ],

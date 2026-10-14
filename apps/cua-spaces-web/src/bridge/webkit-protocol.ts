@@ -142,6 +142,7 @@ export const WEBKIT_METHODS = [
   "keyvault.revokeGrant",
   "window.setBackgroundColor",
   "window.setDragRegions",
+  "window.setDropTargets",
   "startup.get",
   "startup.act",
   "relay.usage",

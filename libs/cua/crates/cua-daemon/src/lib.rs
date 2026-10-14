@@ -506,8 +506,10 @@ impl From<cua_spaces::Error> for Error {
             E::CapabilityMissing { .. } => Error::CapabilityMissing(m),
             E::HostCapabilityMissing { .. } => Error::HostCapabilityMissing(m),
             E::WrongProvider { .. } => Error::Unsupported(m),
-            // Both are a consent gate saying no; the message names which.
-            E::TeleportRefused(_) | E::LoginRefused(_) => Error::TeleportRefused(m),
+            // Both are a consent gate saying no; the message names which (a
+            // teleport's own words: this error says "teleport refused:" itself).
+            E::TeleportRefused(why) => Error::TeleportRefused(why),
+            E::LoginRefused(_) => Error::TeleportRefused(m),
             E::Timeout(_) => Error::Timeout(m),
             E::Cancelled(c) => Error::Cancelled(c),
             E::Env(env) => Error::from(env),
@@ -766,6 +768,18 @@ pub fn random_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "spaces")]
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = Error::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert_eq!(err, Error::TeleportRefused("the approver declined".into()));
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+        let back = Error::from_status(&err.to_status());
+        assert_eq!(back.to_string(), "teleport refused: the approver declined");
+    }
 
     #[test]
     fn error_roundtrips_through_status() {

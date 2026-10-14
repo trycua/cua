@@ -272,3 +272,13 @@ describe("LiveSpacesBackend's runtime settings", () => {
     expect(await backend("linux").linuxSource()).toBe("auto");
   });
 });
+
+describe("LiveSpacesBackend and the retired Fleets API", () => {
+  it("New Space asks no Fleet for pricing, even with Fleet credentials set", async () => {
+    let fleetCalls = 0;
+    const cua = { fleet: () => (fleetCalls++, { usagePricing: async () => ({ vcpuHourUsd: 1, memoryGibHourUsd: 1 }) }) };
+    const backend = new LiveSpacesBackend({} as Native, cua as never, { FLEETS_TOKEN: "t" }, fetch, "darwin");
+    expect(await backend.cloudPricing()).toBeNull();
+    expect(fleetCalls).toBe(0);
+  });
+});

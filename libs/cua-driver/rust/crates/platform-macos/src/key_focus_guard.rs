@@ -46,6 +46,11 @@ use std::time::{Duration, Instant};
 
 use crate::input::skylight;
 
+/// How long a guarded target's tap hides the driver's own theft after an id
+/// lookup starts. Outside that window the notice passes: the target may be the
+/// frontmost app by then, and dropping a key-focus change there leaves AppKit
+/// with a stale key window.
+const LOOKUP_WINDOW: Duration = Duration::from_millis(500);
 /// How long a target stays guarded after the action that armed it ends.
 /// AppKit opens a pressed popup's menu from a delayed perform that runs just
 /// after the accessibility call returns.
@@ -378,8 +383,12 @@ struct State {
     /// Taps on guarded targets that hide the driver's own id lookup from
     /// them (see [`target_tap_callback`]).
     target_taps: HashMap<i32, Tap>,
-    /// Guarded pid -> (live leases, end of the tail after the last lease).
-    guarded: HashMap<i32, (usize, Instant)>,
+    /// Guarded pid -> (live leases, end of the tail after the last lease,
+    /// intentional-activation epoch when last armed).
+    guarded: HashMap<i32, (usize, Instant, u64)>,
+    /// End of the window in which target taps drop the driver's own theft
+    /// notice (see [`release_target_theft`]).
+    lookup_until: Option<Instant>,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -430,7 +439,7 @@ impl Drop for Lease {
         }
         watch_order_after_action(self.pid, self.front, !self.above_before, self.epoch);
         let mut st = lock();
-        if let Some((leases, until)) = st.guarded.get_mut(&self.pid) {
+        if let Some((leases, until, _)) = st.guarded.get_mut(&self.pid) {
             *leases = leases.saturating_sub(1);
             *until = Instant::now() + TAIL;
         }
@@ -464,9 +473,14 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     // ensure_tap.
     {
         let mut st = lock();
-        let entry = st.guarded.entry(target_pid).or_insert((0, Instant::now()));
+        let epoch = crate::window_change_detector::intentional_epoch();
+        let entry = st
+            .guarded
+            .entry(target_pid)
+            .or_insert((0, Instant::now(), epoch));
         entry.0 += 1;
         entry.1 = Instant::now() + TAIL;
+        entry.2 = epoch;
     }
     let lease = Lease {
         pid: target_pid,
@@ -488,11 +502,24 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     Some(lease)
 }
 
+/// Whether key-focus thefts by `pid` are background menu thefts to release.
+/// Not once the driver itself has activated an app since the guard was armed
+/// (bring_to_front, launch_app, foreground delivery): the target taking key
+/// focus then is that activation, and releasing it would leave the target
+/// active without a key window (0.35.4 gate: bring_to_front within the tail
+/// of a refused background invoke_menu, then the foreground invoke_menu found
+/// its key-window-gated item disabled).
 fn is_guarded(pid: i32) -> bool {
+    let epoch = crate::window_change_detector::intentional_epoch();
     let st = lock();
-    st.guarded
-        .get(&pid)
-        .is_some_and(|(leases, until)| *leases > 0 || Instant::now() < *until)
+    st.guarded.get(&pid).is_some_and(|&(leases, until, armed)| {
+        guard_applies(leases, until, armed, Instant::now(), epoch)
+    })
+}
+
+/// Pure part of [`is_guarded`], for tests.
+fn guard_applies(leases: usize, until: Instant, armed: u64, now: Instant, epoch: u64) -> bool {
+    armed == epoch && (leases > 0 || now < until)
 }
 
 /// Release the theft a guarded target just made. Only called once the tap
@@ -500,6 +527,7 @@ fn is_guarded(pid: i32) -> bool {
 /// steal on the driver's own connection takes the next id, and the target's
 /// theft is the newest live one below it.
 fn release_target_theft() -> bool {
+    lock().lookup_until = Some(Instant::now() + LOOKUP_WINDOW);
     let Some(own) = skylight::steal_key_focus() else {
         return false;
     };
@@ -647,7 +675,11 @@ fn ensure_target_tap(target_pid: i32) -> bool {
 /// Tap on a guarded target: drop the "lost key focus" notice the driver's id
 /// lookup sends it while its menu holds the keyboard. AppKit ends menu
 /// tracking on that notice, which closed popups and context menus the action
-/// had just opened. Every other event passes.
+/// had just opened. Every other event passes, including the driver's own
+/// key-focus changes outside a lookup: the tap outlives the action by the
+/// tail, and a foreground action that follows (bring_to_front, then
+/// invoke_menu) needs AppKit to see them, or its menu items validate against
+/// a stale key window (0.35.4 gate, harness_appkit_invoke_menu_live_path).
 extern "C" fn target_tap_callback(
     _proxy: *mut c_void,
     event_type: u32,
@@ -670,7 +702,10 @@ extern "C" fn target_tap_callback(
             CGEventGetIntegerValueField(event, FIELD_THIEF_PID),
         )
     };
-    if is_own_theft_notice(event_type, subtype, thief, std::process::id() as i32) {
+    let in_lookup = lock()
+        .lookup_until
+        .is_some_and(|until| Instant::now() < until);
+    if in_lookup && is_own_theft_notice(event_type, subtype, thief, std::process::id() as i32) {
         std::ptr::null_mut()
     } else {
         event
@@ -744,7 +779,7 @@ fn schedule_idle_teardown() {
             let mut st = lock();
             let now = Instant::now();
             st.guarded
-                .retain(|_, (leases, until)| *leases > 0 || now < *until);
+                .retain(|_, (leases, until, _)| *leases > 0 || now < *until);
             let idle: Vec<i32> = st
                 .target_taps
                 .keys()
@@ -835,6 +870,21 @@ mod tests {
         // Other notices and event types pass.
         assert!(!is_own_theft_notice(21, 0x2000, OWN as i64, OWN));
         assert!(!is_own_theft_notice(10, 0x4000, OWN as i64, OWN));
+    }
+
+    #[test]
+    fn an_intentional_activation_ends_the_guard() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(3);
+        // Live lease or tail, same epoch: guarded.
+        assert!(guard_applies(1, now, 5, now, 5));
+        assert!(guard_applies(0, later, 5, now, 5));
+        // The driver activated an app since (bring_to_front in the tail):
+        // the target's key-focus change is that activation, not a menu.
+        assert!(!guard_applies(0, later, 5, now, 6));
+        assert!(!guard_applies(1, later, 5, now, 6));
+        // Tail over.
+        assert!(!guard_applies(0, now, 5, later, 5));
     }
 
     #[test]

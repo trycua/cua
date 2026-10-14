@@ -121,7 +121,7 @@ export const CLI_GROUPS: CliGroup[] = [
   { slug: 'cloud', title: 'cua cloud', summary: 'Your own AWS, Google Cloud or Modal account as a place for sandboxes and Spaces: connect, test, status, sweep', commands: ['cloud'] },
   { slug: 'host', title: 'cua host', summary: 'Set this machine up for unattended access', commands: ['host'] },
   { slug: 'devices', title: 'cua devices', summary: 'Enroll this device on the relay, approve, rename and revoke devices, and read the access log', commands: ['devices'] },
-  { slug: 'team', title: 'cua team (experimental)', summary: 'Experimental, not available yet (needs `CUA_EXPERIMENTAL_TEAMS=1`): teams, their members, machines, device approvals and audit log', commands: ['team'] },
+  { slug: 'team', title: 'cua team', summary: 'Teams, their members, machines, device approvals and audit log', commands: ['team'] },
   { slug: 'usage', title: 'cua usage', summary: 'Your hosted relay allowance this month: live sessions and relay hours', commands: ['usage'] },
   { slug: 'teleport', title: 'cua teleport', summary: 'Move a desktop app session into a sandbox', commands: ['teleport'] },
   { slug: 'volume', title: 'cua volume', summary: 'Cua Volume: files, versions, grants, access requests and audit of the volume every Space and agent shares', commands: ['volume'] },

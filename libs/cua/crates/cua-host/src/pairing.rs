@@ -275,7 +275,10 @@ mod tests {
             ..Default::default()
         };
         let err = check_pairing_team(&team, false).unwrap_err().to_string();
-        assert!(err.contains("Teams isn't available yet."), "{err}");
+        assert!(
+            err.contains("Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0)."),
+            "{err}"
+        );
         check_pairing_team(&team, true).unwrap();
         check_pairing_team(&PairingCodeRequest::default(), false).unwrap();
     }

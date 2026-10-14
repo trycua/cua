@@ -179,7 +179,7 @@ pub fn normalize_who(who: &str) -> Result<String> {
 /// Sharing with a team makes the Space a team machine: every member (and
 /// their agents) sees it and opens it as an editor from a device a team
 /// admin approved.
-/// Teams are experimental: with them off ([`cua_home::experimental`]) a
+/// With Teams turned off ([`cua_home::experimental`]) a
 /// `team:<id>` invitee is refused.
 pub fn team_of(who: &str) -> Option<Result<String>> {
     team_of_with(who, cua_home::experimental::teams_enabled())
@@ -842,7 +842,10 @@ mod tests {
             .unwrap()
             .unwrap_err()
             .to_string();
-        assert!(e.contains("Teams isn't available yet."), "{e}");
+        assert!(
+            e.contains("Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0)."),
+            "{e}"
+        );
     }
 
     #[test]

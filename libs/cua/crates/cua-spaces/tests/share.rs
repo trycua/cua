@@ -692,7 +692,7 @@ async fn only_the_owner_removes_a_relay_record() {
 /// takes it off.
 #[tokio::test]
 async fn sharing_with_a_team_adds_a_team_machine_and_refuses_macos() {
-    // Teams are experimental (off unless CUA_EXPERIMENTAL_TEAMS is set).
+    // Teams are on by default; pin them on regardless of the environment.
     cua_home::experimental::set_teams_enabled(Some(true));
     let relay = FakeRelay::start().await;
     relay.add_account("ada-token", "ada", Some("ada@example.com"));

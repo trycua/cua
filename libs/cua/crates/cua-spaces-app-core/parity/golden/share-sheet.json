@@ -213,7 +213,7 @@
         "disabled": null,
         "empty": "Only you",
         "error": null,
-        "field": "Email or account ID [team:design] Teams isn't available yet. Share with people, one at a time. as editor",
+        "field": "Email or account ID [team:design] Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0). Share with people, one at a time. as editor",
         "request": null,
         "roles": "viewer=Can view, editor=Can edit",
         "rows": [],

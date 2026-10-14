@@ -279,8 +279,8 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         browser_click["description"]
             .as_str()
             .is_some_and(|description| description
-                .contains("including Linux Chromium and macOS Chromium configurations")),
-        "browser_click description should name macOS and Linux: {}",
+                .contains("including Linux Chromium configurations")),
+        "browser_click description should name Linux: {}",
         browser_click["description"]
     );
     let schema_tools: BTreeSet<&str> = tools

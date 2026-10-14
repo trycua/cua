@@ -264,21 +264,22 @@ public final class FixtureAccount: AccountRunning, @unchecked Sendable {
 
 // MARK: - Cua Cloud billing
 
-/// The account's Cua Cloud billing through the cua SDK (`Fleet.billingStatus`):
-/// the credit left and the website billing page. The app takes no payment
-/// details; the website does.
+/// The account's Cua Cloud billing: the credit left and the account app's
+/// billing page. The app takes no payment details; the account app does.
 public protocol BillingRunning: AnyObject, Sendable {
     /// The status as the app core takes it.
     func status() async throws -> AppBillingStatus
 }
 
-/// The SDK's Fleet billing status.
+/// Billing no longer calls the retired Fleets API (`GET /api/billing/status`
+/// on run.cua.ai). It reports "billing not enabled" with no network call, so
+/// Settings hides the row and a refused cloud Space offers no Add credit.
 public final class LiveBilling: BillingRunning, @unchecked Sendable {
     let cua: Cua
     public init(cua: Cua) { self.cua = cua }
 
     public func status() async throws -> AppBillingStatus {
-        appBillingStatus(status: try await cua.fleet().billingStatus())
+        AppBillingStatus(billingEnabled: false, card: nil, credit: nil, billingUrl: nil)
     }
 }
 

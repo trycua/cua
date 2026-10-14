@@ -65,8 +65,8 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// macOS VMs running on this Mac now (Lume's, Spaces or not: Apple's
     /// license counts every one), when Lume says.
     func runningMacosVms() async -> Int?
-    /// This account's Cua Cloud rates (`Fleet.usagePricing()`), when known:
-    /// the New Space estimate. `nil` shows none.
+    /// This account's Cua Cloud rates, when known: the New Space estimate.
+    /// `nil` shows none (the live backend has no source for them).
     func cloudPricing() async -> AppCloudPricing?
     /// The SDK's teleport handle and the Space handle, for "Teleport an app".
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)?
@@ -401,13 +401,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         }.count
     }
 
-    public func cloudPricing() async -> AppCloudPricing? {
-        guard await cloudAvailable(), let fleet = try? cua.fleet(),
-              case .success(let got) = await withTimeout(seconds: Self.probeSeconds, { try await fleet.usagePricing() }),
-              let p = got
-        else { return nil }
-        return AppCloudPricing(vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd)
-    }
+    /// No estimate: the rates came from the retired Fleets API
+    /// (`Fleet.usagePricing()` on run.cua.ai), and the app does not offer
+    /// new cloud Spaces. New Space never waits on it.
+    public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         (cua.teleport(), try await cua.spaces().space(space: id))

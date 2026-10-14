@@ -125,7 +125,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xdotool wmctrl imagemagick x11-apps dbus-x11 openbox
+          sudo apt-get install -y -qq xvfb xdotool wmctrl imagemagick x11-apps x11-utils dbus-x11 openbox
 
       - name: Install the .deb
         run: |
@@ -156,17 +156,17 @@ jobs:
           sleep 8
           xprop -id "$wid" WM_CLASS _NET_WM_NAME | tee out/$label-wm.txt
           wmctrl -l | tee out/$label-wmctrl.txt
-          pgrep -af cua-spaces | head -5
+          pgrep -a -x cua-spaces | head -5
           import -window root out/gh-linux-$label.png
           tail -30 out/$label.log
-          pkill -f cua-spaces; pkill openbox; sleep 2
+          pkill -x cua-spaces; pkill -x openbox; sleep 2
           SH
           sed -i 's/^          //' launch.sh; chmod +x launch.sh
           Xvfb :99 -screen 0 1440x900x24 -nolisten tcp >/dev/null 2>&1 &
           sleep 2
           # Stock Ubuntu 24.04 restricts unprivileged user namespaces, so the
           # non-setuid chrome-sandbox may need --no-sandbox. Record both.
-          if ./launch.sh deb-sandbox cua-spaces; then echo "deb starts with sandbox: yes"; else echo "deb starts with sandbox: NO"; pkill -f cua-spaces || true; sleep 2; ./launch.sh deb cua-spaces --no-sandbox; fi
+          if ./launch.sh deb-sandbox cua-spaces; then echo "deb starts with sandbox: yes"; else echo "deb starts with sandbox: NO"; pkill -x cua-spaces || true; sleep 2; ./launch.sh deb cua-spaces --no-sandbox; fi
 
       - name: Remove the .deb
         run: |

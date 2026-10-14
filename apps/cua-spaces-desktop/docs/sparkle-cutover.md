@@ -102,6 +102,10 @@ Those are the rehearsal below.
    (`Contents/MacOS/cua`) is gone afterwards, and while the Electron app
    used it the Keyvault refused ("the peer process no longer matches its
    connect-time audit token"). Fixed in #4942 (cua-spaces 0.8.0-beta.3).
+   It also ends an old daemon that acted on Shutdown but never exited, or
+   that still holds `~/.cua/keyvault.sock` (#4950, fixed in #5191,
+   cua-spaces 0.9.1). Before that fix, such a daemon stayed running
+   untracked and the new one couldn't serve the Keyvault.
 
 ## Rehearsal (a staging repository)
 

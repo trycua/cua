@@ -3383,6 +3383,51 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
+fn type_text_with_preflight<G>(
+    text: &str,
+    keymap: &GetKeyboardMappingReply,
+    mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+) -> Result<Vec<G>> {
+    let mut mapping = keymap.clone();
+    let mut guards = Vec::new();
+    let mut resolved = std::collections::HashMap::new();
+    let mut keys = Vec::new();
+    for ch in text.chars() {
+        let key = match resolved.get(&ch).copied() {
+            Some(key) => key,
+            None => {
+                let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
+                    Some(key) => key,
+                    None => {
+                        let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
+                            let needed = text
+                                .chars()
+                                .map(mpx_keyboard::keysym_for_char)
+                                .filter(|keysym| !keymap.keysyms.contains(keysym))
+                                .collect::<std::collections::HashSet<_>>()
+                                .len();
+                            anyhow::anyhow!(
+                                "typed 0 of {} characters: the text needs {needed} spare keycodes: {error:#}",
+                                text.chars().count()
+                            )
+                        })?;
+                        guards.extend(guard);
+                        (keycode, false)
+                    }
+                };
+                resolved.insert(ch, key);
+                key
+            }
+        };
+        keys.push(key);
+    }
+    for (keycode, needs_shift) in keys {
+        send(keycode, needs_shift)?;
+    }
+    Ok(guards)
+}
+
 fn type_text_in_spare_batches<G>(
     text: &str,
     mapping: &GetKeyboardMappingReply,
@@ -3449,14 +3494,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         &mapping,
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift| {
-            if client
-                .borrow()
-                .borrowed
-                .iter()
-                .any(|guard| guard.keycode == keycode)
-            {
-                client.borrow_mut().record_recipient();
-            }
+            client.borrow_mut().record_recipient(keycode);
             let state = if needs_shift {
                 KeyButMask::SHIFT
             } else {
@@ -3537,14 +3575,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         &mapping,
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift| {
-            if client
-                .borrow()
-                .borrowed
-                .iter()
-                .any(|guard| guard.keycode == keycode)
-            {
-                client.borrow_mut().record_recipient();
-            }
+            client.borrow_mut().record_recipient(keycode);
             if needs_shift {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
@@ -4441,7 +4472,10 @@ impl<'a> TextClient<'a> {
         })
     }
 
-    fn record_recipient(&mut self) {
+    fn record_recipient(&mut self, keycode: u8) {
+        if !self.borrowed.iter().any(|guard| guard.keycode == keycode) {
+            return;
+        }
         if let Some(window) = self.recipient() {
             if !self.sent.contains(&window) {
                 self.sent.push(window);
@@ -4449,15 +4483,13 @@ impl<'a> TextClient<'a> {
         }
     }
 
-    fn ping(&mut self, window: Window) -> ClientSync {
+    fn ping(&mut self, window: Window) {
         if self.unanswered.contains(&window) {
-            return ClientSync::Unanswered;
+            return;
         }
-        let sync = sync_client(self.conn, Some(window));
-        if sync == ClientSync::Unanswered {
+        if sync_client(self.conn, Some(window)) == ClientSync::Unanswered {
             self.unanswered.push(window);
         }
-        sync
     }
 }
 

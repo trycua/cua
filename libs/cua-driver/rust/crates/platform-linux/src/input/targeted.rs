@@ -654,7 +654,7 @@ pub(crate) fn type_xtest(
                 &character.to_string(),
             )
         },
-        |code, shift, _| Ok(tap(conn, root, keymap, code, shift)?),
+        |code, shift| Ok(tap(conn, root, keymap, code, shift)?),
     )
     .map_err(|error| {
         error

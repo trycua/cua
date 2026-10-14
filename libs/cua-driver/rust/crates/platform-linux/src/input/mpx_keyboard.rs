@@ -130,7 +130,7 @@ pub(super) fn plan_text_with_fallback<G>(
 ) -> Result<(Vec<KeyStep>, Vec<G>)> {
     let shift = shift_x_keycode.and_then(evdev_code_for_x_keycode);
     let mut steps = Vec::with_capacity(text.len() * 2);
-    let guards = type_text_with_preflight(text, mapping, remap, |keycode, needs_shift, _| {
+    let guards = type_text_with_preflight(text, mapping, remap, |keycode, needs_shift| {
         tap_steps(keycode, needs_shift, shift, &mut steps);
         Ok(())
     })?;

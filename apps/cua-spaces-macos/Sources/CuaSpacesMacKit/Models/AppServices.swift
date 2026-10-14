@@ -331,7 +331,7 @@ public final class FixtureTeams: TeamsReading, @unchecked Sendable {
                 members: [AppTeamPersonInput(email: "ada@example.com", role: "owner"),
                           AppTeamPersonInput(email: "grace@example.com", role: "member")],
                 invites: ["linus@example.com"]),
-        ]))
+        ]), currentTeamId: nil)
     }
 
     public func teams() async throws -> AppTeamsInput { current }

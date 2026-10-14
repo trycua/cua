@@ -165,17 +165,18 @@ pub fn of_row(id: &str) -> Option<Experiment> {
 /// New UI is off. (`experiment:web_ui`, on for the New UI, is still read.)
 pub const CLASSIC_UI_ROW: &str = "experiment:classic_ui";
 
-/// The New UI's first release on the Beta channel: from it on, the New UI
-/// is on by default for Beta.
-pub const NEW_UI_BETA_FROM: &str = "0.8.0-beta.6";
+/// From this version the New UI is on by default for the Beta channel:
+/// every 0.8.1 prerelease (`0.8.1-0` is the lowest SemVer allows; 0.8.0
+/// shipped without the default).
+pub const NEW_UI_BETA_FROM: &str = "0.8.1-0";
 
 /// The first release with the New UI on by default on every channel.
-pub const NEW_UI_ALL_FROM: &str = "0.8.0";
+pub const NEW_UI_ALL_FROM: &str = "0.8.1";
 
 /// Whether the New UI is on for someone who never chose: on the Beta
 /// channel from [`NEW_UI_BETA_FROM`], everywhere from [`NEW_UI_ALL_FROM`]
-/// (so 0.8.0 turns it on for Stable with no change here). `version` is the
-/// running app's (`0.8.0-beta.6`); one that does not read as a version
+/// (so 0.8.1 turns it on for Stable with no change here). `version` is the
+/// running app's (`0.8.1-beta.1`); one that does not read as a version
 /// (a dev build's, or none) keeps the classic UI.
 pub fn new_ui_default(channel: UpdateChannel, version: &str) -> bool {
     let Some(v) = Version::parse(version) else {
@@ -451,24 +452,30 @@ mod tests {
     }
 
     #[test]
-    fn the_new_ui_is_on_for_beta_from_beta_6_and_for_everyone_from_0_8_0() {
+    fn the_new_ui_is_on_for_beta_from_0_8_1_betas_and_for_everyone_from_0_8_1() {
         use UpdateChannel::{Beta, Stable};
         for (channel, version, on) in [
-            // Before: classic on both channels.
+            // Before: classic on both channels, 0.8.0 included (it shipped
+            // without the default).
             (Beta, "0.7.2", false),
             (Stable, "0.7.2", false),
             (Beta, "0.8.0-beta.5", false),
-            // The Beta release it ships in, and every later one.
-            (Beta, "0.8.0-beta.6", true),
-            (Beta, "0.8.0-beta.10", true),
-            (Beta, "0.8.0-rc.1", true),
-            (Beta, "0.8.0-beta.6+build.7", true),
-            // Stable keeps classic until 0.8.0.
-            (Stable, "0.8.0-beta.6", false),
-            (Stable, "0.8.0-rc.1", false),
-            (Stable, "0.8.0", true),
-            (Beta, "0.8.0", true),
+            (Beta, "0.8.0-beta.6", false),
+            (Beta, "0.8.0", false),
+            (Stable, "0.8.0", false),
+            // Beta: every 0.8.1 prerelease, from the first.
+            (Beta, "0.8.1-0", true),
+            (Beta, "0.8.1-beta.0", true),
+            (Beta, "0.8.1-beta.1", true),
+            (Beta, "0.8.1-beta.10", true),
+            (Beta, "0.8.1-rc.1", true),
+            (Beta, "0.8.1-beta.1+build.7", true),
+            // Stable keeps classic until 0.8.1.
+            (Stable, "0.8.1-beta.1", false),
+            (Stable, "0.8.1-rc.1", false),
             (Stable, "0.8.1", true),
+            (Beta, "0.8.1", true),
+            (Stable, "0.8.2", true),
             (Stable, "0.9.0-beta.1", true),
             (Stable, "1.0.0", true),
             // Not a version: classic.
@@ -495,6 +502,11 @@ mod tests {
         assert!(v("0.8.0-rc.1") < v("0.8.0"));
         assert!(v("0.7.2") < v("0.8.0-beta.1"));
         assert!(v("0.8.0-beta") < v("0.8.0-beta.1"));
+        assert!(v("0.8.0") < v("0.8.1-0"));
+        assert!(
+            v("0.8.1-0") < v("0.8.1-beta.0"),
+            "numeric before alphanumeric"
+        );
         assert_eq!(v("v0.8.0+abc"), v("0.8.0"));
         assert!(Version::parse("0.8.0-").is_none());
         assert!(Version::parse("0.8.0.1").is_none());

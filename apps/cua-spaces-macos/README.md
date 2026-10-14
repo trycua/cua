@@ -88,7 +88,7 @@ Started and the app's notifications; the native window, opened any other way
 native; a Space's desktop opens in its native window.
 
 It is on by default on the Beta update channel (the setting Sparkle uses)
-from 0.8.0-beta.6, and on every channel from 0.8.0
+from the 0.8.1 betas, and on every channel from 0.8.1 (0.8.0 shipped without it)
 (`experiments::new_ui_default`). Settings, Experiments, "Use classic UI"
 (`experiment:classic_ui`) is the way back; it saves the user's choice
 (`AppSettings.new_ui`), which later launches keep. Only a choice is saved:

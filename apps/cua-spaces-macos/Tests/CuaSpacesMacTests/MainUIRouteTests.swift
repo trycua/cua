@@ -256,29 +256,31 @@ struct MainUIRouteTests {
     }
 
     /// The New UI by default: an upgraded install's saved `webUi: false`
-    /// was never a choice, so Beta from beta.6 opens the New UI; a saved
-    /// `true` is kept; Stable keeps classic until 0.8.0.
+    /// was never a choice, so Beta from the 0.8.1 betas opens the New UI; a
+    /// saved `true` is kept; Stable keeps classic until 0.8.1 (0.8.0 shipped
+    /// without the default).
     @Test func theNewUIIsTheDefaultOnBetaAndAnOlderSavedOffIsNotAChoice() {
         let old = #"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#
-        #expect(launched(old, version: "0.8.0-beta.6").settings.experiments.webUi)
-        #expect(!launched(old, version: "0.8.0-beta.5").settings.experiments.webUi)
-        #expect(launched(old, version: "0.8.0-beta.6").settings.newUi == nil)
+        #expect(launched(old, version: "0.8.1-beta.1").settings.experiments.webUi)
+        #expect(!launched(old, version: "0.8.0").settings.experiments.webUi)
+        #expect(launched(old, version: "0.8.1-beta.1").settings.newUi == nil)
         let stable = #"{"updateChannel":"stable","experiments":{"webUi":false}}"#
-        #expect(!launched(stable, version: "0.8.0-beta.6").settings.experiments.webUi)
+        #expect(!launched(stable, version: "0.8.1-beta.1").settings.experiments.webUi)
         #expect(!launched(stable, version: "0.7.2").settings.experiments.webUi)
-        #expect(launched(stable, version: "0.8.0").settings.experiments.webUi)
+        #expect(!launched(stable, version: "0.8.0").settings.experiments.webUi)
+        #expect(launched(stable, version: "0.8.1").settings.experiments.webUi)
         let chosen = #"{"updateChannel":"stable","experiments":{"webUi":true}}"#
         #expect(launched(chosen, version: "0.7.2").settings.newUi == true)
         #expect(launched(chosen, version: "0.7.2").settings.experiments.webUi)
         // A fresh install (no file): Stable until the first launch records Beta.
-        #expect(!launched(nil, version: "0.8.0-beta.6").settings.experiments.webUi)
+        #expect(!launched(nil, version: "0.8.1-beta.1").settings.experiments.webUi)
     }
 
     /// "Use classic UI" swaps the windows in place, is saved as a choice,
     /// and later launches (and later versions) keep it.
     @Test func useClassicUIIsAChoiceLaterLaunchesKeep() {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
-        let m = launched(#"{"updateChannel":"beta"}"#, version: "0.8.0-beta.6", dir: dir)
+        let m = launched(#"{"updateChannel":"beta"}"#, version: "0.8.1-beta.1", dir: dir)
         #expect(m.settings.experiments.webUi)
         var calls: [String] = []
         m.openWebUI = { calls.append("open") }
@@ -290,11 +292,11 @@ struct MainUIRouteTests {
         #expect(calls == ["close"])
         #expect(!m.settings.experiments.webUi)
         #expect(appSettingsLoad(path: m.settingsPath).newUi == false, "saved as a choice")
-        for version in ["0.8.0-beta.6", "0.8.0-beta.7", "0.8.0"] {
+        for version in ["0.8.1-beta.1", "0.8.1-beta.2", "0.8.1"] {
             #expect(!launched(nil, version: version, dir: dir).settings.experiments.webUi, "\(version)")
         }
         // And back: the New UI, chosen.
-        let again = launched(nil, version: "0.8.0-beta.7", dir: dir)
+        let again = launched(nil, version: "0.8.1-beta.2", dir: dir)
         again.openWebUI = { calls.append("open") }
         again.chooseExperiment(row: "experiment:classic_ui", option: "off")
         #expect(calls == ["close", "open"])
@@ -304,7 +306,7 @@ struct MainUIRouteTests {
     /// Settings → About's channel moves the default (and the window) when
     /// the user never chose; a choice stays put.
     @Test func switchingChannelMovesTheDefaultNotAChoice() {
-        let m = launched(#"{"updateChannel":"beta"}"#, version: "0.8.0-beta.6")
+        let m = launched(#"{"updateChannel":"beta"}"#, version: "0.8.1-beta.1")
         var calls: [String] = []
         m.openWebUI = { calls.append("open") }
         m.closeWebUI = { calls.append("close") }
@@ -328,14 +330,14 @@ struct MainUIRouteTests {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("settings.json").path
-        UpdateRefresh.record(settingsPath: path, version: "0.8.0-beta.6", build: "1", onboarded: false)
+        UpdateRefresh.record(settingsPath: path, version: "0.8.1-beta.1", build: "1", onboarded: false)
         #expect(appSettingsLoad(path: path).updateChannel == .beta)
-        #expect(launched(nil, version: "0.8.0-beta.6", dir: dir).settings.experiments.webUi)
+        #expect(launched(nil, version: "0.8.1-beta.1", dir: dir).settings.experiments.webUi)
         // A later launch keeps the channel the user set.
         var s = appSettingsLoad(path: path)
         s.updateChannel = .stable
         try? appSettingsSave(path: path, settings: s)
-        UpdateRefresh.record(settingsPath: path, version: "0.8.0-beta.7", build: "2", onboarded: true)
+        UpdateRefresh.record(settingsPath: path, version: "0.8.1-beta.2", build: "2", onboarded: true)
         #expect(appSettingsLoad(path: path).updateChannel == .stable)
         let release = FileManager.default.temporaryDirectory.appendingPathComponent("cua-newui-\(UUID().uuidString)/settings.json").path
         UpdateRefresh.record(settingsPath: release, version: "0.7.2", build: "1", onboarded: false)

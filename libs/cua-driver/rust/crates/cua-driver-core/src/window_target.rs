@@ -389,69 +389,6 @@ pub fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
     total.saturating_sub(1).saturating_sub(position)
 }
 
-/// Normalise one `kCGWindowBounds` component for the public window record.
-///
-/// CGWindowList can report non-finite geometry for helper or off-screen
-/// windows (for example a `CGRectNull` origin of `+inf`). JSON has no
-/// representation for NaN or infinity, so `serde_json` emits `null`, and the
-/// typed `WindowBounds` contract (`f64`) then rejects the whole `list_windows`
-/// response. Map non-finite values to `0.0`, the same fallback used when a
-/// bounds key is missing.
-pub fn finite_window_coordinate(value: f64) -> f64 {
-    if value.is_finite() {
-        value
-    } else {
-        0.0
-    }
-}
-
-#[cfg(test)]
-mod window_coordinate_tests {
-    use super::finite_window_coordinate;
-
-    fn list_windows_payload(x: f64, y: f64, width: f64, height: f64) -> serde_json::Value {
-        serde_json::json!({
-            "windows": [{
-                "window_id": 42,
-                "pid": 123,
-                "app_name": "Gemini",
-                "title": "",
-                "bounds": { "x": x, "y": y, "width": width, "height": height },
-                "layer": 0,
-                "z_index": 0,
-                "is_on_screen": false,
-                "current_space_id": null,
-                "on_current_space": null,
-                "space_ids": null
-            }],
-            "current_space_id": null
-        })
-    }
-
-    #[test]
-    fn non_finite_bounds_serialize_to_null_and_fail_the_contract() {
-        let raw = list_windows_payload(f64::INFINITY, f64::INFINITY, 0.0, f64::NAN);
-        assert!(raw["windows"][0]["bounds"]["x"].is_null());
-        let err = cua_driver_contract::validate_success_output("list_windows", raw).unwrap_err();
-        assert!(err.contains("invalid type: null, expected f64"), "{err}");
-    }
-
-    #[test]
-    fn finite_window_coordinate_keeps_list_windows_valid() {
-        let c = finite_window_coordinate;
-        assert_eq!(c(12.5), 12.5);
-        assert_eq!(c(-30.0), -30.0);
-        assert_eq!(c(f64::INFINITY), 0.0);
-        assert_eq!(c(f64::NEG_INFINITY), 0.0);
-        assert_eq!(c(f64::NAN), 0.0);
-        let payload = list_windows_payload(c(f64::INFINITY), c(f64::INFINITY), c(0.0), c(f64::NAN));
-        assert_eq!(
-            cua_driver_contract::validate_success_output("list_windows", payload),
-            Ok(true)
-        );
-    }
-}
-
 #[cfg(test)]
 mod z_index_tests {
     use super::z_index_from_front_to_back;

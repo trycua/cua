@@ -315,7 +315,7 @@ fn get_bounds_num(
                 None
             }
         })
-        .map(cua_driver_core::window_target::finite_window_coordinate)
+        .filter(|v| v.is_finite())
         .unwrap_or(0.0)
 }
 
@@ -523,6 +523,39 @@ fn poll_until_no_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounds_numbers_preserve_finite_values_and_default_non_finite_or_missing_values() {
+        use core_foundation::{
+            base::TCFType, dictionary::CFDictionary, number::CFNumber, string::CFString,
+        };
+
+        let bounds = CFDictionary::from_CFType_pairs(&[
+            (
+                CFString::new("X").as_CFType(),
+                CFNumber::from(12.5).as_CFType(),
+            ),
+            (
+                CFString::new("Y").as_CFType(),
+                CFNumber::from(f64::INFINITY).as_CFType(),
+            ),
+            (
+                CFString::new("Width").as_CFType(),
+                CFNumber::from(f64::NAN).as_CFType(),
+            ),
+            (
+                CFString::new("Height").as_CFType(),
+                CFNumber::from(f64::NEG_INFINITY).as_CFType(),
+            ),
+        ]);
+        let bounds = unsafe { CFDictionary::wrap_under_get_rule(bounds.as_concrete_TypeRef()) };
+
+        assert_eq!(get_bounds_num(&bounds, "X"), 12.5);
+        assert_eq!(get_bounds_num(&bounds, "Y"), 0.0);
+        assert_eq!(get_bounds_num(&bounds, "Width"), 0.0);
+        assert_eq!(get_bounds_num(&bounds, "Height"), 0.0);
+        assert_eq!(get_bounds_num(&bounds, "Missing"), 0.0);
+    }
 
     #[test]
     fn space_membership_checks_all_spaces_for_a_window() {

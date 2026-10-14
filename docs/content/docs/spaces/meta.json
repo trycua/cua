@@ -3,6 +3,8 @@
   "root": true,
   "pages": [
     "index",
+    "install",
+    "plans",
     "quickstart",
     "guides",
     "examples",

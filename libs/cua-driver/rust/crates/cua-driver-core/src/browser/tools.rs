@@ -1436,6 +1436,24 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
 
+fn with_key_codes(mut payload: Value) -> Value {
+    let (code, virtual_key) = match payload["key"].as_str().unwrap_or_default().as_bytes() {
+        b"Enter" => ("Enter".to_string(), 13),
+        b" " => ("Space".to_string(), 32),
+        b"Delete" => ("Delete".to_string(), 46),
+        [byte] if byte.is_ascii_alphabetic() => {
+            let upper = byte.to_ascii_uppercase();
+            (format!("Key{}", upper as char), upper)
+        }
+        [byte] if byte.is_ascii_digit() => (format!("Digit{}", *byte as char), *byte),
+        _ => return payload,
+    };
+    payload["code"] = json!(code);
+    payload["windowsVirtualKeyCode"] = json!(virtual_key);
+    payload["nativeVirtualKeyCode"] = json!(virtual_key);
+    payload
+}
+
 /// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
 ///
 /// `HTMLElement.click()` fires only a bare `click` with no coordinates, so
@@ -1932,13 +1950,7 @@ impl Tool for BrowserTypeTool {
                         .call(
                             Some(cdp),
                             "Input.dispatchKeyEvent",
-                            json!({
-                                "type": "keyDown",
-                                "key": "Delete",
-                                "code": "Delete",
-                                "windowsVirtualKeyCode": 46,
-                                "nativeVirtualKeyCode": 46,
-                            }),
+                            with_key_codes(json!({ "type": "keyDown", "key": "Delete" })),
                         )
                         .await
                     {
@@ -1946,13 +1958,7 @@ impl Tool for BrowserTypeTool {
                             conn.call(
                                 Some(cdp),
                                 "Input.dispatchKeyEvent",
-                                json!({
-                                    "type": "keyUp",
-                                    "key": "Delete",
-                                    "code": "Delete",
-                                    "windowsVirtualKeyCode": 46,
-                                    "nativeVirtualKeyCode": 46,
-                                }),
+                                with_key_codes(json!({ "type": "keyUp", "key": "Delete" })),
                             )
                             .await
                         }
@@ -2110,13 +2116,7 @@ impl Tool for BrowserTypeTool {
                         .call(
                             Some(cdp),
                             "Input.dispatchKeyEvent",
-                            json!({
-                                "type": phase,
-                                "key": "Delete",
-                                "code": "Delete",
-                                "windowsVirtualKeyCode": 46,
-                                "nativeVirtualKeyCode": 46,
-                            }),
+                            with_key_codes(json!({ "type": phase, "key": "Delete" })),
                         )
                         .await
                     {
@@ -2135,19 +2135,19 @@ impl Tool for BrowserTypeTool {
                     .call(
                         Some(cdp),
                         "Input.dispatchKeyEvent",
-                        json!({ "type": "keyDown", "key": key }),
+                        with_key_codes(json!({ "type": "keyDown", "key": key })),
                     )
                     .await;
                 let character = if down.is_ok() {
                     conn.call(
                         Some(cdp),
                         "Input.dispatchKeyEvent",
-                        json!({
+                        with_key_codes(json!({
                             "type": "char",
                             "key": key,
                             "text": key_text,
                             "unmodifiedText": key_text,
-                        }),
+                        })),
                     )
                     .await
                 } else {
@@ -2157,7 +2157,7 @@ impl Tool for BrowserTypeTool {
                     .call(
                         Some(cdp),
                         "Input.dispatchKeyEvent",
-                        json!({ "type": "keyUp", "key": key }),
+                        with_key_codes(json!({ "type": "keyUp", "key": key })),
                     )
                     .await;
                 if let Err(e) = down.and(character).and(up) {

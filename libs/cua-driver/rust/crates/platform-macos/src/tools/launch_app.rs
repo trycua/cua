@@ -514,8 +514,6 @@ fn protected_host_launch_refusal() -> ToolResult {
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
 
-/// Poll for the pid's windows, layer-0 preferred, retrying up to 5x100ms to absorb
-/// LaunchServices → WindowServer latency (mirrors the Swift reference).
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
         let mut found = crate::windows::pid_windows_with_space_snapshot(pid, false).windows;

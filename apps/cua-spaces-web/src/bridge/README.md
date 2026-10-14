@@ -429,6 +429,7 @@ mechanism. Types are in `contracts/settings.ts`, `contracts/devices.ts` and
 | `devices.createPairingCode` | `{ team? }` | `PairingCode` (camelCase: `id`, `code`, `url`, `installSh`, `installPowershell`, `state`, `team`, `createdAt`, `expiresAt`, `usedAt`, `machine`) | `devices_create_pairing_code` | `DevicesRunning.createPairingCode` (the SDK's `Devices.createPairingCode`) |
 | `devices.pairingCodes` | `{}` | `PairingCode[]`, newest first, without `code`, `url` and the commands | `devices_pairing_codes` | `DevicesRunning.pairingCodes` |
 | `devices.revokePairingCode` | `{ id }` | `null` | `devices_revoke_pairing_code` | `DevicesRunning.revokePairingCode` |
+| `teams.list` | `{}` | `TeamsList` (`teams`: `id`, `alias`, `name`, `role`, `plan`; `currentTeamId`) | `teams_list` | the app's Teams (Settings, Teams) |
 | `storage.get` | `{}` | `StorageInput` (`volume_storage`, `volume_mount_status`, `volume_cache_stats` as the tools answer) | `agents_tool` | `StorageModel.load` inputs |
 | `storage.run` | `{ request: StorageRequest }` | `DriveCheckInput` for test, save and adopt; else `null` | `agents_tool` (`volume_*`), `drive_reveal`, `host_open_settings` | `StorageModel`'s request runner |
 | `notifications.list` | `{}` | `NotificationInput[]` (camelCase) | `agents_tool` `notifications_list` | `PersistentModel.feed` |

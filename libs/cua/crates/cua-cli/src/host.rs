@@ -100,12 +100,18 @@ pub enum HostCmd {
   cua host pair
   cua host pair --name build-box --expires 60
   cua host pair --list
-  cua host pair --revoke pc_0123456789abcdef")]
+  cua host pair --revoke pc_0123456789abcdef
+  # Add the machine to a team: waits for it to join, then adds it
+  cua host pair --team AIGIS")]
     Pair {
-        /// Add the machine for this team (its id). Experimental: needs
-        /// CUA_EXPERIMENTAL_TEAMS=1.
+        /// Add the machine to this team (id, alias or name; owner or admin):
+        /// waits until the machine joins, then makes it a team machine.
         #[arg(long)]
         team: Option<String>,
+        /// With --team: print the code and exit instead of waiting; add the
+        /// machine later with `cua team add-machine <team> relay:<id>`.
+        #[arg(long, requires = "team")]
+        no_wait: bool,
         /// Name the machine gets (default: its own host name).
         #[arg(long)]
         name: Option<String>,
@@ -612,12 +618,21 @@ pub async fn run_spaces_sdk(
         SpacesCmd::Share {
             space, who, role, ..
         } => {
+            let who = team_who(&who).await?;
+            if who.starts_with("team:") && !json {
+                eprintln!(
+                    "Adding {space} to the team… (right after a Teams checkout this can take up to a minute while the plan is set up)"
+                );
+            }
             let s = spaces.space(space).await?;
             print_shares(&s.share(who, Some(role)).await?, json, out);
         }
         SpacesCmd::Unshare { space, who, all } => {
             let s = spaces.space(space).await?;
-            let who = if all { None } else { who };
+            let who = match who {
+                Some(w) if !all => Some(team_who(&w).await?),
+                _ => None,
+            };
             print_shares(&s.unshare(who).await?, json, out);
         }
         SpacesCmd::Shares { space } => {
@@ -1383,6 +1398,7 @@ pub async fn run_host(
         }
         HostCmd::Pair {
             team,
+            no_wait,
             name,
             expires,
             list,
@@ -1397,6 +1413,7 @@ pub async fn run_host(
                 device,
                 relay,
                 team,
+                no_wait,
                 name,
                 expires,
                 list,
@@ -1405,7 +1422,7 @@ pub async fn run_host(
                 out,
             )
             .await
-            .map_err(host_err)?;
+            .map_err(crate::team_cmd::err)?;
         }
         HostCmd::Status => {
             let s = host.status().await.map_err(host_err)?;
@@ -1558,6 +1575,23 @@ fn print_allow(allow: &[String], json: bool, out: &mut dyn Write) {
     }
 }
 
+/// `who` as it is shared with: a `team:<name>` becomes `team:<organization
+/// id>` (the Spaces API resolves names and aliases); anything else as is.
+async fn team_who(who: &str) -> Result<String, CuaError> {
+    match who.trim().strip_prefix("team:") {
+        Some(t)
+            if !cua_host::spaces_api::is_org_ref(t)
+                && !cua_host::spaces_api::is_legacy_team_id(t) =>
+        {
+            Ok(format!(
+                "team:{}",
+                crate::team_cmd::resolve_team(&crate::util::cua_home(), t).await?
+            ))
+        }
+        _ => Ok(who.trim().to_string()),
+    }
+}
+
 /// `cua host pair`: mints (default), lists or revokes pairing codes as the
 /// account from this enrolled device.
 #[allow(clippy::too_many_arguments)]
@@ -1567,6 +1601,7 @@ async fn pair_codes(
     device: Option<&DeviceAuth>,
     relay: Option<String>,
     team: Option<String>,
+    no_wait: bool,
     name: Option<String>,
     expires: u64,
     list: bool,
@@ -1623,12 +1658,35 @@ async fn pair_codes(
             "--expires is 1 to 1440 minutes".into(),
         ));
     }
+    // A team is an organization of the Spaces API: the relay code carries
+    // no team (the relay's own teams are retired), and the machine becomes
+    // a team machine once it joins (below).
+    let api = cua_host::spaces_api::SpacesApiClient::current()?;
+    let org = match &team {
+        Some(t) => {
+            let org = api.resolve_org(&token, t).await?;
+            if !org.manages() {
+                return Err(cua_host::Error::PermissionDenied(format!(
+                    "only an owner or admin of {} can add machines to it",
+                    org.label()
+                )));
+            }
+            if !org.has("team_machines") {
+                eprintln!(
+                    "Note: {} has no team machines on its plan yet (buy Teams at app.cua.ai); a plan bought a moment ago is waited for.",
+                    org.label()
+                );
+            }
+            Some(org)
+        }
+        None => None,
+    };
     let minted = client
         .create_pairing_code(
             &token,
             &cua_host::PairingCodeRequest {
                 name,
-                team,
+                team: None,
                 ttl_secs: Some(expires * 60),
             },
         )
@@ -1646,7 +1704,7 @@ async fn pair_codes(
             out,
             serde_json::json!({
                 "id": minted.id, "code": code, "url": link, "expires_at": minted.expires_at,
-                "team": minted.team, "install": {"sh": sh, "powershell": ps},
+                "team": org.as_ref().map(|o| o.id.clone()), "install": {"sh": sh, "powershell": ps},
             })
             .to_string(),
         );
@@ -1664,6 +1722,62 @@ async fn pair_codes(
         ] {
             line(out, l);
         }
+    }
+    let Some(org) = org else {
+        return Ok(());
+    };
+    let later = format!("cua team add-machine {} relay:<machine id>", org.id);
+    if no_wait {
+        if !json {
+            line(
+                out,
+                format!("When it has joined, add it to {}: {later}", org.label()),
+            );
+        }
+        return Ok(());
+    }
+    if !json {
+        line(
+            out,
+            format!(
+                "Waiting for the machine to join, to add it to {} (Ctrl-C to stop; then: {later})…",
+                org.label()
+            ),
+        );
+    }
+    let mut said = false;
+    let machine = client
+        .add_paired_machine_to_team(
+            &api,
+            &token,
+            &minted.id,
+            &org.id,
+            minted.expires_at.max(1),
+            std::time::Duration::from_secs(3),
+            |_| {
+                if !said && !json {
+                    eprintln!(
+                        "{} (the team's plan is on its way)",
+                        cua_host::spaces_api::FINISHING_SETUP
+                    );
+                    said = true;
+                }
+            },
+        )
+        .await?;
+    if json {
+        line(
+            out,
+            serde_json::json!({ "team": org.id, "machine": machine }).to_string(),
+        );
+    } else {
+        line(
+            out,
+            format!(
+                "relay:{machine} joined and is a machine of {}.",
+                org.label()
+            ),
+        );
     }
     Ok(())
 }

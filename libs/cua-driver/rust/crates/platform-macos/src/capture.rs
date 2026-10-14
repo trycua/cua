@@ -40,6 +40,7 @@
 //! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use objc2::rc::autoreleasepool;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::process::Command;
@@ -418,7 +419,7 @@ where
     std::thread::Builder::new()
         .name("cua-sck-window-capture".into())
         .spawn(move || {
-            let result = work();
+            let result = autoreleasepool(|_| work());
             drop(permit);
             let _ = sender.send(result);
         })
@@ -1468,6 +1469,23 @@ mod tests {
             GATE.try_acquire().is_some(),
             "gate reopens only when the worker-owned permit drops"
         );
+    }
+
+    #[test]
+    fn pooled_native_worker_returns_work_result_and_error() {
+        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+
+        let ok = run_native_capture_worker(&GATE, Duration::from_secs(5), || Ok(7u8));
+        assert_eq!(ok.expect("work result flows through the pooled worker"), 7);
+
+        let err: anyhow::Result<u8> =
+            run_native_capture_worker(&GATE, Duration::from_secs(5), || {
+                Err(anyhow::anyhow!("boom"))
+            });
+        assert!(err
+            .expect_err("work error flows through")
+            .to_string()
+            .contains("boom"));
     }
 
     #[test]

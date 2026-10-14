@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, LoaderCircleIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { encode } from "uqr";
 
-import { expiresInText, useMachines, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
+import { expiresInText, FINISHING_SETUP, teamName, useMachines, useTeamChoices, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/segmented";
+import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
@@ -40,12 +41,15 @@ export function AddMachineDialog({
   onOpenChange,
   guide,
   pollMs,
+  team = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   guide: HostSetupGuide;
   /** How often to ask whether the link was used (tests). */
   pollMs?: number;
+  /** The team (organization id) chosen at first; default: the current team, when it can take machines. */
+  team?: string | null;
 }) {
   const { data: session, signIn } = useSession();
   const { data: listed, refresh } = useMachines();
@@ -54,7 +58,15 @@ export function AddMachineDialog({
   // Signed in but not enrolled: this device can't vouch for a new machine
   // (known once the machines are read).
   const notice = machines.find((m) => m.current)?.accessNotice ?? null;
-  const pairing = usePairingCode({ open, enabled: signedIn && listed !== undefined && !notice, pollMs, onUsed: () => void refresh().catch(() => {}) });
+  // Which team the new machine joins (none: just this account). The
+  // account's teams that can take machines, the current one first.
+  const choices = useTeamChoices(open && signedIn);
+  const [picked, setPicked] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!open) setPicked(undefined);
+  }, [open]);
+  const chosen = picked !== undefined ? picked : (team ?? choices.current);
+  const pairing = usePairingCode({ open, enabled: signedIn && listed !== undefined && !notice, pollMs, team: chosen, onUsed: () => void refresh().catch(() => {}) });
   const fail = (title: string) => (e: unknown) => toast(title, { description: e instanceof Error ? e.message : String(e) });
 
   // Any reason there is no link: the manual steps are the way, so show them.
@@ -90,7 +102,24 @@ export function AddMachineDialog({
               </Button>
             </Notice>
           ) : (
-            <PairingPanel pairing={pairing} machines={machines} />
+            <>
+              {choices.teams.length > 0 && pairing.phase !== "used" ? (
+                <div className="mt-4 flex items-center gap-2 text-[13px]" data-add-machine-team={chosen ?? "me"}>
+                  <span className="text-muted-foreground">Add it for</span>
+                  <Select
+                    aria-label="Add it for"
+                    className="h-8 min-w-40"
+                    value={chosen ?? "me"}
+                    options={[
+                      { value: "me", label: "Just me" },
+                      ...choices.teams.map((t) => ({ value: t.id, label: `${teamName(t)} (team)` })),
+                    ]}
+                    onValueChange={(v) => setPicked(v === "me" ? null : v)}
+                  />
+                </div>
+              ) : null}
+              <PairingPanel pairing={pairing} machines={machines} />
+            </>
           )}
 
           {pairing.phase === "used" ? null : <ManualSteps guide={guide} open={manualOnly} />}
@@ -127,10 +156,25 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
 
   if (phase === "used") {
     const name = machines.find((m) => m.id === code.machine)?.name;
+    const team = pairing.team;
+    if (team?.phase === "adding") {
+      return (
+        <div className="mt-5 flex items-center gap-2 text-[13px] text-muted-foreground" data-pairing-team="adding">
+          <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden /> {FINISHING_SETUP}
+        </div>
+      );
+    }
     return (
-      <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added>
+      <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added data-pairing-team={team?.phase}>
         <CheckIcon className="size-4 shrink-0 text-success" aria-hidden />
-        <span>{name ? `Added ${name}.` : "Added the computer."} It shows in your machines.</span>
+        <span>
+          {name ? `Added ${name}.` : "Added the computer."}{" "}
+          {team?.phase === "added"
+            ? "Your team can use it now."
+            : team?.phase === "failed"
+              ? `It isn't on your team yet: ${team.error ?? "something went wrong"}`
+              : "It shows in your machines."}
+        </span>
       </div>
     );
   }

@@ -404,6 +404,46 @@ fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
     Ok(())
 }
 
+/// Text with more distinct characters missing from the keymap than there are
+/// spare keycodes is typed in batches that reuse the spare keycodes.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn text_types_more_distinct_unmapped_characters_than_spare_keycodes() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let window = focused_input_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    let (&free, taken) = spare
+        .split_last()
+        .expect("the test display has no spare keycode");
+    let per = conn
+        .get_keyboard_mapping(free, 1)?
+        .reply()?
+        .keysyms_per_keycode;
+    let bind = |keysym: u32| -> Result<()> {
+        for &keycode in taken {
+            conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
+        }
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    };
+    bind(0x7e1)?;
+    let results = [
+        send_type_text_xtest("\u{4f60}\u{597d}\u{4e16}\u{4f60}"),
+        send_type_text(u64::from(window), "\u{4f60}\u{597d}\u{4e16}\u{4f60}"),
+    ];
+    bind(0)?;
+    for result in results {
+        result?;
+        let events = keyboard_events(&conn, 8)?;
+        for pair in events.chunks_exact(2) {
+            assert!(pair[0].0 && !pair[1].0);
+            assert_eq!((pair[0].1.detail, pair[1].1.detail), (free, free));
+        }
+    }
+    assert_eq!(spare_keycodes(&conn)?, spare);
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {

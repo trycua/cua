@@ -232,10 +232,9 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
-    /// Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1):
-    /// teams share machines with every member and their agents. Owners
-    /// and admins invite (email or link), approve member devices, add
-    /// machines and read the audit log.
+    /// Teams (organizations of your cua.ai account) share machines with
+    /// every member and their agents. Owners and admins invite by email,
+    /// approve member devices and add machines.
     #[command(
         subcommand,
         after_help = "Examples:
@@ -243,7 +242,7 @@ enum Command {
   cua team invite AIGIS dillon@example.com
   cua team add-machine AIGIS local:build-box
   cua team approve AIGIS dev_0123456789abcdef01234567
-  cua team audit AIGIS"
+  cua team show AIGIS"
     )]
     Team(team_cmd::TeamCmd),
     /// Your relay allowance this month: live sessions, relay hours, and
@@ -1297,8 +1296,8 @@ async fn env_at(
 
 async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     let json = cli.json;
-    // Teams are experimental: refused (before any sign-in, daemon or relay
-    // call) unless CUA_EXPERIMENTAL_TEAMS is set.
+    // Teams turned off (CUA_EXPERIMENTAL_TEAMS=0): refused before any
+    // sign-in, daemon or relay call.
     if uses_teams(&cli.command) && !cua_home::experimental::teams_enabled() {
         return Err(CuaError::InvalidArgument(
             cua_home::experimental::TEAMS_UNAVAILABLE.into(),
@@ -1716,8 +1715,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         // Adding a machine is sharing the Space with the team: the same
         // path as `cua spaces share <space> team:<id>` (attach, confirm).
         Command::Team(team_cmd::TeamCmd::AddMachine { team, space, yes }) => {
-            let auth = devices_cmd::device_auth(&host::relay_url(None, &util::cua_home()))?;
-            let id = team_cmd::resolve_team(&auth, &team).await?;
+            let id = team_cmd::resolve_team(&util::cua_home(), &team).await?;
             let share = Cli {
                 command: Command::Spaces(host::SpacesCmd::Share {
                     space,
@@ -2543,7 +2541,23 @@ fn cli_command(teams: bool) -> clap::Command {
     }
     cmd.mut_subcommand("team", |c| c.hide(true))
         .mut_subcommand("host", |h| {
-            h.mut_subcommand("pair", |p| p.mut_arg("team", |a| a.hide(true)))
+            h.mut_subcommand("pair", |p| {
+                // Drop the Teams example too.
+                let examples = p.get_after_help().map(|h| {
+                    h.to_string()
+                        .lines()
+                        .filter(|l| !l.contains("team"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                let p = p
+                    .mut_arg("team", |a| a.hide(true))
+                    .mut_arg("no_wait", |a| a.hide(true));
+                match examples {
+                    Some(e) => p.after_help(e),
+                    None => p,
+                }
+            })
         })
 }
 

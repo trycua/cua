@@ -866,6 +866,12 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "XDG_RUNTIME_DIR"
                 | "XDG_SESSION_TYPE"
                 | "DBUS_SESSION_BUS_ADDRESS"
+                | "XDG_CURRENT_DESKTOP"
+                | "XDG_SESSION_DESKTOP"
+                | "DESKTOP_SESSION"
+                | "NO_AT_BRIDGE"
+                | "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE"
+                | "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE"
                 | "XAUTHORITY"
                 | "CUA_LOG"
                 | "CUA_DRIVER_RS_HOME"
@@ -1433,6 +1439,39 @@ mod tests {
         assert!(!values
             .iter()
             .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
+    }
+
+    #[test]
+    fn desktop_identity_and_accessibility_controls_reach_the_child() {
+        for name in [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+            "NO_AT_BRIDGE",
+            "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE",
+            "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE",
+        ] {
+            let inherited = [(name.to_owned(), "inherited".to_owned())];
+            let host = EmbeddedEnvironmentVariable {
+                name: name.into(),
+                value: "host".into(),
+            };
+            for (values, expected) in [
+                (merge_safe_environment(inherited.clone(), &[]), "inherited"),
+                (
+                    merge_safe_environment(std::iter::empty(), &[host.clone()]),
+                    "host",
+                ),
+                (merge_safe_environment(inherited, &[host]), "host"),
+            ] {
+                let reached: Vec<_> = values
+                    .iter()
+                    .filter(|variable| variable.name == name)
+                    .map(|variable| variable.value.as_str())
+                    .collect();
+                assert_eq!(reached, [expected], "{name}");
+            }
+        }
     }
 
     #[test]

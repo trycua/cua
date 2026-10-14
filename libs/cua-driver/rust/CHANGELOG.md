@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.35.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.3...cua-driver-rs-v0.35.4) (2026-10-14)
+
+
+### Bug Fixes
+
+* **cua-driver:** background browser clicks reach pointer-driven rows ([#5110](https://github.com/trycua/cua/issues/5110)) ([a7c4a0e](https://github.com/trycua/cua/commit/a7c4a0ea5e197fdfb422fa07a53649419296e842))
+* **cua-driver:** exit 64 for an unknown permissions subcommand ([#5148](https://github.com/trycua/cua/issues/5148)) ([63b3c9e](https://github.com/trycua/cua/commit/63b3c9efe7d207c62abbbe2f6504d1f6b42430a9))
+* **cua-driver:** fail type_text when a character cannot be typed ([#5139](https://github.com/trycua/cua/issues/5139)) ([2c3d2f4](https://github.com/trycua/cua/commit/2c3d2f412231b5ab41213c1972e985f4d079bbf7))
+* **cua-driver:** give each character of a text its own spare keycode ([#5158](https://github.com/trycua/cua/issues/5158)) ([f7e177f](https://github.com/trycua/cua/commit/f7e177fab66777faa7abba3576af4668c57add9c))
+* **cua-driver:** isolate Computer History under CUA_DRIVER_RS_HOME ([#5165](https://github.com/trycua/cua/issues/5165)) ([fbab7c5](https://github.com/trycua/cua/commit/fbab7c506cf94d25dd76edda627e58a51b27b570))
+* **cua-driver:** keep background popups and context menus open on macOS ([#5129](https://github.com/trycua/cua/issues/5129)) ([2952665](https://github.com/trycua/cua/commit/295266586d25fcfea934eeb915ba8a701501d644))
+* **cua-driver:** keep list_windows valid when macOS reports non-finite window bounds ([#5125](https://github.com/trycua/cua/issues/5125)) ([e1091af](https://github.com/trycua/cua/commit/e1091afef672afdeb6fcf32aa18843aaf8c7ff52))
+* **cua-driver:** keep the Chromium screen rebase off a top-level frame that matches its window-manager frame ([#4967](https://github.com/trycua/cua/issues/4967)) ([6e050d7](https://github.com/trycua/cua/commit/6e050d72078b33959fbfece8e85bd1d4999a18d3))
+* **cua-driver:** preserve macOS middle-click window routing ([#5137](https://github.com/trycua/cua/issues/5137)) ([bf42be3](https://github.com/trycua/cua/commit/bf42be34f53ee5230f1dfa0ac38d37892592acfd))
+* **cua-driver:** preserve recording start timestamp in session.json ([#5145](https://github.com/trycua/cua/issues/5145)) ([d7d8ed8](https://github.com/trycua/cua/commit/d7d8ed8c690e93d691055f070b247371c84cbf60))
+* **cua-driver:** print the named command's help for `<command> --help` ([#5083](https://github.com/trycua/cua/issues/5083)) ([2a50b89](https://github.com/trycua/cua/commit/2a50b895eb055a13c778d0c8a041510ce1082dbc)), closes [#4708](https://github.com/trycua/cua/issues/4708)
+* **cua-driver:** refuse background Cmd+V when the browser focus is its omnibox ([#5124](https://github.com/trycua/cua/issues/5124)) ([c18bb1c](https://github.com/trycua/cua/commit/c18bb1c058ad09dc1beb0634a451c737049b000a))
+* **cua-driver:** share one approved Chrome connection across sessions ([#5115](https://github.com/trycua/cua/issues/5115)) ([a3a50cb](https://github.com/trycua/cua/commit/a3a50cbc4fe05848ac0f65f30a92ef6d97f197af))
+* **cua-driver:** stop opening a console window for the embedded daemon on Windows ([#5136](https://github.com/trycua/cua/issues/5136)) ([a9d9128](https://github.com/trycua/cua/commit/a9d912817b3021f330fc0734824373874f84038a))
+* **cua-driver:** wake Chromium AT-SPI content before the first application tree traversal ([#5074](https://github.com/trycua/cua/issues/5074)) ([e7af6a6](https://github.com/trycua/cua/commit/e7af6a61b0c297fd25a582c283ed55cfbece864b))
+* **cua-driver:** write action.json timestamp as ISO-8601 as documented ([#5144](https://github.com/trycua/cua/issues/5144)) ([a2a2d73](https://github.com/trycua/cua/commit/a2a2d7335f31f215ecac2cb33eeb96a90520fa4c))
+
 ## [0.35.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.35.2...cua-driver-rs-v0.35.3) (2026-10-13)
 
 

@@ -1,6 +1,6 @@
 ---
-title: "cua team (experimental)"
-description: "Experimental, not available yet (needs `CUA_EXPERIMENTAL_TEAMS=1`): teams, their members, machines, device approvals and audit log."
+title: "cua team"
+description: "Teams (organizations), their members, machines and device approvals."
 ---
 
 {/*
@@ -13,10 +13,10 @@ description: "Experimental, not available yet (needs `CUA_EXPERIMENTAL_TEAMS=1`)
 | Command | Description |
 | --- | --- |
 | [`cua team create`](#cua-team-create) | Create a team; you are its owner. |
-| [`cua team ls`](#cua-team-ls) | Your teams, and email invites waiting for you. |
-| [`cua team show`](#cua-team-show) | A team: members, machines, open invites and devices. |
-| [`cua team invite`](#cua-team-invite) | Invite someone by email, or make a link anyone can join with. |
-| [`cua team join`](#cua-team-join) | Join a team with an invite link or code, or (with --team) the email invite for your account's email. |
+| [`cua team ls`](#cua-team-ls) | Your teams. |
+| [`cua team show`](#cua-team-show) | A team: plan, members, machines, open invites and devices. |
+| [`cua team invite`](#cua-team-invite) | Invite someone by email: cua.ai emails them an invitation. |
+| [`cua team join`](#cua-team-join) | After accepting an emailed invitation: take the role it offered. |
 | [`cua team leave`](#cua-team-leave) | Leave a team. |
 | [`cua team remove-member`](#cua-team-remove-member) | Remove a member (owner or admin; admins cannot remove admins). |
 | [`cua team set-role`](#cua-team-set-role) | Make a member an admin, or an admin a member (owner). |
@@ -26,14 +26,14 @@ description: "Experimental, not available yet (needs `CUA_EXPERIMENTAL_TEAMS=1`)
 | [`cua team request`](#cua-team-request) | Ask the team's admins to approve this device. |
 | [`cua team add-machine`](#cua-team-add-machine) | Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. |
 | [`cua team remove-machine`](#cua-team-remove-machine) | Take a machine off the team. |
-| [`cua team audit`](#cua-team-audit) | The team's audit log: joins, approvals, machines opened, changes. |
-| [`cua team delete`](#cua-team-delete) | Delete a team (owner). |
+| [`cua team audit`](#cua-team-audit) | The team's audit log. |
+| [`cua team delete`](#cua-team-delete) | Delete a team (owner; cancel its subscription first). |
 
 Every command also accepts the [global options](/cua-cli/reference/cli#global-options).
 
 <span id="cua-team"></span>
 
-Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1): teams share machines with every member and their agents. Owners and admins invite (email or link), approve member devices, add machines and read the audit log.
+Teams (organizations of your cua.ai account) share machines with every member and their agents. Owners and admins invite by email, approve member devices and add machines.
 
 ```text output
 cua team [OPTIONS] <COMMAND>
@@ -46,12 +46,12 @@ cua team create AIGIS
 cua team invite AIGIS dillon@example.com
 cua team add-machine AIGIS local:build-box
 cua team approve AIGIS dev_0123456789abcdef01234567
-cua team audit AIGIS
+cua team show AIGIS
 ```
 
 ## `cua team create`
 
-Create a team; you are its owner.
+Create a team; you are its owner. Buy Teams for it at app.cua.ai to add machines.
 
 ```text output
 cua team create [OPTIONS] <NAME>
@@ -69,7 +69,7 @@ cua team create "AIGIS"
 
 ## `cua team ls`
 
-Your teams, and email invites waiting for you.
+Your teams.
 
 ```text output
 cua team ls [OPTIONS]
@@ -86,7 +86,7 @@ cua team ls --json
 
 ## `cua team show`
 
-A team: members, machines, open invites and devices.
+A team: plan, members, machines, open invites and devices.
 
 ```text output
 cua team show [OPTIONS] <TEAM>
@@ -94,7 +94,7 @@ cua team show [OPTIONS] <TEAM>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id (`team-…`) or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 **Examples**
 
@@ -104,51 +104,44 @@ cua team show AIGIS
 
 ## `cua team invite`
 
-Invite someone by email, or make a link anyone can join with.
+Invite someone by email: cua.ai emails them an invitation. Manage invites at app.cua.ai/team.
 
 ```text output
-cua team invite [OPTIONS] <TEAM> [EMAIL]
+cua team invite [OPTIONS] <TEAM> <EMAIL>
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
-| `<EMAIL>` | string | optional | Their email (they join by signing in with it). |
+| `<TEAM>` | string | required | Team id, alias or name. |
+| `<EMAIL>` | string | required | Their email. |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-team-invite--role"></span>`--role` | `member` \| `admin` | `member` | `member` or `admin` (only the owner invites admins). |
-| <span id="cua-team-invite--link"></span>`--link` | boolean | `false` | Make a link instead (up to 25 joins, 7 days). |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-team-invite"
 cua team invite AIGIS dillon@example.com
-cua team invite AIGIS --link
 cua team invite AIGIS ops@example.com --role admin
 ```
 
 ## `cua team join`
 
-Join a team with an invite link or code, or (with --team) the email invite for your account's email.
+After accepting an emailed invitation: take the role it offered. Run `cua auth login` first so your session lists the team.
 
 ```text output
-cua team join [OPTIONS] [CODE]
+cua team join [OPTIONS] <TEAM>
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<CODE>` | string | optional | The invite link or code. |
-
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-team-join--team"></span>`--team` | string |  | The team of an email invite. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-team-join"
-cua team join https://relay.cua.ai/join/team/team-0a1b….xyz
-cua team join --team team-0a1b2c3d4e5f6a7b
+cua team join AIGIS
 ```
 
 ## `cua team leave`
@@ -161,7 +154,7 @@ cua team leave [OPTIONS] <TEAM>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 **Examples**
 
@@ -179,7 +172,7 @@ cua team remove-member [OPTIONS] <TEAM> <WHO>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 | `<WHO>` | string | required | Their email or account id. |
 
 **Examples**
@@ -198,7 +191,7 @@ cua team set-role [OPTIONS] <TEAM> <WHO> <ROLE>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 | `<WHO>` | string | required | Their email or account id. |
 | `<ROLE>` | `member` \| `admin` | required | `member` or `admin`. |
 
@@ -218,7 +211,7 @@ cua team devices [OPTIONS] <TEAM>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 **Examples**
 
@@ -236,7 +229,7 @@ cua team approve [OPTIONS] <TEAM> <DEVICE>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 | `<DEVICE>` | string | required | Device id (`cua team devices`). |
 
 **Examples**
@@ -255,7 +248,7 @@ cua team deny [OPTIONS] <TEAM> <DEVICE>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 | `<DEVICE>` | string | required | Device id. |
 
 **Examples**
@@ -274,7 +267,7 @@ cua team request [OPTIONS] <TEAM>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 **Examples**
 
@@ -284,7 +277,7 @@ cua team request AIGIS
 
 ## `cua team add-machine`
 
-Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. macOS Spaces cannot.
+Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. Macs, Linux and Windows machines all can. Each Space is added on its own: adding a host does not add the Spaces it provides.
 
 ```text output
 cua team add-machine [OPTIONS] <TEAM> <SPACE>
@@ -292,8 +285,8 @@ cua team add-machine [OPTIONS] <TEAM> <SPACE>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
-| `<SPACE>` | string | required | Space id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
+| `<SPACE>` | string | required | Space id or name (`relay:<id>` for a machine you host). |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -316,7 +309,7 @@ cua team remove-machine [OPTIONS] <TEAM> <MACHINE>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 | `<MACHINE>` | string | required | The machine (`relay:<id>` or its id, as `cua team show` lists it). |
 
 **Examples**
@@ -327,7 +320,7 @@ cua team remove-machine AIGIS relay:0123abcd4567ef89
 
 ## `cua team audit`
 
-The team's audit log: joins, approvals, machines opened, changes.
+The team's audit log. Audit export is coming soon; for now see the account app (app.cua.ai).
 
 ```text output
 cua team audit [OPTIONS] <TEAM>
@@ -335,21 +328,21 @@ cua team audit [OPTIONS] <TEAM>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-team-audit--limit"></span>`--limit` | integer | `50` | Newest events to show. |
+| <span id="cua-team-audit--limit"></span>`--limit` | integer | `50` | Newest events to show (when export arrives). |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-team-audit"
-cua team audit AIGIS --limit 50
+cua team audit AIGIS
 ```
 
 ## `cua team delete`
 
-Delete a team (owner). Its machines stay yours.
+Delete a team (owner; cancel its subscription first). Its machines stay yours.
 
 ```text output
 cua team delete [OPTIONS] <TEAM>
@@ -357,7 +350,7 @@ cua team delete [OPTIONS] <TEAM>
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TEAM>` | string | required | Team id or name. |
+| `<TEAM>` | string | required | Team id, alias or name. |
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |

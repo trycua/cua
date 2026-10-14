@@ -2,6 +2,7 @@ name: "CI: Image API"
 
 on:
   push:
+    branches: [main]
     paths:
       - "clusters/base/cua-images/**"
       - "libs/python/cua-sandbox/cua_sandbox/image.py"
@@ -41,6 +42,10 @@ env:
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   validate:

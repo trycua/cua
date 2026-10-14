@@ -42,7 +42,11 @@ runs:
         if command -v cygpath >/dev/null 2>&1; then dir="$(cygpath -m "$dir")"; fi
         echo "asset=protoc-${VERSION}-${asset}.zip" >> "$GITHUB_OUTPUT"
         echo "dir=${dir}" >> "$GITHUB_OUTPUT"
-        echo "key=protoc-${VERSION}-${asset}" >> "$GITHUB_OUTPUT"
+        # The runner architecture is in the key: Windows x64 and Arm runners
+        # both use the win64 build but keep their workspace on different
+        # drives, and a cache saved on one restores to the wrong drive on the
+        # other (protoc then "No such file or directory").
+        echo "key=protoc-${VERSION}-${asset}-${RUNNER_ARCH_NAME}" >> "$GITHUB_OUTPUT"
     - name: Restore protoc cache
       id: cache
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -50,15 +54,21 @@ runs:
         path: ${{ steps.asset.outputs.dir }}
         key: ${{ steps.asset.outputs.key }}
     - name: Download protoc (retrying)
-      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
         ASSET: ${{ steps.asset.outputs.asset }}
         DIR: ${{ steps.asset.outputs.dir }}
         GH_TOKEN: ${{ inputs.token }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
         set -euo pipefail
+        # A cache hit that did not restore the binary downloads it again.
+        if [ -x "$DIR/bin/protoc" ] || [ -f "$DIR/bin/protoc.exe" ]; then
+          echo "protoc ${VERSION} is restored from the cache"
+          exit 0
+        fi
+        [ "${CACHE_HIT}" = true ] && echo "::warning::the protoc cache hit restored no binary; downloading"
         tmp="$(mktemp -d)"
         url="https://github.com/protocolbuffers/protobuf/releases/download/v${VERSION}/${ASSET}"
         if ! curl --fail --location --silent --show-error \

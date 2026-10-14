@@ -28,6 +28,9 @@ pub struct RelayAccount {
     pub tokens: Arc<dyn AccountTokens>,
     /// This client device (its session rides on every relay call).
     pub device: Option<Arc<DeviceAuth>>,
+    /// The Spaces API Teams go through (`None`: the environment's,
+    /// [`cua_host::spaces_api::SpacesApiClient::current`]).
+    pub spaces_api: Option<String>,
 }
 
 impl RelayAccount {
@@ -37,6 +40,22 @@ impl RelayAccount {
             url: url.into(),
             tokens,
             device: None,
+            spaces_api: None,
+        }
+    }
+
+    /// Teams (organizations) go through the Spaces API at `url` instead of
+    /// the environment's.
+    pub fn with_spaces_api(mut self, url: impl Into<String>) -> Self {
+        self.spaces_api = Some(url.into());
+        self
+    }
+
+    /// The Spaces API client Teams go through.
+    pub fn spaces_api(&self) -> cua_host::Result<cua_host::spaces_api::SpacesApiClient> {
+        match &self.spaces_api {
+            Some(u) => cua_host::spaces_api::SpacesApiClient::new(u),
+            None => cua_host::spaces_api::SpacesApiClient::current(),
         }
     }
 

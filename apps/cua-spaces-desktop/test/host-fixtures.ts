@@ -305,7 +305,7 @@ export const HOST_METHODS = [
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
-  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
   "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.choose",
   "onboarding.get", "onboarding.complete",
@@ -317,7 +317,7 @@ export const HOST_OPS = [
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
-  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
   "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
 ];

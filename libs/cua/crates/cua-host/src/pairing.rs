@@ -264,6 +264,66 @@ impl RelayClient {
     }
 }
 
+impl RelayClient {
+    /// Waits (polling every `poll`) until the pairing code `code_id` adds a
+    /// machine, then makes that machine a machine of the team `org` on the
+    /// Spaces API (`POST /v1/orgs/{org}/machines`): pairing alone never puts
+    /// a machine in a team. A plan bought a moment ago is waited for (see
+    /// [`crate::spaces_api::SpacesApiClient::finishing_setup`]; `waiting`
+    /// is called meanwhile). Gives up when the code is revoked or expires,
+    /// or at `until` (Unix seconds). Returns the machine id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_paired_machine_to_team(
+        &self,
+        api: &crate::spaces_api::SpacesApiClient,
+        token: &str,
+        code_id: &str,
+        org: &str,
+        until: u64,
+        poll: std::time::Duration,
+        waiting: impl FnMut(std::time::Duration),
+    ) -> Result<String> {
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        };
+        let (machine, name) = loop {
+            let codes = self.pairing_codes(token).await?;
+            let c = codes.into_iter().find(|c| c.id == code_id);
+            match c {
+                Some(c) if c.state == "used" && c.machine.is_some() => {
+                    break (c.machine.unwrap_or_default(), c.name.unwrap_or_default());
+                }
+                Some(c) if c.state == "revoked" || c.state == "expired" => {
+                    return Err(Error::InvalidArgument(format!(
+                        "pairing code {code_id} was {} before a machine used it",
+                        c.state
+                    )));
+                }
+                None => {
+                    return Err(Error::NotFound(format!("pairing code {code_id}")));
+                }
+                Some(_) if now() >= until => {
+                    return Err(Error::InvalidArgument(format!(
+                        "no machine used pairing code {code_id} in time"
+                    )));
+                }
+                Some(_) => tokio::time::sleep(poll).await,
+            }
+        };
+        api.finishing_setup(
+            token,
+            crate::spaces_api::SETUP_RETRY_WINDOW,
+            waiting,
+            || api.add_org_machine(token, org, &machine, "", &name),
+        )
+        .await?;
+        Ok(machine)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,7 +335,10 @@ mod tests {
             ..Default::default()
         };
         let err = check_pairing_team(&team, false).unwrap_err().to_string();
-        assert!(err.contains("Teams isn't available yet."), "{err}");
+        assert!(
+            err.contains("Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0)."),
+            "{err}"
+        );
         check_pairing_team(&team, true).unwrap();
         check_pairing_team(&PairingCodeRequest::default(), false).unwrap();
     }

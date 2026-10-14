@@ -11,8 +11,6 @@ use cua_driver_core::browser::{
 use crate::ax::bindings::{kAXErrorSuccess, perform_action, AXUIElementRef};
 use crate::ax::tree::{walk_native_chrome_bounded, AXNode, TreeWalkResult};
 
-// Keep the native-chrome walk bounded even though it skips web content.
-// The matcher still requires one exact AXSheet and semantic Allow action.
 const CONSENT_MAX_ELEMENTS: usize = 5_000;
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {

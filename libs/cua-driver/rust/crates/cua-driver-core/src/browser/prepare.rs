@@ -111,8 +111,6 @@ where
     }
     let result = match result {
         Some(result) => result,
-        // A committed action may confirm after the consent timer; keep the
-        // original reconnect alive briefly, but never wait on it indefinitely.
         None if consent_timed_out => tokio::time::timeout(Duration::from_secs(4), claim.as_mut())
             .await
             .map_err(|_| {

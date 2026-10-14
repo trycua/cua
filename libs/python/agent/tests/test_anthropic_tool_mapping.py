@@ -1,5 +1,4 @@
 import pytest
-
 from cua_agent.loops.anthropic import _get_tool_config_for_model
 
 COMPUTER_20251124 = {

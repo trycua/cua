@@ -2870,6 +2870,7 @@ mod teams_tests {
                     plan: "teams".into(),
                     status: "active".into(),
                     seats: 3,
+                    features: vec!["team_machines".into()],
                 },
                 members: vec![ApiMember {
                     sub: "u1".into(),

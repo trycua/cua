@@ -257,8 +257,11 @@ impl DevicesService {
     }
 
     /// Makes a one-time code (link, QR code, install commands) that adds
-    /// another computer to the account, or to `team`, from this enrolled
-    /// device. It expires after 30 minutes.
+    /// another computer to the account, from this enrolled device. It
+    /// expires after 30 minutes. With `team` (an organization id) the code
+    /// is the same: the relay's own teams are retired, and the machine
+    /// becomes a team machine once it joined (the web UI shares it with
+    /// `team:<id>`, through the Spaces API).
     pub async fn create_pairing_code(
         &self,
         team: Option<String>,
@@ -266,10 +269,11 @@ impl DevicesService {
         let (relay, token) = self.account_relay().await?;
         let req = PairingCodeRequest {
             name: None,
-            team,
+            team: None,
             ttl_secs: None,
         };
-        let code = relay.create_pairing_code(&token, &req).await.map_err(err)?;
+        let mut code = relay.create_pairing_code(&token, &req).await.map_err(err)?;
+        code.team = team.filter(|t| !t.trim().is_empty());
         Ok(PairingCodeView::new(code, self.auth.relay_url()))
     }
 

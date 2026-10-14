@@ -971,8 +971,11 @@ impl Devices {
     }
 
     /// Makes a one-time code (link, QR, install commands) that adds another
-    /// computer to the account, or to `team` (from this enrolled device).
-    /// It expires after `ttl_secs` (30 minutes when `None`).
+    /// computer to the account (from this enrolled device). It expires
+    /// after `ttl_secs` (30 minutes when `None`). `team` (an organization
+    /// id) is only echoed back: the relay's own teams are retired, and the
+    /// machine becomes a team machine once it joined, by sharing it with
+    /// `team:<id>` (the Spaces API).
     pub async fn create_pairing_code(
         &self,
         team: Option<String>,
@@ -990,11 +993,15 @@ impl Devices {
                     &token,
                     &cua_host::PairingCodeRequest {
                         name: None,
-                        team,
+                        team: None,
                         ttl_secs,
                     },
                 )
                 .await?;
+            let code = cua_host::PairingCode {
+                team: team.filter(|t| !t.trim().is_empty()),
+                ..code
+            };
             Ok(PairingCode::from_host(code, &relay))
         })
         .await

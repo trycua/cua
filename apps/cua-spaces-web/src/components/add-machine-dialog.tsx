@@ -5,7 +5,7 @@ import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, LoaderCircleIc
 import { useState, type ReactNode } from "react";
 import { encode } from "uqr";
 
-import { expiresInText, useMachines, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
+import { expiresInText, FINISHING_SETUP, useMachines, usePairingCode, useSession, type HostFormField, type HostSetupGuide, type Machine, type PairingHook } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/segmented";
@@ -40,12 +40,15 @@ export function AddMachineDialog({
   onOpenChange,
   guide,
   pollMs,
+  team = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   guide: HostSetupGuide;
   /** How often to ask whether the link was used (tests). */
   pollMs?: number;
+  /** A team (organization id) the new machine joins once it is added (owner or admin). */
+  team?: string | null;
 }) {
   const { data: session, signIn } = useSession();
   const { data: listed, refresh } = useMachines();
@@ -54,7 +57,7 @@ export function AddMachineDialog({
   // Signed in but not enrolled: this device can't vouch for a new machine
   // (known once the machines are read).
   const notice = machines.find((m) => m.current)?.accessNotice ?? null;
-  const pairing = usePairingCode({ open, enabled: signedIn && listed !== undefined && !notice, pollMs, onUsed: () => void refresh().catch(() => {}) });
+  const pairing = usePairingCode({ open, enabled: signedIn && listed !== undefined && !notice, pollMs, team, onUsed: () => void refresh().catch(() => {}) });
   const fail = (title: string) => (e: unknown) => toast(title, { description: e instanceof Error ? e.message : String(e) });
 
   // Any reason there is no link: the manual steps are the way, so show them.
@@ -127,10 +130,25 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
 
   if (phase === "used") {
     const name = machines.find((m) => m.id === code.machine)?.name;
+    const team = pairing.team;
+    if (team?.phase === "adding") {
+      return (
+        <div className="mt-5 flex items-center gap-2 text-[13px] text-muted-foreground" data-pairing-team="adding">
+          <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden /> {FINISHING_SETUP}
+        </div>
+      );
+    }
     return (
-      <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added>
+      <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added data-pairing-team={team?.phase}>
         <CheckIcon className="size-4 shrink-0 text-success" aria-hidden />
-        <span>{name ? `Added ${name}.` : "Added the computer."} It shows in your machines.</span>
+        <span>
+          {name ? `Added ${name}.` : "Added the computer."}{" "}
+          {team?.phase === "added"
+            ? "Your team can use it now."
+            : team?.phase === "failed"
+              ? `It isn't on your team yet: ${team.error ?? "something went wrong"}`
+              : "It shows in your machines."}
+        </span>
       </div>
     );
   }

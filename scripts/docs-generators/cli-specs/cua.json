@@ -9491,10 +9491,21 @@
     },
     {
      "abstract": "Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. Codes work once and expire (30 minutes by default). Run from an enrolled device",
-     "after_help": "Examples:\n  cua host pair\n  cua host pair --name build-box --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef",
+     "after_help": "Examples:\n  cua host pair\n  cua host pair --name build-box --expires 60\n  cua host pair --list\n  cua host pair --revoke pc_0123456789abcdef\n  # Add the machine to a team: waits for it to join, then adds it\n  cua host pair --team AIGIS",
      "aliases": [],
      "arguments": [],
      "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "With --team: print the code and exit instead of waiting; add the machine later with `cua team add-machine <team> relay:<id>`",
+       "hidden": false,
+       "name": "no-wait",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
       {
        "aliases": [],
        "default_value": false,
@@ -9515,7 +9526,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Add the machine for this team (its id)",
+       "help": "Add the machine to this team (id, alias or name; owner or admin): waits until the machine joins, then makes it a team machine",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -9866,17 +9877,6 @@
        "name": "force",
        "repeatable": false,
        "short_name": "f",
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "For an uninstall of Cua Spaces: turns off the Spaces this machine provides and takes them off the relay too, instead of refusing while it provides any. The Spaces and their data stay on this machine",
-       "hidden": false,
-       "name": "uninstalling",
-       "repeatable": false,
-       "short_name": null,
        "takes_value": false
       }
      ],
@@ -11270,8 +11270,8 @@
    "usage": "cua devices [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Teams share machines with every member and their agents. Owners and admins invite (email or link), approve member devices, add machines and read the audit log",
-   "after_help": "Examples:\n  cua team create AIGIS\n  cua team invite AIGIS dillon@example.com\n  cua team add-machine AIGIS local:build-box\n  cua team approve AIGIS dev_0123456789abcdef01234567\n  cua team audit AIGIS",
+   "abstract": "Teams (organizations of your cua.ai account) share machines with every member and their agents. Owners and admins invite by email, approve member devices and add machines",
+   "after_help": "Examples:\n  cua team create AIGIS\n  cua team invite AIGIS dillon@example.com\n  cua team add-machine AIGIS local:build-box\n  cua team approve AIGIS dev_0123456789abcdef01234567\n  cua team show AIGIS",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -11282,7 +11282,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Create a team; you are its owner",
+     "abstract": "Create a team; you are its owner. Buy Teams for it at app.cua.ai to add machines",
      "after_help": "Examples:\n  cua team create \"AIGIS\"",
      "aliases": [],
      "arguments": [
@@ -11307,7 +11307,7 @@
      "usage": "cua team create [OPTIONS] <NAME>"
     },
     {
-     "abstract": "Your teams, and email invites waiting for you",
+     "abstract": "Your teams",
      "after_help": "Examples:\n  cua team ls\n  cua team ls --json",
      "aliases": [
       "list"
@@ -11323,13 +11323,13 @@
      "usage": "cua team ls [OPTIONS]"
     },
     {
-     "abstract": "A team: members, machines, open invites and devices",
+     "abstract": "A team: plan, members, machines, open invites and devices",
      "after_help": "Examples:\n  cua team show AIGIS",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id (`team-…`) or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11348,13 +11348,13 @@
      "usage": "cua team show [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Invite someone by email, or make a link anyone can join with",
-     "after_help": "Examples:\n  cua team invite AIGIS dillon@example.com\n  cua team invite AIGIS --link\n  cua team invite AIGIS ops@example.com --role admin",
+     "abstract": "Invite someone by email: cua.ai emails them an invitation",
+     "after_help": "Examples:\n  cua team invite AIGIS dillon@example.com\n  cua team invite AIGIS ops@example.com --role admin",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11364,28 +11364,16 @@
       },
       {
        "default_value": null,
-       "help": "Their email (they join by signing in with it)",
+       "help": "Their email",
        "hidden": false,
-       "is_optional": true,
+       "is_optional": false,
        "name": "EMAIL",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
       }
      ],
-     "flags": [
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "Make a link instead (up to 25 joins, 7 days)",
-       "hidden": false,
-       "name": "link",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      }
-     ],
+     "flags": [],
      "hidden": false,
      "hidden_aliases": [],
      "name": "invite",
@@ -11412,19 +11400,19 @@
      ],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua team invite [OPTIONS] <TEAM> [EMAIL]"
+     "usage": "cua team invite [OPTIONS] <TEAM> <EMAIL>"
     },
     {
-     "abstract": "Join a team with an invite link or code, or (with --team) the email invite for your account's email",
-     "after_help": "Examples:\n  cua team join https://relay.cua.ai/join/team/team-0a1b….xyz\n  cua team join --team team-0a1b2c3d4e5f6a7b",
+     "abstract": "After accepting an emailed invitation: take the role it offered. Run `cua auth login` first so your session lists the team",
+     "after_help": "Examples:\n  cua team join AIGIS",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "The invite link or code",
+       "help": "Team id, alias or name",
        "hidden": false,
-       "is_optional": true,
-       "name": "CODE",
+       "is_optional": false,
+       "name": "TEAM",
        "possible_values": [],
        "repeatable": false,
        "type": "string"
@@ -11434,27 +11422,10 @@
      "hidden": false,
      "hidden_aliases": [],
      "name": "join",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "The team of an email invite",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "team",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": "TEAM"
-      }
-     ],
+     "options": [],
      "subcommand_optional": false,
      "subcommands": [],
-     "usage": "cua team join [OPTIONS] [CODE]"
+     "usage": "cua team join [OPTIONS] <TEAM>"
     },
     {
      "abstract": "Leave a team",
@@ -11463,7 +11434,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11488,7 +11459,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11523,7 +11494,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11571,7 +11542,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11596,7 +11567,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11631,7 +11602,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11666,7 +11637,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11685,13 +11656,13 @@
      "usage": "cua team request [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. Macs, Linux and Windows machines all can",
+     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. Macs, Linux and Windows machines all can. Each Space is added on its own: adding a host does not add the Spaces it provides",
      "after_help": "Examples:\n  cua team add-machine AIGIS local:build-box\n  cua team add-machine AIGIS relay:0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11701,7 +11672,7 @@
       },
       {
        "default_value": null,
-       "help": "Space id or name",
+       "help": "Space id or name (`relay:<id>` for a machine you host)",
        "hidden": false,
        "is_optional": false,
        "name": "SPACE",
@@ -11738,7 +11709,7 @@
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",
@@ -11767,55 +11738,13 @@
      "usage": "cua team remove-machine [OPTIONS] <TEAM> <MACHINE>"
     },
     {
-     "abstract": "The team's audit log: joins, approvals, machines opened, changes",
-     "after_help": "Examples:\n  cua team audit AIGIS --limit 50",
-     "aliases": [],
-     "arguments": [
-      {
-       "default_value": null,
-       "help": "Team id or name",
-       "hidden": false,
-       "is_optional": false,
-       "name": "TEAM",
-       "possible_values": [],
-       "repeatable": false,
-       "type": "string"
-      }
-     ],
-     "flags": [],
-     "hidden": false,
-     "hidden_aliases": [],
-     "name": "audit",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": "50",
-       "env": null,
-       "help": "Newest events to show",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "limit",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "integer",
-       "value_name": "LIMIT"
-      }
-     ],
-     "subcommand_optional": false,
-     "subcommands": [],
-     "usage": "cua team audit [OPTIONS] <TEAM>"
-    },
-    {
-     "abstract": "Delete a team (owner). Its machines stay yours",
+     "abstract": "Delete a team (owner; cancel its subscription first). Its machines stay yours",
      "after_help": "Examples:\n  cua team delete AIGIS --yes",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Team id or name",
+       "help": "Team id, alias or name",
        "hidden": false,
        "is_optional": false,
        "name": "TEAM",

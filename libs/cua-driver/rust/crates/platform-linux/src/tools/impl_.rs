@@ -8291,8 +8291,13 @@ fn type_text_mpx_result(
         structured[key] = value.clone();
     }
     structured["delivery_mode"] = json!("background");
+    let outcome = if report.skipped_characters.is_empty() {
+        format!("Typed {text_len} character(s)")
+    } else {
+        "Partial typing result".to_owned()
+    };
     let mut text = format!(
-        "Typed {text_len} character(s) as real key events {} (delivery_mode=background); \
+        "{outcome} as real key events {} (delivery_mode=background); \
          not verified — confirm with a screenshot.",
         report.route_phrase()
     );
@@ -8336,6 +8341,7 @@ fn mpx_type_text_with_skipped_characters_is_an_error() {
     assert_eq!(type_text_mpx_result(2, report(Vec::new())).is_error, None);
     let skipped = type_text_mpx_result(2, report(vec!['約']));
     assert_eq!(skipped.is_error, Some(true));
+    assert!(!format!("{:?}", skipped.content).contains("Typed 2 character(s)"));
     assert_eq!(
         skipped.structured_content.unwrap()["skipped_characters"],
         "約"

@@ -3380,90 +3380,111 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
+fn type_text_with_preflight<G>(
+    text: &str,
+    mapping: &GetKeyboardMappingReply,
+    mut remap: impl FnMut(char) -> Result<(u8, Option<G>)>,
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+) -> Result<()> {
+    let mut guards = Vec::new();
+    let mut resolved = std::collections::HashMap::new();
+    let mut keys = Vec::new();
+    for ch in text.chars() {
+        let key = match resolved.get(&ch).copied() {
+            Some(key) => key,
+            None => {
+                let key = match char_to_keycode_shift(mapping, mpx_keyboard::keysym_for_char(ch)) {
+                    Some(key) => key,
+                    None => {
+                        let (keycode, guard) = remap(ch).map_err(|error| {
+                            anyhow::anyhow!(
+                                "typed 0 of {} characters: {error:#}",
+                                text.chars().count()
+                            )
+                        })?;
+                        guards.extend(guard);
+                        (keycode, false)
+                    }
+                };
+                resolved.insert(ch, key);
+                key
+            }
+        };
+        keys.push(key);
+    }
+    for (keycode, needs_shift) in keys {
+        send(keycode, needs_shift)?;
+    }
+    Ok(())
+}
+
 /// Type a string with an additional `inter_char_ms` delay between each character.
 pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    // Remap guards live until the function returns: a character outside the
-    // keymap (CJK, emoji, ...) borrows a spare keycode rather than being
-    // silently dropped — see keycode_for_keysym's doc and the analogous fix
-    // in mpx_keyboard::plan_text_with_fallback for the background path.
-    let mut remap_guards = Vec::new();
-
-    for (typed, ch) in text.chars().enumerate() {
-        // Resolve the keycode and whether Shift must be held — without it,
-        // uppercase and shifted symbols would otherwise type their unshifted
-        // form (e.g. "A" arriving as "a").
-        let (keycode, needs_shift) =
-            match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
-                Some(found) => found,
-                None => match keycode_for_keysym(
-                    &conn,
-                    &mapping,
-                    mpx_keyboard::keysym_for_char(ch),
-                    &ch.to_string(),
-                ) {
-                    Ok((keycode, guard)) => {
-                        remap_guards.extend(guard);
-                        (keycode, false)
-                    }
-                    Err(error) => {
-                        bail!(
-                            "typed {typed} of {} characters: {error:#}",
-                            text.chars().count()
-                        )
-                    }
-                },
+    type_text_with_preflight(
+        text,
+        &mapping,
+        |ch| {
+            keycode_for_keysym(
+                &conn,
+                &mapping,
+                mpx_keyboard::keysym_for_char(ch),
+                &ch.to_string(),
+            )
+        },
+        |keycode, needs_shift| {
+            let state = if needs_shift {
+                KeyButMask::SHIFT
+            } else {
+                KeyButMask::from(0u16)
             };
-        let state = if needs_shift {
-            KeyButMask::SHIFT
-        } else {
-            KeyButMask::from(0u16)
-        };
 
-        let press = KeyPressEvent {
-            response_type: KEY_PRESS_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0,
-            root_y: 0,
-            event_x: 0,
-            event_y: 0,
-            state,
-            same_screen: true,
-        };
-        let release = KeyReleaseEvent {
-            response_type: KEY_RELEASE_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0,
-            root_y: 0,
-            event_x: 0,
-            event_y: 0,
-            state,
-            same_screen: true,
-        };
+            let press = KeyPressEvent {
+                response_type: KEY_PRESS_EVENT,
+                detail: keycode,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event: window,
+                child: x11rb::NONE,
+                root_x: 0,
+                root_y: 0,
+                event_x: 0,
+                event_y: 0,
+                state,
+                same_screen: true,
+            };
+            let release = KeyReleaseEvent {
+                response_type: KEY_RELEASE_EVENT,
+                detail: keycode,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event: window,
+                child: x11rb::NONE,
+                root_x: 0,
+                root_y: 0,
+                event_x: 0,
+                event_y: 0,
+                state,
+                same_screen: true,
+            };
 
-        conn.send_event(false, window, EventMask::KEY_PRESS, press)?;
-        // Start the hold interval after sending the press, not while it is buffered.
-        conn.flush()?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-        conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
-        conn.flush()?;
-        if inter_char_ms > 0 {
-            sleep(Duration::from_millis(inter_char_ms));
-        }
-    }
+            conn.send_event(false, window, EventMask::KEY_PRESS, press)?;
+            // Start the hold interval after sending the press, not while it is buffered.
+            conn.flush()?;
+            sleep(Duration::from_millis(KEY_DELAY_MS));
+            conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
+            conn.flush()?;
+            if inter_char_ms > 0 {
+                sleep(Duration::from_millis(inter_char_ms));
+            }
+            Ok(())
+        },
+    )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
     Ok(())
@@ -3488,36 +3509,31 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    // Remap guards live until the function returns — see send_type_text_with_delay.
-    let mut remap_guards = Vec::new();
-    for (typed, ch) in text.chars().enumerate() {
-        let cp = mpx_keyboard::keysym_for_char(ch);
-        let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
-            Some(found) => found,
-            None => match keycode_for_keysym(&conn, &mapping, cp, &ch.to_string()) {
-                Ok((keycode, guard)) => {
-                    remap_guards.extend(guard);
-                    (keycode, false)
-                }
-                Err(error) => {
-                    bail!(
-                        "typed {typed} of {} characters: {error:#}",
-                        text.chars().count()
-                    )
-                }
-            },
-        };
-        if needs_shift {
-            conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
-        }
-        conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        if needs_shift {
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
-        }
-        conn.flush()?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-    }
+    type_text_with_preflight(
+        text,
+        &mapping,
+        |ch| {
+            keycode_for_keysym(
+                &conn,
+                &mapping,
+                mpx_keyboard::keysym_for_char(ch),
+                &ch.to_string(),
+            )
+        },
+        |keycode, needs_shift| {
+            if needs_shift {
+                conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            if needs_shift {
+                conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.flush()?;
+            sleep(Duration::from_millis(KEY_DELAY_MS));
+            Ok(())
+        },
+    )?;
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
@@ -4111,7 +4127,65 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 
 #[cfg(test)]
 mod key_name_alias_tests {
-    use super::{char_to_keycode_shift, key_name_to_keysym, GetKeyboardMappingReply};
+    use super::{
+        char_to_keycode_shift, key_name_to_keysym, type_text_with_preflight,
+        GetKeyboardMappingReply,
+    };
+
+    #[test]
+    fn text_preflight_failure_leaves_target_and_events_unchanged() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32],
+        };
+        for text in ["約ab", "aa約", "a約a"] {
+            let mut target = String::from("existing");
+            let mut events = Vec::new();
+            let result = type_text_with_preflight::<()>(
+                text,
+                &mapping,
+                |_| anyhow::bail!("no spare keycode"),
+                |keycode, shift| {
+                    events.extend([keycode, keycode]);
+                    target.push(if shift { 'A' } else { 'a' });
+                    Ok(())
+                },
+            );
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .starts_with("typed 0 of 3 characters"));
+            assert!(events.is_empty());
+            assert_eq!(target, "existing");
+        }
+    }
+
+    #[test]
+    fn text_preflight_preserves_shift_order_and_reuses_remaps() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32],
+        };
+        let mut remaps = 0;
+        let mut events = Vec::new();
+        type_text_with_preflight::<()>(
+            "aA約約",
+            &mapping,
+            |_| {
+                remaps += 1;
+                Ok((9, None))
+            },
+            |keycode, shift| {
+                events.push((keycode, shift));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(remaps, 1);
+        assert_eq!(events, [(8, false), (8, true), (9, false), (9, false)]);
+    }
 
     #[test]
     fn shifted_column_glyphs_need_shift_and_base_glyphs_do_not() {

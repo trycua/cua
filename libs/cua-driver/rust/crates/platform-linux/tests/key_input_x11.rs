@@ -324,7 +324,7 @@ fn xtest_text_restores_the_spare_keycodes_it_borrows() -> Result<()> {
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
     let (conn, screen) = connect()?;
-    focused_input_window(&conn, screen)?;
+    let window = focused_input_window(&conn, screen)?;
     let spare = spare_keycodes(&conn)?;
     let per = conn
         .get_keyboard_mapping(spare[0], 1)?
@@ -338,12 +338,27 @@ fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
         Ok(())
     };
     bind(0x7e1)?;
-    let result = send_type_text_xtest("\u{4f60}");
+    let results = [
+        send_type_text_xtest("ab\u{4f60}"),
+        send_type_text(u64::from(window), "ab\u{4f60}"),
+    ];
     bind(0)?;
-    let error = result.expect_err("typing without a spare keycode reported success");
-    assert!(
-        error.to_string().starts_with("typed 0 of 1 characters"),
-        "{error:#}"
-    );
+    for result in results {
+        let error = result.expect_err("typing without a spare keycode reported success");
+        assert!(
+            error.to_string().starts_with("typed 0 of 3 characters"),
+            "{error:#}"
+        );
+    }
+    let deadline = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < deadline {
+        match conn.poll_for_event()? {
+            Some(Event::KeyPress(_)) | Some(Event::KeyRelease(_)) => {
+                bail!("failed text delivery changed the target")
+            }
+            Some(Event::Error(error)) => bail!("X11 observer error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
     Ok(())
 }

@@ -1536,6 +1536,78 @@ const SELECT_ALL_IN_ELEMENT: &str = "function() { \
 /// to *set* a field that already holds text — a caller who tries ends up with
 /// the old and the new value concatenated. Both delivery paths replace the
 /// current selection, so selecting everything first turns "insert" into "set".
+/// One `browser_type` keystroke as CDP `Input.dispatchKeyEvent` fields.
+///
+/// Without `code` and `windowsVirtualKeyCode`, Chromium delivers keydown/keyup
+/// with `KeyboardEvent.code == ""` and `keyCode == 0`. Pages that submit on
+/// `keyCode === 13` (Closure, Angular CDK `ENTER`, many Material comboboxes)
+/// then never see Enter, so a typed "\n" never submits.
+/// Fill in the US-layout identity for Enter, space, ASCII letters, and digits;
+/// other characters keep the previous key-only shape.
+pub(crate) struct KeyStroke {
+    key: String,
+    code: &'static str,
+    key_code: i64,
+    text: String,
+}
+
+impl KeyStroke {
+    pub(crate) fn for_char(ch: char) -> Self {
+        const LETTER_CODES: [&str; 26] = [
+            "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK",
+            "KeyL", "KeyM", "KeyN", "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV",
+            "KeyW", "KeyX", "KeyY", "KeyZ",
+        ];
+        const DIGIT_CODES: [&str; 10] = [
+            "Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7",
+            "Digit8", "Digit9",
+        ];
+        let (key, code, key_code, text) = match ch {
+            '\n' | '\r' => ("Enter".to_string(), "Enter", 13, "\r".to_string()),
+            ' ' => (" ".to_string(), "Space", 32, " ".to_string()),
+            c if c.is_ascii_alphabetic() => {
+                let upper = c.to_ascii_uppercase();
+                (
+                    c.to_string(),
+                    LETTER_CODES[(upper as u8 - b'A') as usize],
+                    upper as i64,
+                    c.to_string(),
+                )
+            }
+            c if c.is_ascii_digit() => (
+                c.to_string(),
+                DIGIT_CODES[(c as u8 - b'0') as usize],
+                c as i64,
+                c.to_string(),
+            ),
+            c => (c.to_string(), "", 0, c.to_string()),
+        };
+        Self {
+            key,
+            code,
+            key_code,
+            text,
+        }
+    }
+
+    pub(crate) fn event(&self, kind: &str) -> Value {
+        let mut event = json!({ "type": kind, "key": self.key });
+        if self.key_code != 0 {
+            event["code"] = json!(self.code);
+            event["windowsVirtualKeyCode"] = json!(self.key_code);
+            event["nativeVirtualKeyCode"] = json!(self.key_code);
+        }
+        event
+    }
+
+    pub(crate) fn char_event(&self) -> Value {
+        let mut event = self.event("char");
+        event["text"] = json!(self.text);
+        event["unmodifiedText"] = json!(self.text);
+        event
+    }
+}
+
 async fn select_all_in_element(
     conn: &CdpConnection,
     cdp: &str,
@@ -2126,39 +2198,18 @@ impl Tool for BrowserTypeTool {
                 }
             }
             for ch in text.chars() {
-                let (key, key_text) = if ch == '\n' {
-                    ("Enter".to_string(), "\r".to_string())
-                } else {
-                    (ch.to_string(), ch.to_string())
-                };
+                let stroke = KeyStroke::for_char(ch);
                 let down = conn
-                    .call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({ "type": "keyDown", "key": key }),
-                    )
+                    .call(Some(cdp), "Input.dispatchKeyEvent", stroke.event("keyDown"))
                     .await;
                 let character = if down.is_ok() {
-                    conn.call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({
-                            "type": "char",
-                            "key": key,
-                            "text": key_text,
-                            "unmodifiedText": key_text,
-                        }),
-                    )
-                    .await
+                    conn.call(Some(cdp), "Input.dispatchKeyEvent", stroke.char_event())
+                        .await
                 } else {
                     Ok(json!({}))
                 };
                 let up = conn
-                    .call(
-                        Some(cdp),
-                        "Input.dispatchKeyEvent",
-                        json!({ "type": "keyUp", "key": key }),
-                    )
+                    .call(Some(cdp), "Input.dispatchKeyEvent", stroke.event("keyUp"))
                     .await;
                 if let Err(e) = down.and(character).and(up) {
                     result = Err(e);

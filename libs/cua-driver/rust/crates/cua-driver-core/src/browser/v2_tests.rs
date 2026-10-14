@@ -29,7 +29,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
-    BrowserTypeTool, GetBrowserStateTool,
+    BrowserTypeTool, GetBrowserStateTool, KeyStroke,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -3008,6 +3008,16 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     let params: Vec<&Value> = events.iter().map(|(_, params)| params).collect();
     assert_eq!(params[0]["type"], "keyDown");
     assert!(params[0].get("text").is_none());
+    // Key identity on every phase: pages that test keyCode/code (Closure,
+    // Angular CDK, Material comboboxes) ignore events with keyCode 0.
+    for p in &params[0..3] {
+        assert_eq!(p["code"], "KeyA", "{p}");
+        assert_eq!(p["windowsVirtualKeyCode"], 65, "{p}");
+    }
+    for p in &params[3..6] {
+        assert_eq!(p["code"], "Enter", "{p}");
+        assert_eq!(p["windowsVirtualKeyCode"], 13, "{p}");
+    }
     assert_eq!(params[1]["type"], "char");
     assert_eq!(params[1]["text"], "a");
     assert_eq!(params[1]["unmodifiedText"], "a");
@@ -3035,6 +3045,30 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     }));
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[test]
+fn keystroke_identity_covers_enter_space_letters_and_digits() {
+    let enter = KeyStroke::for_char('\n').event("keyDown");
+    assert_eq!(enter["key"], "Enter");
+    assert_eq!(enter["code"], "Enter");
+    assert_eq!(enter["windowsVirtualKeyCode"], 13);
+    let upper = KeyStroke::for_char('Q').event("keyDown");
+    assert_eq!(upper["key"], "Q");
+    assert_eq!(upper["code"], "KeyQ");
+    assert_eq!(upper["windowsVirtualKeyCode"], 81);
+    let digit = KeyStroke::for_char('7').char_event();
+    assert_eq!(digit["code"], "Digit7");
+    assert_eq!(digit["windowsVirtualKeyCode"], 55);
+    assert_eq!(digit["text"], "7");
+    let space = KeyStroke::for_char(' ').event("keyUp");
+    assert_eq!(space["code"], "Space");
+    assert_eq!(space["windowsVirtualKeyCode"], 32);
+    // Unmapped characters keep the key-only shape rather than guess a layout.
+    let other = KeyStroke::for_char('é').event("keyDown");
+    assert_eq!(other["key"], "é");
+    assert!(other.get("code").is_none());
+    assert!(other.get("windowsVirtualKeyCode").is_none());
 }
 
 // ---- window-less page targets (trycua/cua#3540) ------------------------------------------

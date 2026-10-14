@@ -356,13 +356,10 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
           echo "SLACK_COLOR=${SLACK_COLOR}" >> $GITHUB_ENV
 
-      - name: Send summary to Slack
+      # The weekly Slack summary was retired (CUA-1564): it posted to a
+      # dedicated #tests channel nobody read. Failures show as a red run; the
+      # summary stays on the run page.
+      - name: Write summary to the job summary
         if: always()
-        uses: rtCamp/action-slack-notify@33ca3be66c6f378fe1610fd1d5258632dbed5e58 # v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
-          SLACK_TITLE: Cua Models Test Summary
-          SLACK_COLOR: ${{ env.SLACK_COLOR }}
-          SLACK_MESSAGE: |
-            ${{ env.SUMMARY_MESSAGE }}
+        run: printf '%s\n' "$SUMMARY_MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+

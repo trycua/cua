@@ -31616,7 +31616,11 @@ export type AppReviewView = {
      */
     items: Array<AppConsentItem>,
     /**
-     * Plan steps.
+     * What happens, in plan steps, when the review has nothing to choose
+     * (no files, state, secrets or sites; e.g. "Just the app" for an app
+     * the Space's image already has), so the review is never blank. Empty
+     * otherwise: the lines below say what is sent, and a step's counts
+     * would not follow what is turned off. The installs are in `items`.
      */
     steps: Array<AppPlanStepView>,
     /**

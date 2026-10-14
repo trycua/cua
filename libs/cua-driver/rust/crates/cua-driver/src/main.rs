@@ -43,6 +43,7 @@ mod updater;
 mod version_check;
 
 use std::sync::Arc;
+use tracing_subscriber::EnvFilter;
 
 fn init_logging() {
     tracing_subscriber::fmt()
@@ -52,11 +53,8 @@ fn init_logging() {
     telemetry::register_stdio_observer();
 }
 
-/// `warn` unless `CUA_LOG` says otherwise. The default goes first because a
-/// later directive for the same target replaces an earlier one, so a bare
-/// `CUA_LOG=info` must come after `warn` to take effect.
-fn log_filter(cua_log: &str) -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::builder().parse_lossy(format!("warn,{cua_log}"))
+fn log_filter(cua_log: &str) -> EnvFilter {
+    EnvFilter::builder().parse_lossy(format!("warn,{cua_log}"))
 }
 
 #[cfg(test)]
@@ -65,13 +63,10 @@ mod log_filter_tests {
 
     #[test]
     fn cua_log_sets_the_level_and_warn_is_the_default() {
-        // Display lists the directives in effect (a replaced one is gone).
         assert_eq!(log_filter("").to_string(), "warn");
         assert_eq!(log_filter("info").to_string(), "info");
         assert_eq!(log_filter("debug").to_string(), "debug");
-        // An invalid value is ignored, so the default stays.
         assert_eq!(log_filter("cua_driver=loud").to_string(), "warn");
-        // A target directive keeps warn for everything else.
         let scoped = log_filter("cua_driver=info").to_string();
         assert!(
             scoped.contains("cua_driver=info") && scoped.contains("warn"),

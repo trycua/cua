@@ -4,7 +4,7 @@ use cua_sdk::CuaError;
 use std::{
     io::{IsTerminal, Write},
     path::PathBuf,
-    sync::Mutex,
+    sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
 
@@ -215,40 +215,26 @@ pub enum ProgramState {
     Error,
 }
 
-#[derive(PartialEq)]
-enum Reported {
-    Nothing,
-    Status,
-    Cleared,
-}
-
-static PROGRAM_STATUS: Mutex<Reported> = Mutex::new(Reported::Nothing);
+static PROGRAM_STATUS: AtomicU8 = AtomicU8::new(UNREPORTED);
+const UNREPORTED: u8 = 0;
+const REPORTED: u8 = 1;
+const CLEARED: u8 = 2;
 
 pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
-    if std::io::stderr().is_terminal() {
-        let report = program_status_report(state, progress, msg);
-        write_program_status(&PROGRAM_STATUS, &mut std::io::stderr(), &report);
+    if std::io::stderr().is_terminal() && program_status_may_write(&PROGRAM_STATUS, REPORTED) {
+        eprint!("{}", program_status_report(state, progress, msg));
     }
 }
 
 pub fn clear_program_status() {
-    write_program_status_clear(&PROGRAM_STATUS, &mut std::io::stderr());
-}
-
-fn write_program_status(reported: &Mutex<Reported>, out: &mut dyn Write, report: &str) {
-    let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
-    if *reported != Reported::Cleared {
-        let _ = out.write_all(report.as_bytes());
-        *reported = Reported::Status;
+    if program_status_may_write(&PROGRAM_STATUS, CLEARED) {
+        eprint!("\x1b]7501;state=clear\x1b\\");
     }
 }
 
-fn write_program_status_clear(reported: &Mutex<Reported>, out: &mut dyn Write) {
-    let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
-    if *reported == Reported::Status {
-        let _ = out.write_all(b"\x1b]7501;state=clear\x1b\\");
-    }
-    *reported = Reported::Cleared;
+fn program_status_may_write(status: &AtomicU8, next: u8) -> bool {
+    let prev = status.fetch_max(next, Ordering::SeqCst);
+    prev == REPORTED || (prev == UNREPORTED && next == REPORTED)
 }
 
 fn program_status_report(state: ProgramState, progress: Option<u8>, msg: &str) -> String {
@@ -345,16 +331,14 @@ mod secret_tests {
 
     #[test]
     fn program_status_is_not_reported_after_it_is_cleared() {
-        let reported = Mutex::new(Reported::Nothing);
-        let mut out = Vec::new();
-        write_program_status_clear(&reported, &mut out);
-        assert!(out.is_empty());
-        let reported = Mutex::new(Reported::Nothing);
-        write_program_status(&reported, &mut out, "working");
-        write_program_status_clear(&reported, &mut out);
-        write_program_status(&reported, &mut out, "working again");
-        write_program_status_clear(&reported, &mut out);
-        assert_eq!(out, b"working\x1b]7501;state=clear\x1b\\");
+        let status = AtomicU8::new(UNREPORTED);
+        assert!(!program_status_may_write(&status, CLEARED));
+        let status = AtomicU8::new(UNREPORTED);
+        assert!(program_status_may_write(&status, REPORTED));
+        assert!(program_status_may_write(&status, REPORTED));
+        assert!(program_status_may_write(&status, CLEARED));
+        assert!(!program_status_may_write(&status, REPORTED));
+        assert!(!program_status_may_write(&status, CLEARED));
     }
 }
 

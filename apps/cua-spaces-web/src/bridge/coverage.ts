@@ -150,6 +150,7 @@ export const HOST_COVERAGE = {
   "devices.createPairingCode": { webkit: { methods: ["devices.createPairingCode"] }, tauri: ST["devices.createPairingCode"] },
   "devices.pairingCodes": { webkit: { methods: ["devices.pairingCodes"] }, tauri: ST["devices.pairingCodes"] },
   "devices.revokePairingCode": { webkit: { methods: ["devices.revokePairingCode"] }, tauri: ST["devices.revokePairingCode"] },
+  "teams.list": { webkit: { methods: ["teams.list"] }, tauri: ST["teams.list"] },
   "storage.get": { webkit: { methods: ["storage.get"] }, tauri: ST["storage.get"] },
   "storage.run": { webkit: { methods: ["storage.run"] }, tauri: ST["storage.run"] },
   // Notifications (ops/notifications.ts).

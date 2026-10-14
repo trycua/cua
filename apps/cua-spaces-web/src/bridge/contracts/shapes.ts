@@ -23,7 +23,7 @@
  */
 
 import type { AgentDetailInput, AgentEventsPage, AgentOpenFile, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
-import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode } from "./devices";
+import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode, TeamChoice, TeamsList } from "./devices";
 import type {
   CancelOutcome,
   DaemonStatus,
@@ -301,6 +301,16 @@ const PairingCodeShape = ref(
     expiresAt: num,
     usedAt: nullable(num),
     machine: nullable(str),
+  }),
+);
+
+const TeamsListShape = ref(
+  "TeamsList",
+  obj<TeamsList>()({
+    teams: list(
+      obj<TeamChoice>()({ id: str, alias: str, name: str, role: str, plan: str }),
+    ),
+    currentTeamId: nullable(str),
   }),
 );
 
@@ -832,6 +842,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "devices.createPairingCode": PairingCodeShape,
   "devices.pairingCodes": list(PairingCodeShape),
   "devices.revokePairingCode": nul,
+  "teams.list": TeamsListShape,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
@@ -1138,6 +1149,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "devices.createPairingCode": PairingCodeShape,
   "devices.pairingCodes": list(PairingCodeShape),
   "devices.revokePairingCode": nul,
+  "teams.list": TeamsListShape,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),

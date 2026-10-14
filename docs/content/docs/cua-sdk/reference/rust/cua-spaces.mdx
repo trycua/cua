@@ -1088,9 +1088,12 @@ pub struct RelayAccount {
   pub url: String,
   pub tokens: Arc<dyn AccountTokens>,
   pub device: Option<Arc<DeviceAuth>>,
+  pub spaces_api: Option<String>,
 }
 impl RelayAccount {
   fn new(url: impl Into<String>, tokens: Arc<dyn AccountTokens>) -> Self;
+  fn with_spaces_api(self, url: impl Into<String>) -> Self;
+  fn spaces_api(&self) -> Result<SpacesApiClient>;
   fn with_device(self, device: Arc<DeviceAuth>) -> Self;
   async fn device_session(&self) -> Option<String>;
   async fn client(&self) -> Result<RelayClient>;
@@ -1683,6 +1686,7 @@ impl Spaces {
   async fn share_space(&self, space: &str, who: &str, role: ShareRole) -> Result<SpaceShares>;
   async fn unshare_space(&self, space: &str, who: Option<&str>) -> Result<SpaceShares>;
   async fn share_with_team(&self, space: &str, team: &str) -> Result<SpaceShares>;
+  async fn share_with_team_waiting(&self, space: &str, team: &str, waiting: &mut dyn FnMut(Duration) + Send) -> Result<SpaceShares>;
   async fn unshare_from_team(&self, space: &str, team: &str) -> Result<SpaceShares>;
   async fn relay_register(&self, space: &str) -> Result<RelayRegistration>;
   async fn relay_unregister(&self, space: &str) -> Result<bool>;

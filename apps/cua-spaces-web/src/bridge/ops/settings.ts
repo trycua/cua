@@ -11,7 +11,7 @@
 
 import { UnsupportedOperationError } from "../adapter";
 import type { LoginItemStatus } from "../contracts/host";
-import type { DevicesInput, EnrollResult, PairingCode } from "../contracts/devices";
+import type { DevicesInput, EnrollResult, PairingCode, TeamsList } from "../contracts/devices";
 import type {
   AboutInput,
   DriveCacheInput,
@@ -65,6 +65,9 @@ export interface SettingsOperations {
   "devices.pairingCodes": { args: Empty; result: PairingCode[] };
   /** Revokes an unused pairing code (`pc_…`). */
   "devices.revokePairingCode": { args: { id: string }; result: null };
+  /** The account's Teams (organizations of `GET /v1/me`) and the current one:
+   * "Add a machine" and "Share" offer them. */
+  "teams.list": { args: Empty; result: TeamsList };
 
   /** The Cua Volume's storage, mount and cache (`volume_storage`, `volume_mount_status`, `volume_cache_stats`). */
   "storage.get": { args: Empty; result: StorageInput };
@@ -93,6 +96,7 @@ export const SETTINGS_OPERATIONS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
 ] as const satisfies readonly SettingsOpName[];
@@ -195,6 +199,7 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
       await invoke("devices_revoke_pairing_code", { id });
       return null;
     },
+    "teams.list": () => invoke<TeamsList>("teams_list"),
 
     "storage.get": storage,
     "storage.run": async ({ request }) => {
@@ -249,6 +254,7 @@ export const SETTINGS_TAURI_COMMANDS = {
   "devices.createPairingCode": ["devices_create_pairing_code"],
   "devices.pairingCodes": ["devices_pairing_codes"],
   "devices.revokePairingCode": ["devices_revoke_pairing_code"],
+  "teams.list": ["teams_list"],
   "storage.get": ["get_environment", "agents_tool"],
   "storage.run": ["agents_tool", "drive_reveal", "host_open_settings"],
 } as const satisfies Record<SettingsOpName, readonly string[]>;

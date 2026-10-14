@@ -116,6 +116,7 @@ export const WEBKIT_METHODS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",

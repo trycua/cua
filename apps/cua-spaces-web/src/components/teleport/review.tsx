@@ -88,6 +88,18 @@ export function TeleportReview({
         </Group>
       ) : null}
 
+      {r.steps.length ? (
+        <Group title="What happens">
+          <ul className="divide-y">
+            {r.steps.map((s, i) => (
+              <li key={i} className="px-4 py-2.5 text-[13px]" data-review-step={s.kind}>
+                {s.summary}
+              </li>
+            ))}
+          </ul>
+        </Group>
+      ) : null}
+
       {installs.length || r.warnings.length ? (
         <Group>
           <ul className="divide-y">

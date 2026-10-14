@@ -1250,7 +1250,11 @@ pub struct ReviewView {
     pub title: String,
     /// The consent lines.
     pub items: Vec<ConsentItem>,
-    /// Plan steps.
+    /// What happens, in plan steps, when the review has nothing to choose
+    /// (no files, state, secrets or sites; e.g. "Just the app" for an app
+    /// the Space's image already has), so the review is never blank. Empty
+    /// otherwise: the lines below say what is sent, and a step's counts
+    /// would not follow what is turned off. The installs are in `items`.
     pub steps: Vec<PlanStepView>,
     /// The secrets checkbox shows.
     pub needs_acknowledgement: bool,
@@ -1344,10 +1348,27 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
         (bytes > 0).then(|| format!("{} leaves this Mac", format_bytes(bytes)))
     };
     let app = &plan.app.name;
+    let chooses = vault || cookies || plan.consent.iter().any(|c| toggleable(c, choice));
     Some(ReviewView {
         title: format!("Teleport {} to {}", plan.app.name, s.space_name),
         items: plan.consent.clone(),
-        steps: plan.steps.clone(),
+        steps: if chooses {
+            vec![]
+        } else {
+            plan.steps
+                .iter()
+                .filter(|st| st.kind != "install")
+                .map(|st| PlanStepView {
+                    // The app's own name ("Open Firefox"), not its program's.
+                    summary: if st.kind == "launch" {
+                        format!("Open {app}")
+                    } else {
+                        st.summary.clone()
+                    },
+                    ..st.clone()
+                })
+                .collect()
+        },
         toggles: plan
             .consent
             .iter()
@@ -1698,6 +1719,90 @@ mod tests {
             },
         );
         reduce(&s, &PickerEvent::Plan)
+    }
+
+    /// "Just the app" for an app the Space's image already has sends
+    /// nothing and installs nothing: the review still says what happens
+    /// (CUA-1616), and only when there is nothing to choose.
+    #[test]
+    fn a_review_with_nothing_to_choose_lists_what_happens() {
+        let step = |kind: &str, summary: &str| PlanStepView {
+            kind: kind.into(),
+            summary: summary.into(),
+        };
+        let s = reduce(
+            &initial("dev"),
+            &PickerEvent::Preselect {
+                entry: chrome_entry(),
+                files: vec![],
+            },
+        );
+        let s = reduce(
+            &reduce(
+                &s,
+                &PickerEvent::Move {
+                    moves: Move::AppOnly,
+                },
+            ),
+            &PickerEvent::Plan,
+        );
+        let app_only = Plan {
+            moves: Move::AppOnly,
+            steps: vec![step("launch", "Open google-chrome")],
+            total_bytes: 0,
+            ..plan(false)
+        };
+        let s = reduce(
+            &s,
+            &PickerEvent::Planned {
+                plan: app_only.clone(),
+            },
+        );
+        let rv = review(&s).unwrap();
+        assert!(rv.items.is_empty() && rv.toggles.is_empty() && rv.warnings.is_empty());
+        assert_eq!(rv.steps, vec![step("launch", "Open Google Chrome")]);
+        assert!(rv.can_confirm);
+
+        // An install is listed in `items` already, not again as a step.
+        let installs = Plan {
+            steps: vec![
+                step("install", "Install google-chrome (pinned, verified)"),
+                step("launch", "Open google-chrome"),
+            ],
+            consent: vec![ConsentItem {
+                kind: ConsentKind::Install,
+                key: "google-chrome".into(),
+                label: "Install Google Chrome 141".into(),
+                detail: String::new(),
+                bytes: 0,
+                sensitive: false,
+            }],
+            ..app_only.clone()
+        };
+        let s2 = reduce(&reduce(&s, &PickerEvent::Back), &PickerEvent::Plan);
+        let rv = review(&reduce(&s2, &PickerEvent::Planned { plan: installs })).unwrap();
+        assert_eq!(rv.steps, vec![step("launch", "Open Google Chrome")]);
+
+        // Something to choose: the lines say what is sent, not the steps.
+        let files = Plan {
+            moves: Move::AppWithFiles,
+            steps: vec![
+                step("files", "Send 1 item(s) to ~/Downloads/x"),
+                step("launch", "Open google-chrome"),
+            ],
+            consent: vec![ConsentItem {
+                kind: ConsentKind::File,
+                key: "/Users/me/a.txt".into(),
+                label: "a.txt".into(),
+                detail: String::new(),
+                bytes: 10,
+                sensitive: false,
+            }],
+            ..app_only
+        };
+        let rv = review(&reduce(&s2, &PickerEvent::Planned { plan: files })).unwrap();
+        assert_eq!(rv.toggles.len(), 1);
+        assert!(rv.steps.is_empty());
     }
 
     /// "Save to Keyvault" only shows and only takes for a sensitive plan (a

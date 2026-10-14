@@ -174,6 +174,12 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         webView.uiDelegate = self
         bridge.host = self
         videoSurfaces?.emit = { [weak self] event, payload in self?.emit(event, payload: payload) }
+        // A real window dragged over a tile: the page highlights it.
+        dropTargets.window = window
+        dropTargets.setFrames([:])
+        dropTargets.onTargeted = { [weak self] id in
+            self?.emit("window.dropTarget", payload: ["spaceId": id.map { $0 as Any } ?? NSNull()])
+        }
         setBackground(Self.storedBackground(for: window.effectiveAppearance), keep: false)
     }
 
@@ -219,8 +225,9 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        // A new page: the old one's video slots are gone with it.
+        // A new page: the old one's video slots and tiles are gone with it.
         videoSurfaces?.removeAll()
+        dropTargets.setFrames([:])
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -353,6 +360,21 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         webView.dragRegions = rects
     }
 
+    /// The page's Space tiles (CSS pixels from its top left) as targets for
+    /// a real window dragged onto one, in the window content's points (the
+    /// web view is the content view).
+    func setDropTargets(_ frames: [String: CGRect]) {
+        let zoom = webView.pageZoom * webView.magnification
+        dropTargets.window = window
+        dropTargets.setFrames(frames.mapValues {
+            CGRect(x: $0.minX * zoom, y: $0.minY * zoom, width: $0.width * zoom, height: $0.height * zoom)
+        })
+    }
+
+    /// The drop targets this window's page reports (the app model's, which
+    /// the notch's drag monitor hit-tests).
+    var dropTargets: SidebarDropTargets { bridge.model.pageDropTargets }
+
     /// Tells the page something changed (`cua:event`).
     func emit(_ event: String, payload: Any? = nil) {
         onEmit?(event, payload)
@@ -429,6 +451,10 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         window?.saveFrame(usingName: Self.frameName)
         videoSurfaces?.removeAll()
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        if dropTargets.window === window {
+            dropTargets.setFrames([:])
+            dropTargets.onTargeted = nil
+        }
         if Self.shared === self { Self.shared = nil }
     }
 }

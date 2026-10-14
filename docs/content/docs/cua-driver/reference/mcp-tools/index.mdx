@@ -55,7 +55,7 @@ List, launch, quit, front and arrange apps and windows. [Reference](/cua-driver/
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | <span id="list_apps"></span>[`list_apps`](/cua-driver/reference/mcp-tools/apps-and-windows#list_apps) | List macOS apps, both currently running and installed-but-not-running, with per-app state flags: - running: is a process for this app live? | macOS, Linux, Windows |
-| <span id="list_windows"></span>[`list_windows`](/cua-driver/reference/mcp-tools/apps-and-windows#list_windows) | List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). | macOS, Linux, Windows |
+| <span id="list_windows"></span>[`list_windows`](/cua-driver/reference/mcp-tools/apps-and-windows#list_windows) | List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): layer-0 only without `pid`, every layer with `pid`. | macOS, Linux, Windows |
 | <span id="launch_app"></span>[`launch_app`](/cua-driver/reference/mcp-tools/apps-and-windows#launch_app) | Launch a macOS app in the background: the target does NOT come to the foreground. | macOS, Linux, Windows |
 | <span id="kill_app"></span>[`kill_app`](/cua-driver/reference/mcp-tools/apps-and-windows#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
 | <span id="bring_to_front"></span>[`bring_to_front`](/cua-driver/reference/mcp-tools/apps-and-windows#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |

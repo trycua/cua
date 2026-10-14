@@ -22,6 +22,7 @@
   "identityOverrides": {
     "antoine.bonnet@hcompany.ai": "abonneth",
     "anvit.mail@icloud.com": "AnvitDevadiga",
+    "bitomule@gmail.com": "bitomule",
     "ddupont@mit.edu": "ddupont808",
     "dillon@trycua.com": "ddupont808",
     "egnichtel@crosscode.com": "ngnichtel",
@@ -39,8 +40,8 @@
     "me@madhavajay.com": "madhavajay",
     "methanoya@like.dance": "methanoya",
     "robert@trycua.com": "enchanted-koala",
-    "rwendt1337@gmail.com": "r33drichards",
     "rsyuzyov@gmail.com": "rsyuzyov",
+    "rwendt1337@gmail.com": "r33drichards",
     "sarinajin.li@gmail.com": "sarinali",
     "steipete@gmail.com": "steipete",
     "sunflowers0607@outlook.com": "SunflowersLwtech",
@@ -49,6 +50,10 @@
     "zane.chee.2023@scis.smu.edu.sg": "injaneity",
     "zongxin_yang@hms.harvard.edu": "z-x-yang"
   },
-  "internalHandles": ["ddupont808", "enchanted-koala", "f-trycua"],
+  "internalHandles": [
+    "ddupont808",
+    "enchanted-koala",
+    "f-trycua"
+  ],
   "optOutHandles": []
 }

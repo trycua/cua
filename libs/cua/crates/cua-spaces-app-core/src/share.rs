@@ -448,8 +448,8 @@ mod tests {
     }
 
     #[test]
-    fn teams_are_shared_with_only_while_teams_are_on() {
-        // On (CUA_EXPERIMENTAL_TEAMS=1): a team id, always for full use.
+    fn teams_are_shared_with_unless_turned_off() {
+        // On (the default): a team id, always for full use.
         assert_eq!(
             validate_who_with("team:design", true).unwrap_err(),
             "Enter a team as team:<id>, as `cua team ls` shows it."
@@ -459,11 +459,11 @@ mod tests {
             "team:team-0a1b"
         );
         assert_eq!(role_for("team:team-0a1b", "viewer"), "editor");
-        // Off: refused, whatever the id.
+        // Off (CUA_EXPERIMENTAL_TEAMS=0): refused, whatever the id.
         for who in ["team:team-0a1b", "team:design", "org:acme"] {
             assert_eq!(
                 validate_who_with(who, false).unwrap_err(),
-                "Teams isn't available yet. Share with people, one at a time."
+                "Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0). Share with people, one at a time."
             );
         }
         assert_eq!(

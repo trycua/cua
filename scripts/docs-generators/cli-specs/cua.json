@@ -9515,7 +9515,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Add the machine for this team (its id). Experimental: needs CUA_EXPERIMENTAL_TEAMS=1",
+       "help": "Add the machine for this team (its id)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -11270,7 +11270,7 @@
    "usage": "cua devices [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1): teams share machines with every member and their agents. Owners and admins invite (email or link), approve member devices, add machines and read the audit log",
+   "abstract": "Teams share machines with every member and their agents. Owners and admins invite (email or link), approve member devices, add machines and read the audit log",
    "after_help": "Examples:\n  cua team create AIGIS\n  cua team invite AIGIS dillon@example.com\n  cua team add-machine AIGIS local:build-box\n  cua team approve AIGIS dev_0123456789abcdef01234567\n  cua team audit AIGIS",
    "aliases": [],
    "arguments": [],
@@ -11685,7 +11685,7 @@
      "usage": "cua team request [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. macOS Spaces cannot",
+     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. Macs, Linux and Windows machines all can",
      "after_help": "Examples:\n  cua team add-machine AIGIS local:build-box\n  cua team add-machine AIGIS relay:0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [

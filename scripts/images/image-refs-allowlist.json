@@ -24,7 +24,6 @@
     "docs/content/docs/cua-sdk/reference/typescript/*",
     "docs/content/docs/cua-sdk/reference/protocol/*",
     "docs/content/docs/cua-cli/reference/*",
-    "docs/content/docs/fleets/reference/*",
     "docs/content/docs/lume/reference/*",
     "docs/content/docs/spaces/reference/*",
     "scripts/docs-generators/cli-specs/*.json",

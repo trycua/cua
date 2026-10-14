@@ -129,6 +129,21 @@ name: "CD: Cua Spaces"
 # of the SwiftUI app's, so installed Swift apps update to the Electron app.
 # It refuses to run unless src/updater.ts serves the stable feed.
 #
+# Build speed (a release is a critical path of the slowest job):
+#  - Native libraries are built per target in parallel and kept in the Actions
+#    cache by the git tree hash of their inputs (.github/actions/spaces-native,
+#    the macos-rust job). A run of the same inputs, such as a test or dry run
+#    of the commit then its release, restores them; a miss builds (with the
+#    Rust dependency cache). Caches are visible to the branch that saved them
+#    and to the default branch's, so run the test build from main.
+#  - The web UI is built once (electron-web); Windows and Linux x64 and arm64
+#    are packaged in parallel and joined into electron-windows / electron-linux.
+#  - A release (tag) run is never cancelled; manual runs cancel their own
+#    predecessors.
+#  - Apple notarization of the disk images and .pkg runs in parallel and
+#    retries Apple-side failures; so does codesign --timestamp
+#    (apps/cua-spaces-macos/scripts/retry-apple.sh, notarize.sh).
+#
 # Required repository secrets (macOS Developer ID signing + notarization reuse
 # the same identities as the Cua Driver release):
 #   APPLICATION_CERT_BASE64  - base64 Developer ID Application .p12
@@ -169,6 +184,13 @@ on:
 permissions:
   contents: write
 
+# A release (a tag push) is never cancelled: not by a newer push, tag or run,
+# whatever the group (a second run of the same tag waits its turn). Manual
+# runs (tests and dry runs) share a group per branch and replace each other.
+concurrency:
+  group: cd-cua-spaces-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 defaults:
   run:
     working-directory: apps/cua-spaces
@@ -205,9 +227,85 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
 
+  # The SwiftUI app's Rust slices (the app core library and the cua CLI), one
+  # job per architecture so the two build in parallel, as
+  # build-release.sh would build them (same command and environment). The
+  # compiled slices are kept in the Actions cache by the content of their
+  # inputs: a rerun, or a release of the commit a test build already
+  # compiled, restores them; a miss builds.
+  macos-rust:
+    name: SwiftUI Rust (${{ matrix.arch }})
+    needs: spacesd-published
+    if: github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run
+    runs-on: macos-26
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, triple: aarch64-apple-darwin }
+          - { arch: x86_64, triple: x86_64-apple-darwin }
+    env:
+      CARGO_BUILD_JOBS: 4
+      # build-release.sh's stable channel (--channel is not passed).
+      CUA_DEFAULT_ENV: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache key
+        id: key
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          set -euo pipefail
+          inputs_hash="$(git rev-parse HEAD:libs/cua HEAD:libs/cua-spacesd/VERSION | git hash-object --stdin)"
+          repo="${CUA_RELEASE_REPOSITORY//\//-}"
+          echo "key=swiftui-rust-v1-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+      - name: Restore the compiled slice
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
+            libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+          key: ${{ steps.key.outputs.key }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: ${{ matrix.triple }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua -> target
+          shared-key: swiftui-rust-${{ matrix.triple }}
+          cache-on-failure: true
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build the slice
+        working-directory: libs/cua
+        run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "${{ matrix.triple }}"
+      - name: Check the slice
+        run: |
+          set -euo pipefail
+          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
+            test -f "libs/cua/target/${{ matrix.triple }}/release/$f" || { echo "::error::missing $f"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-rust-${{ matrix.arch }}
+          path: |
+            libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
+            libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+          if-no-files-found: error
+          retention-days: 3
+
   build-macos:
     name: darwin-universal (SwiftUI)
-    needs: [spacesd-published, electron-plan]
+    needs: [spacesd-published, electron-plan, macos-rust, electron-web]
     # An Electron dry run builds only the Electron app.
     if: github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run
     runs-on: macos-26
@@ -312,25 +410,21 @@ jobs:
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
           fi
 
-      # The version rust-toolchain.toml pins (libs/cua): targets added to
-      # another toolchain leave the x86_64 half without `core`.
-      - name: Install Rust (both macOS targets, and wasm for the web UI's core)
-        uses: dtolnay/rust-toolchain@1.97.1
+      # The Rust slices come from macos-rust (build-release.sh --skip-cargo).
+      - name: Download the Rust slices
+        uses: actions/download-artifact@v4
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown
-
-      - name: Install protoc
-        uses: ./.github/actions/setup-protoc
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            libs/cua/target
-          key: cua-spaces-macos-cargo-${{ hashFiles('libs/cua/Cargo.lock', 'libs/cua/rust-toolchain.toml') }}
-          restore-keys: cua-spaces-macos-cargo-
+          pattern: macos-rust-*
+          path: ${{ runner.temp }}/macos-rust
+      - name: Place the Rust slices
+        run: |
+          set -euo pipefail
+          for pair in arm64:aarch64-apple-darwin x86_64:x86_64-apple-darwin; do
+            dir="libs/cua/target/${pair#*:}/release"
+            mkdir -p "$dir"
+            cp "$RUNNER_TEMP/macos-rust/macos-rust-${pair%%:*}/"* "$dir/"
+            chmod +x "$dir/cua-spaces-cli"
+          done
 
       # A throwaway keychain holds the Developer ID Application identity for
       # this job only (deleted in the last step).
@@ -359,22 +453,13 @@ jobs:
           test "$(security find-identity -v -p codesigning "$kc" | grep -c 'Developer ID Application')" -ge 1
 
       # New UI (preview): build-app.sh bundles apps/cua-spaces-web/dist as
-      # Contents/Resources/WebUI; without it the window is a placeholder.
-      - name: Install wasm-bindgen (the web UI's app core)
-        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
-      # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
-      # root package.json pins pnpm 9 for the rest of the repo.
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      # Contents/Resources/WebUI; without it the window is a placeholder. The
+      # electron-web job builds it once for every job.
+      - name: Download the web UI
+        uses: actions/download-artifact@v4
         with:
-          package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build the web UI
-        working-directory: apps/cua-spaces-web
-        run: |
-          pnpm install --ignore-workspace --frozen-lockfile
-          pnpm build
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
 
       - name: Build and sign Cua Spaces.app (universal)
         env:
@@ -389,7 +474,7 @@ jobs:
           # The updater's feed is this repository's (staging updates from
           # staging).
           apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
-            --build-number "$GITHUB_RUN_NUMBER" --arch universal \
+            --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
 
@@ -432,9 +517,12 @@ jobs:
           dmg_sign=()
           [ "$SIGNED" = true ] && dmg_sign=(--sign "Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)")
           apps/cua-spaces-macos/scripts/package-dmg.sh --app "$app" --out "$dmg" ${dmg_sign[@]+"${dmg_sign[@]}"}
+          # The disk image goes to Apple now and is notarized while the .pkg is
+          # built, signed and submitted.
+          dmg_notary=""
           if [ "$SIGNED" = true ]; then
-            apps/cua-spaces-macos/scripts/notarize.sh "$dmg"
-            xcrun stapler staple "$dmg"
+            apps/cua-spaces-macos/scripts/notarize.sh "$dmg" > "$RUNNER_TEMP/notarize-dmg.log" 2>&1 &
+            dmg_notary=$!
           fi
           if [ -z "$INSTALLER_SIGNING_IDENTITY" ] && [ -n "$DEVELOPER_NAME" ] && [ -n "$TEAM_ID" ]; then
             INSTALLER_SIGNING_IDENTITY="Developer ID Installer: $DEVELOPER_NAME ($TEAM_ID)"
@@ -458,13 +546,22 @@ jobs:
           # The SwiftUI app needs macOS 26.
           apps/cua-spaces/scripts/build-pkg.sh --app "$app" --version "$VERSION" --min-os 26.0 \
             --out "$pkg" ${sign[@]+"${sign[@]}"}
+          pkg_status=0
           if [ ${#sign[@]} -gt 0 ] && [ -n "$APPLE_ID" ]; then
-            apps/cua-spaces-macos/scripts/notarize.sh "$pkg"
-            xcrun stapler staple "$pkg"
+            apps/cua-spaces-macos/scripts/notarize.sh "$pkg" || pkg_status=$?
           elif [ "$REQUIRE_SIGNING" = true ]; then
             echo "::error::the .pkg would ship unsigned or unnotarized" >&2
             exit 1
           fi
+          if [ -n "$dmg_notary" ]; then
+            dmg_status=0
+            wait "$dmg_notary" || dmg_status=$?
+            cat "$RUNNER_TEMP/notarize-dmg.log"
+            [ "$dmg_status" -eq 0 ] || { echo "::error::the DMG was not notarized" >&2; exit 1; }
+            xcrun stapler staple "$dmg"
+          fi
+          [ "$pkg_status" -eq 0 ] || { echo "::error::the .pkg was not notarized" >&2; exit 1; }
+          if [ ${#sign[@]} -gt 0 ] && [ -n "$APPLE_ID" ]; then xcrun stapler staple "$pkg"; fi
           if [ "$SIGNED" = true ]; then
             codesign --verify --deep --strict "$app"
             xcrun stapler validate "$app"
@@ -834,8 +931,59 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Electron: version $VERSION, build(mac)=$build, desktop(win+linux)=$desktop, publish=$publish, Sparkle cutover=$cutover"
 
-  # The arm64 Windows and Linux native libraries, built on arm64 runners;
-  # electron-windows and electron-linux package both architectures.
+  # The web UI (the app core compiled to wasm, and the Vite build), built once
+  # for every job that bundles it: the SwiftUI app, the Electron apps.
+  electron-web:
+    name: Web UI
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Restore wasm-bindgen
+        id: wasm-bindgen
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/bin/wasm-bindgen-test-runner
+            ~/.cargo/bin/wasm2es6js
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}-${{ runner.arch }}
+      - name: Install wasm-bindgen (the web UI's app core)
+        if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: apps/cua-spaces-desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the web UI
+        working-directory: apps/cua-spaces-web
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  # The Windows and Linux native libraries, one job per target, each on the
+  # runner of its architecture; the packaging jobs below take them as
+  # artifacts. Each is restored from the Actions cache when a run of the same
+  # inputs (a test or dry-run build of the commit) built it (see the
+  # spaces-native action); a miss builds.
   electron-native:
     name: Electron native (${{ matrix.label }})
     needs: electron-plan
@@ -846,39 +994,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { label: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
           - { label: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
           - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
     defaults:
       run:
         working-directory: apps/cua-spaces-desktop
         shell: bash
-    env:
-      CARGO_BUILD_JOBS: 4
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/spaces-native
         with:
-          targets: ${{ matrix.target }}
-      - name: Install protoc
-        uses: ./.github/actions/setup-protoc
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          package_json_file: apps/cua-spaces-desktop/package.json
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      # The library, its N-API runtime and the bundled cua; Windows links the
-      # C runtime statically (build-native.mjs), so no VC++ redistributable.
-      - name: Build the native layer
-        env:
-          VERSION: ${{ needs.electron-plan.outputs.version }}
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm native -- --target ${{ matrix.target }}
-          test -d "native/${{ matrix.label }}" || { echo "::error::pnpm native wrote no native/${{ matrix.label }}"; exit 1; }
+          label: ${{ matrix.label }}
+          target: ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: electron-native-${{ matrix.label }}
@@ -886,9 +1015,49 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # The macOS native libraries (arm64 and x86_64, built in parallel instead of
+  # one after the other in electron-mac).
+  electron-native-mac:
+    name: Electron native (${{ matrix.label }})
+    needs: electron-plan
+    if: needs.electron-plan.outputs.build == 'true'
+    runs-on: macos-26
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: darwin-arm64, target: aarch64-apple-darwin }
+          - { label: darwin-x64, target: x86_64-apple-darwin }
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/spaces-native
+        with:
+          label: ${{ matrix.label }}
+          target: ${{ matrix.target }}
+          # The bindings check (electron-mac) reads the arm64 library here.
+          extra-paths: ${{ matrix.label == 'darwin-arm64' && 'libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electron-native-${{ matrix.label }}
+          path: apps/cua-spaces-desktop/native/${{ matrix.label }}/
+          if-no-files-found: error
+          retention-days: 3
+      - if: matrix.label == 'darwin-arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-native-darwin-arm64-lib
+          path: libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib
+          if-no-files-found: error
+          retention-days: 3
+
   electron-mac:
     name: Electron darwin (arm64, universal)
-    needs: electron-plan
+    needs: [electron-plan, electron-native-mac, electron-web]
     if: needs.electron-plan.outputs.build == 'true'
     runs-on: macos-26
     timeout-minutes: 180
@@ -933,32 +1102,41 @@ jobs:
             echo "apple=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Electron macOS build is UNSIGNED (ad-hoc signed, not notarized); missing secrets: ${missing[*]}"
           fi
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown
-      - name: Install protoc
-        uses: ./.github/actions/setup-protoc
-      - name: Install wasm-bindgen (the web UI's app core)
-        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build the web UI
-        working-directory: apps/cua-spaces-web
-        run: |
-          pnpm install --ignore-workspace --frozen-lockfile
-          pnpm build
-      # Both architectures: the arm64 and universal builds.
-      - name: Native library (arm64, x86_64) and the notch helper
+      # The web UI is built once, by electron-web.
+      - name: Download the web UI
+        uses: actions/download-artifact@v4
+        with:
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
+      # Both architectures are built in parallel by electron-native-mac (or
+      # restored from the cache); the notch helper is quick.
+      - name: Install dependencies and build the notch helper
         working-directory: apps/cua-spaces-desktop
         run: |
           pnpm install --frozen-lockfile
-          pnpm native -- --target aarch64-apple-darwin
-          pnpm native -- --target x86_64-apple-darwin
           pnpm notch
+      - uses: actions/download-artifact@v4
+        with:
+          name: electron-native-darwin-arm64
+          path: apps/cua-spaces-desktop/native/darwin-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: electron-native-darwin-x64
+          path: apps/cua-spaces-desktop/native/darwin-x64
+      # The bindings check reads the arm64 library where cargo left it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: electron-native-darwin-arm64-lib
+          path: libs/cua/target/aarch64-apple-darwin/release
+      # Artifacts drop the executable bit; the daemon starts from this cua.
+      - name: The bundled cua is executable
+        run: chmod +x apps/cua-spaces-desktop/native/darwin-arm64/cua apps/cua-spaces-desktop/native/darwin-x64/cua
       # The committed TypeScript bindings match the library this run built,
       # and the bridge answers on it (the native tests skip without it).
       - name: Native bindings and the bridge on the app core
@@ -1024,7 +1202,10 @@ jobs:
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             unset APPLE_ID
           fi
-          pnpm dist:mac
+          # Apple's timestamp server and notary service fail now and then:
+          # such a failure (and only such) runs the packaging again.
+          apps=../cua-spaces-macos/scripts
+          "$apps/retry-apple.sh" --attempts 3 --delay 60 --stream -- pnpm dist:mac
       # electron-builder signs and notarizes the apps, not the disk images:
       # each is signed (with a timestamp), notarized and stapled here like the
       # SwiftUI app's, then its blockmap and its entry in the update feed
@@ -1040,10 +1221,14 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
         run: |
           set -euo pipefail
+          apps=../cua-spaces-macos/scripts
           for dmg in dist/*.dmg; do
-            codesign --force --timestamp --keychain "$SIGNING_KEYCHAIN" \
+            "$apps/retry-apple.sh" -- codesign --force --timestamp --keychain "$SIGNING_KEYCHAIN" \
               --sign "Developer ID Application: $SIGNING_NAME" "$dmg"
-            ../cua-spaces-macos/scripts/notarize.sh "$dmg"
+          done
+          # Both disk images go to Apple at once.
+          "$apps/notarize.sh" dist/*.dmg
+          for dmg in dist/*.dmg; do
             xcrun stapler staple "$dmg"
           done
           node scripts/refresh-update-info.mjs dist/*.dmg
@@ -1132,12 +1317,18 @@ jobs:
           [ -f "$kc" ] && security delete-keychain "$kc" || true
           rm -f "$RUNNER_TEMP/electron-application.p12"
 
-  electron-windows:
-    name: Electron windows (x64, arm64)
-    needs: [electron-plan, electron-native]
+  # Windows: x64 and arm64 are packaged and signed in parallel, then joined
+  # (electron-windows) into the one artifact the rest of the workflow reads.
+  electron-windows-pkg:
+    name: Electron windows (${{ matrix.arch }})
+    needs: [electron-plan, electron-native, electron-web]
     if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: windows-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
     # Holds the Azure Artifact Signing identity (Windows Authenticode).
     environment: cua-driver-release-signing
     permissions:
@@ -1150,8 +1341,9 @@ jobs:
         working-directory: apps/cua-spaces-desktop
         shell: bash
     env:
-      CARGO_BUILD_JOBS: 4
       VERSION: ${{ needs.electron-plan.outputs.version }}
+      # Pack this architecture only (packaging/archs.cjs).
+      CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - name: Signing configuration
@@ -1168,33 +1360,24 @@ jobs:
             echo "azure=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Electron Windows build is UNSIGNED (no Authenticode; Azure Artifact Signing vars are not set)"
           fi
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
-      - name: Install protoc
-        uses: ./.github/actions/setup-protoc
-      - name: Install wasm-bindgen (the web UI's app core)
-        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build the web UI
-        working-directory: apps/cua-spaces-web
-        run: |
-          pnpm install --ignore-workspace --frozen-lockfile
-          pnpm build
-      - name: Native library (x64)
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm native -- --target x86_64-pc-windows-msvc
-      - name: Native library (arm64, from electron-native)
+      - name: Download the web UI
         uses: actions/download-artifact@v4
         with:
-          name: electron-native-win32-arm64
-          path: apps/cua-spaces-desktop/native/win32-arm64
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
+      - name: Native library
+        uses: actions/download-artifact@v4
+        with:
+          name: electron-native-win32-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/native/win32-${{ matrix.arch }}
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Azure login for Artifact Signing
         if: steps.signing.outputs.azure == 'true'
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
@@ -1228,75 +1411,135 @@ jobs:
         shell: pwsh
         env:
           SIGNED: ${{ steps.signing.outputs.azure }}
+          ARCH: ${{ matrix.arch }}
         run: |
           $files = @(Get-ChildItem dist -Filter *.exe) + @(Get-ChildItem dist/win-unpacked, dist/win-arm64-unpacked -Filter "Cua Spaces.exe" -ErrorAction SilentlyContinue)
-          if ($files.Count -lt 2) { throw "no Windows installers in dist" }
+          if ($files.Count -lt 2) { throw "no Windows installer for $env:ARCH in dist" }
+          if (-not (Test-Path "dist/Cua-Spaces-Setup-$env:VERSION-$env:ARCH.exe")) { throw "no Cua-Spaces-Setup-$env:VERSION-$env:ARCH.exe in dist" }
           foreach ($file in $files) {
             $signature = Get-AuthenticodeSignature -FilePath $file.FullName
             Write-Host "$($file.Name): $($signature.Status)"
             if ($env:SIGNED -eq 'true' -and $signature.Status -ne 'Valid') { throw "$($file.Name) is not Authenticode-signed" }
           }
-          New-Item -ItemType Directory -Force electron-assets | Out-Null
+          New-Item -ItemType Directory -Force electron-assets, electron-feed | Out-Null
           Copy-Item dist/*.exe, dist/*.blockmap electron-assets/
-          Copy-Item dist/beta.yml, dist/latest.yml electron-assets/ -ErrorAction SilentlyContinue
-          if ($env:SIGNED -eq 'true') {
-            "electron-windows: Authenticode signed (Electron app, Azure Artifact Signing)" | Set-Content electron-assets/signing-electron-windows.txt
-          } else {
-            "electron-windows: UNSIGNED (Electron app, no Authenticode)" | Set-Content electron-assets/signing-electron-windows.txt
+          Copy-Item dist/beta.yml, dist/latest.yml electron-feed/ -ErrorAction SilentlyContinue
+          if ($env:ARCH -eq 'x64') {
+            if ($env:SIGNED -eq 'true') {
+              "electron-windows: Authenticode signed (Electron app, Azure Artifact Signing)" | Set-Content electron-assets/signing-electron-windows.txt
+            } else {
+              "electron-windows: UNSIGNED (Electron app, no Authenticode)" | Set-Content electron-assets/signing-electron-windows.txt
+            }
           }
           Get-FileHash electron-assets/* | Format-Table -AutoSize
       - uses: actions/upload-artifact@v4
         with:
-          name: electron-windows
+          name: electron-windows-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-assets/
           if-no-files-found: error
           retention-days: 7
+      # Each arch's own feed; electron-windows joins them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winfeed-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/electron-feed/
+          if-no-files-found: error
+          retention-days: 7
 
-  electron-linux:
-    name: Electron linux (x64, arm64)
-    needs: [electron-plan, electron-native]
+  # The two Windows builds as the one `electron-windows` artifact (installers,
+  # blockmaps, the signing note and a feed that lists both installers) that
+  # electron-publish and verify-release read.
+  electron-windows:
+    name: Electron windows (x64, arm64)
+    needs: [electron-plan, electron-windows-pkg]
+    if: needs.electron-plan.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ needs.electron-windows-pkg.outputs.signed }}
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: winfeed-*
+          path: winfeed
+      - name: Join the feeds
+        run: |
+          set -euo pipefail
+          mkdir -p merged-feed
+          for name in latest.yml beta.yml; do
+            if [ -f "winfeed/winfeed-x64/$name" ] || [ -f "winfeed/winfeed-arm64/$name" ]; then
+              test -f "winfeed/winfeed-x64/$name" && test -f "winfeed/winfeed-arm64/$name" \
+                || { echo "::error::$name is missing from one architecture's build"; exit 1; }
+              node apps/cua-spaces-desktop/scripts/merge-feeds.mjs --out "merged-feed/$name" \
+                "winfeed/winfeed-x64/$name" "winfeed/winfeed-arm64/$name"
+            fi
+          done
+          ls merged-feed
+          test -n "$(ls merged-feed)" || { echo "::error::no Windows feed"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electron-windows-feed
+          path: merged-feed/
+          if-no-files-found: error
+          retention-days: 7
+      # Installers, blockmaps and the signing note of both architectures, and
+      # the joined feed, as electron-windows (merged without downloading).
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: electron-windows
+          pattern: electron-windows-*
+          retention-days: 7
+
+  # Linux: x64 and arm64 packaged in parallel (fpm and the AppImage tools run
+  # on x64 for both), joined as `electron-linux`.
+  electron-linux-pkg:
+    name: Electron linux (${{ matrix.arch }})
+    needs: [electron-plan, electron-native, electron-web]
     if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
     defaults:
       run:
         working-directory: apps/cua-spaces-desktop
     env:
-      CARGO_BUILD_JOBS: 4
+      # Pack this architecture only (packaging/archs.cjs).
+      CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          targets: x86_64-unknown-linux-gnu,wasm32-unknown-unknown
-      - name: Install protoc
-        uses: ./.github/actions/setup-protoc
-      - name: Install Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
-      - name: Install wasm-bindgen (the web UI's app core)
-        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build the web UI
-        working-directory: apps/cua-spaces-web
-        run: |
-          pnpm install --ignore-workspace --frozen-lockfile
-          pnpm build
-      - name: Native library (x64)
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm native -- --target x86_64-unknown-linux-gnu
-      - name: Native library (arm64, from electron-native)
+      - name: Download the web UI
         uses: actions/download-artifact@v4
         with:
-          name: electron-native-linux-arm64
-          path: apps/cua-spaces-desktop/native/linux-arm64
+          name: spaces-web-dist
+          path: apps/cua-spaces-web/dist
+      - name: Native library
+        uses: actions/download-artifact@v4
+        with:
+          name: electron-native-linux-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
       # Artifacts drop the executable bit; the daemon starts from this cua.
       - name: The bundled cua is executable
-        run: chmod +x native/linux-arm64/cua
+        run: chmod +x native/linux-${{ matrix.arch }}/cua
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       # No OS code signing on Linux; electron-updater checks each file's sha512.
       - name: Build (electron-builder)
         env:
@@ -1304,18 +1547,37 @@ jobs:
           CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
         run: pnpm dist:linux
       - name: Collect the assets
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           mkdir -p electron-assets
           cp dist/*.AppImage dist/*.deb electron-assets/
           cp dist/beta-linux*.yml dist/latest-linux*.yml electron-assets/ 2>/dev/null || true
-          echo "electron-linux: updater sha512 only (no OS code signing on Linux)" > electron-assets/signing-electron-linux.txt
+          if [ "$ARCH" = x64 ]; then
+            echo "electron-linux: updater sha512 only (no OS code signing on Linux)" > electron-assets/signing-electron-linux.txt
+          fi
           sha256sum electron-assets/*
       - uses: actions/upload-artifact@v4
         with:
-          name: electron-linux
+          name: electron-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/electron-assets/
           if-no-files-found: error
+          retention-days: 7
+
+  electron-linux:
+    name: Electron linux (x64, arm64)
+    needs: [electron-plan, electron-linux-pkg]
+    if: needs.electron-plan.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Both architectures' installers, feeds and the signing note as
+      # electron-linux (merged without downloading).
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: electron-linux
+          pattern: electron-linux-*
           retention-days: 7
 
   # Uploads the Electron installers to the version's (draft) release and

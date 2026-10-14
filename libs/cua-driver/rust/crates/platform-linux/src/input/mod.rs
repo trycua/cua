@@ -3380,9 +3380,6 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
-/// Type `text` in batches that each need at most as many remaps as the keymap
-/// has spare keycodes. A batch resolves every key before it sends one, and its
-/// remaps are restored before the next batch borrows the same keycodes.
 fn type_text_with_preflight<G>(
     text: &str,
     mapping: &GetKeyboardMappingReply,

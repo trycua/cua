@@ -155,21 +155,25 @@ pub fn status() -> Result<Status> {
     platform::status()
 }
 
-/// Start the daemon detached and wait until it is listening. The autostart
-/// task runs this through the windowless launcher.
+/// Start the daemon detached and wait until it is listening. The Windows
+/// autostart task runs this through the windowless launcher. Managed restart
+/// stays off: it would kick this same task again.
+#[cfg(target_os = "windows")]
 pub fn launch() -> Result<()> {
     let socket = crate::serve::default_socket_path();
     if crate::serve::is_daemon_listening(&socket) {
         return Ok(());
     }
     let history = crate::history_runtime::preview_admitted_preference();
-    Ok(crate::cli::launch_daemon_and_wait(
-        &socket,
-        30,
-        false,
-        &[],
-        history,
+    let state = Default::default();
+    Ok(crate::cli::launch_daemon_with_state_and_wait(
+        &socket, 30, &state, history, false,
     )?)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn launch() -> Result<()> {
+    Err(anyhow!("autostart launch is only used on Windows"))
 }
 
 /// Run the autostart entry immediately without waiting for a fresh logon.

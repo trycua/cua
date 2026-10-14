@@ -79,20 +79,14 @@ impl Tool for ListWindowsTool {
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
 
-        ToolResult::text(format_window_list(&windows)).with_structured(
-            serde_json::json!({
-                "windows": windows_json,
-                "current_space_id": current_space_id
-            }),
-        )
+        ToolResult::text(format_window_list(&windows)).with_structured(serde_json::json!({
+            "windows": windows_json,
+            "current_space_id": current_space_id
+        }))
     }
 }
 
-/// One compact line per window after the count header, so text-only MCP
-/// clients can discover `window_id`s without reading `structuredContent`.
-/// Same row shape as the Windows tool (`- app (pid) "title" [window_id]`,
-/// `(no title)` fallback, ` [off-screen]` tag); the header line is unchanged.
-pub(super) fn format_window_list(windows: &[crate::windows::WindowInfo]) -> String {
+fn format_window_list(windows: &[crate::windows::WindowInfo]) -> String {
     let mut lines = vec![format!("Found {} window(s).", windows.len())];
     for w in windows {
         let title = if w.title.is_empty() {

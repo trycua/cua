@@ -11,7 +11,7 @@
 //! ```
 
 use crate::sandbox::{Narrow, env_of};
-use crate::util::line;
+use crate::util::{ProgramState, line, program_status};
 use clap::Subcommand;
 use cua_sdk::{AgentFile, AgentRun, AgentRunMcpServer, AgentRunOptions, Cua, CuaError};
 use std::collections::HashMap;
@@ -210,6 +210,14 @@ async fn follow(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<u64, CuaError> {
+    let label = format!("{} {}", run.harness(), run.run_id());
+    let mut reported = None;
+    let mut report = |shown: &(ProgramState, String)| {
+        if until_turn_end && !json && reported.replace(shown.clone()).as_ref() != Some(shown) {
+            program_status(shown.0, None, &format!("{label}: {}", shown.1));
+        }
+    };
+    let mut shown = (ProgramState::Working, "working".to_string());
     // Bounded: at most 24 h of polling at 500 ms.
     for _ in 0..172_800 {
         let page = run.events(cursor, Some(500)).await?;
@@ -224,19 +232,42 @@ async fn follow(
             if matches!(e.kind.as_str(), "turn_ended" | "exited") {
                 done = true;
             }
+            shown = run_state(shown, &e.kind, e.stop_reason.as_deref(), e.text.as_deref());
         }
+        report(&shown);
         if !until_turn_end || (done && page.caught_up) {
             break;
         }
         if page.caught_up {
             let s = run.status().await?;
             if s.status != "running" && !done {
+                report(&run_state(shown, &s.status, None, Some(&s.reason)));
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
     Ok(cursor)
+}
+
+fn run_state(
+    shown: (ProgramState, String),
+    kind: &str,
+    stop_reason: Option<&str>,
+    detail: Option<&str>,
+) -> (ProgramState, String) {
+    use ProgramState::*;
+    let detail = detail.unwrap_or_default();
+    match (kind, stop_reason) {
+        ("turn_started", _) => (Working, "working".into()),
+        ("turn_ended", None | Some("" | "end_turn")) => (Done, "turn done".into()),
+        ("turn_ended", Some("cancelled")) => (Idle, "cancelled".into()),
+        ("turn_ended", Some(reason)) => (Error, format!("turn ended ({reason})")),
+        ("idle", _) => (Idle, detail.into()),
+        ("exited", _) if shown.0 != Working => shown,
+        ("error" | "exited" | "failed" | "crashed", _) => (Error, format!("{kind}: {detail}")),
+        _ => shown,
+    }
 }
 
 /// The harnesses with the readiness the Spaces server reports
@@ -706,6 +737,62 @@ mod tests {
             "the value is never quoted: {e}"
         );
         assert!(e.to_string().contains("not a provider key variable"));
+    }
+
+    #[test]
+    fn turn_events_and_run_statuses_map_to_program_states() {
+        use ProgramState::*;
+        let working = || (Working, "working".to_string());
+        let done = || (Done, "turn done".to_string());
+        assert_eq!(
+            run_state(done(), "turn_started", None, Some("fix it")),
+            working()
+        );
+        assert_eq!(
+            run_state(working(), "turn_ended", Some("end_turn"), None),
+            done()
+        );
+        assert_eq!(run_state(working(), "turn_ended", None, None), done());
+        assert_eq!(
+            run_state(working(), "turn_ended", Some("cancelled"), None),
+            (Idle, "cancelled".into())
+        );
+        assert_eq!(
+            run_state(working(), "turn_ended", Some("max_tokens"), None),
+            (Error, "turn ended (max_tokens)".into())
+        );
+        assert_eq!(
+            run_state(working(), "error", None, Some("boom")),
+            (Error, "error: boom".into())
+        );
+        assert_eq!(run_state(done(), "exited", None, Some("code 1")), done());
+        assert_eq!(
+            run_state(working(), "exited", None, Some("code 1")),
+            (Error, "exited: code 1".into())
+        );
+        assert_eq!(
+            run_state(working(), "crashed", None, Some("oom")),
+            (Error, "crashed: oom".into())
+        );
+        assert_eq!(
+            run_state(working(), "idle", None, Some("waiting for a follow-up")),
+            (Idle, "waiting for a follow-up".into())
+        );
+        assert_eq!(run_state(working(), "message", None, Some("hi")), working());
+        assert_eq!(run_state(working(), "unknown", None, Some("")), working());
+    }
+
+    #[test]
+    fn turn_end_text_is_not_a_stop_reason() {
+        let working = (ProgramState::Working, "working".to_string());
+        assert_eq!(
+            run_state(working.clone(), "turn_ended", None, Some("All done.")),
+            (ProgramState::Done, "turn done".into())
+        );
+        assert_eq!(
+            run_state(working, "turn_ended", Some("max_tokens"), Some("All done.")),
+            (ProgramState::Error, "turn ended (max_tokens)".into())
+        );
     }
 
     #[test]

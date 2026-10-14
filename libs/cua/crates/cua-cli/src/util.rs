@@ -4,6 +4,7 @@ use cua_sdk::CuaError;
 use std::{
     io::{IsTerminal, Write},
     path::PathBuf,
+    sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
 
@@ -206,6 +207,46 @@ pub fn write_private(p: &std::path::Path, data: &[u8]) -> Result<(), CuaError> {
     std::fs::rename(&tmp, p).map_err(internal)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramState {
+    Idle,
+    Working,
+    Done,
+    Error,
+}
+
+static PROGRAM_STATUS: AtomicU8 = AtomicU8::new(UNREPORTED);
+const UNREPORTED: u8 = 0;
+const REPORTED: u8 = 1;
+const CLEARED: u8 = 2;
+
+pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
+    if std::io::stderr().is_terminal() && program_status_may_write(&PROGRAM_STATUS, REPORTED) {
+        eprint!("{}", program_status_report(state, progress, msg));
+    }
+}
+
+pub fn clear_program_status() {
+    if program_status_may_write(&PROGRAM_STATUS, CLEARED) {
+        eprint!("\x1b]7501;state=clear\x1b\\");
+    }
+}
+
+fn program_status_may_write(status: &AtomicU8, next: u8) -> bool {
+    let prev = status.fetch_max(next, Ordering::SeqCst);
+    prev == REPORTED || (prev == UNREPORTED && next == REPORTED)
+}
+
+fn program_status_report(state: ProgramState, progress: Option<u8>, msg: &str) -> String {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let name = format!("{state:?}").to_lowercase();
+    let progress = progress.filter(|_| state == ProgramState::Working);
+    let progress = progress.map_or(String::new(), |p| format!(":progress={}", p.min(100)));
+    let msg = msg.replace(char::is_control, " ");
+    let msg = STANDARD.encode(&msg.trim()[..msg.trim().floor_char_boundary(2048)]);
+    format!("\x1b]7501;state={name}{progress}:app=cua:msg={msg}\x1b\\")
+}
+
 #[cfg(test)]
 mod secret_tests {
     use super::*;
@@ -245,6 +286,59 @@ mod secret_tests {
         assert_eq!(header_for_display("x-cua-fleet-claim", "box", false), "box");
         // A scheme-less value with spaces is masked whole.
         assert_eq!(mask_secret("a/b c"), "****");
+    }
+
+    #[test]
+    fn program_status_reports_are_osc_7501() {
+        let report = program_status_report;
+        assert_eq!(
+            report(ProgramState::Working, None, "Installing updates"),
+            "\x1b]7501;state=working:app=cua:msg=SW5zdGFsbGluZyB1cGRhdGVz\x1b\\"
+        );
+        assert_eq!(
+            report(ProgramState::Working, Some(42), "x"),
+            "\x1b]7501;state=working:progress=42:app=cua:msg=eA==\x1b\\"
+        );
+        assert_eq!(
+            report(ProgramState::Working, Some(250), "x"),
+            "\x1b]7501;state=working:progress=100:app=cua:msg=eA==\x1b\\"
+        );
+        assert_eq!(
+            report(ProgramState::Done, Some(42), "x"),
+            "\x1b]7501;state=done:app=cua:msg=eA==\x1b\\"
+        );
+    }
+
+    #[test]
+    fn program_status_messages_fit_the_limits() {
+        use base64::Engine;
+        let msg = |report: &str| {
+            let b64 = report
+                .strip_prefix("\x1b]7501;state=error:app=cua:msg=")
+                .and_then(|r| r.strip_suffix("\x1b\\"))
+                .unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap();
+            String::from_utf8(bytes).unwrap()
+        };
+        let long = program_status_report(ProgramState::Error, None, &"é".repeat(3000));
+        assert!(long.len() <= 4096, "{}", long.len());
+        assert_eq!(msg(&long), "é".repeat(1024));
+        let control = program_status_report(ProgramState::Error, None, "a\x1bb\u{85}c\n");
+        assert_eq!(msg(&control), "a b c");
+    }
+
+    #[test]
+    fn program_status_is_not_reported_after_it_is_cleared() {
+        let status = AtomicU8::new(UNREPORTED);
+        assert!(!program_status_may_write(&status, CLEARED));
+        let status = AtomicU8::new(UNREPORTED);
+        assert!(program_status_may_write(&status, REPORTED));
+        assert!(program_status_may_write(&status, REPORTED));
+        assert!(program_status_may_write(&status, CLEARED));
+        assert!(!program_status_may_write(&status, REPORTED));
+        assert!(!program_status_may_write(&status, CLEARED));
     }
 }
 
@@ -307,6 +401,7 @@ pub mod test_env {
 pub fn exit_on_ctrl_c() {
     tokio::spawn(async {
         if tokio::signal::ctrl_c().await.is_ok() {
+            clear_program_status();
             std::process::exit(130);
         }
     });

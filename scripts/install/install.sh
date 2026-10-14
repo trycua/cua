@@ -8,7 +8,7 @@
 #
 # In a terminal it shows a checklist of what to install. Items:
 #   cli         the cua CLI (always installed, except with --app-only)
-#   spaces      the Cua Spaces app (macOS only for now; default on macOS)
+#   spaces      the Cua Spaces app (macOS and Linux; default on both)
 #   cua-driver  cua-driver MCP and skill for your agents (default off)
 #   host        host this machine: `cua host setup` (default off)
 #
@@ -306,7 +306,7 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS.
+        # The app is a default on macOS and Linux.
         if spaces_supported; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
@@ -315,16 +315,15 @@ init_selection() {
         sel_spaces=1
     fi
     if [ "$sel_spaces" = 1 ] && ! spaces_supported; then
-        info "Cua Spaces is macOS-only for now; skipping the app on Linux"
+        info "Cua Spaces is not available for $os; skipping the app"
         sel_spaces=0
     fi
 }
 
-# Cua Spaces ships for macOS only for now (cd-cua-spaces.yml builds no Linux
-# app). To bring Linux back, return 0 for linux too (install_app_linux is
-# kept).
+# Cua Spaces ships for macOS (the SwiftUI app) and Linux (the Electron app,
+# .deb or AppImage).
 spaces_supported() {
-    [ "$os" = darwin ]
+    [ "$os" = darwin ] || [ "$os" = linux ]
 }
 
 # Show the checklist only when a human can answer it.
@@ -358,7 +357,7 @@ draw_rows() { # cursor row, or 0 for the numbered list
 # checklist: pick items with arrows/numbers + space, Enter to install.
 checklist() {
     rows="cli"
-    # Spaces is offered only where it ships (macOS).
+    # Spaces is offered only where it ships (macOS, Linux).
     if spaces_supported; then rows="$rows spaces"; fi
     rows="$rows cua-driver host"
     n=0
@@ -762,10 +761,17 @@ install_app_darwin() {
 
 install_app_linux() {
     deb_entry="$(manifest_entry app deb)"
-    if [ -z "$prefix" ] && [ "$(id -u)" = 0 ] && has apt-get && [ -n "$deb_entry" ]; then
-        if confirm "Install the Cua Spaces .deb with apt-get?" y; then
+    # Debian and Ubuntu: the .deb (apt resolves its dependencies), as root or
+    # with passwordless sudo. Anything else, or no privileges: the AppImage.
+    if [ -z "$prefix" ] && has apt-get && [ -n "$deb_entry" ]; then
+        sudo_cmd=""
+        if [ "$(id -u)" != 0 ]; then
+            if has sudo && sudo -n true 2>/dev/null; then sudo_cmd="sudo"; else sudo_cmd="none"; fi
+        fi
+        if [ "$sudo_cmd" != none ] && confirm "Install the Cua Spaces .deb with apt-get?" y; then
             download app deb
-            run apt-get install -y "$artifact"
+            # shellcheck disable=SC2086
+            run $sudo_cmd apt-get install -y "$artifact"
             app_path="cua-spaces"
             return
         fi

@@ -92,6 +92,29 @@ class ReleaseManifestTest(unittest.TestCase):
         kinds = [(p, k) for rows in got.values() for p, k in rows]
         self.assertEqual(len(kinds), len(set(kinds)))
 
+    def test_installer_named_copies_of_the_electron_app_list_beside_the_electron_names(self):
+        # A stable release: Windows and Linux Electron installers also under the
+        # installer names, so install.sh / install.ps1 pick them (kinds nsis,
+        # appimage, deb) while the electron-builder names stay (electron-*).
+        v = "1.2.3"
+        files = {
+            f"Cua-Spaces-Setup-{v}-x64.exe": ("windows-x64", "electron-nsis"),
+            f"cua-spaces-{v}-windows-x64-setup.exe": ("windows-x64", "nsis"),
+            f"cua-spaces-{v}-windows-arm64-setup.exe": ("windows-arm64", "nsis"),
+            f"Cua-Spaces-{v}-x86_64.AppImage": ("linux-x64", "electron-appimage"),
+            f"cua-spaces-{v}-linux-x64.AppImage": ("linux-x64", "appimage"),
+            f"cua-spaces_{v}_amd64.deb": ("linux-x64", "electron-deb"),
+            f"cua-spaces-{v}-linux-x64.deb": ("linux-x64", "deb"),
+            f"cua-spaces-{v}-linux-arm64.deb": ("linux-arm64", "deb"),
+        }
+        for name in files:
+            self.touch(name, name.encode())
+        out = self.dir / "m.json"
+        proc = run("--component", "app", "--version", v, "--dir", str(self.dir), "--out", str(out))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = {(a["name"], a["platform"], a["kind"]) for a in json.loads(out.read_text())["artifacts"]}
+        self.assertEqual(got, {(n, *pk) for n, pk in files.items()})
+
     def test_version_mismatch_and_empty_dir_fail(self):
         self.touch("cua-cli-1.0.0-linux-x64.tar.gz")
         self.assertNotEqual(run("--component", "cli", "--version", "1.0.1", "--dir", str(self.dir)).returncode, 0)

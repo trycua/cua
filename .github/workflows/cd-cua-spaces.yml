@@ -2,16 +2,12 @@ name: "CD: Cua Spaces"
 
 # Cua Spaces desktop releases, published to a GitHub Release.
 #
-# MACOS ONLY FOR NOW: a release builds and publishes only the macOS SwiftUI
-# app (build-macos). The Linux and Windows Tauri app (build-linux-windows) is
-# kept below but disabled by its `if:`; installer-manifest runs without it,
-# and the Tauri updater feed (latest.json) is skipped while no Linux/Windows
-# updater artifact is on the release. install.sh / install.ps1 skip the Cua
-# Spaces app on Linux and Windows with a note. To bring Linux and Windows
-# back, drop build-linux-windows's `if:` (latest.json is then built and
-# required again for every Tauri platform) and re-enable the app in the
-# installers (spaces_supported in install.sh, $script:SpacesSupported in
-# install.ps1).
+# Stable releases ship the SwiftUI app for macOS (build-macos) and the
+# Electron app (apps/cua-spaces-desktop) for Windows and Linux. The Linux and
+# Windows Tauri app (build-linux-windows) is kept below but disabled by its
+# `if:`; installer-manifest builds the Tauri updater feed (latest.json) only
+# when that job ran. install.sh / install.ps1 install the Electron app on
+# Linux and Windows (see scripts/install/README.md).
 #
 # macOS: the SwiftUI app (apps/cua-spaces-macos), universal (arm64 + x86_64),
 # built by apps/cua-spaces-macos/scripts/build-release.sh: the Cua Spaces app
@@ -43,7 +39,7 @@ name: "CD: Cua Spaces"
 # disk images, the apps, the Windows installers, the Sparkle appcast and the
 # Electron feeds.
 #
-# Linux and Windows (disabled for now, see above): the Tauri app
+# Linux and Windows Tauri app (disabled, see above): the Tauri app
 # (apps/cua-spaces), with Tauri auto-updater
 # artifacts (.sig) and a `latest.json` update feed that lists only those
 # platforms. Every Tauri bundle carries the Cua Spaces build of the `cua` CLI
@@ -99,9 +95,10 @@ name: "CD: Cua Spaces"
 # CFBundleShortVersionString X.Y.Z, CFBundleVersion X.Y.Z.<run number>, and
 # the full version (with any -suffix) as CuaVersion.
 #
-# Electron app (apps/cua-spaces-desktop), PRERELEASES ONLY for now: a
-# prerelease version (X.Y.Z-suffix, e.g. cua-spaces-v0.8.0-beta.1) also
-# builds the Electron app for macOS (arm64 + universal dmg and zip,
+# Electron app (apps/cua-spaces-desktop). Every release tag, stable or not,
+# builds and publishes it for Windows and Linux (electron-plan `desktop`).
+# macOS stays the SwiftUI app: a prerelease version (X.Y.Z-suffix, e.g.
+# cua-spaces-v0.8.0-beta.1) also builds the Electron app for macOS (arm64 + universal dmg and zip,
 # bundle id com.trycua.spaces.macos, Developer ID signed and notarized by
 # electron-builder from the same secrets as the SwiftUI app), Windows (one
 # NSIS installer for x64 and arm64, plus per-arch ones, Authenticode signed
@@ -109,14 +106,18 @@ name: "CD: Cua Spaces"
 # deb, x64 and arm64). Each runs `pnpm native -- --target <triple>` (the
 # cua-spaces-ffi library and its Node bindings; arm64 Windows and Linux are
 # built on arm64 runners) and, on macOS, `pnpm notch` before electron-builder.
-# electron-publish uploads the installers to the same prerelease, and once it
-# is published the last job uploads the electron-updater feed (beta.yml,
-# beta-mac.yml, beta-linux*.yml, installer URLs made absolute by
+# electron-publish uploads the installers to the same release (the Windows and
+# Linux ones also under the installer names cua-spaces-<v>-windows-<arch>-setup.exe
+# and cua-spaces-<v>-linux-<arch>.AppImage / .deb, so they get Sigstore
+# bundles, checksums and release-artifacts.json entries), and once it
+# is published the last job uploads the electron-updater feed (beta*.yml for a
+# prerelease, latest.yml and latest-linux*.yml for a stable release, plus the
+# -mac one when electron-mac ran; installer URLs made absolute by
 # scripts/feed-urls.mjs) to the rolling `cua-spaces-latest` release, which is
 # the feed URL electron-builder bakes in from github.repository. The Electron
-# updater is opt-in and reads only the beta channel. The SwiftUI app,
-# installers and Sparkle beta item of a prerelease are unchanged; stable
-# releases build no Electron app. A manual run with `electron_dry_run` builds
+# updater is opt-in; it serves the beta channel everywhere and the stable
+# channel on Windows and Linux (macOS: only after the Sparkle cutover). The
+# SwiftUI app, installers and Sparkle beta item of a release are unchanged. A manual run with `electron_dry_run` builds
 # and signs only the Electron app and keeps it as workflow artifacts
 # (electron-darwin, electron-windows, electron-linux), publishing nothing.
 #
@@ -788,6 +789,7 @@ jobs:
     outputs:
       version: ${{ steps.plan.outputs.version }}
       build: ${{ steps.plan.outputs.build }}
+      desktop: ${{ steps.plan.outputs.desktop }}
       publish: ${{ steps.plan.outputs.publish }}
       cutover: ${{ steps.plan.outputs.cutover }}
     steps:
@@ -816,24 +818,28 @@ jobs:
             fi
           fi
           build=false; { [ "$beta" = true ] || [ "$cutover" = true ] || [ "$DRY_RUN" = true ]; } && build=true
-          # A beta or the cutover from a release tag publishes; a dry run never does.
+          # Windows and Linux Electron: every release tag (stable too), the
+          # cutover and a dry run. `build` above is the macOS Electron app only.
+          desktop=false
+          { [ "$build" = true ] || [[ "$GITHUB_REF" == refs/tags/cua-spaces-v* ]]; } && desktop=true
+          # Any release tag publishes; a dry run never does.
           publish=false
-          if { [ "$beta" = true ] || [ "$cutover" = true ]; } && [ "$DRY_RUN" != true ] \
-            && [[ "$GITHUB_REF" == refs/tags/cua-spaces-v* ]]; then publish=true; fi
+          if [ "$DRY_RUN" != true ] && [[ "$GITHUB_REF" == refs/tags/cua-spaces-v* ]]; then publish=true; fi
           {
             echo "version=$VERSION"
             echo "build=$build"
+            echo "desktop=$desktop"
             echo "publish=$publish"
             echo "cutover=$cutover"
           } >> "$GITHUB_OUTPUT"
-          echo "Electron: version $VERSION, build=$build, publish=$publish, Sparkle cutover=$cutover"
+          echo "Electron: version $VERSION, build(mac)=$build, desktop(win+linux)=$desktop, publish=$publish, Sparkle cutover=$cutover"
 
   # The arm64 Windows and Linux native libraries, built on arm64 runners;
   # electron-windows and electron-linux package both architectures.
   electron-native:
     name: Electron native (${{ matrix.label }})
     needs: electron-plan
-    if: needs.electron-plan.outputs.build == 'true'
+    if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -1129,7 +1135,7 @@ jobs:
   electron-windows:
     name: Electron windows (x64, arm64)
     needs: [electron-plan, electron-native]
-    if: needs.electron-plan.outputs.build == 'true'
+    if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: windows-latest
     timeout-minutes: 120
     # Holds the Azure Artifact Signing identity (Windows Authenticode).
@@ -1249,7 +1255,7 @@ jobs:
   electron-linux:
     name: Electron linux (x64, arm64)
     needs: [electron-plan, electron-native]
-    if: needs.electron-plan.outputs.build == 'true'
+    if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     defaults:
@@ -1318,7 +1324,11 @@ jobs:
   electron-publish:
     name: Electron publish
     needs: [electron-plan, electron-mac, electron-windows, electron-linux]
-    if: needs.electron-plan.outputs.publish == 'true'
+    # electron-mac is skipped on a stable release (macOS stays the SwiftUI app).
+    if: >-
+      !cancelled() && needs.electron-plan.outputs.publish == 'true'
+      && needs.electron-windows.result == 'success' && needs.electron-linux.result == 'success'
+      && (needs.electron-mac.result == 'success' || needs.electron-mac.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -1329,7 +1339,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+      - if: needs.electron-mac.result == 'success'
+        uses: actions/download-artifact@v4
         with:
           name: electron-darwin
           path: electron
@@ -1345,6 +1356,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.electron-plan.outputs.version }}
+          MAC: ${{ needs.electron-mac.result }}
         run: |
           set -euo pipefail
           tag="cua-spaces-v${VERSION}"
@@ -1361,9 +1373,25 @@ jobs:
             --base "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/" feed/*.yml
           # beta*.yml for a prerelease, latest*.yml for the cutover's stable one.
           channel=latest; [[ "$VERSION" == *-* ]] && channel=beta
-          for want in "$channel.yml" "$channel-mac.yml" "$channel-linux.yml" "$channel-linux-arm64.yml"; do
+          wants=("$channel.yml" "$channel-linux.yml" "$channel-linux-arm64.yml")
+          # macOS Electron only when electron-mac ran (beta, cutover).
+          [ "$MAC" = success ] && wants+=("$channel-mac.yml")
+          for want in "${wants[@]}"; do
             test -f "feed/$want" || { echo "::error::no $want"; exit 1; }
           done
+          # The installer names release_manifest.py, install.sh and install.ps1
+          # use, next to the electron-builder names the feed URLs reference.
+          # The copies get Sigstore bundles, checksums and manifest entries.
+          copy_as() { # copy_as SOURCE-NAME INSTALLER-NAME
+            test -f "electron/$1" || { echo "::error::no electron/$1"; exit 1; }
+            cp "electron/$1" "electron/$2"
+          }
+          copy_as "Cua-Spaces-Setup-${VERSION}-x64.exe" "cua-spaces-${VERSION}-windows-x64-setup.exe"
+          copy_as "Cua-Spaces-Setup-${VERSION}-arm64.exe" "cua-spaces-${VERSION}-windows-arm64-setup.exe"
+          copy_as "Cua-Spaces-${VERSION}-x86_64.AppImage" "cua-spaces-${VERSION}-linux-x64.AppImage"
+          copy_as "Cua-Spaces-${VERSION}-arm64.AppImage" "cua-spaces-${VERSION}-linux-arm64.AppImage"
+          copy_as "cua-spaces_${VERSION}_amd64.deb" "cua-spaces-${VERSION}-linux-x64.deb"
+          copy_as "cua-spaces_${VERSION}_arm64.deb" "cua-spaces-${VERSION}-linux-arm64.deb"
           ls -la electron feed
           gh release upload "$tag" electron/* --clobber --repo "$GITHUB_REPOSITORY"
       - uses: actions/upload-artifact@v4
@@ -1393,8 +1421,9 @@ jobs:
     needs: [build-macos, electron-plan, electron-mac, electron-windows, electron-publish]
     if: >-
       !cancelled() && needs.build-macos.result == 'success'
-      && (needs.electron-plan.outputs.build != 'true'
-        || (needs.electron-mac.result == 'success' && needs.electron-windows.result == 'success'))
+      && (needs.electron-plan.outputs.desktop != 'true'
+        || (needs.electron-windows.result == 'success'
+          && (needs.electron-plan.outputs.build != 'true' || needs.electron-mac.result == 'success')))
       && (needs.electron-plan.outputs.publish != 'true' || needs.electron-publish.result == 'success')
     runs-on: macos-26
     timeout-minutes: 60
@@ -1405,7 +1434,8 @@ jobs:
       contents: read
     env:
       VERSION: ${{ needs.build-macos.outputs.version }}
-      ELECTRON: ${{ needs.electron-plan.outputs.build }}
+      ELECTRON: ${{ needs.electron-plan.outputs.desktop }}
+      ELECTRON_MAC: ${{ needs.electron-plan.outputs.build }}
       SWIFT_SIGNED: ${{ needs.build-macos.outputs.signed }}
       ELECTRON_MAC_SIGNED: ${{ needs.electron-mac.outputs.signed }}
       ELECTRON_WINDOWS_SIGNED: ${{ needs.electron-windows.outputs.signed }}
@@ -1421,7 +1451,7 @@ jobs:
         with:
           name: electron-darwin
           path: release
-      - if: needs.electron-plan.outputs.build == 'true'
+      - if: needs.electron-plan.outputs.desktop == 'true'
         uses: actions/download-artifact@v4
         with:
           name: electron-windows
@@ -1438,7 +1468,7 @@ jobs:
           name: sparkle-appcast
           path: release
       - name: Install osslsigncode (Windows Authenticode)
-        if: needs.electron-plan.outputs.build == 'true' && env.ELECTRON_WINDOWS_SIGNED == 'true'
+        if: needs.electron-plan.outputs.desktop == 'true' && env.ELECTRON_WINDOWS_SIGNED == 'true'
         run: brew install osslsigncode
       - name: verify-release.sh
         run: |
@@ -1452,7 +1482,9 @@ jobs:
           fi
           if [ "$ELECTRON" = true ]; then
             expect+=(feed)
-            if [ "$ELECTRON_MAC_SIGNED" = true ]; then expect+=(electron); else
+            # No Electron macOS build on a stable release (macOS stays SwiftUI).
+            if [ "$ELECTRON_MAC" != true ]; then :
+            elif [ "$ELECTRON_MAC_SIGNED" = true ]; then expect+=(electron); else
               echo "::warning::the Electron macOS build is unsigned: not verified"
               rm -f release/Cua-Spaces-*.dmg
             fi
@@ -1477,8 +1509,9 @@ jobs:
     # Only a release tag publishes: the Sigstore identity the installers and
     # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*.
     # A manual run from a tag re-publishes; from a branch it only builds.
-    # build-linux-windows may be skipped (disabled: macOS only), never failed.
-    # A prerelease waits for its Electron installers (electron-publish).
+    # build-linux-windows (Tauri) may be skipped, never failed; electron-mac is
+    # skipped on a stable release. A release tag waits for its Electron
+    # installers (electron-publish).
     # Nothing is published unless verify-release passed.
     if: >-
       !cancelled() && startsWith(github.ref, 'refs/tags/cua-spaces-v')
@@ -1514,12 +1547,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
+          TAURI: ${{ needs.build-linux-windows.result }}
         run: |
           set -euo pipefail
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           mkdir -p assets previous
-          # Every asset: the SwiftUI app's, and a prerelease's Electron
-          # installers for macOS, Windows and Linux (electron-publish).
+          # Every asset: the SwiftUI app's, and the Electron installers
+          # (Windows and Linux always, macOS for a prerelease) with their
+          # installer-named copies (electron-publish).
           gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
           rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json
           # Keyless Sigstore bundles next to each installer (install.sh and
@@ -1540,19 +1575,16 @@ jobs:
           # Every published artifact is listed, with its checksum (CUA-1507).
           python3 scripts/install/check_release_manifest.py --dir assets --component app \
             --version "$VERSION" --base-url "$BASE"
-          # The Tauri updater feed: Linux and Windows only (the macOS app is
-          # the SwiftUI app, which updates through the Sparkle appcast). With
-          # any Linux/Windows artifact on the release it fails when one of
-          # those platforms is missing or unsigned; with none (macOS only for
-          # now) there is no feed.
+          # The Tauri updater feed (latest.json) only when the Tauri app
+          # (build-linux-windows) ran and built its updater artifacts. The
+          # Electron app for Windows and Linux updates from latest*.yml.
           upload=(assets/*.sigstore.json assets/checksums.txt assets/release-artifacts.json)
-          if compgen -G "assets/cua-spaces-$VERSION-linux-*" >/dev/null \
-            || compgen -G "assets/cua-spaces-$VERSION-windows-*" >/dev/null; then
+          if [ "$TAURI" = success ]; then
             python3 scripts/install/updater_feed.py --version "$VERSION" --dir assets \
               --base-url "$BASE" --out assets/latest.json
             upload+=(assets/latest.json)
           else
-            echo "::notice::macOS-only release: no Linux/Windows Tauri app, so no latest.json"
+            echo "::notice::no Tauri build in this release, so no latest.json"
           fi
           gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
       - name: Publish the release
@@ -1583,10 +1615,11 @@ jobs:
             flags+=(--title "Cua Spaces v$VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
-      # The Electron feed (beta*.yml), once the release it names is
-      # published. Stable apps never read beta*.yml, so a trycua/cua
-      # prerelease updates it too (like the Sparkle beta items below). The
-      # cutover release writes latest*.yml.
+      # The Electron feed, once the release it names is published: beta*.yml
+      # for a prerelease (stable apps never read it, so a trycua/cua
+      # prerelease updates it too, like the Sparkle beta items below),
+      # latest*.yml for a stable release (Windows and Linux; macOS only at the
+      # cutover). A trycua/cua prerelease never moves the stable feed.
       - name: Fetch the Electron feed
         if: needs.electron-publish.result == 'success'
         uses: actions/download-artifact@v4
@@ -1594,7 +1627,10 @@ jobs:
           name: electron-feed
           path: electron-feed
       - name: Upload the Electron feed to cua-spaces-latest
-        if: needs.electron-publish.result == 'success'
+        if: >-
+          needs.electron-publish.result == 'success'
+          && (contains(needs.build-macos.outputs.version, '-')
+            || needs.build-macos.outputs.prerelease != 'true' || github.repository != 'trycua/cua')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

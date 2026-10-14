@@ -178,21 +178,20 @@ Describe 'install.ps1' {
         $out | Should -Match 'is not on your PATH'
     }
 
-    # Cua Spaces is macOS-only for now: Windows skips the app with a note.
-    It 'dry run: plans the CLI, skips the app (macOS only) and changes nothing' {
+    # Cua Spaces for Windows is the Electron app's NSIS setup.exe.
+    It 'dry run: -Mode plans the CLI and the silent setup.exe, and changes nothing' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p2'
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; Prefix = $prefix; Mode = 'host' } @{ CUA_INSTALL_ARCH = 'ARM64' }
         $out | Should -Match 'cua-cli-1.2.3-windows-arm64.zip'
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-arm64-setup.exe'
+        $out | Should -Match '/S'
         $out | Should -Not -Match 'msiexec'
-        $out | Should -Not -Match 'cua-spaces-1.2.3-windows'
         $prefix | Should -Not -Exist
     }
 
-    It 'dry run: -AppOnly skips the app with a note and installs nothing' {
-        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Installer = 'nsis'; Mode = 'client' }
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
-        $out | Should -Not -Match 'setup.exe'
+    It 'dry run: -AppOnly plans only the silent setup.exe' {
+        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'client' }
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'cua-cli-1.2.3'
     }
 
@@ -268,10 +267,10 @@ Describe 'install.ps1' {
         $out | Should -Not -Match 'cua-driver'
     }
 
-    It 'dry run: -Only spaces installs the CLI and skips the app' {
+    It 'dry run: -Only spaces installs the CLI and the setup.exe' {
         $out = Invoke-Installer @{ DryRun = $true; Only = 'spaces' }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'msiexec'
     }
 

@@ -1614,6 +1614,10 @@ if (-not $skipDownload) {
             # cua-driver-rs-v0.2.8 and is absent in earlier releases. Copy it when
             # present for a future authenticated daemon-internal forwarding path;
             # current autostart does not launch it. See #1602.
+            $launcherStage = Join-Path $stageDir 'cua-driver-autostart.exe'
+            if (Test-Path -LiteralPath $launcherStage) {
+                Copy-Item -LiteralPath $launcherStage -Destination (Join-Path $versionedDir 'cua-driver-autostart.exe') -Force
+            }
             $uiaStage = Join-Path $stageDir 'cua-driver-uia.exe'
             if (Test-Path -LiteralPath $uiaStage) {
                 Copy-Item -LiteralPath $uiaStage -Destination (Join-Path $versionedDir 'cua-driver-uia.exe') -Force

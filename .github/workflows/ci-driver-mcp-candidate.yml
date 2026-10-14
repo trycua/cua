@@ -94,7 +94,7 @@ jobs:
           assert source == os.environ["EXPECTED_SOURCE_SHA"]
           assert not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
           windows = os.environ["RUNNER_OS"] == "Windows"
-          names = ["cua-driver", "cua-cursor-theme"] + (["cua-driver-uia"] if windows else [])
+          names = ["cua-driver", "cua-cursor-theme"] + (["cua-driver-uia", "cua-driver-autostart"] if windows else [])
           binaries = [Path("libs/cua-driver/rust/target/debug") / (name + (".exe" if windows else "")) for name in names]
           assert all(path.is_file() and path.stat().st_size > 0 for path in binaries)
           bundle = Path("mcp-candidate")

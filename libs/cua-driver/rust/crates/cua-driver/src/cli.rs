@@ -443,6 +443,7 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "disable" => "disable",
             "status" => "status",
             "kick" => "kick",
+            "launch" => "launch",
             _ => "other",
         },
         Some("skills") => match subcommand.unwrap_or("status") {

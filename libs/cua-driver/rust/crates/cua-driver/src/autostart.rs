@@ -155,6 +155,23 @@ pub fn status() -> Result<Status> {
     platform::status()
 }
 
+/// Start the daemon detached and wait until it is listening. The autostart
+/// task runs this through the windowless launcher.
+pub fn launch() -> Result<()> {
+    let socket = crate::serve::default_socket_path();
+    if crate::serve::is_daemon_listening(&socket) {
+        return Ok(());
+    }
+    let history = crate::history_runtime::preview_admitted_preference();
+    Ok(crate::cli::launch_daemon_and_wait(
+        &socket,
+        30,
+        false,
+        &[],
+        history,
+    )?)
+}
+
 /// Run the autostart entry immediately without waiting for a fresh logon.
 /// Errors if the entry isn't registered.
 pub fn kick() -> Result<()> {
@@ -278,18 +295,10 @@ mod platform {
     /// shape, this script needs the same edit.
     ///
     /// **Hidden-console launch (issues #1645, #3983):** the task action runs
-    /// `conhost.exe --headless "<cua-driver.exe>" serve`. `cua-driver.exe` is
-    /// a console-subsystem binary, so launching it directly makes Task
-    /// Scheduler allocate a visible console for the daemon's lifetime
-    /// (#1645). The earlier fix wrapped it in `powershell.exe -WindowStyle
-    /// Hidden`, but `powershell.exe` is itself a console binary: its console
-    /// is created (and, with Windows Terminal as the default terminal on
-    /// Windows 11, a Terminal window is shown) before `-WindowStyle Hidden`
-    /// takes effect, so a window still flashes at every logon. A headless
-    /// conhost gives the daemon a console that is never rendered, so no
-    /// window is created at any point. conhost stays as the daemon's
-    /// console host, so the task instance stays `Running` while the daemon
-    /// lives (ExecutionTimeLimit is already unlimited).
+    /// the GUI-subsystem `cua-driver-autostart.exe` next to the driver, which
+    /// runs `cua-driver.exe autostart launch` with `CREATE_NO_WINDOW`. Console
+    /// launchers such as `powershell.exe` flash a window at logon before they
+    /// can hide it.
     ///
     /// **RunLevel = Highest** (since 2026-05-21): the daemon is registered to
     /// run at the user's elevated/admin token rather than the filtered
@@ -321,13 +330,11 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
     $domain = $env:COMPUTERNAME
 }
 $user = "$domain\$env:USERNAME"
-# Launch the daemon under a headless conhost so no console window is ever
-# shown at logon. cua-driver.exe is a CUI (console-subsystem) binary, and a
-# powershell.exe -WindowStyle Hidden wrapper still flashes its own console
-# (a Windows Terminal window on Windows 11) before hiding (#1645, #3983).
+$launcher = Join-Path (Split-Path -Parent $env:CUA_DRIVER_AS_EXE) 'cua-driver-autostart.exe'
+if (-not (Test-Path -LiteralPath $launcher)) { throw "missing $launcher; reinstall cua-driver" }
 $action = New-ScheduledTaskAction `
-    -Execute "$env:SystemRoot\System32\conhost.exe" `
-    -Argument "--headless `"$env:CUA_DRIVER_AS_EXE`" serve" `
+    -Execute $launcher `
+    -Argument "`"$env:CUA_DRIVER_AS_EXE`" autostart launch" `
     -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
@@ -637,6 +644,7 @@ pub fn run_autostart_cmd(subcommand: &str) {
                 std::process::exit(1);
             }
         },
+        "launch" => (launch(), "Cua Driver daemon is listening.".to_owned()),
         "kick" => (
             kick(),
             format!(
@@ -646,7 +654,7 @@ pub fn run_autostart_cmd(subcommand: &str) {
         ),
         other => {
             eprintln!("Unknown autostart subcommand: {other:?}");
-            eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick}}");
+            eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick|launch}}");
             std::process::exit(64);
         }
     };
@@ -668,14 +676,11 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn autostart_action_uses_headless_conhost() {
-        // A powershell.exe -WindowStyle Hidden wrapper flashes a console
-        // window at logon (#3983); the daemon must run under a
-        // headless conhost instead.
+    fn autostart_action_uses_windowless_launcher() {
         let ps = platform::REGISTER_PS;
-        assert!(ps.contains(r#"-Execute "$env:SystemRoot\System32\conhost.exe""#));
-        assert!(ps.contains(r#"-Argument "--headless `"$env:CUA_DRIVER_AS_EXE`" serve""#));
-        assert!(!ps.contains("-Execute 'powershell.exe'"));
+        assert!(ps.contains("'cua-driver-autostart.exe'"));
+        assert!(ps.contains(r#"-Argument "`"$env:CUA_DRIVER_AS_EXE`" autostart launch""#));
+        assert!(!ps.contains("powershell.exe") && !ps.contains("conhost"));
     }
 
     #[test]

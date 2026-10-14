@@ -113,7 +113,7 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, l
     elif platform_name == "windows":
         filename = f"cua-driver-rs-{version}-windows-{arch}-binary.zip"
         # Windows includes both main executable and UIAccess worker
-        binary_names = ["cua-driver.exe", "cua-driver-uia.exe", "cua_driver_sdk.dll"]
+        binary_names = ["cua-driver.exe", "cua-driver-autostart.exe", "cua-driver-uia.exe", "cua_driver_sdk.dll"]
     else:
         raise ValueError(f"Unknown platform: {platform_name}")
 

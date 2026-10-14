@@ -34,6 +34,7 @@ def test_release_archives_include_cli_and_uniffi_library():
     assert linux_files == ["cua-driver", "libcua_driver_sdk.so"]
     assert windows_files == [
         "cua-driver.exe",
+        "cua-driver-autostart.exe",
         "cua-driver-uia.exe",
         "cua_driver_sdk.dll",
     ]

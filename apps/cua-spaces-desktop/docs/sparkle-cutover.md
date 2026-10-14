@@ -78,9 +78,10 @@ Those are the rehearsal below.
 1. The Electron app is at parity on macOS and has shipped as betas. The
    beta feed has worked end to end: a beta updated to the next beta.
 2. `STABLE_FEED = true` in `src/updater.ts`. The workflow refuses the
-   cutover otherwise. `test/release.test.ts` ("serves only the beta channel
-   until the cutover") asserts the old value; it changes in the same commit,
-   or electron-mac's tests fail before the build.
+   cutover otherwise. `test/release.test.ts` ("serves stable on Windows and
+   Linux, and on macOS only after the cutover") asserts the old value; it
+   changes in the same commit, or electron-mac's tests fail before the
+   build.
 3. Migrated users update on their own (`src/update-prefs.ts`, done). Until
    the user chooses in Settings → About, automatic checks are on when
    `swiftMigration.found` is true and `sparkleAutomaticChecks !== false`
@@ -129,8 +130,8 @@ releases feed only test Macs.
 
 ## Rehearsal without a staging repository
 
-The staging repository has no signing secrets, so the same check can run
-from trycua/cua without publishing anything:
+The same check can run from trycua/cua (or the staging repository, whose
+CI holds the same signing secrets) without publishing anything:
 
 1. On a throwaway branch with `STABLE_FEED = true` (and the test above),
    run "CD: Cua Spaces" by hand with `electron_dry_run` and

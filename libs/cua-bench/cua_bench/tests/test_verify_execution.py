@@ -21,8 +21,12 @@ def make_receipts(root, execution_id="run-1"):
         "schema_version": "cua-bench-cleanup/v1",
         "task_id": execution_id,
         "verified": True,
-        "resources": {key: {"name": key, "absent": True} for key in
-                      ("agent_container", "env_container", "network", "overlay")},
+        "resources": {
+            "agent_container": {"name": f"cua-agent-{execution_id}", "absent": True},
+            "env_container": {"name": f"cua-env-{execution_id}", "absent": True},
+            "network": {"name": f"cua-task-{execution_id}", "absent": True},
+            "overlay": {"name": f"/tmp/overlays/{execution_id}", "absent": True},
+        },
     })
     logs = root / "task_0_agent_logs" / "executed-actions.jsonl"
     write_json(logs, {
@@ -156,3 +160,14 @@ def test_missing_cleanup_resource_fails_closed(tmp_path):
     report = verify_execution(tmp_path, 0, "run-1")
     assert report["checks"]["cleanup"] is False
     assert report["run_accepted"] is False
+
+
+def test_wrong_cleanup_resource_identity_is_rejected(tmp_path):
+    make_receipts(tmp_path)
+    path = tmp_path / "cleanup-result.json"
+    receipt = json.loads(path.read_text())
+    receipt["resources"]["network"]["name"] = "cua-task-some-other-run"
+    write_json(path, receipt)
+    result = verify_execution(tmp_path, 0, "run-1")
+    assert result["checks"]["cleanup"] is False
+    assert result["run_accepted"] is False

@@ -80,6 +80,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -100,6 +104,7 @@ impl Default for AppSettings {
             keyvault_site_icons: true,
             teleport_choices: vec![],
             auto_connect: true,
+            current_team_id: None,
         }
     }
 }
@@ -737,6 +742,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
                     } else {
                         crate::teams::TeamsState::SignedOut
                     },
+                    current_team_id: None,
                 }
             })),
         },

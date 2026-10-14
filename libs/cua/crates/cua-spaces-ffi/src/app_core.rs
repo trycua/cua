@@ -1956,6 +1956,8 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                 })
                 .collect(),
         },
+        // The apps fill the saved team in from their settings.
+        current_team_id: None,
     }
 }
 

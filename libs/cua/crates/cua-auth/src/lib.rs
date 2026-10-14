@@ -40,7 +40,10 @@ use std::{
 pub const DEFAULT_OIDC_ISSUER: &str = "https://auth.cua.ai/realms/cyclops-cs";
 /// Public OAuth client of the cua CLI and apps (`CUA_OIDC_CLIENT_ID`).
 pub const DEFAULT_CLIENT_ID: &str = "cua-cli";
-const DEFAULT_SCOPE: &str = "openid profile offline_access";
+/// `organization:*` lists every organization (team) the user belongs to in
+/// the token. Keycloak's plain `organization` scope leaves the claim empty
+/// once a user is in two or more, so the clients saw no team at all.
+const DEFAULT_SCOPE: &str = "openid profile offline_access organization:*";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh this long before expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
@@ -2134,6 +2137,17 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_scope_asks_for_every_organization() {
+        let scopes: Vec<&str> = super::DEFAULT_SCOPE.split_whitespace().collect();
+        assert!(scopes.contains(&"organization:*"));
+        assert!(scopes.contains(&"offline_access"));
+        assert_eq!(
+            super::Oidc::new("https://i.example", "c").scope,
+            super::DEFAULT_SCOPE
+        );
+    }
+
     use super::*;
 
     /// A cargo test binary is ad-hoc signed, like every development build:

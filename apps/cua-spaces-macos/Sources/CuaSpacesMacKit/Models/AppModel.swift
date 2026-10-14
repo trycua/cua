@@ -1260,7 +1260,8 @@ public final class AppModel {
     /// Teams for Settings: the account's organizations with their people
     /// (the Spaces API), and the account app's address for this environment.
     var teamsSettingsInput: AppTeamsInput {
-        AppTeamsInput(accountAppUrl: appAccountAppUrl(), state: identity == nil ? .signedOut : teamsState)
+        AppTeamsInput(accountAppUrl: appAccountAppUrl(), state: identity == nil ? .signedOut : teamsState,
+                      currentTeamId: settings.currentTeamId)
     }
 
     /// Reads the account's Teams (Settings, Teams). A failure says so in the
@@ -1434,6 +1435,10 @@ public final class AppModel {
     /// A choice row changed.
     public func choose(row: String, option: String) async {
         switch row {
+        case "team-current":
+            // Settings, Teams: the team to work in (saved; the option is its id).
+            settings.currentTeamId = option
+            saveSettings()
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()

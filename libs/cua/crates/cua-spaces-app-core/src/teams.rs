@@ -9,7 +9,11 @@
 //! live in the account app (`app.cua.ai`), one link away. The data is read
 //! by the host (`app_teams`); this module only words it.
 
-use crate::settings::{SettingsRow, SettingsRowKind::Text, row};
+use crate::settings::{
+    SettingsOption, SettingsRow,
+    SettingsRowKind::{Choice, Text},
+    row,
+};
 use serde::{Deserialize, Serialize};
 
 /// The production account app: billing, plans, team administration.
@@ -89,6 +93,21 @@ pub struct TeamsInput {
     /// `https://app.staging.cua.ai` under `CUA_ENV=staging`).
     pub account_app_url: String,
     pub state: TeamsState,
+    /// The saved current team (`AppSettings::current_team_id`).
+    #[serde(default)]
+    pub current_team_id: Option<String>,
+}
+
+/// The settings row of the team picker; its options are team ids.
+pub const CURRENT_TEAM_ROW: &str = "team-current";
+
+/// The team the account works in: the saved one while the account is still
+/// in it, else its first owned team, else its first team.
+pub fn current<'a>(teams: &'a [TeamInput], saved: Option<&str>) -> Option<&'a TeamInput> {
+    saved
+        .and_then(|id| teams.iter().find(|t| t.id == id))
+        .or_else(|| teams.iter().find(|t| t.role == "owner"))
+        .or_else(|| teams.first())
 }
 
 impl TeamInput {
@@ -165,7 +184,21 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
             out.push(r);
         }
         TeamsState::Ready { teams } => {
-            for t in teams {
+            let cur = current(teams, input.current_team_id.as_deref());
+            if teams.len() > 1 {
+                // Several teams: pick the one to work in.
+                let mut pick = row(CURRENT_TEAM_ROW, Choice, "Current team");
+                pick.options = teams
+                    .iter()
+                    .map(|t| SettingsOption {
+                        id: t.id.clone(),
+                        label: t.display_name().to_string(),
+                        active: cur.is_some_and(|c| c.id == t.id),
+                    })
+                    .collect();
+                out.push(pick);
+            }
+            for t in teams.iter().filter(|t| teams.len() == 1 || cur.is_some_and(|c| c.id == t.id)) {
                 let seats = match t.seats {
                     0 => String::new(),
                     1 => " \u{b7} 1 seat".into(),
@@ -233,6 +266,7 @@ mod tests {
         TeamsInput {
             account_app_url: "https://app.cua.ai/".into(),
             state: TeamsState::Ready { teams },
+            current_team_id: None,
         }
     }
 
@@ -296,6 +330,7 @@ mod tests {
             rows(&TeamsInput {
                 account_app_url: String::new(),
                 state: s,
+                current_team_id: None,
             })[0]
                 .value
                 .clone()
@@ -323,5 +358,62 @@ mod tests {
                 "{all}"
             );
         }
+    }
+
+    fn named(id: &str, role: &str) -> TeamInput {
+        TeamInput {
+            id: id.into(),
+            alias: id.into(),
+            name: String::new(),
+            role: role.into(),
+            plan: "free".into(),
+            seats: 0,
+            members: vec![],
+            invites: vec![],
+        }
+    }
+
+    #[test]
+    fn the_current_team_is_the_saved_one_else_the_first_owned_else_the_first() {
+        let teams = vec![named("a", "member"), named("b", "owner"), named("c", "owner")];
+        assert_eq!(current(&teams, Some("c")).unwrap().id, "c");
+        assert_eq!(current(&teams, None).unwrap().id, "b");
+        // A saved team the account left falls back.
+        assert_eq!(current(&teams, Some("gone")).unwrap().id, "b");
+        let members = vec![named("a", "member"), named("z", "admin")];
+        assert_eq!(current(&members, None).unwrap().id, "a");
+        assert!(current(&[], Some("a")).is_none());
+    }
+
+    #[test]
+    fn two_teams_show_a_picker_and_the_chosen_teams_people() {
+        let mut a = team("Acme", "acme");
+        a.id = "a".into();
+        let mut b = team("Beta", "beta");
+        b.id = "b".into();
+        b.role = "member".into();
+        b.members.truncate(1);
+        b.invites.clear();
+        let mut i = input(vec![a, b]);
+        let r = rows(&i);
+        let pick = r.iter().find(|r| r.id == CURRENT_TEAM_ROW).unwrap();
+        assert_eq!(pick.kind, Choice);
+        let opts: Vec<(&str, bool)> = pick.options.iter().map(|o| (o.id.as_str(), o.active)).collect();
+        // Default: the first owned team.
+        assert_eq!(opts, [("a", true), ("b", false)]);
+        assert!(r.iter().any(|r| r.id == "team:a"));
+        assert!(!r.iter().any(|r| r.id == "team:b"));
+        i.current_team_id = Some("b".into());
+        let r = rows(&i);
+        let pick = r.iter().find(|r| r.id == CURRENT_TEAM_ROW).unwrap();
+        assert!(pick.options[1].active && !pick.options[0].active);
+        assert!(r.iter().any(|r| r.id == "team:b"));
+        assert!(!r.iter().any(|r| r.id == "team:a"));
+    }
+
+    #[test]
+    fn one_team_has_no_picker() {
+        let r = rows(&input(vec![team("Acme", "acme")]));
+        assert!(!r.iter().any(|r| r.id == CURRENT_TEAM_ROW));
     }
 }

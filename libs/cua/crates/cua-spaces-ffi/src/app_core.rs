@@ -1914,6 +1914,62 @@ fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
     })
 }
 
+/// The account's Teams (the organizations of `GET /v1/me` on the Spaces
+/// API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
+/// with its members and pending invites, read with `account_token`.
+/// Both Spaces apps read Teams here; Settings words them
+/// (`app_settings_page`'s `teams`).
+#[uniffi::export]
+pub async fn app_teams(account_token: String) -> Result<AppTeamsInput> {
+    cua_sdk::support::run(async move {
+        let snapshot = cua_host::spaces_api::SpacesApiClient::current()?
+            .teams(&account_token)
+            .await?;
+        Ok(teams_input(snapshot, cua_home::env::account_app_url()))
+    })
+    .await
+}
+
+fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) -> AppTeamsInput {
+    core::teams::TeamsInput {
+        account_app_url,
+        state: core::teams::TeamsState::Ready {
+            teams: s
+                .teams
+                .into_iter()
+                .map(|t| core::teams::TeamInput {
+                    id: t.org.id,
+                    alias: t.org.alias,
+                    name: t.org.name,
+                    role: t.org.role,
+                    plan: t.org.plan,
+                    seats: t.org.seats,
+                    members: t
+                        .members
+                        .into_iter()
+                        .map(|m| core::teams::TeamPersonInput {
+                            email: m.email,
+                            role: m.role,
+                        })
+                        .collect(),
+                    invites: t.invites.into_iter().map(|i| i.email).collect(),
+                })
+                .collect(),
+        },
+        // The apps fill the saved team in from their settings.
+        current_team_id: None,
+    }
+}
+
+/// The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
+/// `https://app.cua.ai`, or `https://app.staging.cua.ai` under
+/// `CUA_ENV=staging`): billing, plans and team administration, which the
+/// apps open in the browser.
+#[uniffi::export]
+pub fn app_account_app_url() -> String {
+    cua_home::env::account_app_url()
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]
@@ -2792,6 +2848,45 @@ mod keyvault_home_tests {
             home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
             PathBuf::from("/srv/cua")
         );
+    }
+}
+
+#[cfg(test)]
+mod teams_tests {
+    use super::*;
+    use cua_host::spaces_api::{ApiInvite, ApiMember, ApiOrg, TeamDetail, TeamsSnapshot};
+
+    #[test]
+    fn a_snapshot_becomes_the_cores_teams_input() {
+        let snapshot = TeamsSnapshot {
+            email: "ada@example.com".into(),
+            plan: "pro".into(),
+            teams: vec![TeamDetail {
+                org: ApiOrg {
+                    id: "o1".into(),
+                    alias: "acme".into(),
+                    name: "".into(),
+                    role: "admin".into(),
+                    plan: "teams".into(),
+                    status: "active".into(),
+                    seats: 3,
+                },
+                members: vec![ApiMember {
+                    sub: "u1".into(),
+                    email: "ada@example.com".into(),
+                    role: "admin".into(),
+                }],
+                invites: vec![ApiInvite {
+                    id: "i1".into(),
+                    email: "cy@example.com".into(),
+                }],
+            }],
+        };
+        let input = teams_input(snapshot, "https://app.cua.ai".into());
+        let rows = core::teams::rows(&input);
+        assert_eq!(rows[0].label, "acme");
+        assert_eq!(rows[2].label, "cy@example.com");
+        assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
     }
 }
 

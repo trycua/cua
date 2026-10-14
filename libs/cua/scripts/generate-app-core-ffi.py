@@ -68,6 +68,7 @@ TYPES = [
     ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
     ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
+    ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
     ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "RelayUsageView"]),
 ]
 

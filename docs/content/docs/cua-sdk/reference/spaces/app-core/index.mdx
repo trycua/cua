@@ -43,19 +43,45 @@ pub fn cua_spaces_register()
 </Tab>
 </Tabs>
 
+## `app_account_app_url`
+
+The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
+`https://app.cua.ai`, or `https://app.staging.cua.ai` under
+`CUA_ENV=staging`): billing, plans and team administration, which the
+apps open in the browser.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appAccountAppUrl() -> String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_account_app_url() -> String
+```
+
+</Tab>
+</Tabs>
+
+**Returns** `String`
+
 ## All items
 
-630 items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.
+620 items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.
 
 **[About, updates and launch](/cua-sdk/reference/spaces/app-core/about)**: `app_about_after_launch`, `app_about_allowed_channels`, `app_about_input_from_json`, `app_about_refresh_notice`, `app_about_restart_daemon`, `app_about_view`, `app_daemon_check_from_json`, `app_launch_input_from_json`, `app_refresh_report_from_json`, `AppAboutInput`, `AppAboutLink`, `AppAboutLinkId`, `AppAboutUpdates`, `AppAboutView`, `AppCliInstaller`, `AppCliInstallPlan`, `AppCliInstallRequest`, `AppDaemonCheck`, `AppInstallMethod`, `AppLaunchInput`, `AppLaunchPlan`, `AppRefreshReport`, `AppUpdateChannel`
+
+**Spaces app core**: [`app_account_app_url`](#app_account_app_url), [`cua_spaces_register`](#cua_spaces_register)
 
 **[Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys)**: `app_agent_key_form`, `app_agent_key_form_input_from_json`, `app_agent_key_name_problem`, `app_agent_key_remove_confirm`, `app_agent_keys_input_from_json`, `app_agent_keys_view`, `app_agent_settings_rows`, `app_agent_setup_outcome`, `app_agent_setup_outcomes_from_json`, `app_agent_setup_status`, `app_agent_setup_statuses_from_json`, `app_agent_setup_summary`, `AppAgentKeyConfirm`, `AppAgentKeyFormInput`, `AppAgentKeyFormView`, `AppAgentKeyInput`, `AppAgentKeyRow`, `AppAgentKeysInput`, `AppAgentKeysView`, `AppAgentSettingsRow`, `AppAgentSetupOutcomeInput`, `AppAgentSetupStatus`, `AppAgentSetupSummary`
 
 **[Spaces](/cua-sdk/reference/spaces/app-core/spaces)**: `app_agent_name`, `app_ambient_dots`, `app_group_windows_by_app`, `app_hosted_rows`, `app_roster_initial`, `app_roster_reduce`, `app_rows_to_spaces`, `app_sidebar`, `app_space_accepts_drop`, `app_space_detail`, `app_space_detail_for`, `app_space_detail_with`, `app_space_rows_from_json`, `app_spaces_from_json`, `app_status_line`, `app_this_machine_space`, `app_without_this_relay_machine`, `AppAgentStatus`, `AppAmbientDots`, `AppFactWarning`, `AppHostSummaryInput`, `AppNewSpaceOn`, `AppNotice`, `AppNoticeKind`, `AppOpenApp`, `AppOpenWindow`, `AppRemoteWindow`, `AppRemoteWindowGroup`, `AppRosterAction`, `AppRosterState`, `AppSidebarRow`, `AppSidebarSection`, `AppSidebarView`, `AppSpace`, `AppSpaceAgentRun`, `AppSpaceDetail`, `AppSpaceKind`, `AppSpaceOs`, `AppSpaceProgress`, `AppSpaceProvider`, `AppSpaceRow`, `AppSpaceSdkRef`, `AppSpaceStatus`, `AppThumbnailScene`, `AppWindowMode`
 
 **[Devices](/cua-sdk/reference/spaces/app-core/devices)**: `app_approve_open`, `app_approve_reduce`, `app_approve_sheet_action_from_json`, `app_approve_view`, `app_confirm_presence`, `app_devices_clean_name`, `app_devices_input`, `app_devices_input_from_json`, `app_devices_view`, `app_enroll_action_from_json`, `app_enroll_initial`, `app_enroll_reduce`, `app_enroll_state_from_json`, `app_enroll_view`, `app_machine_access_notice`, `AppActivityRow`, `AppApprovalPrompt`, `AppApproveRequest`, `AppApproveSheetAction`, `AppApproveSheetState`, `AppApproveSheetView`, `AppAuditInput`, `AppBannerTone`, `AppDeviceAction`, `AppDeviceBanner`, `AppDeviceConfirm`, `AppDeviceInput`, `AppDeviceRow`, `AppDevicesInput`, `AppDevicesLabels`, `AppDevicesView`, `AppEnrollAction`, `AppEnrollmentKind`, `AppEnrollMethod`, `AppEnrollOption`, `AppEnrollPhase`, `AppEnrollState`, `AppEnrollView`, `AppMachineAccessNotice`, `AppMachineInput`, `AppThisDevice`, `AppUnconfirmedMachine`
-
-**[Cua Cloud billing](/cua-sdk/reference/spaces/app-core/billing)**: `app_billing_status`, `AppBillingCard`, `AppBillingCredit`, `AppBillingStatus`, `AppCreditNotice`
 
 **[Teleport picker](/cua-sdk/reference/spaces/app-core/teleport)**: `app_catalog_entries_from_json`, `app_catalog_entry`, `app_picker_can_plan`, `app_picker_consent`, `app_picker_initial`, `app_picker_plan_sensitive`, `app_picker_primary`, `app_picker_progress`, `app_picker_reduce`, `app_picker_review`, `app_picker_sections`, `app_picker_sensitive_options`, `app_picker_status`, `AppCatalogEntry`, `AppEntrySection`, `AppPickerAction`, `AppPickerEvent`, `AppPickerPrimary`, `AppPickerState`, `AppPickerStep`, `AppPickerTab`
 
@@ -81,8 +107,6 @@ pub fn cua_spaces_register()
 
 **[Teleport picker grid](/cua-sdk/reference/spaces/app-core/teleport-grid)**: `app_picker_app_grid`, `app_picker_grid_primary`, `app_picker_grid_step`, `app_picker_grid_tabs`, `app_picker_remote_grid`, `app_picker_window_grid`, `AppPickerGrid`, `AppPickerGridPrimary`, `AppPickerGridTab`, `AppPickerGridTabItem`, `AppPickerTile`, `AppPickerTileIcon`, `AppPickerTileSection`, `AppPickerTileThumbnail`
 
-**[Relay usage](/cua-sdk/reference/spaces/app-core/relay)**: `app_relay_usage`, `app_relay_usage_view`, `AppRelayAllowanceNotice`, `AppRelayUsage`, `AppRelayUsageTeam`, `AppRelayUsageView`
-
 **[Teleport review](/cua-sdk/reference/spaces/app-core/teleport-review)**: `app_review_remember`, `app_review_remember_key`, `app_review_remembered`, `AppConsentItem`, `AppConsentKind`, `AppInstallCuaPrompt`, `AppPlanStepView`, `AppRememberedChoice`, `AppReviewChoice`, `AppReviewDomain`, `AppReviewToggle`, `AppReviewView`, `AppSendSource`, `AppVaultSource`
 
 **[Keyvault](/cua-sdk/reference/spaces/app-core/keyvault)**: `app_sensitive_group_sdk`, `AppSensitiveGroup`, `AppSensitiveOption`, `KeyvaultClient`, `KeyvaultOverview`, `kv_credential_form`, `kv_duration`, `kv_labels`, `kv_overview_from_json`, `kv_passphrase_check`, `kv_prune_dismissed`, `kv_recovery_key_text`, `kv_sharing_label`, `kv_signed_in_spaces`, `kv_space_access_key`, `kv_visible_sharing_label`, `KvAccessRequest`, `KvAuditEntry`, `KvCaller`, `KvCommand`, `KvCredentialForm`, `KvDelivery`, `KvDomainCount`, `KvFavicon`, `KvFormMode`, `KvGrant`, `KvInventory`, `KvItem`, `KvItemPolicy`, `KvLabels`, `KvMethod`, `KvOutcome`, `KvPassphraseCheck`, `KvPending`, `KvRule`, `KvRuleCaller`, `KvSelector`, `KvSigning`, `KvStatus`, `KvStrength`, `KvVerification`
@@ -100,7 +124,5 @@ pub fn cua_spaces_register()
 **[New Space wizard](/cua-sdk/reference/spaces/app-core/new-space)**: `app_wizard_action_from_json`, `app_wizard_create_args`, `app_wizard_create_failed_text`, `app_wizard_creating_text`, `app_wizard_env_from_json`, `app_wizard_image_suggestions`, `app_wizard_initial`, `app_wizard_reduce`, `app_wizard_validate_image_ref`, `app_wizard_view`, `AppAddressForm`, `AppAddressSubmit`, `AppAddressView`, `AppCloudEngine`, `AppCloudPricing`, `AppCreatePlan`, `AppCreateSpaceArgs`, `AppGpuChoice`, `AppGpuRow`, `AppKindOption`, `AppLocalEngine`, `AppLocalStorage`, `AppLocation`, `AppMenuOption`, `AppRuntime`, `AppRuntimeSwitch`, `AppStepDot`, `AppStepState`, `AppStepView`, `AppStorageVolume`, `AppTile`, `AppWizardAction`, `AppWizardEnv`, `AppWizardFact`, `AppWizardField`, `AppWizardLabels`, `AppWizardMode`, `AppWizardState`, `AppWizardView`
 
 **[Image catalog](/cua-sdk/reference/spaces/app-core/images)**: `AppImageDistro`, `AppImageFieldView`, `AppImageGroup`, `AppImageSizes`, `AppImageSuggestion`, `AppImageTier`, `AppPlatformSize`, `AppSandboxImage`, `AppSuggestionGroup`
-
-**Spaces app core**: [`cua_spaces_register`](#cua_spaces_register)
 
 **[Keyvault screens](/cua-sdk/reference/spaces/app-core/keyvault-screens)**: `kv_approval_approve_command`, `kv_approval_deny_command`, `kv_approval_open`, `kv_approval_reduce`, `kv_approval_view`, `kv_delete_command`, `kv_delete_confirm`, `kv_list`, `kv_live_copy_spaces`, `kv_lock_command`, `kv_page`, `kv_sidebar`, `kv_unlock_command`, `kv_unlock_prompt`, `kv_unlock_prompt_always`, `kv_vault_prune`, `kv_vault_reduce`, `kv_vault_source`, `kv_vault_view`, `KvAccessKind`, `KvAccessRow`, `KvApprovalAction`, `KvApprovalRow`, `KvApprovalState`, `KvApprovalView`, `KvAppRow`, `KvCategory`, `KvCategoryRow`, `KvDecision`, `KvDecisionTone`, `KvDeleteConfirm`, `KvKind`, `KvListView`, `KvLock`, `KvPage`, `KvPendingRow`, `KvRecentRow`, `KvSelection`, `KvSidebar`, `KvSigningBadge`, `KvTone`, `KvTri`, `KvUnlockPrompt`, `KvVaultAction`, `KvVaultApp`, `KvVaultFiles`, `KvVaultRow`, `KvVaultSelection`, `KvVaultSite`, `KvVaultSource`, `KvVaultState`, `KvVaultView`

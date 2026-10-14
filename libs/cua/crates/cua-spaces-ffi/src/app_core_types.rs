@@ -5765,12 +5765,11 @@ pub struct AppOnboardingCopy {
     pub permissions_title: String,
     /// The permission rows' button.
     pub open_settings: String,
-    /// The Sign in page's Teams line ("Teams · coming soon").
+    /// The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
     pub teams: String,
-    /// Its link ("Join the waitlist").
+    /// Its link ("Open the account app").
     pub teams_link: String,
-    /// The link's URL: the website's Teams waitlist (the app collects
-    /// nothing).
+    /// The link's URL: the account app, which administers teams.
     pub teams_url: String,
 }
 
@@ -6426,6 +6425,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 /// A pressed key combination.
@@ -6505,6 +6508,10 @@ pub struct AppSettingsInput {
     pub agents_busy: bool,
     /// Agents with an action running.
     pub agents_pending: Vec<String>,
+    /// Teams from the Spaces API (the host reads them), with the account
+    /// app's URL. None: the Teams section shows the production account
+    /// app's links only.
+    pub teams: Option<AppTeamsInput>,
     /// The account's Cua Cloud billing, once read (signed in).
     pub billing: Option<AppBillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
@@ -9269,6 +9276,63 @@ pub struct AppPaletteEntry {
     pub hint: Option<String>,
     /// Extra words it answers to ("create add").
     pub keywords: Option<String>,
+}
+
+/// A person on a team.
+pub type AppTeamPersonInput = core::teams::TeamPersonInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamPersonInput {
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+}
+
+/// One team, as the Spaces API describes it.
+pub type AppTeamInput = core::teams::TeamInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamInput {
+    pub id: String,
+    /// The org's slug.
+    pub alias: String,
+    /// Its display name (empty: use the alias).
+    pub name: String,
+    /// The account's role in it.
+    pub role: String,
+    /// `free`, `teams`, ...
+    pub plan: String,
+    /// Paid seats.
+    pub seats: i64,
+    pub members: Vec<AppTeamPersonInput>,
+    /// Pending invites' emails (only owners and admins can read them).
+    pub invites: Vec<String>,
+}
+
+/// `teams::TeamsState`.
+pub type AppTeamsState = core::teams::TeamsState;
+#[uniffi::remote(Enum)]
+pub enum AppTeamsState {
+    /// Not signed in.
+    SignedOut,
+    /// Signed in, but this host does not read teams: only the links.
+    Unread,
+    /// Being read.
+    Loading,
+    /// The read failed.
+    Failed { message: String },
+    /// The account's teams (maybe none).
+    Ready { teams: Vec<AppTeamInput> },
+}
+
+/// Settings' Teams input.
+pub type AppTeamsInput = core::teams::TeamsInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamsInput {
+    /// The account app for this environment (`https://app.cua.ai`, or
+    /// `https://app.staging.cua.ai` under `CUA_ENV=staging`).
+    pub account_app_url: String,
+    pub state: AppTeamsState,
+    /// The saved current team (`AppSettings::current_team_id`).
+    pub current_team_id: Option<String>,
 }
 
 /// The team whose allowance is pooled.

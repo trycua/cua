@@ -80,6 +80,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -100,6 +104,7 @@ impl Default for AppSettings {
             keyvault_site_icons: true,
             teleport_choices: vec![],
             auto_connect: true,
+            current_team_id: None,
         }
     }
 }
@@ -230,18 +235,18 @@ pub fn format_hotkey(c: &KeyCombo) -> Option<String> {
 }
 
 /// What telemetry's docs say is collected.
-/// The Teams waitlist on the website (Settings' Teams row, the Sign in
-/// page's line). The app collects nothing itself.
-pub const TEAMS_WAITLIST_URL: &str = "https://cua.ai/teams";
+/// Where the Sign in page's Teams line links: the account app, which
+/// administers teams (Settings shows the real Teams section, [`crate::teams`]).
+pub const TEAMS_URL: &str = "https://app.cua.ai/welcome";
 
-/// The Teams row's label.
+/// The Sign in page's Teams line's label.
 pub const TEAMS_LABEL: &str = "Teams";
 
 /// Its value.
-pub const TEAMS_VALUE: &str = "Coming soon";
+pub const TEAMS_VALUE: &str = "manage them at app.cua.ai";
 
-/// Its button.
-pub const TEAMS_BUTTON: &str = "Join the waitlist";
+/// Its link.
+pub const TEAMS_BUTTON: &str = "Open the account app";
 
 pub const TELEMETRY_DOCS_URL: &str = "https://cua.ai/docs/cua-sdk/concepts/telemetry";
 
@@ -312,6 +317,11 @@ pub struct SettingsInput {
     pub agents_busy: bool,
     /// Agents with an action running.
     pub agents_pending: Vec<String>,
+    /// Teams from the Spaces API (the host reads them), with the account
+    /// app's URL. None: the Teams section shows the production account
+    /// app's links only.
+    #[serde(default)]
+    pub teams: Option<crate::teams::TeamsInput>,
     /// The account's Cua Cloud billing, once read (signed in).
     pub billing: Option<crate::billing::BillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
@@ -359,6 +369,7 @@ impl Default for SettingsInput {
             agents: None,
             agents_busy: false,
             agents_pending: vec![],
+            teams: None,
             billing: None,
             login_item: None,
             experiments: Experiments::default(),
@@ -666,14 +677,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             account.push(row("sign-in-error", Error, message));
         }
     }
-    // Teams: a waitlist on the website (the app collects nothing). Row id
-    // `teams`; the button opens `link_url`.
-    let mut teams = row("teams", Text, TEAMS_LABEL);
-    teams.value = Some(TEAMS_VALUE.into());
-    teams.button = Some(TEAMS_BUTTON.into());
-    teams.link_url = Some(TEAMS_WAITLIST_URL.into());
-    account.push(teams);
-
     let mut notch = row("notch", Choice, "Spaces tab in the notch");
     notch.options = vec![
         opt("show", "Show", !input.menu_bar),
@@ -722,6 +725,26 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             button_enabled: false,
             button_help: None,
             rows: account,
+        },
+        SettingsSection {
+            id: "teams".into(),
+            title: crate::teams::TEAMS_TITLE.into(),
+            button: None,
+            button_enabled: false,
+            button_help: None,
+            // Each team with its members and pending invites, then the
+            // account app's links (invites, roles, billing).
+            rows: crate::teams::rows(&input.teams.clone().unwrap_or_else(|| {
+                crate::teams::TeamsInput {
+                    account_app_url: crate::teams::ACCOUNT_APP_URL.into(),
+                    state: if input.identity.is_some() {
+                        crate::teams::TeamsState::Unread
+                    } else {
+                        crate::teams::TeamsState::SignedOut
+                    },
+                    current_team_id: None,
+                }
+            })),
         },
         SettingsSection {
             id: "general".into(),
@@ -1009,7 +1032,7 @@ mod tests {
     fn the_page_lists_account_general_privacy_agents() {
         let p = page(&SettingsInput::default());
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "general", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "agents"]);
         let p = page(&SettingsInput {
             identity: Some("ada@example.com".into()),
             can_sign_out: true,
@@ -1017,7 +1040,7 @@ mod tests {
             ..Default::default()
         });
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "general", "privacy", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "privacy", "agents"]);
         assert_eq!(p.sections[0].rows[0].button.as_deref(), Some("Sign out"));
         let sign_in: SignInPhase =
             serde_json::from_str(r#"{"kind":"waiting","userCode":"AB-CD"}"#).unwrap();
@@ -1042,9 +1065,11 @@ mod tests {
         });
         assert_eq!(
             ids(&p),
-            ["account", "general", "privacy", "keyvault", "agents"]
+            [
+                "account", "teams", "general", "privacy", "keyvault", "agents"
+            ]
         );
-        let kv = &p.sections[3];
+        let kv = &p.sections[4];
         assert_eq!(kv.title, "Keyvault");
         let toggle = &kv.rows[0];
         assert_eq!(
@@ -1200,14 +1225,14 @@ mod tests {
         let ids =
             |p: &SettingsPage| -> Vec<String> { p.sections.iter().map(|s| s.id.clone()).collect() };
         let note = |p: &SettingsPage| {
-            p.sections[1]
+            p.sections[2]
                 .rows
                 .iter()
                 .find(|r| r.id == "launch-at-login-note")
                 .map(|r| r.label.clone())
         };
         let off = with_storage(&page(&input), &storage, &input.experiments);
-        assert_eq!(ids(&off), ["account", "general", "agents"]);
+        assert_eq!(ids(&off), ["account", "teams", "general", "agents"]);
         assert_eq!(note(&off).as_deref(), Some(NOTE_WITHOUT_VOLUME));
         let on = SettingsInput {
             experiments: Experiments {
@@ -1217,7 +1242,10 @@ mod tests {
             ..input
         };
         let p = with_storage(&page(&on), &storage, &on.experiments);
-        assert_eq!(ids(&p), ["account", "general", "storage", "agents"]);
+        assert_eq!(
+            ids(&p),
+            ["account", "teams", "general", "storage", "agents"]
+        );
         assert_eq!(note(&p).as_deref(), Some(NOTE));
         // A settings file from before experiments: all off.
         let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();

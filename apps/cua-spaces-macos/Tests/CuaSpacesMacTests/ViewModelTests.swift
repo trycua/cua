@@ -409,7 +409,7 @@ struct ViewModelTests {
         })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
-        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(3) == ["account", "general", "storage"])
+        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(4) == ["account", "teams", "general", "storage"])
         #expect(appSettingsLoad(path: model.settingsPath).experiments.cuaVolume, "saved")
         #expect(model.onboarding.state.experiments.cuaVolume)
         let toggled = telemetry.recorded.compactMap { s -> String? in
@@ -472,7 +472,7 @@ struct ViewModelTests {
         let model = makeModel(account: account, agents: agents)
         await model.loadSettings()
         let page = model.settingsPage
-        #expect(page.sections.map(\.id) == ["account", "general", "runtimes", "privacy", "agents"])
+        #expect(page.sections.map(\.id) == ["account", "teams", "general", "runtimes", "privacy", "agents"])
         // Settings, Runtimes: macOS VMs picks runtime.lume.
         let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
         #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
@@ -1308,29 +1308,41 @@ struct ViewModelTests {
         #expect(notch.view.phase == .closed)
     }
 
-    /// Settings hides Cua Cloud billing and offers the Teams waitlist (the
-    /// website); a cloud create refused for want of credit shows one line
-    /// and no Add credit.
-    @Test func billingIsHiddenAndTeamsOpensTheWaitlist() async throws {
+    /// Settings hides Cua Cloud billing and shows the real Teams section
+    /// (the Spaces API: name with alias fallback, members, pending invites
+    /// marked "(Invited)", the account app for invites and billing); a cloud
+    /// create refused for want of credit shows one line and no Add credit.
+    @Test func billingIsHiddenAndTeamsComeFromTheSpacesAPI() async throws {
         var opened: [URL] = []
         BillingBrowser.open = { opened.append($0) }
         let model = makeModel(account: FixtureAccount(identity: "you@example.com"),
                               billing: FixtureBilling(balanceCents: 742))
+        model.teamsReader = FixtureTeams([
+            AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
+                         members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
+                                   AppTeamPersonInput(email: "grace@example.com", role: "member")],
+                         invites: ["linus@example.com"]),
+        ])
         await model.loadSettings()
         let rows = model.settingsPage.sections.flatMap(\.rows)
         #expect(!rows.contains { $0.id == "billing" })
         #expect(!rows.contains { $0.id == "default-location" })
-        let teams = rows.first { $0.id == "teams" }
-        #expect(teams?.value == "Coming soon" && teams?.button == "Join the waitlist")
-        await model.press(row: "teams")
-        #expect(opened.map(\.absoluteString) == ["https://cua.ai/teams"])
+        #expect(!rows.contains { $0.value == "Coming soon" || $0.button == "Join the waitlist" })
+        let team = model.settingsPage.sections.first { $0.id == "teams" }!.rows
+        #expect(team[0].label == "acme", "the alias stands in for a missing name")
+        #expect(team[0].value == "Owner \u{b7} Teams plan \u{b7} 3 seats")
+        #expect(team.first { $0.label == "linus@example.com" }?.value == "(Invited)")
+        #expect(team.first { $0.label == "grace@example.com" }?.value == "Member")
+        await model.press(row: "teams-manage")
+        await model.press(row: "teams-billing")
+        #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
         var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: []),
                                        action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
                                                       now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
                                                       host: nil, hostName: nil))
         creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing",
+            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
             errorVariant: ""))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")

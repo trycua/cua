@@ -4187,8 +4187,8 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 #[cfg(test)]
 mod key_name_alias_tests {
     use super::{
-        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode, type_text_in_spare_batches, type_text_with_preflight,
-        GetKeyboardMappingReply,
+        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode,
+        type_text_in_spare_batches, type_text_with_preflight, GetKeyboardMappingReply,
     };
 
     #[test]

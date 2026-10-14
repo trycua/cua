@@ -404,7 +404,7 @@ fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
     Ok(())
 }
 
-
+/// Text with more distinct characters missing from the keymap than there are
 /// spare keycodes is typed in batches that reuse the spare keycodes.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]

@@ -52,6 +52,14 @@ async def test_real_docker_network_cleanup_receipt_and_offline_verification(tmp_
         assert second["resources"]["network"]["absent"] is True
         assert second["verified"] is True
         assert verify_execution(tmp_path, 0, task_id)["checks"]["cleanup"] is True
+        # A genuine daemon observation must not validate another run identity.
+        second["resources"]["network"]["name"] = "cua-task-different-execution"
+        (tmp_path / "cleanup-result.json").write_text(
+            json.dumps(second) + "\n", encoding="utf-8"
+        )
+        forged = verify_execution(tmp_path, 0, task_id)
+        assert forged["checks"]["cleanup"] is False
+        assert forged["run_accepted"] is False
     finally:
         # Never leave test-created Docker resources on the runner.
         proc = await asyncio.create_subprocess_exec(

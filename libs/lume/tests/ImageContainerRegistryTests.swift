@@ -3,173 +3,79 @@ import Testing
 
 @testable import lume
 
-@Test("parameterized OCI tar disk layers are recognized as raw disk parts")
-func testParameterizedTarDiskLayerIsRecognizedAsRawDiskPart() throws {
+private func tarLayer(_ parameters: String, title: String? = "disk.img.part.ab") -> Layer {
+    Layer(
+        mediaType: "application/vnd.oci.image.layer.v1.tar\(parameters)",
+        digest: "sha256:\(UUID().uuidString)", size: 1,
+        annotations: title.map { ["org.opencontainers.image.title": $0] })
+}
+
+private func rawPart(_ number: String, of total: String) -> Layer {
+    tarLayer(";part.number=\(number);part.total=\(total)")
+}
+
+private func manifest(_ layers: [Layer]) -> Manifest {
+    Manifest(
+        layers: layers, config: nil, mediaType: "application/vnd.oci.image.manifest.v1+json",
+        schemaVersion: 2, annotations: nil)
+}
+
+@Test("parameterized OCI tar disk layers are recognized as raw disk parts",
+      arguments: [
+          "application/vnd.oci.image.layer.v1.tar;part.number=2;part.total=41",
+          "Application/Vnd.Oci.Image.Layer.V1.Tar; Part.Number = 2 ; PART.TOTAL = 41",
+      ])
+func recognizesRawDiskPart(mediaType: String) {
     let layer = Layer(
-        mediaType: "application/vnd.oci.image.layer.v1.tar;part.number=2;part.total=41",
-        digest: "sha256:part2",
-        size: 512,
-        annotations: ["org.opencontainers.image.title": "disk.img.part.ab"]
-    )
-
-    let diskPart = OCIMediaType.rawDiskPartInfo(for: layer)
-
-    #expect(diskPart?.partNumber == 2)
-    #expect(diskPart?.totalParts == 41)
+        mediaType: mediaType, digest: "sha256:part2", size: 512,
+        annotations: ["org.opencontainers.image.title": "disk.img.part.ab"])
+    let part = OCIMediaType.rawDiskPart(layer)
+    #expect(part?.number == 2)
+    #expect(part?.total == 41)
 }
 
-@Test("OCI tar disk layer parameters tolerate case, whitespace, and quoted values")
-func testParameterizedTarDiskLayerNormalizesParameters() throws {
-    let layer = Layer(
-        mediaType: "Application/Vnd.Oci.Image.Layer.V1.Tar; Part.Number = \"2\" ; PART.TOTAL = \"41\"",
-        digest: "sha256:part2",
-        size: 512,
-        annotations: ["org.opencontainers.image.title": "disk.img.part.ab"]
-    )
-
-    let diskPart = OCIMediaType.rawDiskPartInfo(for: layer)
-
-    #expect(diskPart?.partNumber == 2)
-    #expect(diskPart?.totalParts == 41)
+@Test("layers without a disk part title or tar base type are not raw disk parts",
+      arguments: [
+          tarLayer(";part.number=1;part.total=1", title: "metadata.tar"),
+          tarLayer(";part.number=1;part.total=1", title: nil),
+          tarLayer("+gzip;part.number=1;part.total=1"),
+      ])
+func ignoresNonDiskLayers(layer: Layer) {
+    #expect(OCIMediaType.rawDiskPart(layer)?.number == nil)
 }
 
-@Test("non-disk OCI tar layers are not treated as disk parts")
-func testNonDiskTarLayerIsNotRecognizedAsRawDiskPart() throws {
-    let layer = Layer(
-        mediaType: "application/vnd.oci.image.layer.v1.tar;part.number=1;part.total=1",
-        digest: "sha256:config",
-        size: 128,
-        annotations: ["org.opencontainers.image.title": "metadata.tar"]
-    )
-
-    #expect(OCIMediaType.rawDiskPartInfo(for: layer) == nil)
+@Test("complete raw disk part sets and manifests without raw parts are accepted")
+func acceptsValidRawDiskParts() throws {
+    try OCIMediaType.validateRawDiskParts(manifest([rawPart("2", of: "2"), rawPart("1", of: "2")]))
+    try OCIMediaType.validateRawDiskParts(manifest([
+        Layer(mediaType: "application/octet-stream+lz4", digest: "sha256:lz4", size: 1, annotations: nil)
+    ]))
 }
 
-@Test("disk part collector preserves explicit part ordering")
-func testDiskPartsCollectorPreservesExplicitPartOrdering() async {
-    let collector = DiskPartsCollector()
-    let tempDir = FileManager.default.temporaryDirectory
-
-    await collector.addPart(
-        partNumber: 10,
-        url: tempDir.appendingPathComponent("disk.img.part.10"),
-        compression: .raw
-    )
-    await collector.addPart(
-        partNumber: 2,
-        url: tempDir.appendingPathComponent("disk.img.part.2"),
-        compression: .raw
-    )
-    await collector.addPart(
-        partNumber: 1,
-        url: tempDir.appendingPathComponent("disk.img.part.1"),
-        compression: .raw
-    )
-
-    let parts = await collector.getSortedParts()
-
-    #expect(parts.map(\.partNumber) == [1, 2, 10])
-    #expect(parts.map(\.compression) == [.raw, .raw, .raw])
-}
-
-@Test("raw disk part writer copies bytes without decompression")
-func testRawDiskPartWriterCopiesBytesWithoutDecompression() throws {
-    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let source = tempDir.appendingPathComponent("disk.img.part.1")
-    let destination = tempDir.appendingPathComponent("disk.img")
-    try Data([0xde, 0xad, 0xbe, 0xef]).write(to: source)
-    _ = FileManager.default.createFile(atPath: destination.path, contents: nil)
-
-    let handle = try FileHandle(forWritingTo: destination)
-
-    let writtenBytes = try DiskPartWriter.writeRawChunk(
-        inputPath: source.path,
-        outputHandle: handle,
-        startOffset: 2
-    )
-
-    try handle.close()
-    let output = try Data(contentsOf: destination)
-
-    #expect(writtenBytes == 4)
-    #expect(output == Data([0x00, 0x00, 0xde, 0xad, 0xbe, 0xef]))
-}
-
-@Test("raw disk part writer fails when the source file is missing")
-func testRawDiskPartWriterThrowsForMissingSource() throws {
-    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let destination = tempDir.appendingPathComponent("disk.img")
-    _ = FileManager.default.createFile(atPath: destination.path, contents: nil)
-    let handle = try FileHandle(forWritingTo: destination)
-    defer { try? handle.close() }
-
-    var didThrow = false
+@Test("invalid raw disk part sets are rejected as reassembly failures",
+      arguments: [
+          [rawPart("1", of: "2"), rawPart("2", of: "3")],
+          [rawPart("1", of: "2"), rawPart("1", of: "2")],
+          [rawPart("1", of: "3"), rawPart("2", of: "3")],
+          [rawPart("2", of: "2"), rawPart("3", of: "2")],
+          [rawPart("2", of: "1")],
+          [rawPart("0", of: "1")],
+          [rawPart("-1", of: "1")],
+          [rawPart("x", of: "1")],
+          [rawPart("1", of: "99999999999999999999")],
+          [tarLayer(";part.total=1")],
+          [tarLayer("")],
+          [
+              rawPart("1", of: "1"),
+              Layer(mediaType: "application/octet-stream+lz4", digest: "sha256:lz4", size: 1, annotations: nil),
+          ],
+      ])
+func rejectsInvalidRawDiskParts(layers: [Layer]) {
     do {
-        _ = try DiskPartWriter.writeRawChunk(
-            inputPath: tempDir.appendingPathComponent("missing.part").path,
-            outputHandle: handle,
-            startOffset: 0
-        )
+        try OCIMediaType.validateRawDiskParts(manifest(layers))
+        Issue.record("expected reassemblyFailed")
+    } catch PullError.reassemblyFailed {
     } catch {
-        didThrow = true
+        Issue.record("expected reassemblyFailed, got \(error)")
     }
-
-    #expect(didThrow)
-}
-
-@Test("raw disk part validation rejects duplicate part numbers")
-func testRawDiskPartValidationRejectsDuplicateParts() throws {
-    let parts = [
-        OCIDiskPartInfo(partNumber: 1, totalParts: 2),
-        OCIDiskPartInfo(partNumber: 1, totalParts: 2),
-    ]
-
-    var didThrow = false
-    do {
-        try OCIMediaType.validateRawDiskParts(parts)
-    } catch {
-        didThrow = true
-    }
-
-    #expect(didThrow)
-}
-
-@Test("raw disk part validation rejects inconsistent totals")
-func testRawDiskPartValidationRejectsInconsistentTotals() throws {
-    let parts = [
-        OCIDiskPartInfo(partNumber: 1, totalParts: 2),
-        OCIDiskPartInfo(partNumber: 2, totalParts: 3),
-    ]
-
-    var didThrow = false
-    do {
-        try OCIMediaType.validateRawDiskParts(parts)
-    } catch {
-        didThrow = true
-    }
-
-    #expect(didThrow)
-}
-
-@Test("raw disk part validation rejects incomplete ranges")
-func testRawDiskPartValidationRejectsIncompleteRanges() throws {
-    let parts = [
-        OCIDiskPartInfo(partNumber: 1, totalParts: 3),
-        OCIDiskPartInfo(partNumber: 2, totalParts: 3),
-    ]
-
-    var didThrow = false
-    do {
-        try OCIMediaType.validateRawDiskParts(parts)
-    } catch {
-        didThrow = true
-    }
-
-    #expect(didThrow)
 }

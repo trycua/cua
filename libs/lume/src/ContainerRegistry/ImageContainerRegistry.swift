@@ -91,7 +91,13 @@ func gunzipChunkAndWriteSparse(
         throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
     }
 
-    let readHandle = try FileHandle(forReadingFrom: decompressedPath)
+    return try writeFileSparse(decompressedPath, to: outputHandle, startOffsets: startOffsets)
+}
+
+func writeFileSparse(
+    _ url: URL, to outputHandle: FileHandle, startOffsets: [UInt64]
+) throws -> UInt64 {
+    let readHandle = try FileHandle(forReadingFrom: url)
     defer { try? readHandle.close() }
 
     let blockSize = sparseHoleGranularityBytes
@@ -285,98 +291,33 @@ enum OCIMediaType {
         return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
     }
 
-    static func rawDiskPartInfo(for layer: Layer) -> OCIDiskPartInfo? {
-        let mediaType = parse(layer.mediaType)
-        guard mediaType.base.lowercased() == standardTarLayer,
-            let partNumberText = mediaType.parameters["part.number"],
-            let partNumber = Int(partNumberText),
-            partNumber > 0,
-            let totalPartsText = mediaType.parameters["part.total"],
-            let totalParts = Int(totalPartsText),
-            totalParts > 0,
-            partNumber <= totalParts
-        else {
-            return nil
-        }
-
-        guard
+    static func rawDiskPart(_ layer: Layer) -> (number: Int, total: Int)? {
+        let fields = layer.mediaType.lowercased().filter { !$0.isWhitespace }.split(separator: ";")
+        guard fields.first.map(String.init) == standardTarLayer,
             layer.annotations?["org.opencontainers.image.title"]?.hasPrefix("disk.img.part.")
                 == true
         else {
             return nil
         }
-
-        return OCIDiskPartInfo(partNumber: partNumber, totalParts: totalParts)
+        var parameters: [Substring: Int] = [:]
+        for field in fields.dropFirst() {
+            let pair = field.split(separator: "=", maxSplits: 1)
+            parameters[pair[0]] = pair.count == 2 ? Int(pair[1]) : nil
+        }
+        return (parameters["part.number"] ?? 0, parameters["part.total"] ?? 0)
     }
 
-    static func isRawDiskPartLayer(_ layer: Layer) -> Bool {
-        let mediaType = parse(layer.mediaType)
-        return mediaType.base.lowercased() == standardTarLayer
-            && layer.annotations?["org.opencontainers.image.title"]?.hasPrefix(
-                "disk.img.part.") == true
-    }
-
-    static func validateRawDiskParts(_ parts: [OCIDiskPartInfo]) throws {
+    static func validateRawDiskParts(_ manifest: Manifest) throws {
+        let parts = manifest.layers.compactMap(rawDiskPart)
         guard !parts.isEmpty else { return }
-
-        let totals = Swift.Set(parts.map(\.totalParts))
-        guard totals.count == 1, let totalParts = totals.first else {
+        guard parts.map({ $0.number }).sorted() == Array(1...parts.count),
+            parts.allSatisfy({ $0.total == parts.count }),
+            !manifest.layers.contains(where: { $0.mediaType == "application/octet-stream+lz4" })
+        else {
             throw PullError.reassemblyFailed(
-                "raw OCI disk parts declare inconsistent part.total values")
-        }
-
-        let partNumbers = parts.map(\.partNumber)
-        guard Swift.Set(partNumbers).count == partNumbers.count else {
-            throw PullError.reassemblyFailed(
-                "raw OCI disk parts contain duplicate part.number values")
-        }
-
-        let expectedPartNumbers = Swift.Set(1...totalParts)
-        let actualPartNumbers = Swift.Set(partNumbers)
-        guard actualPartNumbers == expectedPartNumbers else {
-            if let missingPart = expectedPartNumbers.subtracting(actualPartNumbers).min() {
-                throw PullError.missingPart(missingPart)
-            }
-            throw PullError.reassemblyFailed(
-                "raw OCI disk parts contain a part.number outside the declared range")
+                "raw OCI disk parts must be numbered 1...part.total without LZ4 parts")
         }
     }
-
-    private static func parse(_ mediaType: String) -> OCIMediaTypeComponents {
-        let parts = mediaType
-            .split(separator: ";", omittingEmptySubsequences: true)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-
-        guard let base = parts.first else {
-            return OCIMediaTypeComponents(base: mediaType, parameters: [:])
-        }
-
-        var parameters: [String: String] = [:]
-        for parameter in parts.dropFirst() {
-            let pair = parameter.split(
-                separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            guard pair.count == 2 else { continue }
-            let key = String(pair[0])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            let value = String(pair[1])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            parameters[key] = value
-        }
-
-        return OCIMediaTypeComponents(base: base, parameters: parameters)
-    }
-}
-
-struct OCIMediaTypeComponents: Equatable {
-    let base: String
-    let parameters: [String: String]
-}
-
-struct OCIDiskPartInfo: Equatable {
-    let partNumber: Int
-    let totalParts: Int
 }
 
 /// Annotation keys for multi-layer chunked disk images.
@@ -422,17 +363,6 @@ struct DiskChunkDescriptor {
     let diskOffset: UInt64
 }
 
-enum DiskPartCompression: Equatable {
-    case lz4
-    case raw
-}
-
-struct DiskPartSource {
-    let partNumber: Int
-    let url: URL
-    let compression: DiskPartCompression
-}
-
 /// OCI config JSON structure for lume VM images.
 struct LumeOCIConfig: Codable {
     let mediatype: String?
@@ -475,69 +405,27 @@ struct ImageMetadata: Codable {
 
 // Actor to safely collect disk part information from concurrent tasks
 actor DiskPartsCollector {
-    private var diskParts: [DiskPartSource] = []
+    // Store tuples of (sequentialPartNum, url)
+    private var diskParts: [(Int, URL)] = []
     // Restore internal counter
     private var partCounter = 0
 
     // Adds a part and returns its assigned sequential number
-    func addPart(url: URL, compression: DiskPartCompression = .lz4) -> Int {
-        partCounter += 1  // Use counter logic
-        let partNum = partCounter
-        diskParts.append(DiskPartSource(partNumber: partNum, url: url, compression: compression))
+    func addPart(url: URL, number: Int? = nil) -> Int {
+        let partNum = number ?? partCounter + 1
+        partCounter = max(partCounter, partNum)
+        diskParts.append((partNum, url))  // Store sequential number
         return partNum  // Return assigned sequential number
     }
 
-    @discardableResult
-    func addPart(partNumber: Int, url: URL, compression: DiskPartCompression) -> Int {
-        partCounter = max(partCounter, partNumber)
-        diskParts.append(DiskPartSource(partNumber: partNumber, url: url, compression: compression))
-        return partNumber
-    }
-
-    func getSortedParts() -> [DiskPartSource] {
-        return diskParts.sorted { $0.partNumber < $1.partNumber }
+    // Sort by the sequential part number (index 0 of tuple)
+    func getSortedParts() -> [(Int, URL)] {
+        return diskParts.sorted { $0.0 < $1.0 }
     }
 
     // Restore getTotalParts
     func getTotalParts() -> Int {
-        return diskParts.count
-    }
-}
-
-enum DiskPartWriter {
-    private static let holeGranularityBytes = 4 * 1024 * 1024
-    private static let zeroChunk = Data(count: holeGranularityBytes)
-
-    static func writeRawChunk(
-        inputPath: String, outputHandle: FileHandle, startOffset: UInt64
-    ) throws -> UInt64 {
-        guard FileManager.default.fileExists(atPath: inputPath) else {
-            Logger.error("Raw disk part not found at: \(inputPath)")
-            throw PullError.layerDownloadFailed(inputPath)
-        }
-
-        let readHandle = try FileHandle(forReadingFrom: URL(fileURLWithPath: inputPath))
-        defer { try? readHandle.close() }
-
-        var currentWriteOffset = startOffset
-        var totalBytesWritten: UInt64 = 0
-
-        while true {
-            let data = readHandle.readData(ofLength: holeGranularityBytes)
-            if data.isEmpty { break }
-
-            if data.count == holeGranularityBytes && data == zeroChunk {
-                currentWriteOffset += UInt64(data.count)
-            } else {
-                try outputHandle.seek(toOffset: currentWriteOffset)
-                try outputHandle.write(contentsOf: data)
-                currentWriteOffset += UInt64(data.count)
-            }
-
-            totalBytesWritten += UInt64(data.count)
-        }
-
-        return totalBytesWritten
+        return partCounter
     }
 }
 
@@ -1376,6 +1264,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 Logger.info("Cache miss or invalid cache, setting up new cache")
             }
 
+            try OCIMediaType.validateRawDiskParts(manifest)
+
             // Clean up old versions of this repository before setting up new cache if caching is enabled
             if cachingEnabled {
                 try cleanupOldVersions(currentManifestId: manifestId, image: imageName)
@@ -1447,51 +1337,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     }
 
                     // Identify disk parts by media type
-                    if let rawDiskPart = OCIMediaType.rawDiskPartInfo(for: layer) {
-                        // --- Handle raw OCI tar disk part layer ---
-                        let currentPartNum = rawDiskPart.partNumber
-                        let cachedLayer = getCachedLayerPath(
-                            manifestId: manifestId, digest: layer.digest)
-                        let digest = layer.digest
-                        let size = layer.size
-
-                        if FileManager.default.fileExists(atPath: cachedLayer.path) {
-                            Logger.info(
-                                "Using cached raw OCI disk part \(currentPartNum): \(cachedLayer.lastPathComponent)"
-                            )
-                            await downloadProgress.addProgress(Int64(size))
-                            continue
-                        }
-
-                        group.addTask { [self] in
-                            await counter.increment()
-                            let tempPartURL = tempDownloadDir.appendingPathComponent(
-                                "disk.img.raw.part.\(currentPartNum)")
-                            if isDownloading(digest) {
-                                try await waitForExistingDownload(
-                                    digest, cachedLayer: cachedLayer)
-                                if FileManager.default.fileExists(atPath: cachedLayer.path) {
-                                    await downloadProgress.addProgress(Int64(size))
-                                    await counter.decrement()
-                                    return Int64(size)
-                                }
-                            }
-
-                            markDownloadStarted(digest)
-                            try await self.downloadLayer(
-                                repository: "\(self.organization)/\(imageName)",
-                                digest: digest, mediaType: layer.mediaType,
-                                token: token,
-                                to: tempPartURL, maxRetries: 5,
-                                progress: downloadProgress, manifestId: manifestId
-                            )
-                            Logger.info(
-                                "Downloaded raw OCI disk part \(currentPartNum): \(tempPartURL.lastPathComponent)"
-                            )
-                            await counter.decrement()
-                            return Int64(size)
-                        }
-                    } else if layer.mediaType == "application/octet-stream+lz4" {
+                    if layer.mediaType == "application/octet-stream+lz4"
+                        || OCIMediaType.rawDiskPart(layer) != nil
+                    {
                         // --- Handle LZ4 Disk Part Layer ---
                         lz4LayerCount += 1  // Increment count
                         let currentPartNum = lz4LayerCount  // Use the current count as the logical number for logging
@@ -2186,19 +2034,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // If we don't have a reassembled image, proceed with legacy part handling
         Logger.debug("No reassembled image found, using part-based reassembly")
 
+        try OCIMediaType.validateRawDiskParts(manifest)
         // Instantiate collector
         let diskPartsCollector = DiskPartsCollector()
-        let malformedRawDiskLayers = manifest.layers.filter {
-            OCIMediaType.isRawDiskPartLayer($0)
-                && OCIMediaType.rawDiskPartInfo(for: $0) == nil
-        }
-        guard malformedRawDiskLayers.isEmpty else {
-            throw PullError.reassemblyFailed("raw OCI disk part metadata is invalid")
-        }
-        let rawDiskPartsInManifest = manifest.layers.compactMap {
-            OCIMediaType.rawDiskPartInfo(for: $0)
-        }
-        try OCIMediaType.validateRawDiskParts(rawDiskPartsInManifest)
         var lz4LayerCount = 0  // Count lz4 layers found
         var hasNvram = false
         var configPath: URL? = nil
@@ -2207,33 +2045,21 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         for layer in manifest.layers {
             let cachedLayer = getCachedLayerPath(manifestId: manifestId, digest: layer.digest)
 
+            let rawPart = OCIMediaType.rawDiskPart(layer)
             // Identify disk parts simply by media type
-            if let rawDiskPart = OCIMediaType.rawDiskPartInfo(for: layer) {
-                if !FileManager.default.fileExists(atPath: cachedLayer.path) {
-                    Logger.info("Raw disk part not found in cache: \(cachedLayer.path) - skipping")
-                    continue
-                }
-
-                let collectorPartNum = await diskPartsCollector.addPart(
-                    partNumber: rawDiskPart.partNumber,
-                    url: cachedLayer,
-                    compression: .raw
-                )
-                Logger.info(
-                    "Adding cached raw OCI disk part \(collectorPartNum)/\(rawDiskPart.totalParts): \(cachedLayer.lastPathComponent)"
-                )
-            } else if layer.mediaType == "application/octet-stream+lz4" {
+            if layer.mediaType == "application/octet-stream+lz4" || rawPart != nil {
                 lz4LayerCount += 1  // Increment count
 
                 // When caching is disabled, the file might not exist with the cache path name
                 // Check if the file exists before trying to use it
-                if !FileManager.default.fileExists(atPath: cachedLayer.path) {
+                if rawPart == nil && !FileManager.default.fileExists(atPath: cachedLayer.path) {
                     Logger.info("Layer file not found in cache: \(cachedLayer.path) - skipping")
                     continue
                 }
 
                 // Add to collector. It will assign the sequential part number.
-                let collectorPartNum = await diskPartsCollector.addPart(url: cachedLayer)
+                let collectorPartNum = await diskPartsCollector.addPart(
+                    url: cachedLayer, number: rawPart?.number)
                 Logger.info(
                     "Adding cached lz4 layer (part \(lz4LayerCount)) -> Collector #\(collectorPartNum): \(cachedLayer.lastPathComponent)"
                 )
@@ -2277,21 +2103,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // --- Safely retrieve parts AFTER loop ---
         let diskPartSources = await diskPartsCollector.getSortedParts()  // Sorted by assigned sequential number
         let totalParts = await diskPartsCollector.getTotalParts()  // Get total count from collector
+        let rawParts = manifest.layers.contains { OCIMediaType.rawDiskPart($0) != nil }
 
-        Logger.info("Found \(totalParts) disk parts in cache to reassemble.")
-        if !rawDiskPartsInManifest.isEmpty {
-            let expectedRawPartNumbers = Swift.Set(rawDiskPartsInManifest.map(\.partNumber))
-            let cachedRawPartNumbers = Swift.Set(
-                diskPartSources.filter { $0.compression == .raw }.map(\.partNumber))
-            guard cachedRawPartNumbers == expectedRawPartNumbers else {
-                if let missingPart = expectedRawPartNumbers.subtracting(cachedRawPartNumbers).min() {
-                    throw PullError.missingPart(missingPart)
-                }
-                throw PullError.reassemblyFailed(
-                    "cached raw OCI disk parts do not match the manifest")
-            }
-            Logger.info("Found \(cachedRawPartNumbers.count) raw OCI disk parts in cache to reassemble.")
-        }
+        Logger.info("Found \(totalParts) lz4 disk parts in cache to reassemble.")
         // --- End retrieving parts ---
 
         // Reassemble disk parts if needed
@@ -2350,39 +2164,14 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
 
             // If we have just one disk part, use the shared function
-            if totalParts == 1 {
+            if totalParts == 1 && !rawParts {
                 // Single part - use shared function
-                let source = diskPartSources[0]
-                switch source.compression {
-                case .lz4:
-                    try createDiskImageFromSource(
-                        sourceURL: source.url,
-                        destinationURL: outputURL,
-                        diskSize: sizeForTruncate
-                    )
-                case .raw:
-                    if FileManager.default.fileExists(atPath: outputURL.path) {
-                        try FileManager.default.removeItem(at: outputURL)
-                    }
-                    guard FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-                    else {
-                        throw PullError.fileCreationFailed(outputURL.path)
-                    }
-                    let outputHandle = try FileHandle(forWritingTo: outputURL)
-                    do {
-                        try outputHandle.truncate(atOffset: sizeForTruncate)
-                        _ = try DiskPartWriter.writeRawChunk(
-                            inputPath: source.url.path,
-                            outputHandle: outputHandle,
-                            startOffset: 0
-                        )
-                        try outputHandle.synchronize()
-                        try outputHandle.close()
-                    } catch {
-                        try? outputHandle.close()
-                        throw error
-                    }
-                }
+                let sourceURL = diskPartSources[0].1  // Get the first source URL (index 1 of the tuple)
+                try createDiskImageFromSource(
+                    sourceURL: sourceURL,
+                    destinationURL: outputURL,
+                    diskSize: sizeForTruncate
+                )
             } else {
                 // Multiple parts - we need to reassemble
                 // Wrap file handle setup and sparse file creation within this block
@@ -2421,33 +2210,35 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 var reassemblyProgressLogger = ProgressLogger(threshold: 0.05)
                 var currentOffset: UInt64 = 0
 
-                // Use the collector's sorted sources directly. Raw OCI disk parts are validated
-                // against part.total above when that metadata is present.
-                for sourceInfo in diskPartSources {
-                    let sourceURL = sourceInfo.url
+                // Iterate from 1 up to the total number of parts found by the collector
+                for collectorPartNum in 1...totalParts {
+                    // Find the source URL from our collected parts using the sequential collectorPartNum
+                    guard
+                        let sourceInfo = diskPartSources.first(where: { $0.0 == collectorPartNum })
+                    else {
+                        Logger.error(
+                            "Missing required cached part number \(collectorPartNum) in collected parts during reassembly."
+                        )
+                        throw PullError.missingPart(collectorPartNum)
+                    }
+                    let sourceURL = sourceInfo.1  // Get URL from tuple
 
                     // Log using the sequential collector part number
-                    let action = sourceInfo.compression == .raw ? "Copying" : "Decompressing"
                     Logger.info(
-                        "\(action) part \(sourceInfo.partNumber) of \(totalParts) from cache: \(sourceURL.lastPathComponent) at offset \(currentOffset)..."
+                        "Decompressing part \(collectorPartNum) of \(totalParts) from cache: \(sourceURL.lastPathComponent) at offset \(currentOffset)..."
                     )
 
-                    let bytesWritten: UInt64
-                    switch sourceInfo.compression {
-                    case .lz4:
-                        bytesWritten = try decompressChunkAndWriteSparse(
+                    // Always use the correct sparse decompression function
+                    let decompressedBytesWritten =
+                        try rawParts
+                        ? writeFileSparse(
+                            sourceURL, to: outputHandle, startOffsets: [currentOffset])
+                        : decompressChunkAndWriteSparse(
                             inputPath: sourceURL.path,
                             outputHandle: outputHandle,
                             startOffset: currentOffset
                         )
-                    case .raw:
-                        bytesWritten = try DiskPartWriter.writeRawChunk(
-                            inputPath: sourceURL.path,
-                            outputHandle: outputHandle,
-                            startOffset: currentOffset
-                        )
-                    }
-                    currentOffset += bytesWritten
+                    currentOffset += decompressedBytesWritten
                     // Update progress (using sizeForTruncate which should be available)
                     reassemblyProgressLogger.logProgress(
                         current: Double(currentOffset) / Double(sizeForTruncate),
@@ -2545,8 +2336,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 // Use an array to track unique file paths to avoid trying to delete the same file multiple times
                 var processedPaths: [String] = []
 
-                for part in diskPartSources {
-                    let partURL = part.url
+                for (_, partURL) in diskPartSources {
                     let path = partURL.path
 
                     // Skip if we've already processed this exact path

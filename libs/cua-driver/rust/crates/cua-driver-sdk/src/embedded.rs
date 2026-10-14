@@ -864,6 +864,16 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "XDG_RUNTIME_DIR"
                 | "XDG_SESSION_TYPE"
                 | "DBUS_SESSION_BUS_ADDRESS"
+                // A child that reaches the session bus must also learn which
+                // desktop it is on and whether accessibility setup is disabled.
+                // Without them it launches Orca on GNOME and COSMIC and loses
+                // the write-nothing mode on Cinnamon.
+                | "XDG_CURRENT_DESKTOP"
+                | "XDG_SESSION_DESKTOP"
+                | "DESKTOP_SESSION"
+                | "NO_AT_BRIDGE"
+                | "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE"
+                | "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE"
                 | "XAUTHORITY"
                 | "CUA_LOG"
                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
@@ -1395,6 +1405,62 @@ mod tests {
         assert!(!values
             .iter()
             .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
+    }
+
+    #[test]
+    fn desktop_identity_and_accessibility_controls_reach_the_child() {
+        let values = merge_safe_environment(
+            [
+                ("XDG_CURRENT_DESKTOP".into(), "ubuntu:GNOME".into()),
+                ("XDG_SESSION_DESKTOP".into(), "ubuntu".into()),
+                ("DESKTOP_SESSION".into(), "ubuntu".into()),
+                ("NO_AT_BRIDGE".into(), "1".into()),
+                ("AT_SPI_BUS_ADDRESS".into(), "must-not-leak".into()),
+            ],
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE".into(),
+                    value: "1".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE".into(),
+                    value: "none".into(),
+                },
+            ],
+        );
+
+        for (name, value) in [
+            ("XDG_CURRENT_DESKTOP", "ubuntu:GNOME"),
+            ("XDG_SESSION_DESKTOP", "ubuntu"),
+            ("DESKTOP_SESSION", "ubuntu"),
+            ("NO_AT_BRIDGE", "1"),
+            ("CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE", "1"),
+            ("CUA_DRIVER_RS_A11Y_ADVERTISE_MODE", "none"),
+        ] {
+            assert!(
+                values
+                    .iter()
+                    .any(|variable| variable.name == name && variable.value == value),
+                "{name} did not reach the child environment"
+            );
+        }
+        assert!(!values
+            .iter()
+            .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
+    }
+
+    /// The child can reach the session bus, so every variable the Linux
+    /// accessibility advertisement reads must pass the filter with it (#2010).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_accessibility_advertise_variable_passes_the_allowlist() {
+        assert!(allowed_environment_name("DBUS_SESSION_BUS_ADDRESS"));
+        for name in platform_linux::a11y::ADVERTISE_ENVIRONMENT {
+            assert!(
+                allowed_environment_name(name),
+                "{name} decides what the driver advertises but is filtered out"
+            );
+        }
     }
 
     #[test]

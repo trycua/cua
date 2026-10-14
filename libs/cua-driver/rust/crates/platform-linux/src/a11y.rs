@@ -43,6 +43,33 @@ const SCREEN_READER_ENABLED_PROPERTY: &str = "ScreenReaderEnabled";
 /// Companion property GTK/Qt watch to load their AT-SPI bridges.
 const ACCESSIBILITY_IS_ENABLED_PROPERTY: &str = "IsEnabled";
 
+/// Set to any value to leave the session's accessibility status untouched.
+const DISABLE_ADVERTISE_ENV: &str = "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE";
+/// Explicit policy: `all`, `is_enabled_only`, or `none`.
+const ADVERTISE_MODE_ENV: &str = "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE";
+/// Where the desktop name is read from, in order of preference.
+const DESKTOP_NAME_ENVS: [&str; 3] = [
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_DESKTOP",
+    "DESKTOP_SESSION",
+];
+
+/// Every environment variable that decides what this module advertises.
+///
+/// A driver process that can reach the session bus needs all of them. Without
+/// the desktop name it advertises everything: on GNOME and COSMIC that sets
+/// `ScreenReaderEnabled` and launches Orca, and on Cinnamon it loses the mode
+/// that writes nothing and can start the settings write loop. Without the two
+/// overrides its host cannot turn the advertisement off. Anything that starts a
+/// driver process with a filtered environment must pass these through.
+pub const ADVERTISE_ENVIRONMENT: [&str; 5] = [
+    DISABLE_ADVERTISE_ENV,
+    ADVERTISE_MODE_ENV,
+    DESKTOP_NAME_ENVS[0],
+    DESKTOP_NAME_ENVS[1],
+    DESKTOP_NAME_ENVS[2],
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AdvertiseMode {
     All,
@@ -59,14 +86,11 @@ pub fn ensure_chromium_accessibility_enabled() {
     static ADVERTISED: Once = Once::new();
     ADVERTISED.call_once(|| {
         let mode = advertise_mode_from(
-            std::env::var_os("CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE").is_some(),
-            std::env::var("CUA_DRIVER_RS_A11Y_ADVERTISE_MODE")
-                .ok()
-                .as_deref(),
-            std::env::var("XDG_CURRENT_DESKTOP")
-                .or_else(|_| std::env::var("XDG_SESSION_DESKTOP"))
-                .or_else(|_| std::env::var("DESKTOP_SESSION"))
-                .ok()
+            std::env::var_os(DISABLE_ADVERTISE_ENV).is_some(),
+            std::env::var(ADVERTISE_MODE_ENV).ok().as_deref(),
+            DESKTOP_NAME_ENVS
+                .iter()
+                .find_map(|name| std::env::var(name).ok())
                 .as_deref(),
         );
         if mode == AdvertiseMode::None {

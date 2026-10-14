@@ -3383,35 +3383,10 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
 fn type_text_with_preflight<G>(
     text: &str,
     mapping: &GetKeyboardMappingReply,
-    mut remap: impl FnMut(char, &GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+    mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
     mut send: impl FnMut(u8, bool) -> Result<()>,
 ) -> Result<()> {
-    let needed = text
-        .chars()
-        .filter(|&ch| char_to_keycode_shift(mapping, mpx_keyboard::keysym_for_char(ch)).is_none())
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-    let per = mapping.keysyms_per_keycode as usize;
-    let available = if per == 0 {
-        0
-    } else {
-        mapping
-            .keysyms
-            .chunks(per)
-            .filter(|syms| syms.iter().all(|&s| s == 0))
-            .count()
-    };
-    if needed > available {
-        bail!(
-            "typed 0 of {} characters: need {needed} spare keycodes, only {available} available",
-            text.chars().count()
-        );
-    }
-    let mut mapping = GetKeyboardMappingReply {
-        keysyms_per_keycode: mapping.keysyms_per_keycode,
-        sequence: mapping.sequence,
-        keysyms: mapping.keysyms.clone(),
-    };
+    let mut mapping = mapping.clone();
     let mut guards = Vec::new();
     let mut resolved = std::collections::HashMap::new();
     let mut keys = Vec::new();
@@ -3422,14 +3397,12 @@ fn type_text_with_preflight<G>(
                 let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
                     Some(key) => key,
                     None => {
-                        let (keycode, guard) = remap(ch, &mapping).map_err(|error| {
+                        let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
                             anyhow::anyhow!(
                                 "typed 0 of {} characters: {error:#}",
                                 text.chars().count()
                             )
                         })?;
-                        let idx = (keycode as usize - 8) * per;
-                        mapping.keysyms[idx..idx + per].fill(mpx_keyboard::keysym_for_char(ch));
                         guards.extend(guard);
                         (keycode, false)
                     }
@@ -3456,7 +3429,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         text,
         &mapping,
         |ch, mapping| {
-            keycode_for_keysym(
+            keycode_for_keysym_mut(
                 &conn,
                 mapping,
                 mpx_keyboard::keysym_for_char(ch),
@@ -3541,7 +3514,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         text,
         &mapping,
         |ch, mapping| {
-            keycode_for_keysym(
+            keycode_for_keysym_mut(
                 &conn,
                 mapping,
                 mpx_keyboard::keysym_for_char(ch),
@@ -4156,7 +4129,7 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 #[cfg(test)]
 mod key_name_alias_tests {
     use super::{
-        char_to_keycode_shift, key_name_to_keysym, type_text_with_preflight,
+        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode, type_text_with_preflight,
         GetKeyboardMappingReply,
     };
 
@@ -4201,7 +4174,14 @@ mod key_name_alias_tests {
         let error = type_text_with_preflight::<()>(
             "a你好",
             &mapping,
-            |_, _| panic!("insufficient capacity must fail before remapping"),
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |_, _, _, _| Ok(()),
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
             |keycode, _| {
                 events.push(keycode);
                 target.push('a');
@@ -4211,7 +4191,10 @@ mod key_name_alias_tests {
         .unwrap_err();
         assert_eq!(
             error.to_string(),
-            "typed 0 of 3 characters: need 2 spare keycodes, only 1 available"
+            format!(
+                "typed 0 of 3 characters: no spare keycode available to remap keysym 0x{:X}",
+                super::mpx_keyboard::keysym_for_char('好')
+            )
         );
         assert!(events.is_empty());
         assert_eq!(target, "existing");
@@ -4229,14 +4212,14 @@ mod key_name_alias_tests {
         type_text_with_preflight::<()>(
             "aA你好你",
             &mapping,
-            |_, mapping| {
+            |ch, mapping| {
                 remaps += 1;
-                let index = mapping
-                    .keysyms
-                    .chunks(2)
-                    .rposition(|syms| syms == [0, 0])
-                    .unwrap();
-                Ok(((8 + index) as u8, None))
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |_, _, _, _| Ok(()),
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
             },
             |keycode, shift| {
                 events.push((keycode, shift));
@@ -4249,6 +4232,31 @@ mod key_name_alias_tests {
             events,
             [(8, false), (8, true), (10, false), (9, false), (10, false)]
         );
+    }
+
+    #[test]
+    fn text_preflight_preserves_keys_with_symbols_in_later_columns() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 4,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 'b' as u32, 0],
+        };
+        let mut events = Vec::new();
+        type_text_with_preflight::<()>(
+            "bAa",
+            &mapping,
+            |ch, mapping| {
+                assert_eq!(ch, 'b');
+                assert!(mapping.keysyms.contains(&(ch as u32)));
+                Ok((8, None))
+            },
+            |keycode, shift| {
+                events.push((keycode, shift));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(events, [(8, false), (8, true), (8, false)]);
     }
 
     #[test]
@@ -4334,11 +4342,11 @@ impl Drop for RemappedKeycode<'_> {
 /// injected even when no existing keycode emits it. Returns a guard that
 /// restores the original mapping on drop. Errors only if the keymap has no free
 /// keycode left to borrow.
-fn remap_spare_keycode<'a>(
-    conn: &'a RustConnection,
-    mapping: &GetKeyboardMappingReply,
+fn reserve_spare_keycode<G>(
+    mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
-) -> Result<RemappedKeycode<'a>> {
+    mut bind: impl FnMut(u8, u8, &[u32], &[u32]) -> Result<G>,
+) -> Result<(u8, G)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
@@ -4362,17 +4370,9 @@ fn remap_spare_keycode<'a>(
     let idx = (spare as usize - 8) * per;
     let original_keysyms = mapping.keysyms[idx..idx + per].to_vec();
     let new_keysyms = vec![keysym; per];
-    conn.change_keyboard_mapping(1, spare, per as u8, &new_keysyms)?;
-    // Round-trip so the server has installed the new mapping before we emit the
-    // key event against it.
-    let _ = conn.get_input_focus()?.reply();
-
-    Ok(RemappedKeycode {
-        conn,
-        keycode: spare,
-        keysyms_per_keycode: per as u8,
-        original_keysyms,
-    })
+    let guard = bind(spare, per as u8, &original_keysyms, &new_keysyms)?;
+    mapping.keysyms[idx..idx + per].copy_from_slice(&new_keysyms);
+    Ok((spare, guard))
 }
 
 /// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
@@ -4380,9 +4380,45 @@ fn remap_spare_keycode<'a>(
 /// sparse headless keymaps like a minimal Xwayland) it borrows a spare keycode
 /// and remaps it, returning a guard that restores the original mapping on drop.
 /// The guard is `None` when the keysym was already present (no cleanup needed).
+fn remap_spare_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    keysym: u32,
+) -> Result<RemappedKeycode<'a>> {
+    bind_spare_keycode(conn, &mut mapping.clone(), keysym)
+}
+
 fn keycode_for_keysym<'a>(
     conn: &'a RustConnection,
     mapping: &GetKeyboardMappingReply,
+    keysym: u32,
+    key: &str,
+) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+    keycode_for_keysym_mut(conn, &mut mapping.clone(), keysym, key)
+}
+
+fn bind_spare_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &mut GetKeyboardMappingReply,
+    keysym: u32,
+) -> Result<RemappedKeycode<'a>> {
+    let (_, guard) = reserve_spare_keycode(mapping, keysym, |spare, per, original, new| {
+        conn.change_keyboard_mapping(1, spare, per, new)?;
+        let guard = RemappedKeycode {
+            conn,
+            keycode: spare,
+            keysyms_per_keycode: per,
+            original_keysyms: original.to_vec(),
+        };
+        let _ = conn.get_input_focus()?.reply();
+        Ok(guard)
+    })?;
+    Ok(guard)
+}
+
+fn keycode_for_keysym_mut<'a>(
+    conn: &'a RustConnection,
+    mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
     key: &str,
 ) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
@@ -4396,7 +4432,7 @@ fn keycode_for_keysym<'a>(
     }
 
     // Not in the map — fall back to remapping a spare keycode.
-    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
+    let guard = bind_spare_keycode(conn, mapping, keysym).with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
     let keycode = guard.keycode;

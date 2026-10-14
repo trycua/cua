@@ -528,27 +528,6 @@ impl KeyboardMap {
     pub(crate) fn lookup(&self, keysym: u32) -> Option<(u8, bool)> {
         super::char_to_keycode_shift(&self.mapping, keysym)
     }
-
-    /// Like [`lookup`](Self::lookup), but borrows a spare keycode when the map
-    /// has no keycode for `keysym` (non-Latin text on a US map, sparse
-    /// headless keymaps). The guard restores the map on drop.
-    pub(crate) fn lookup_or_remap<'a>(
-        &self,
-        conn: &'a RustConnection,
-        keysym: u32,
-    ) -> Result<(u8, bool, Option<super::RemappedKeycode<'a>>), TargetedInputError> {
-        if let Some((code, shift)) = self.lookup(keysym) {
-            return Ok((code, shift, None));
-        }
-        let (code, guard) = super::keycode_for_keysym(
-            conn,
-            &mut self.mapping.clone(),
-            keysym,
-            &format!("0x{keysym:X}"),
-        )
-        .map_err(failed)?;
-        Ok((code, false, guard))
-    }
 }
 
 pub(crate) fn fake_motion(
@@ -664,21 +643,25 @@ pub(crate) fn type_xtest(
     keymap: &KeyboardMap,
     text: &str,
 ) -> Result<(), TargetedInputError> {
-    for character in text.chars() {
-        let sym = match character {
-            '\n' | '\r' => XK_RETURN,
-            '\t' => XK_TAB,
-            other => char_keysym(other),
-        };
-        let (code, shift, guard) = keymap.lookup_or_remap(conn, sym)?;
-        tap(conn, root, keymap, code, shift)?;
-        if guard.is_some() {
-            // Let the focused client translate the event under the temporary
-            // mapping before the guard restores it.
-            sync(conn)?;
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        drop(guard);
+    let guards = super::type_text_with_preflight(
+        text,
+        &keymap.mapping,
+        |character, mapping| {
+            super::keycode_for_keysym(
+                conn,
+                mapping,
+                super::mpx_keyboard::keysym_for_char(character),
+                &character.to_string(),
+            )
+        },
+        |code, shift| Ok(tap(conn, root, keymap, code, shift)?),
+    )
+    .map_err(|error| error.downcast::<TargetedInputError>().unwrap_or_else(failed))?;
+    if !guards.is_empty() {
+        // Let the focused client translate the events under the temporary
+        // mapping before the guards restore it.
+        sync(conn)?;
+        std::thread::sleep(Duration::from_millis(10));
     }
     Ok(())
 }

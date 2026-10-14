@@ -125,13 +125,13 @@ fn tap_steps(keycode: u8, needs_shift: bool, shift: Option<u16>, steps: &mut Vec
 /// the character could neither be found in the keymap nor hosted on a spare
 /// keycode; such characters are returned in the second tuple element.
 pub(super) fn plan_text_with_fallback<F>(
-    mapping: &GetKeyboardMappingReply,
+    mapping: &mut GetKeyboardMappingReply,
     shift_x_keycode: Option<u8>,
     text: &str,
     mut remap: F,
 ) -> (Vec<KeyStep>, Vec<char>)
 where
-    F: FnMut(char) -> Option<u8>,
+    F: FnMut(char, &mut GetKeyboardMappingReply) -> Option<u8>,
 {
     let shift = shift_x_keycode.and_then(evdev_code_for_x_keycode);
     let mut steps = Vec::with_capacity(text.len() * 2);
@@ -139,7 +139,7 @@ where
     for ch in text.chars() {
         match char_to_keycode_shift(mapping, keysym_for_char(ch)) {
             Some((keycode, needs_shift)) => tap_steps(keycode, needs_shift, shift, &mut steps),
-            None => match remap(ch) {
+            None => match remap(ch, mapping) {
                 Some(keycode) => tap_steps(keycode, false, shift, &mut steps),
                 None => skipped.push(ch),
             },
@@ -664,7 +664,7 @@ pub fn send_virtual_keyboard_text(
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
-    let keymap = Keymap::load()?;
+    let mut keymap = Keymap::load()?;
     // Characters absent from the keymap (a sparse layout, or a non-Latin
     // glyph) are hosted on spare keycodes, with a guard that
     // restores the map after delivery. plan_text_with_fallback resolves each
@@ -674,25 +674,16 @@ pub fn send_virtual_keyboard_text(
     // would come out with all the in-map characters first, reordering the
     // typed text relative to what was asked for.
     let mut guards = Vec::new();
-    let mut remap_mapping = keymap.mapping.clone();
     let (steps, skipped) =
-        plan_text_with_fallback(
-            &keymap.mapping,
-            keymap.shift,
-            text,
-            |ch| match keycode_for_keysym(
-                &keymap.conn,
-                &mut remap_mapping,
-                keysym_for_char(ch),
-                &ch.to_string(),
-            ) {
+        plan_text_with_fallback(&mut keymap.mapping, keymap.shift, text, |ch, mapping| {
+            match keycode_for_keysym(&keymap.conn, mapping, keysym_for_char(ch), &ch.to_string()) {
                 Ok((keycode, guard)) => {
                     guards.extend(guard);
                     Some(keycode)
                 }
                 Err(_) => None,
-            },
-        );
+            }
+        });
     deliver(
         cursor_id,
         target_window,
@@ -794,7 +785,8 @@ mod tests {
 
     #[test]
     fn text_plan_taps_keys_and_wraps_shifted_glyphs_in_shift() {
-        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "aA1!\n", |_| None);
+        let (steps, missing) =
+            plan_text_with_fallback(&mut mapping(), Some(50), "aA1!\n", |_, _| None);
         assert!(missing.is_empty());
         assert_eq!(
             steps,
@@ -821,7 +813,7 @@ mod tests {
     fn text_plan_without_a_shift_keycode_types_the_unshifted_level() {
         // No Shift in the modifier map: the keycode is still tapped (the
         // server types the base glyph) rather than the character being lost.
-        let (steps, _) = plan_text_with_fallback(&mapping(), None, "A", |_| None);
+        let (steps, _) = plan_text_with_fallback(&mut mapping(), None, "A", |_, _| None);
         assert_eq!(steps, vec![step(30, true), step(30, false)]);
     }
 
@@ -833,13 +825,14 @@ mod tests {
         // more ASCII. The remapped character must land in the MIDDLE of the
         // key-event sequence, not be deferred to the end.
         const REMAPPED_KEYCODE: u8 = 250; // spare, per the mapping() doc comment
-        let (steps, skipped) = plan_text_with_fallback(&mapping(), Some(50), "aé1", |ch| {
-            assert_eq!(
-                ch, 'é',
-                "only the out-of-keymap character should hit the fallback"
-            );
-            Some(REMAPPED_KEYCODE)
-        });
+        let (steps, skipped) =
+            plan_text_with_fallback(&mut mapping(), Some(50), "aé1", |ch, _| {
+                assert_eq!(
+                    ch, 'é',
+                    "only the out-of-keymap character should hit the fallback"
+                );
+                Some(REMAPPED_KEYCODE)
+            });
         assert!(skipped.is_empty());
         let remapped_evdev = evdev_code_for_x_keycode(REMAPPED_KEYCODE).unwrap();
         assert_eq!(
@@ -861,9 +854,33 @@ mod tests {
 
     #[test]
     fn text_plan_with_fallback_reports_characters_the_remap_also_misses() {
-        let (steps, skipped) = plan_text_with_fallback(&mapping(), Some(50), "a€a", |_| None);
+        let (steps, skipped) =
+            plan_text_with_fallback(&mut mapping(), Some(50), "a€a", |_, _| None);
         assert_eq!(steps.len(), 4); // both 'a's still tap
         assert_eq!(skipped, vec!['€']);
+    }
+
+    #[test]
+    fn text_plan_gives_distinct_missing_characters_distinct_keycodes() {
+        let mut remaps = Vec::new();
+        let (steps, skipped) =
+            plan_text_with_fallback(&mut mapping(), Some(50), "é€é", |ch, mapping| {
+                let (keycode, ()) =
+                    reserve_spare_keycode(mapping, keysym_for_char(ch), |_, _, _, _| Ok(()))
+                        .ok()?;
+                remaps.push(ch);
+                Some(keycode)
+            });
+        assert!(skipped.is_empty());
+        assert_eq!(remaps, ['é', '€']);
+        let presses: Vec<u16> = steps
+            .iter()
+            .filter(|step| step.press)
+            .map(|step| step.evdev_code)
+            .collect();
+        assert_eq!(presses.len(), 3);
+        assert_ne!(presses[0], presses[1]);
+        assert_eq!(presses[0], presses[2]);
     }
 
     #[test]

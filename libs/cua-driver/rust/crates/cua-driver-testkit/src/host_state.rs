@@ -18,8 +18,7 @@
 //!   value makes Microsoft Edge unresolvable, `0x80070002`), and the shell
 //!   expands per-user known folders through `%USERPROFILE%`. The driver's
 //!   `USERPROFILE`-derived state goes through its own `CUA_DRIVER_RS_HOME`
-//!   override instead. Computer History also honors that override, so its
-//!   admission preference is isolated without moving Windows profile folders.
+//!   override instead.
 //! - Linux pins `XDG_DATA_HOME` to the host data directory so user `.desktop`
 //!   entries remain discoverable after `HOME` moves.
 //!

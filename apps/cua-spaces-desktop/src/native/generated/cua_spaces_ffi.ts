@@ -32350,7 +32350,9 @@ export type AppSettings = {
      */
     autoConnect: boolean,
     /**
-     * Settings, Teams: the team (organization id) the account works in.
+     * Settings, Teams: the team (organization id) the account works in
+     * when it is in several ([`crate::teams::current`]); `None` or an id
+     * the account left: its first owned team.
      */
     currentTeamId?: string
 }

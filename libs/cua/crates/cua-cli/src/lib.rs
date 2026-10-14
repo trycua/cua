@@ -232,8 +232,7 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
-    /// Experimental, not available yet (set CUA_EXPERIMENTAL_TEAMS=1):
-    /// teams share machines with every member and their agents. Owners
+    /// Teams share machines with every member and their agents. Owners
     /// and admins invite (email or link), approve member devices, add
     /// machines and read the audit log.
     #[command(
@@ -1297,8 +1296,8 @@ async fn env_at(
 
 async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     let json = cli.json;
-    // Teams are experimental: refused (before any sign-in, daemon or relay
-    // call) unless CUA_EXPERIMENTAL_TEAMS is set.
+    // Teams turned off (CUA_EXPERIMENTAL_TEAMS=0): refused before any
+    // sign-in, daemon or relay call.
     if uses_teams(&cli.command) && !cua_home::experimental::teams_enabled() {
         return Err(CuaError::InvalidArgument(
             cua_home::experimental::TEAMS_UNAVAILABLE.into(),

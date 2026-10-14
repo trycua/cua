@@ -144,17 +144,18 @@ else
     tests+=(standalone_browser_native_omnibox_select_all)
   fi
 fi
+# shellcheck source=lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=browsers
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
-  set +e
-  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver-e2e \
+  test_status=0
+  cua_e2e_run_case "${test_name}" "${ARTIFACT_DIR}/${test_name}.log" "${RUST_ROOT}" \
+    cargo test --release -p cua-driver-e2e \
     ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
-    --ignored --exact --nocapture --test-threads=1) \
-    2>&1 | tee "${ARTIFACT_DIR}/${test_name}.log"
-  test_status=${PIPESTATUS[0]}
-  set -e
+    --ignored --exact --nocapture --test-threads=1 || test_status=$?
   if [[ "${test_status}" != 0 ]]; then
     failure_count=$((failure_count + 1))
   fi

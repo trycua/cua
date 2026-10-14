@@ -179,7 +179,7 @@ pub fn normalize_who(who: &str) -> Result<String> {
 /// Sharing with a team makes the Space a team machine: every member (and
 /// their agents) sees it and opens it as an editor from a device a team
 /// admin approved.
-/// Teams are experimental: with them off ([`cua_home::experimental`]) a
+/// With Teams turned off ([`cua_home::experimental`]) a
 /// `team:<id>` invitee is refused.
 pub fn team_of(who: &str) -> Option<Result<String>> {
     team_of_with(who, cua_home::experimental::teams_enabled())
@@ -206,9 +206,6 @@ fn team_of_with(who: &str, teams: bool) -> Option<Result<String>> {
         )))
     })
 }
-
-/// Why a macOS Space cannot be a team machine.
-pub const MACOS_TEAM_REFUSED: &str = "macOS Spaces cannot be shared with a team: macOS licensing allows one user per macOS copy. Share a Linux or Windows Space, or a whole Mac set up with `cua host setup`";
 
 /// Moves `who` onto the list for `role` (or off both with `None`).
 pub fn apply_share(
@@ -577,8 +574,8 @@ impl Spaces {
 
     /// Makes `space` a machine of `team`: every member (and their agents)
     /// lists it and opens it as an editor, from a device a team admin
-    /// approved. Only a team owner or admin who owns the Space can; a macOS
-    /// Space never can (one user per macOS copy).
+    /// approved. Only a team owner or admin who owns the Space can. Macs, Linux and
+    /// Windows machines can all be team machines.
     pub async fn share_with_team(&self, space: &str, team: &str) -> Result<SpaceShares> {
         let id = self.resolve(space)?;
         let canonical = id.to_string();
@@ -590,15 +587,6 @@ impl Spaces {
             .find(|i| i.id == canonical)
             .map(|i| i.os)
             .filter(|o| !o.is_empty());
-        if !matches!(id, SpaceId::Relay { .. })
-            && os
-                .as_deref()
-                .is_some_and(|o| o.eq_ignore_ascii_case("macos"))
-        {
-            return Err(Error::Relay(cua_host::Error::PermissionDenied(
-                MACOS_TEAM_REFUSED.into(),
-            )));
-        }
         self.confirm_share(format!(
             "Let every member of team {team} use {canonical} (see and control it)"
         ))
@@ -842,7 +830,10 @@ mod tests {
             .unwrap()
             .unwrap_err()
             .to_string();
-        assert!(e.contains("Teams isn't available yet."), "{e}");
+        assert!(
+            e.contains("Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0)."),
+            "{e}"
+        );
     }
 
     #[test]

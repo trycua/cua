@@ -1526,14 +1526,6 @@ async fn team_add_machine(
     if record.owner.id != who.id {
         return err(StatusCode::FORBIDDEN, "add a machine you own");
     }
-    let macos = body["os"].as_str() == Some("macos")
-        || record.meta.get("cua.space.os").map(String::as_str) == Some("macos");
-    if macos {
-        return err(
-            StatusCode::FORBIDDEN,
-            "macOS Spaces cannot be shared with a team: macOS licensing allows one user per macOS copy",
-        );
-    }
     let t = match require_team_manager(&mut st, &id, &who) {
         Ok(t) => t,
         Err(r) => return r,

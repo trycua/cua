@@ -213,7 +213,7 @@
         "disabled": null,
         "empty": "Only you",
         "error": null,
-        "field": "Email or account ID [team:design] Teams isn't available yet. Share with people, one at a time. as editor",
+        "field": "Email or account ID [team:design] Enter a team as team:<id>, as `cua team ls` shows it. as editor",
         "request": null,
         "roles": "viewer=Can view, editor=Can edit",
         "rows": [],

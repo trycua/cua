@@ -626,8 +626,21 @@ fn navigate_initial_page(port: u16, server: &BrowserFixtureServer) {
     let mut last_error = None;
     let mut last_navigate = None;
     loop {
-        let targets = browser_http_json(port, "/json/list")
-            .unwrap_or_else(|error| panic!("read harness CDP targets: {error}"));
+        // A freshly launched browser's DevTools HTTP server can stall or
+        // drop one request while it finishes first-run setup (seen on Windows
+        // Edge). Retry inside the same bounded deadline instead of failing the
+        // case on a single transient read.
+        let targets = match browser_http_json(port, "/json/list") {
+            Ok(targets) => targets,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "read harness CDP targets: {error}"
+                );
+                thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+        };
         let pages = targets
             .as_array()
             .into_iter()

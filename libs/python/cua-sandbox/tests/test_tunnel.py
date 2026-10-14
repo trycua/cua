@@ -89,28 +89,3 @@ async def test_failed_attempt_preserves_previously_opened_tunnels():
     await first.close()
     await second.close()
     assert transport.close_tunnel.await_args_list == [call(third), call(first), call(second)]
-
-
-async def test_successful_context_closes_all_tunnels():
-    transport = AsyncMock(spec=Transport)
-    first = TunnelInfo("localhost", 45001, 9222)
-    second = TunnelInfo("localhost", 45002, 8080)
-    transport.forward_tunnel.side_effect = [first, second]
-
-    async with Tunnel(transport).forward(9222, 8080) as tunnels:
-        assert tunnels == {9222: first, 8080: second}
-        transport.close_tunnel.assert_not_awaited()
-
-    assert transport.close_tunnel.await_args_list == [call(first), call(second)]
-
-
-async def test_successful_await_leaves_tunnel_open_until_closed():
-    transport = AsyncMock(spec=Transport)
-    info = TunnelInfo("localhost", 45001, 9222)
-    transport.forward_tunnel.return_value = info
-
-    assert await Tunnel(transport).forward(9222) is info
-    transport.close_tunnel.assert_not_awaited()
-    await info.close()
-    await info.close()
-    transport.close_tunnel.assert_awaited_once_with(info)

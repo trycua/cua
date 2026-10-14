@@ -478,7 +478,8 @@ impl LumeRuntime {
     /// leases and ARP table ([`lease`]); `lume serve` can lag the lease by
     /// many seconds or miss it. Polls back off from 0.5 s to 3 s. A VM that
     /// never reaches `running`, or stops after it did, fails fast with the
-    /// tail of its run log instead of waiting out the timeout.
+    /// tail of its run log instead of waiting out the timeout; one Lume no
+    /// longer knows (deleted outside the SDK) fails within a few seconds.
     async fn wait_for_ip(&self, name: &str) -> Result<VmDetails> {
         let start = tokio::time::Instant::now();
         let deadline = start + self.cfg.ip_timeout;
@@ -488,9 +489,20 @@ impl LumeRuntime {
         let mut last_state = String::new();
         let leases_path = std::path::PathBuf::from(&self.cfg.leases_path);
         let before = lease::read_leases(&leases_path).await;
+        let mut missing_since: Option<tokio::time::Instant> = None;
         // Bounded by the deadline; at most ip_timeout / 0.5 s iterations.
         while tokio::time::Instant::now() < deadline {
             let vm = self.client.get(name).await?;
+            if vm.is_none() {
+                let since = *missing_since.get_or_insert_with(tokio::time::Instant::now);
+                if since.elapsed() >= VM_GONE_GRACE {
+                    return Err(VmmError::other(format!(
+                        "lume VM '{name}' disappeared while booting (it was deleted outside Cua)"
+                    )));
+                }
+            } else {
+                missing_since = None;
+            }
             if let Some(mut vm) = vm {
                 let state = format!(
                     "status={} api_ip={:?} mac={:?}",
@@ -1007,6 +1019,9 @@ pub async fn cli_pull(
 /// Host-side marker: this VM got a workload environment from cua-vmm (so a
 /// later start without one clears it).
 const MACOS_ENV_MARKER: &str = "env-applied";
+/// How long a booting VM may be unknown to Lume before the wait fails.
+const VM_GONE_GRACE: Duration = Duration::from_secs(3);
+
 /// How long to keep retrying the environment write while the guest's sshd
 /// comes up after boot.
 const MACOS_ENV_BUDGET: Duration = Duration::from_secs(180);

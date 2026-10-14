@@ -2266,6 +2266,12 @@
             "label",
             "registered"
           ]
+        },
+        "accountUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3684,6 +3690,12 @@
           "required": [
             "label",
             "registered"
+          ]
+        },
+        "accountUrl": {
+          "type": [
+            "string",
+            "null"
           ]
         }
       },

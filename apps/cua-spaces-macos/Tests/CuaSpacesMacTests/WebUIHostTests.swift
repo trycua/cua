@@ -310,6 +310,14 @@ struct WebUIHostTests {
         #expect(model.updates.channel == .beta)
     }
 
+    /// The page's core has no environment: the host names the account app
+    /// Upgrade's billing fallback opens (CUA_ENV, CUA_ACCOUNT_APP_URL).
+    @Test func settingsNameTheAccountApp() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
     @Test func theGlobalShortcutSaysWhetherTheSystemGaveIt() async throws {
         let (bridge, _) = bridge()
         defer { GlobalShortcut.installed = nil }

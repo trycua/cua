@@ -687,11 +687,11 @@ async fn only_the_owner_removes_a_relay_record() {
 }
 
 /// `team:<id>` makes a Space a team machine (attaching it first, with the
-/// user's confirmation and the Space's OS on its relay record); a macOS
-/// Space never becomes one (one user per macOS copy); `unshare team:<id>`
+/// user's confirmation and the Space's OS on its relay record); a Mac
+/// can be one too (Macs, Linux and Windows machines all can); `unshare team:<id>`
 /// takes it off.
 #[tokio::test]
-async fn sharing_with_a_team_adds_a_team_machine_and_refuses_macos() {
+async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
     // Teams are on by default; pin them on regardless of the environment.
     cua_home::experimental::set_teams_enabled(Some(true));
     let relay = FakeRelay::start().await;
@@ -780,7 +780,7 @@ async fn sharing_with_a_team_adds_a_team_machine_and_refuses_macos() {
             .is_empty()
     );
 
-    // A macOS Space is refused before anything reaches the relay.
+    // A Mac can be a team machine like any other.
     let mac = MockServer::start(MockAuth::default()).await;
     mac.state.advertise(&["relay_attach"]);
     *mac.state.os.lock().unwrap() = Some(Some(cua_proto::env::v1::OperatingSystem {
@@ -792,16 +792,32 @@ async fn sharing_with_a_team_adds_a_team_machine_and_refuses_macos() {
         .add(&mac.url(), None, Some("mac".into()))
         .await
         .unwrap();
-    let e = spaces
+    let mac_state = mac.state.clone();
+    let mac_online = tokio::spawn({
+        let relay = relay.clone();
+        async move {
+            for _ in 0..400 {
+                if let Some(a) = mac_state.relay_attached.lock().unwrap().clone() {
+                    relay.set_online(&a.machine_id, true, "0.1.0");
+                    return a;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("never attached");
+        }
+    });
+    spaces
         .share_space(
             &mac_info.id,
             &format!("team:{}", team.id),
             ShareRole::Editor,
         )
         .await
-        .unwrap_err();
-    assert!(e.to_string().contains("one user per macOS copy"), "{e}");
-    assert!(mac.state.relay_attached.lock().unwrap().is_none());
+        .unwrap();
+    let mac_attached = mac_online.await.unwrap();
+    let t = client.team("ada-token", &team.id).await.unwrap();
+    assert_eq!(t.machines.len(), 1);
+    assert_eq!(t.machines[0].id, mac_attached.machine_id);
 
     // Not a team id.
     let e = spaces

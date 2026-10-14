@@ -11685,7 +11685,7 @@
      "usage": "cua team request [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. macOS Spaces cannot",
+     "abstract": "Make a Space (or a machine you host) a team machine: every member and their agents see it and can open it. Macs, Linux and Windows machines all can",
      "after_help": "Examples:\n  cua team add-machine AIGIS local:build-box\n  cua team add-machine AIGIS relay:0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [

@@ -344,5 +344,9 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       feed = feed.map((n) => ({ ...n, read: true }));
       return null;
     },
+    "notifications.markRead": ({ ids }) => {
+      feed = feed.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n));
+      return null;
+    },
   };
 }

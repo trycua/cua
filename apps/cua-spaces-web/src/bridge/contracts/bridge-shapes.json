@@ -1735,6 +1735,12 @@
         },
         "read": {
           "type": "boolean"
+        },
+        "space": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4468,6 +4474,9 @@
     "notifications.markAllRead": {
       "type": "null"
     },
+    "notifications.markRead": {
+      "type": "null"
+    },
     "presence.join": {
       "type": "object",
       "properties": {
@@ -5985,6 +5994,9 @@
       }
     },
     "notifications.markAllRead": {
+      "type": "null"
+    },
+    "notifications.markRead": {
       "type": "null"
     },
     "relay.usage": {

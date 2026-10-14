@@ -437,6 +437,7 @@ mechanism. Types are in `contracts/settings.ts`, `contracts/devices.ts` and
 | `storage.run` | `{ request: StorageRequest }` | `DriveCheckInput` for test, save and adopt; else `null` | `agents_tool` (`volume_*`), `drive_reveal`, `host_open_settings` | `StorageModel`'s request runner |
 | `notifications.list` | `{}` | `NotificationInput[]` (camelCase) | `agents_tool` `notifications_list` | `PersistentModel.feed` |
 | `notifications.markAllRead` | `{}` | `null` | `agents_tool` `notifications_ack {ids: []}` | `PersistentModel.markAllRead` |
+| `notifications.markRead` | `{ ids }` | `null` | `agents_tool` `notifications_ack {ids}` (nothing for no ids) | `PersistentModel.markRead(ids:)` |
 
 **Electron.** The Swift host's methods, as they are ported
 (`apps/cua-spaces-desktop/test/not-yet.ts`).

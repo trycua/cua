@@ -16,11 +16,13 @@ export interface NotificationsOperations {
   "notifications.list": { args: Empty; result: NotificationInput[] };
   /** Marks every entry read (`notifications_ack` with no ids). */
   "notifications.markAllRead": { args: Empty; result: null };
+  /** Marks these entries read (`notifications_ack` with their ids). */
+  "notifications.markRead": { args: { ids: string[] }; result: null };
 }
 
 export type NotificationsOpName = keyof NotificationsOperations;
 
-export const NOTIFICATIONS_OPERATIONS = ["notifications.list", "notifications.markAllRead"] as const satisfies readonly NotificationsOpName[];
+export const NOTIFICATIONS_OPERATIONS = ["notifications.list", "notifications.markAllRead", "notifications.markRead"] as const satisfies readonly NotificationsOpName[];
 
 type Handlers = { [K in NotificationsOpName]: (args: NotificationsOperations[K]["args"]) => Promise<NotificationsOperations[K]["result"]> };
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -38,6 +40,7 @@ export function notificationsFromTool(answer: unknown): NotificationInput[] {
       title: String(n.title ?? ""),
       body: String(n.body ?? ""),
       read: Boolean(n.read),
+      space: typeof n.space === "string" && n.space ? n.space : null,
     };
   });
 }
@@ -50,10 +53,16 @@ export function tauriNotificationsOps(invoke: Invoke): Handlers {
       await invoke("agents_tool", { tool: "notifications_ack", args: { ids: [] } });
       return null;
     },
+    "notifications.markRead": async ({ ids }) => {
+      // An empty list would mark every entry read.
+      if (ids.length) await invoke("agents_tool", { tool: "notifications_ack", args: { ids } });
+      return null;
+    },
   };
 }
 
 export const NOTIFICATIONS_TAURI_COMMANDS = {
   "notifications.list": ["agents_tool"],
   "notifications.markAllRead": ["agents_tool"],
+  "notifications.markRead": ["agents_tool"],
 } as const satisfies Record<NotificationsOpName, readonly string[]>;

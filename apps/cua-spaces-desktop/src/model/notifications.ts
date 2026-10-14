@@ -18,6 +18,9 @@ const rows = (v: unknown, key: string): Record<string, unknown>[] => {
 
 export class NotificationsModel {
   feed: AppNotificationInput[] = [];
+  /** The Space each entry is about, by id (the core's input has no Space;
+   * the web page's Open Space reads it). */
+  private spaces = new Map<string, string>();
   /** Cua Volume's sync status (the menu's sync line), when read. */
   driveSync: AppDriveSyncInput | null = null;
   /** `volume_storage`'s backend (the menu hides sync on this machine's store with no other device). */
@@ -65,6 +68,9 @@ export class NotificationsModel {
       return;
     }
     this.feed = typed;
+    this.spaces = new Map(
+      rows(r, "notifications").flatMap((n) => (typeof n.id === "string" && typeof n.space === "string" && n.space ? [[n.id, n.space] as const] : [])),
+    );
     const before = this.seen.get();
     const plan = this.native.appNotificationsPlan(typed, before);
     for (const note of plan.post) this.post?.(note);
@@ -75,6 +81,19 @@ export class NotificationsModel {
   async markAllRead(): Promise<void> {
     await this.call("notifications_ack", { ids: [] }).catch(() => null);
     await this.poll();
+  }
+
+  /** Marks these entries read (one was opened); none marks nothing, never
+   * all (the daemon reads an empty list as every entry). */
+  async markRead(ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    await this.call("notifications_ack", { ids }).catch(() => null);
+    await this.poll();
+  }
+
+  /** The Space entry `id` is about, if any (the daemon's `space`). */
+  spaceOf(id: string): string | null {
+    return this.spaces.get(id) ?? null;
   }
 
   /** The Volume's backend and sync status (the menu bar item polls them). */

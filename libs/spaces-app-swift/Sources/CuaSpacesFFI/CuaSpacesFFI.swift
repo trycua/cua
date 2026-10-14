@@ -27853,7 +27853,9 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var autoConnect: Bool
     /**
-     * Settings, Teams: the team (organization id) the account works in.
+     * Settings, Teams: the team (organization id) the account works in
+     * when it is in several ([`crate::teams::current`]); `None` or an id
+     * the account left: its first owned team.
      */
     public var currentTeamId: String?
 
@@ -27923,7 +27925,9 @@ public struct AppSettings: Equatable, Hashable {
          * ([`crate::spaces::cover`]).
          */autoConnect: Bool,
         /**
-         * Settings, Teams: the team (organization id) the account works in.
+         * Settings, Teams: the team (organization id) the account works in
+         * when it is in several ([`crate::teams::current`]); `None` or an id
+         * the account left: its first owned team.
          */currentTeamId: String?) {
         self.hotkey = hotkey
         self.menuBar = menuBar

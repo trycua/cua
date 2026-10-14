@@ -304,6 +304,12 @@ export interface Machine {
   /** Online, but its owner stopped sharing it: why, in one line. Calls to it
    * are refused, so New Space lists it as not sharing. */
   notSharing?: string;
+  /** The core's status word for the row (`machines::status_word`), when
+   * the host listed the rows with the core. */
+  status?: string;
+  /** The core's Spaces count for the row (`machines::spaces_label`; empty
+   * for a device of its own), when the host listed the rows with the core. */
+  spacesLabel?: string;
   /** The machine this UI runs on. */
   current: boolean;
   model?: string;
@@ -457,6 +463,8 @@ export function toMachines(rows: MachineRow[], spaces: Space[], core?: CoreClien
       panel: m.current && m.host && core ? hostPanel(core, m.host) : undefined,
       ...(m.current && m.host?.progress ? { hostProgress: m.host.progress } : {}),
       ...(notSharing ? { notSharing } : {}),
+      ...(m.status ? { status: m.status } : {}),
+      ...(m.spacesLabel != null ? { spacesLabel: m.spacesLabel } : {}),
       ...(m.device ? { device: true } : {}),
       ...(m.current && m.accessNotice ? { accessNotice: m.accessNotice } : {}),
     };

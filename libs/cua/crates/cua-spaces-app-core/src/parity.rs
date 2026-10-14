@@ -2972,7 +2972,8 @@ fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
 
 /// The Machines page's rows (`machines.pageRows`), one line each: name,
 /// id, how it is reached, its system, online, the device in it or a
-/// device of its own, its desktop's Space, and whether it stopped sharing.
+/// device of its own, its desktop's Space, whether it stopped sharing, and
+/// the status word and Spaces count every UI shows.
 fn page_lines(rows: &Value) -> Vec<String> {
     rows.as_array()
         .into_iter()
@@ -3007,6 +3008,11 @@ fn page_lines(rows: &Value) -> Vec<String> {
             }
             if r["stoppedSharing"].as_bool() == Some(true) {
                 line.push_str(" (stopped sharing)");
+            }
+            // The words every UI shows: its status and its Spaces.
+            line.push_str(&format!(" \"{}\"", str_of(&r["status"])));
+            if !str_of(&r["spacesLabel"]).is_empty() {
+                line.push_str(&format!(" \"{}\"", str_of(&r["spacesLabel"])));
             }
             line
         })

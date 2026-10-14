@@ -216,6 +216,9 @@ function fromPageRows(spaces: WkSpaces, machines: WkMachines, rows: MachinePageR
       limits: r.stoppedSharing ? withNotSharing([], stoppedSharingLine(r.name)) : [],
       merged: true,
     };
+    // The core's words for the row, the same the SwiftUI list shows.
+    if (r.status) row.status = r.status;
+    if (r.spacesLabel != null) row.spacesLabel = r.spacesLabel;
     const detail = r.current ? machines.thisMachine?.detail : r.deviceOnly ? dev?.detail : own?.detail || dev?.detail;
     if (detail) row.detail = detail;
     if (r.lastSeen != null) row.lastSeen = r.lastSeen;

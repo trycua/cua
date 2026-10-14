@@ -404,9 +404,6 @@ fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
     Ok(())
 }
 
-/// Characters of one text that are missing from the keymap must not share a
-/// borrowed keycode: rebinding it while the client still translates an earlier
-/// key changes what the client reads. A repeated character reuses its own.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {

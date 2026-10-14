@@ -24,6 +24,8 @@ use super::types::{
 };
 use super::BrowserEngine;
 
+/// Bound for one consent-handling attempt (includes bounded AX read retries).
+const CONSENT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 4 } else { 10 });
 const PROFILE_MARKER: &str = ".cua-driver-owned-profile.json";
 const PROFILE_SCHEMA: &str = "cua-driver-browser-profile-v1";
 
@@ -73,7 +75,7 @@ where
     let mut consent = Box::pin(consent);
     let (result, outcome) = {
         let mut bounded = Box::pin(tokio::time::timeout(
-            Duration::from_secs(4),
+            CONSENT_ATTEMPT_TIMEOUT,
             consent.as_mut(),
         ));
         tokio::select! {
@@ -1316,6 +1318,9 @@ impl BrowserEngine {
                 self.approval_broker.revoke(protected).await;
             }
         }
+        // Single-flight: never open a second connection attempt while one
+        // may still have a prompt pending. Held until this function returns.
+        let _flight = self.consent_flights.lock(pid).await;
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
             |action| {
@@ -1335,6 +1340,7 @@ impl BrowserEngine {
                 // The helper owns and cancels the connection future before it
                 // returns a consent error. Grant revocation can therefore take
                 // the same socket-pool mutex without deadlocking.
+                self.withdraw_stale_consent(pid, window_id).await;
                 self.revoke_existing_profile_grant(
                     &request.session,
                     request.transport_session.as_deref(),
@@ -1376,6 +1382,7 @@ impl BrowserEngine {
             {
                 Ok(result) => result,
                 Err(error) => {
+                    self.withdraw_stale_consent(pid, window_id).await;
                     self.revoke_existing_profile_grant(
                         &request.session,
                         request.transport_session.as_deref(),
@@ -1395,6 +1402,7 @@ impl BrowserEngine {
             };
         let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
         if let Err(_final_claim_error) = claimed {
+            self.withdraw_stale_consent(pid, window_id).await;
             self.revoke_existing_profile_grant(
                 &request.session,
                 request.transport_session.as_deref(),

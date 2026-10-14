@@ -713,6 +713,7 @@ struct FixturePlatform {
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    withdrawn: Arc<AtomicBool>,
     focus: Arc<FixtureFocus>,
 }
 
@@ -932,6 +933,15 @@ impl BrowserPlatform for FixturePlatform {
         ))
     }
 
+    async fn withdraw_pending_existing_profile_consent(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<bool, BrowserRefusal> {
+        self.withdrawn.store(true, Ordering::SeqCst);
+        Ok(true)
+    }
+
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
         Ok(ProcessFingerprint {
             pid,
@@ -989,6 +999,7 @@ async fn fixture_with_platform(
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        withdrawn: Default::default(),
         focus: Default::default(),
     }));
     Fixture {
@@ -1044,6 +1055,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            withdrawn: Default::default(),
             focus: Default::default(),
         }),
         Some(provider.clone()),
@@ -1075,6 +1087,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            withdrawn: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -1129,6 +1142,7 @@ async fn attach_fixture_with_space(
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            withdrawn: Default::default(),
             focus: focus.clone(),
         }),
         Some(provider.clone()),
@@ -1184,6 +1198,7 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        withdrawn: Default::default(),
         focus: Default::default(),
     }));
 
@@ -1655,6 +1670,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
         let (_stream, _) = listener.accept().await.unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     });
+    let withdrawn = Arc::new(AtomicBool::new(false));
     let engine = BrowserEngine::new_with_protected_consent_provider(
         Arc::new(FixturePlatform {
             endpoint_state: None,
@@ -1667,6 +1683,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            withdrawn: withdrawn.clone(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
@@ -1688,6 +1705,10 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
     assert_eq!(
         structured(&prepared)["refusal"]["code"],
         "browser_route_unavailable"
+    );
+    assert!(
+        withdrawn.load(Ordering::SeqCst),
+        "a given-up attempt must withdraw the pending consent prompt"
     );
     stalled_server.abort();
 }
@@ -1713,6 +1734,7 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: true,
+            withdrawn: Default::default(),
             focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {

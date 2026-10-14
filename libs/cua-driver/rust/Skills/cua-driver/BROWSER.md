@@ -544,3 +544,5 @@ result from the current host, process, window, session, and tab.
 Always verify the page with a fresh `get_browser_state` snapshot. When the
 result affects native UI as well, also verify the exact native window with
 `get_window_state`.
+
+When a Chrome connection attempt gives up (timeout, cancel, refusal), the driver now withdraws Chrome's "Allow remote debugging?" prompt by pressing Cancel on the exact matched prompt, and it never starts a second attempt for the same browser while one is pending. Reading the prompt through Accessibility is retried with backoff; if it still fails, the error says so and points at Accessibility permission.

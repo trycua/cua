@@ -172,6 +172,8 @@ const MachineRowShape = ref(
     presence: optNull(bool),
     accessNotice: optNull(MachineAccessNoticeShape),
     merged: opt(bool),
+    status: opt(str),
+    spacesLabel: opt(str),
   }),
 );
 
@@ -643,6 +645,9 @@ const MachinePageRowShape = ref(
     spaceId: nullable(str),
     stoppedSharing: bool,
     lastSeen: nullable(num),
+    status: str,
+    spaces: num,
+    spacesLabel: str,
   }),
 );
 

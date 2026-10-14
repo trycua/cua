@@ -9129,6 +9129,15 @@ pub struct AppMachinePageRow {
     pub stopped_sharing: bool,
     /// The device's last session (Unix seconds), when it has a device.
     pub last_seen: Option<u64>,
+    /// The row's status word, the same in every UI ([`status_word`]):
+    /// "Online", "Not sharing" or "Offline".
+    pub status: String,
+    /// The Spaces it runs that the Spaces list shows: this machine's local
+    /// Spaces, or the Spaces another machine provides (`host`).
+    pub spaces: u32,
+    /// "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+    /// device of its own, which runs no Spaces.
+    pub spaces_label: String,
 }
 
 /// One step, in the order the checklist lists them

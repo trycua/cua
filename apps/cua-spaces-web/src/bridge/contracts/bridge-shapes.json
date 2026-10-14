@@ -1514,6 +1514,15 @@
             "number",
             "null"
           ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "spaces": {
+          "type": "number"
+        },
+        "spacesLabel": {
+          "type": "string"
         }
       },
       "required": [
@@ -1527,7 +1536,10 @@
         "deviceOnly",
         "spaceId",
         "stoppedSharing",
-        "lastSeen"
+        "lastSeen",
+        "status",
+        "spaces",
+        "spacesLabel"
       ]
     },
     "MachineRow": {
@@ -1629,6 +1641,12 @@
         },
         "merged": {
           "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "spacesLabel": {
+          "type": "string"
         }
       },
       "required": [

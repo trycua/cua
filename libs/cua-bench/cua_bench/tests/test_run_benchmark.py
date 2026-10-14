@@ -592,6 +592,52 @@ class TestEvaluatorRewardFailClosed:
 
 
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value",
+        [
+            {"reward": None},
+            {"reward": True},
+            {"reward": "1.0"},
+            {"reward": float("nan")},
+            {"reward": float("inf")},
+            {"reward": -0.1},
+            {"reward": 1.1},
+            {"score": 1.0},
+        ],
+    )
+    async def test_invalid_mapping_reward_cannot_claim_success(
+        self, tmp_path, monkeypatch, value
+    ):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        class FakeEnvironment:
+            evaluate_task_fn = object()
+            solve_task_fn = None
+
+            async def reset(self, task_id=0):
+                return b"screen", SimpleNamespace()
+
+            async def step(self, action):
+                return b"screen"
+
+            async def evaluate(self):
+                return value
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(runners, "make", lambda *a, **k: FakeEnvironment())
+        result = await runners.run_single_task(
+            tmp_path, agent_fn=lambda *_: DoneAction()
+        )
+        assert result.success is False
+        assert result.reward == 0.0
+        assert result.error is not None
+
+
+
 class TestBenchmarkDiscoveryFailClosed:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("parallel", [0, -1, True, 1.5, "2"])

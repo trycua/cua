@@ -12,6 +12,7 @@
 import { useContext, useSyncExternalStore } from "react";
 import type { DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
+import { checklistDone } from "./checklist";
 import type { CoreClient } from "./core";
 import type { ShareEntry, ShareInput, ShareSheetAction, ShareSheetState, ShareSheetView } from "./contracts/share";
 import type { Space } from "./contracts/spaces";
@@ -48,6 +49,8 @@ export class ShareStore {
     /** Where usage events go (`BridgeStore.telemetry`): shared, unshared or
      * a role changed, view-only or not; never who. */
     private readonly track: (signals: TelemetrySignal[]) => void = () => {},
+    /** A Space was shared with someone (the getting-started checklist). */
+    private readonly onShared: () => void = () => {},
   ) {}
 
   subscribe = (l: () => void) => {
@@ -110,6 +113,7 @@ export class ShareStore {
           : await this.adapter.call("sharing.unshare", { spaceId: request.space, who: request.who });
       this.setShares(spaceId, shares);
       outcome = { type: "done" };
+      if (request.kind === "share") this.onShared();
     } catch (e) {
       outcome = { type: "failed", error: words(e) };
     }
@@ -134,7 +138,12 @@ const stores = new WeakMap<BridgeStore, ShareStore>();
 export function shareStore(store: BridgeStore): ShareStore {
   let s = stores.get(store);
   if (!s) {
-    s = new ShareStore(store.adapter, store.core, (signals) => void store.telemetry.track(signals));
+    s = new ShareStore(
+      store.adapter,
+      store.core,
+      (signals) => void store.telemetry.track(signals),
+      () => checklistDone(store, "share"),
+    );
     stores.set(store, s);
   }
   return s;

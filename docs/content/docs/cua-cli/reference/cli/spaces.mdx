@@ -49,7 +49,7 @@ Alias: `cua spaces list`.
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-spaces-ls--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai). |
+| <span id="cua-spaces-ls--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
 
 **Examples**
 
@@ -255,10 +255,10 @@ cua spaces share [OPTIONS] <SPACE> <WHO>
 | `<SPACE>` | string | required | Space id, address or display name. |
 | `<WHO>` | string | required | Their email (verified by cua.ai) or account id. |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-spaces-share--role"></span>`--role` | `viewer` \| `editor` | `viewer` | `viewer`: presence and a view-only stream. `editor`: full use. |
-| <span id="cua-spaces-share--yes"></span>`--yes` | boolean | `false` | Confirm without a prompt (needed without a terminal when no daemon runs; a running daemon asks with Touch ID or your password instead). |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-spaces-share--role"></span>`--role` |  | `viewer` \| `editor` | `viewer` | `viewer`: presence and a view-only stream. `editor`: full use. |
+| <span id="cua-spaces-share--yes"></span>`--yes` | `-y` | boolean | `false` | Confirm without a terminal prompt. Without a daemon the share happens at once. A running daemon still asks with Touch ID or your password on this computer; without a terminal, `--yes` says someone will answer there (otherwise the command fails at once instead of waiting for a prompt nobody sees). |
 
 **Examples**
 
@@ -266,6 +266,9 @@ cua spaces share [OPTIONS] <SPACE> <WHO>
 cua spaces share local:studio bob@example.com
 cua spaces share local:studio bob@example.com --role editor
 cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+
+# From a script or agent: confirm with Touch ID or your password here
+cua spaces share local:studio bob@example.com --yes
 ```
 
 ## `cua spaces unshare`

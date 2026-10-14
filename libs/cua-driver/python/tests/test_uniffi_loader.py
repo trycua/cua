@@ -30,9 +30,9 @@ class GeneratedOptionsTests(unittest.TestCase):
 
         from cua_driver import CuaDriver
 
-        # Released callers pass these by keyword; the helpers behind them are private.
+        # Released callers pass these by keyword; embedded is an additive keyword-only option.
         self.assertEqual(str(inspect.signature(CuaDriver.connect)), "(socket_path)")
-        self.assertEqual(str(inspect.signature(CuaDriver.create)), "(options=None)")
+        self.assertEqual(str(inspect.signature(CuaDriver.create)), "(options=None, *, embedded=False)")
 
     def test_action_target_is_public_and_uses_the_generated_contract(self) -> None:
         import cua_driver

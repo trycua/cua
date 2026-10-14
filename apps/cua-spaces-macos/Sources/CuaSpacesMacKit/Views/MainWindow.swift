@@ -7,7 +7,8 @@ import SwiftUI
 
 /// The main window: a sidebar of Spaces and the Keyvault (with its global
 /// switch), and the selected item's detail. Rows are one line; the
-/// sections, search, selection fallback and dimming are the core's.
+/// sections, search, selection fallback and dimming are the core's. ⌘K
+/// opens the command palette.
 public struct MainWindow: View {
     @Bindable var model: AppModel
     @Environment(\.openSettings) private var openSettings
@@ -26,6 +27,7 @@ public struct MainWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         DevicesBanner(devices: model.devices)
+                        RelayAllowanceBanner(devices: model.devices)
                         if let error = model.rosterError {
                             SpacesDiscoveryNotice(error: error)
                         }
@@ -44,12 +46,6 @@ public struct MainWindow: View {
                 .keyboardShortcut("n", modifiers: .command)
                 .help(chrome.newSpaceLabel)
             }
-            if model.settings.experiments.webUi {
-                ToolbarItem(placement: .primaryAction) {
-                    OpenWebUIButton(model: model, label: "New UI")
-                        .help("Open New UI (preview)")
-                }
-            }
         }
         .sheet(isPresented: $model.showingNewSpace) {
             NewSpaceWizardView(wizard: model.wizard,
@@ -60,6 +56,9 @@ public struct MainWindow: View {
                                onCancel: { model.cancelNewSpace() },
                                cloud: model.cloud,
                                onRuntimeSwitch: { await model.applyRuntimeSwitch($0) })
+        }
+        .sheet(isPresented: $model.showingPalette) {
+            CommandPaletteView(model: model)
         }
         .sheet(item: approvalBinding) { _ in
             ApprovalSheet(keyvault: model.keyvault)
@@ -75,6 +74,17 @@ public struct MainWindow: View {
         .task {
             await model.refresh()
             await model.keyvault.refresh()
+        }
+        // The relay allowance: at once (and on every sign-in or out), every
+        // 5 minutes, and when the app comes to the front.
+        .task(id: model.devices.signedIn) {
+            while !Task.isCancelled {
+                await model.devices.readRelayUsage()
+                try? await Task.sleep(for: DevicesModel.relayUsagePoll)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.devices.readRelayUsage(maxAge: DevicesModel.relayUsageFocusAge) }
         }
     }
 
@@ -121,6 +131,10 @@ public struct MainWindow: View {
             EmptySpaces(model: model)
         case .notifications:
             NotificationsPageView(model: model.persistent)
+        case .machines:
+            MachinesPageView(model: model)
+        case .gettingStarted:
+            GettingStartedView(model: model)
         case nil:
             EmptySpaces(model: model)
         }
@@ -141,7 +155,14 @@ struct Sidebar: View {
     var body: some View {
         let sidebar = model.sidebar
         let kv = model.keyvault
+        let checklist = model.checklist.view
         List(selection: $model.selection) {
+            if checklist.visible {
+                Label(checklist.title, systemImage: "checklist")
+                    .badge(Text(checklist.progress))
+                    .tag(MainSelection.gettingStarted)
+                    .accessibilityIdentifier("sidebar-getting-started")
+            }
             if let row = sidebar.thisMachine {
                 spaceRow(row)
             }
@@ -174,6 +195,7 @@ struct Sidebar: View {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)
             }
             Section {
+                Label("Machines", systemImage: "server.rack").tag(MainSelection.machines)
                 Label("Agents", systemImage: "person.2").tag(MainSelection.agents)
                 // Only with the Cua Volume experiment on (the core's chrome).
                 if let volume = model.chrome.volumeLabel {
@@ -395,9 +417,11 @@ struct KeyvaultHeader: View {
 
 struct EmptySpaces: View {
     let model: AppModel
+    @State private var stacked = false
 
     var body: some View {
         let chrome = model.chrome
+        let tiles = stacked ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
         ContentUnavailableView {
             Label(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded",
                   systemImage: "desktopcomputer")
@@ -406,7 +430,7 @@ struct EmptySpaces: View {
         } actions: {
             VStack(spacing: 18) {
                 if model.rosterError == nil {
-                    HStack(spacing: 12) {
+                    tiles {
                         tile("os-linux", chrome.emptyAction, chrome.emptyLinuxDetail, .linux)
                         tile("os-macos", chrome.emptyMacosAction, chrome.emptyMacosDetail, .macos)
                     }
@@ -416,6 +440,9 @@ struct EmptySpaces: View {
             }
             .padding(.top, 10)
         }
+        // Neither the actions slot nor this view reports the pane width, so measure a pane-filling frame.
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: Bool.self) { $0.size.width < 640 } action: { stacked = $0 }
     }
 
     private func tile(_ icon: String, _ name: String, _ detail: String, _ os: AppSpaceOs) -> some View {

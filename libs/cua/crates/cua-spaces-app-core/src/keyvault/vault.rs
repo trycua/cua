@@ -1423,7 +1423,7 @@ mod tests {
         let note = |os| view_on(&o, &st(), NOW, os).hidden_note.unwrap();
         assert_eq!(
             note(crate::model::SpaceOs::Windows),
-            "Names are hidden. Confirm with Windows Hello to see what is saved."
+            "Names are hidden. Confirm with Windows Hello or your password to see what is saved."
         );
         assert_eq!(
             note(crate::model::SpaceOs::Linux),

@@ -725,7 +725,7 @@ export const PAGES: PageSpec[] = [
     title: 'Spaces app core',
     description: 'The view models the Cua Spaces apps share: Space list, New Space wizard, teleport review, notch and Keyvault.',
     intro:
-      'The Tauri and SwiftUI Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Build your own Spaces UI on it. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
+      'The Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
     items: ['cua_spaces_register'],
     modules: ['app_core', 'app_core_types'],
     catalog: true,
@@ -929,8 +929,8 @@ export const PAGES: PageSpec[] = [
     slug: 'spaces/app-core/experiments',
     title: 'Experiments',
     description: 'Settings > Experiments: the switches that hide Cua Volume, your own cloud and sharing until they are turned on.',
-    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_experiments_choose` applies a switch. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
-    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
+    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_settings_choose_experiment` applies a switch and saves the New UI choice ("Use classic UI"). `app_settings_resolve_new_ui` applies the New UI default for the update channel and version. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
+    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_settings_resolve_new_ui', 'app_settings_first_launch_channel', 'app_settings_choose_experiment', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
     prefixes: ['AppExperiment', 'app_experiments_'],
     spaces: true,
   },
@@ -1004,6 +1004,16 @@ export const PAGES: PageSpec[] = [
       'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it.',
     items: ['AppCreditNotice'],
     prefixes: ['AppBilling', 'app_billing_'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/relay',
+    title: 'Relay usage',
+    description: 'The Relay usage row in Settings and the notice past the monthly relay allowance.',
+    intro:
+      '`app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does) with the session\'s `Devices` and an account token. `app_relay_usage_view` derives the Settings row (`AppRelayUsageView`) and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade, dismissed per month and reason. Nothing stops at the limit.',
+    items: [],
+    prefixes: ['AppRelay', 'app_relay_'],
     spaces: true,
   },
   {
@@ -1092,6 +1102,26 @@ export const PAGES: PageSpec[] = [
       '`app_share_view` derives the Share sheet from `AppShareInput` (the Space and its `Space.shares`): one row per person with a role menu, the email field and why sharing is unavailable. `app_share_reduce` applies an action; its `request` goes to `Space.share` or `Space.unshare`, which ask for presence first.',
     items: [],
     prefixes: ['AppShare', 'app_share_', 'AppRoleOption'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/machines-app-core',
+    title: 'Machines page',
+    description: 'The Machines page\'s rows: this machine, your machines and your devices, each computer once.',
+    intro:
+      '`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.',
+    items: ['AppDeviceIn'],
+    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'app_machines_'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-checklist-palette',
+    title: 'Getting started and the command palette',
+    description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
+    intro:
+      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. The host app keeps the one `AppChecklistState`. `app_checklist_observe_from` reads what the app shows (the [Machines page](/cua-sdk/reference/spaces/machines-app-core) rows, the Spaces, the agents) as the same `Observe` action in every UI. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, what the app shows now, or progress merged from another copy) and returns the new state with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
+    items: [],
+    prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
     spaces: true,
   },
   {
@@ -2058,9 +2088,10 @@ function itemTable(items: Array<Item & { href: string }>, page: string): string[
 }
 
 /**
- * A catalog page's compact index: one line of item links per subpage (the
- * summaries live on each item's own section), so large catalogs stay under
- * the page budget.
+ * A catalog page's compact index: one line per subpage, its title linking to
+ * it, then the names of its items (each one's section is on that page, under
+ * its name), so large catalogs stay under the page budget. The catalog page's
+ * own items keep their anchor links.
  */
 function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: RenderContext): string[] {
   const groups = new Map<string, Array<Item & { href: string }>>();
@@ -2072,7 +2103,12 @@ function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: R
   const out: string[] = [];
   for (const [target, group] of groups) {
     const spec = rc.pages.find((p) => pageRoute(p.slug) === target || target.endsWith(`/${p.slug}`));
-    out.push(`**${spec ? spec.title : target}**: ${group.map((i) => `[\`${i.name}\`](${relLink(i.href, page)})`).join(', ')}`, '');
+    const title = spec ? spec.title : target;
+    if (target === pageRoute(page)) {
+      out.push(`**${title}**: ${group.map((i) => `[\`${i.name}\`](${relLink(i.href, page)})`).join(', ')}`, '');
+    } else {
+      out.push(`**[${title}](${target})**: ${group.map((i) => `\`${i.name}\``).join(', ')}`, '');
+    }
   }
   return out;
 }
@@ -2092,7 +2128,7 @@ function renderObjectPage(p: Placed, rc: RenderContext, version: string): string
   for (const item of p.items) body.push(...renderItem(item, rc));
   if (spec.catalog) {
     const items = catalogItems(spec.slug, rc);
-    body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page. Methods are listed on their object.`, '');
+    body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.`, '');
     body.push(...catalogIndex(items, spec.slug, rc), '');
   }
   const needsCallout = body.some((l) => l.includes('<Callout'));

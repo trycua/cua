@@ -58,9 +58,9 @@ UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
 `xcodebuild test -scheme CuaSpacesMacUITests`.
 
 Environment (debug builds only; release builds ignore every `CUA_SPACES_*` hook):
-`CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`);
+`CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`; a relay allowance `CUA_SPACES_RELAY_USAGE` sets: `reached`, `team`, `none`, default the free plan within it);
 `CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings-devices`, `settings-about`, `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
-`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images) or a notch state (`notch-open`, which springs
+`onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images), `run-timeline` (an agent run's conversation from the Space's Agents section; fixtures give `local:aurora` two runs) or a notch state (`notch-open`, which springs
 open 1.5 s after launch, `notch-hover`, `notch-permission`,
 `notch-drag-target`, `notch-drop`); `CUA_SPACES_SELECT`
 selects a Space; `CUA_SPACES_CREATE=<image>[,<name>]` creates one on this
@@ -73,14 +73,28 @@ run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Supp
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
 
-## New UI (preview)
+## New UI
 
-Settings, Experiments, "New UI (preview)" (`web_ui`, off by default) adds
-File, "Open New UI (preview)" (⇧⌘U) and a "New UI" toolbar button. They open
-`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`): a `WKWebView`
-with the shared React UI (`apps/cua-spaces-web`) in a window without a title
-bar. The notch, the menu bar extra, Touch ID, the updater and video stay
+The New UI (the `web_ui` experiment) makes
+`WebUIWindowController` (`Sources/CuaSpacesMacKit/WebHost`) the main window: a
+`WKWebView` with the shared React UI (`apps/cua-spaces-web`) in a window
+without a title bar. Turning it on puts that window where the native one was
+(same frame) and closes the native one; turning it off does the reverse
+(`MainWindowSwitch`). While it is on, everything that opens the main window
+opens it instead, at the matching page (`MainUIRouter`): the Dock icon, the
+menu bar item, the notch, File, New Space (⌘N), the View menu, Help, Getting
+Started and the app's notifications; the native window, opened any other way
+(the Window menu), gives way to it. The notch, the menu bar extra, Touch ID, the updater and video stay
 native; a Space's desktop opens in its native window.
+
+It is on by default on the Beta update channel (the setting Sparkle uses)
+from the 0.8.1 betas, and on every channel from 0.8.1 (0.8.0 shipped without it)
+(`experiments::new_ui_default`). Settings, Experiments, "Use classic UI"
+(`experiment:classic_ui`) is the way back; it saves the user's choice
+(`AppSettings.new_ui`), which later launches keep. Only a choice is saved:
+an older build's saved `webUi: false` was its default, so it reads as no
+choice, and a saved `true` is kept (`settings::load`). A beta's first launch
+starts on the Beta channel (`settings::first_launch_channel`).
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
   or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at
@@ -294,7 +308,12 @@ commits under this directory.
 scripts/build-release.sh --version 0.2.0 --out /tmp/spaces-release   # ad hoc signed, universal
 scripts/package-dmg.sh --app "/tmp/spaces-release/Cua Spaces.app" --out /tmp/cua-spaces.dmg
 scripts/verify-release.sh cua-spaces-0.2.0-darwin-universal.dmg      # a downloaded release
+scripts/verify-release.sh --dir assets --version 0.8.0-beta.6 \
+  --expect swift,electron,windows,appcast,feed                      # every asset of a release
 ```
+
+CD (`cd-cua-spaces.yml`, job `verify-release`) runs `verify-release.sh` on the
+signed and notarized build before anything is published.
 
 The disk image window is the spaces.cua.ai hero with the blue Cua Spaces key
 missing. The app, whose icon is that key, sits on the left. The Applications

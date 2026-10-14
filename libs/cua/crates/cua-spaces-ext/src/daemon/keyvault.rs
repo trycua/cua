@@ -253,9 +253,7 @@ impl DaemonBackend {
         let Some(home) = self.host.home_dir() else {
             return;
         };
-        let root = home.join(cua_teleport_bundle::layout::firefox::root_for(
-            self.platform,
-        ));
+        let root = ff::app_data_dir(&home, self.platform);
         let Some(profile) = ff::default_profile(&root) else {
             notes.push("no Firefox profile was found".into());
             return;
@@ -571,8 +569,14 @@ impl Backend for DaemonBackend {
         let source = spec.profile.clone().unwrap_or_else(|| "default".into());
         let mut out: Vec<Captured> = Vec::new();
         let mut display = self.app_display(&spec.app);
+        // Items carry the provider's id (`chrome` for a Microsoft Edge capture):
+        // the Space imports them through that provider.
+        let provider_id = self
+            .sessions
+            .provider_id(&spec.app)
+            .unwrap_or_else(|| spec.app.clone());
         let keep = |out: &mut Vec<Captured>, display: &str, scope: &str, n: record::NewRecord| {
-            let (meta, payload) = n.into_item(&spec.app, display, &source, scope);
+            let (meta, payload) = n.into_item(&provider_id, display, &source, scope);
             out.push(Captured { meta, payload });
         };
         // Sites named one by one (the MCP import path): their cookies, and
@@ -604,7 +608,7 @@ impl Backend for DaemonBackend {
         if spec.whole_app {
             let (scope, name, entries) = self.export_entries(&spec.app, spec.paths.as_deref())?;
             display = name;
-            let exported = record::codec_for(&spec.app).export(
+            let exported = record::codec_for(&provider_id).export(
                 entries,
                 &ExportOptions {
                     opted_in: spec.paths.clone().unwrap_or_default(),

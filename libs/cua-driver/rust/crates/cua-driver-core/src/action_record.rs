@@ -64,6 +64,9 @@ pub enum ActionTransport {
     MacosAxWindowFrame,
     MacosCgEventPid,
     MacosCgEventHid,
+    /// An Apple Event to the target app's scripting interface (Finder
+    /// rename, a document save), which never activates the app.
+    MacosAppleEvent,
     WindowsUiaInvoke,
     WindowsUiaToggle,
     WindowsUiaSelection,
@@ -106,6 +109,7 @@ impl ActionTransport {
         Self::MacosAxWindowFrame,
         Self::MacosCgEventPid,
         Self::MacosCgEventHid,
+        Self::MacosAppleEvent,
         Self::WindowsUiaInvoke,
         Self::WindowsUiaToggle,
         Self::WindowsUiaSelection,
@@ -169,7 +173,9 @@ impl ActionTransport {
             | Self::LinuxWaylandVirtualPointer
             | Self::LinuxHyprlandForegroundInput
             | Self::LinuxCuaCompositorInject => ActionRoute::GlobalInput,
-            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow => ActionRoute::SystemApi,
+            Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow | Self::MacosAppleEvent => {
+                ActionRoute::SystemApi
+            }
             Self::BrowserCdpRuntimeFunction => ActionRoute::Dom,
             Self::BrowserCdpInputMouse | Self::BrowserCdpInputKey => ActionRoute::TrustedInput,
         }
@@ -1104,6 +1110,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::MacosAxWindowFrame => "macos_ax_window_frame",
         ActionTransport::MacosCgEventPid => "macos_cg_event_pid",
         ActionTransport::MacosCgEventHid => "macos_cg_event_hid",
+        ActionTransport::MacosAppleEvent => "macos_apple_event",
         ActionTransport::WindowsUiaInvoke => "windows_uia_invoke",
         ActionTransport::WindowsUiaToggle => "windows_uia_toggle",
         ActionTransport::WindowsUiaSelection => "windows_uia_selection",

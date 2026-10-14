@@ -200,10 +200,12 @@ fn required_canonical(tool: &str) -> Option<&'static [&'static str]> {
         // `pid` is conditionally required (validated in code: needed unless a
         // windowless desktop-scope call), so it is intentionally NOT pinned here.
         "click" => &[],
+        // An element_token carries its own pid, so element-addressed tools
+        // never require `pid` in the schema (validated in code for x/y).
+        "double_click" | "right_click" => &[],
+        "set_value" => &["value"],
         "scroll" => &["direction"],
         "zoom" => &["window_id", "x1", "y1", "x2", "y2"],
-        // double_click / right_click are already consistent across platforms —
-        // not pinned, so we don't force a behavior change on them.
         _ => return None,
     })
 }
@@ -419,6 +421,24 @@ mod tests {
     fn canonical_click_required_passes() {
         let tool = json!({ "type": "object", "required": [], "properties": {} });
         assert!(shared_schema_violations("click", &tool).is_empty());
+    }
+
+    #[test]
+    fn element_token_tools_must_not_require_pid() {
+        for (tool_name, required) in [
+            ("double_click", json!(["pid"])),
+            ("right_click", json!(["pid"])),
+            ("set_value", json!(["pid", "value"])),
+        ] {
+            let tool = json!({ "type": "object", "required": required, "properties": {} });
+            let v = shared_schema_violations(tool_name, &tool);
+            assert!(
+                v.iter().any(|s| s.contains("required")),
+                "{tool_name}: {v:?}"
+            );
+        }
+        let set_value = json!({ "type": "object", "required": ["value"], "properties": {} });
+        assert!(shared_schema_violations("set_value", &set_value).is_empty());
     }
     #[test]
     fn element_token_pattern_matches_the_minted_wire_shape() {

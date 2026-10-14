@@ -47,7 +47,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -264,7 +264,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.8 GB–6.8 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",

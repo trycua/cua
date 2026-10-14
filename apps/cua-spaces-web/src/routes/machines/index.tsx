@@ -3,7 +3,7 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { LaptopIcon, PlusIcon, ServerIcon, Trash2Icon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useBridge, useExperiments, useMachines, useSpaces, type Machine, type Space, type SpaceDetailView } from "@/bridge";
 import { spaceDetail } from "@/bridge/space-detail";
@@ -19,7 +19,11 @@ import { connectionLabel, machineOs, machinesSummary, machineSubtitle, osName, p
 import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
 import { cn, relativeTime } from "@/lib/utils";
 
-export const Route = createFileRoute("/machines/")({ component: MachinesPage });
+export const Route = createFileRoute("/machines/")({
+  component: MachinesPage,
+  // `?add=1` opens "Add a machine" (the getting-started checklist links here).
+  validateSearch: (s: Record<string, unknown>): { add?: true } => (s.add === 1 || s.add === "1" || s.add === true ? { add: true } : {}),
+});
 
 function MachinesPage() {
   const { data: machines = [], isLoading, error, setupGuide } = useMachines();
@@ -28,7 +32,16 @@ function MachinesPage() {
   const exp = useExperiments();
   const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const { add } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [adding, setAddingState] = useState(add === true);
+  const setAdding = (open: boolean) => {
+    setAddingState(open);
+    if (!open && add) void navigate({ search: {}, replace: true });
+  };
+  useEffect(() => {
+    if (add) setAddingState(true);
+  }, [add]);
   const selected = selectedMachine(machines, selectedId);
   // Reachable from here: a machine whose owner stopped sharing it is not.
   const online = machines.filter(reachable).length;

@@ -270,7 +270,8 @@ pub(crate) async fn stop_daemon(discovery: &Path, pid: u32) -> Result<(), CuaErr
             Some(d) => d.pid != pid,
             None => true,
         };
-        if gone && cua_daemon::client::live_address().is_none() {
+        // Removing discovery and closing listeners does not prove process exit.
+        if gone && !cua_daemon::pid_alive(pid) && cua_daemon::client::live_address().is_none() {
             return Ok(());
         }
         tokio::time::sleep(tick).await;
@@ -279,4 +280,38 @@ pub(crate) async fn stop_daemon(discovery: &Path, pid: u32) -> Result<(), CuaErr
         "the running cua daemon (pid {pid}) did not stop within {} s",
         STOP_WAIT.as_secs()
     )))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    struct Process(Child);
+
+    impl Drop for Process {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_discovery_does_not_mean_the_old_process_exited() {
+        let _env = crate::util::test_env::isolated();
+        let home = tempfile::tempdir().unwrap();
+        let discovery = home.path().join("daemon.json");
+        let mut process = Process(Command::new("sleep").arg("60").spawn().unwrap());
+        let pid = process.0.id();
+
+        let result =
+            tokio::time::timeout(Duration::from_millis(250), stop_daemon(&discovery, pid)).await;
+        assert!(result.is_err(), "must wait for the old process to exit");
+        assert!(process.0.try_wait().unwrap().is_none());
+
+        process.0.kill().unwrap();
+        process.0.wait().unwrap();
+        stop_daemon(&discovery, pid).await.unwrap();
+    }
 }

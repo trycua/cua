@@ -540,8 +540,14 @@ impl KeyboardMap {
         if let Some((code, shift)) = self.lookup(keysym) {
             return Ok((code, shift, None));
         }
-        let guard = super::remap_spare_keycode(conn, &self.mapping, keysym).map_err(failed)?;
-        Ok((guard.keycode, false, Some(guard)))
+        let (code, guard) = super::keycode_for_keysym(
+            conn,
+            &mut self.mapping.clone(),
+            keysym,
+            &format!("0x{keysym:X}"),
+        )
+        .map_err(failed)?;
+        Ok((code, false, guard))
     }
 }
 

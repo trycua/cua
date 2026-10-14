@@ -178,21 +178,20 @@ Describe 'install.ps1' {
         $out | Should -Match 'is not on your PATH'
     }
 
-    # Cua Spaces is macOS-only for now: Windows skips the app with a note.
-    It 'dry run: plans the CLI, skips the app (macOS only) and changes nothing' {
+    # Cua Spaces for Windows is the Electron app's NSIS setup.exe.
+    It 'dry run: -Mode plans the CLI and the silent setup.exe, and changes nothing' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p2'
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; Prefix = $prefix; Mode = 'host' } @{ CUA_INSTALL_ARCH = 'ARM64' }
         $out | Should -Match 'cua-cli-1.2.3-windows-arm64.zip'
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-arm64-setup.exe'
+        $out | Should -Match '/S'
         $out | Should -Not -Match 'msiexec'
-        $out | Should -Not -Match 'cua-spaces-1.2.3-windows'
         $prefix | Should -Not -Exist
     }
 
-    It 'dry run: -AppOnly skips the app with a note and installs nothing' {
-        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Installer = 'nsis'; Mode = 'client' }
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
-        $out | Should -Not -Match 'setup.exe'
+    It 'dry run: -AppOnly plans only the silent setup.exe' {
+        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'client' }
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'cua-cli-1.2.3'
     }
 
@@ -206,6 +205,21 @@ Describe 'install.ps1' {
         { Invoke-Installer @{ CliOnly = $true; Yes = $true; Prefix = $prefix } @{ CUA_INSTALL_MANIFEST_URL = ConvertTo-FileUrl (Join-Path $bad 'release-artifacts.json') } } |
             Should -Throw '*checksum mismatch*'
         Join-Path $prefix 'bin/cua.exe' | Should -Not -Exist
+    }
+
+    It 'dry run: -Pair installs the CLI and runs host setup with the code, no sign-in or checklist' {
+        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'https://relay.example.com' }
+        $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com'
+        $out | Should -Not -Match 'auth login'
+        $out | Should -Not -Match 'Choose what to install'
+    }
+
+    It '-Pair refuses codes and relays with shell characters' {
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM;calc' } } | Should -Throw '*not a pairing code*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://localhost.evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Relay = 'https://relay.example.com' } } | Should -Throw '*goes with -Pair*'
     }
 
     It 'rejects -CliOnly with -AppOnly' {
@@ -253,10 +267,10 @@ Describe 'install.ps1' {
         $out | Should -Not -Match 'cua-driver'
     }
 
-    It 'dry run: -Only spaces installs the CLI and skips the app' {
+    It 'dry run: -Only spaces installs the CLI and the setup.exe' {
         $out = Invoke-Installer @{ DryRun = $true; Only = 'spaces' }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'msiexec'
     }
 
@@ -275,8 +289,8 @@ Describe 'install.ps1' {
         { Invoke-Installer @{ DryRun = $true; CliOnly = $true; Select = 'spaces' } } | Should -Throw '*use -Only spaces*'
     }
 
-    It 'dry run: -Mode writes no install-mode file while the app is skipped' {
+    It 'dry run: -Mode writes the install-mode file when the app is installed' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'host' }
-        $out | Should -Not -Match 'spaces-install-mode'
+        $out | Should -Match 'spaces-install-mode'
     }
 }

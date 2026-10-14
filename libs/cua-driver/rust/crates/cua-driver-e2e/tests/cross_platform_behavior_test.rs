@@ -1654,9 +1654,9 @@ fn shared_case_with_native_hyprland(
             ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
-            ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
-                vec![RefusalCode::BackgroundUnavailable]
-            }
+            // Electron scroll is delivered in the background through
+            // accessibility (reveal scroll), including inner scrollers.
+            (_, "drag", Targeting::Px) => vec![RefusalCode::BackgroundUnavailable],
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

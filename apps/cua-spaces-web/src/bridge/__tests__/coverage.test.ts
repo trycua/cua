@@ -9,10 +9,14 @@ import { createTauriAdapter } from "../adapters/tauri";
 import { createWebkitAdapter } from "../adapters/webkit";
 import { HOST_COVERAGE, WEBKIT_HOST_ONLY } from "../coverage";
 import { NEW_SPACE_ARGS } from "../ops/new-space";
+import { AGENT_DETAIL_ARGS } from "../ops/agent-detail";
 import { AGENT_KEYS_ARGS } from "../ops/agent-keys";
 import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
+import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { CHECKLIST_ARGS } from "../ops/checklist";
+import { PRESENCE_ARGS } from "../ops/presence";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type OpArgs, type OpName } from "../protocol";
@@ -50,6 +54,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
   ...KEYVAULT_SETUP_ARGS,
@@ -94,6 +99,9 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "devices.rename": { id: "dev_p", name: "Work laptop" },
   "devices.revoke": { id: "dev_p" },
   "devices.confirmMachine": { id: "m1" },
+  "devices.createPairingCode": { team: null },
+  "devices.pairingCodes": {},
+  "devices.revokePairingCode": { id: "pc_demo0" },
   "storage.get": {},
   "storage.run": { request: { kind: "clear-cache" } },
   "notifications.list": {},
@@ -112,6 +120,9 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.get": {},
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
+  ...RELAY_USAGE_ARGS,
+  ...CHECKLIST_ARGS,
+  ...PRESENCE_ARGS,
 };
 
 const unsupportedOn = (op: OpName, host: "webkit" | "tauri") =>

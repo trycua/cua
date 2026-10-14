@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OnboardingAction, OnboardingFlowState } from "../contracts/onboarding";
 import { onboardingInitial, onboardingReduce } from "../onboarding";
 import { sanitizeSignals } from "../ops/telemetry";
@@ -71,7 +71,10 @@ describe("the launched signal crossing the bridge", () => {
 });
 
 describe.skipIf(!wasmBuilt)("first-run usage events from the web pages", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("never reports the Menu bar page it passes through, and counts Set up later", async () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     const { act, render, waitFor } = await import("@testing-library/react");
     const { createElement } = await import("react");
     const { BridgeProvider, useOnboarding } = await import("../index");

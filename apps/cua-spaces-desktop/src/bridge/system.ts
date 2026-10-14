@@ -35,4 +35,7 @@ export interface SystemServices {
   updater: UpdaterDriving | null;
   /** The user's home folder, as the daemon sees it. */
   home: string;
+  /** The global shortcut (macOS), registered again if the system refused it
+   * before; absent or null where the shell has none. */
+  globalShortcut?: () => { label: string; registered: boolean } | null;
 }

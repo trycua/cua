@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Native } from "../native/load";
-import { appCoreStatePaths } from "../migrate-swift";
+import { appCoreStatePaths, swiftSupportDir } from "../migrate-swift";
 import { nativeFiles } from "../native/location";
 import type { CuaLike } from "../native/generated/index";
 import { PendingAgentSetup, LiveAgentSetup } from "./agents";
@@ -119,6 +119,11 @@ export function makeModel(o: EnvironmentOptions): Environment {
     keyvault,
     servicesIn: () => gate.current !== null,
     cpus: os.availableParallelism?.() ?? os.cpus().length,
+    // The checklist beside the app core's settings; on macOS, the SwiftUI
+    // app's ticks are where a first launch starts from.
+    checklistPath: path.join(path.dirname(settingsPath), "checklist.json"),
+    checklistSeedPath: platform === "darwin" ? path.join(swiftSupportDir(env.HOME || os.homedir()), "checklist.json") : null,
+    hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.

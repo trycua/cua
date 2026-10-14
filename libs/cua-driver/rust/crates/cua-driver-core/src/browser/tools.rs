@@ -81,7 +81,7 @@ fn schema_delivery_mode() -> Value {
         "type": "string",
         "enum": ["background", "foreground"],
         "default": "background",
-        "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
+        "description": "background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
     })
 }
 
@@ -275,9 +275,11 @@ impl GetBrowserStateTool {
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
                 semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                opaque continuation. Never performs setup: a browser that is not \
+                attached yet refuses with browser_consent_required or \
+                browser_requires_setup, and detail.next_call names the browser_prepare call \
+                that attaches it. Use this route for any web page in Chrome, Edge or Brave; \
+                desktop pointer tools move the user's pointer."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -607,7 +609,13 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser. \
+            description: "Attach the browser tools to a browser. For a page in the user's \
+                running Chrome, Edge or Brave, call it once with pid, window_id, session and \
+                strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with \
+                browser_consent_required or browser_requires_setup; then call \
+                get_browser_state again and act with browser_click, browser_type or \
+                browser_pointer. It attaches, or refuses with nothing changed and says why. \
+                Explicitly prepare an owned DevTools endpoint for a browser. \
                 pid is required for an existing process or existing-profile attachment, \
                 and optional only for allow_launch=true with an isolated profile. Existing \
                 endpoints are detected without side effects. Acting setup \
@@ -625,7 +633,16 @@ impl BrowserPrepareTool {
                 open the recognized browser product's fixed remote-debugging page, toggle \
                 its uniquely matched per-instance checkbox, prove the PID-owned loopback \
                 endpoint, and close the temporary tab. Every visible effect is reported; \
-                ambiguity is refused."
+                ambiguity is refused. Where attaching would bring the browser in front of \
+                the user's app (macOS Chrome shows its own remote-debugging prompt in front \
+                whenever the driver opens a new browser connection; sessions for the same \
+                browser share one approved connection, kept for up to 30 minutes idle and \
+                8 hours in total, so later sessions do not prompt again), existing-profile \
+                attachment refuses with \
+                background_unavailable unless delivery_mode is \"foreground\" (the app that \
+                was in front is brought back afterwards) or the browser window is on another \
+                Space than the user's, where it attaches in the background while the driver \
+                reverts the browser's own brief activations."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -648,12 +665,18 @@ impl BrowserPrepareTool {
                     },
                     "strategy": {
                         "type": "object",
-                        "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+                        "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
                         "properties": {
                             "kind": { "type": "string", "enum": ["existing_profile"] }
                         },
                         "required": ["kind"],
                         "additionalProperties": false
+                    },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "default": "background",
+                        "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
                     },
                     "session": schema_session(),
                 },
@@ -698,12 +721,18 @@ impl Tool for BrowserPrepareTool {
                 Ok(strategy) => Some(strategy),
                 Err(error) => {
                     return ToolResult::error(format!(
-                        "invalid browser preparation strategy: {error}"
+                        "invalid browser preparation strategy ({error}). Pass an object: \
+                         \"strategy\": {{\"kind\": \"existing_profile\"}}, with pid and \
+                         window_id from list_windows."
                     ))
                 }
             },
         };
         let allow_launch = args.opt_bool("allow_launch").unwrap_or(false);
+        let foreground = match parse_delivery_mode(&args) {
+            Ok(foreground) => foreground,
+            Err(error) => return ToolResult::error(error),
+        };
         let pid = match args.get("pid") {
             None => None,
             Some(_) => match args.require_i64("pid") {
@@ -726,6 +755,7 @@ impl Tool for BrowserPrepareTool {
             strategy,
             profile,
             allow_launch,
+            foreground,
         };
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
@@ -750,6 +780,24 @@ impl Tool for BrowserPrepareTool {
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))
+            }
+            Err(refusal) if refusal.code == BrowserRefusalCode::BackgroundUnavailable => {
+                let reason = refusal
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.get("limitation"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("attaching would bring the browser to the front")
+                    .to_owned();
+                crate::delivery::background_unavailable_result(
+                    format!("browser_prepare refused: {}", refusal.message),
+                    refusal.code.as_str(),
+                    reason,
+                    json!({
+                        "status": "refused",
+                        "refusal": refusal,
+                    }),
+                )
             }
             Err(refusal) => refusal.to_tool_result(),
         }
@@ -907,9 +955,10 @@ impl BrowserClickTool {
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture unless \
                 delivery_mode=\"foreground\" accepts that the browser window may \
-                activate (Linux Chromium; for example a browser inside a sandbox). \
-                input_route=\"dom_event\" (synthetic \
-                el.click(), ref required) is used only when explicitly requested; \
+                activate (including Linux Chromium configurations whose trusted route cannot stay in the background; \
+                for example a browser inside a sandbox). \
+                input_route=\"dom_event\" (synthetic pointer and mouse \
+                down/up/click sequence at the element's center, ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
                 controls may ignore synthetic events. \
                 Refused for heuristic bindings."
@@ -1169,7 +1218,7 @@ impl Tool for BrowserClickTool {
                     "Runtime.callFunctionOn",
                     json!({
                         "objectId": object_id,
-                        "functionDeclaration": "function() { this.click(); }",
+                        "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
                     }),
                 )
                 .await
@@ -1347,6 +1396,47 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let ys = [nums[1], nums[3], nums[5], nums[7]];
     Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
+
+/// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
+///
+/// `HTMLElement.click()` fires only a bare `click` with no coordinates, so
+/// apps that open rows or menus from `pointerdown`/`mousedown`/`pointerup`
+/// (common in React tables and grids) ignore it. This dispatches the sequence
+/// a real primary-button mouse click produces, at the element's center and on
+/// the hit-tested descendant there: hover, move, down, focus, up, click. Like
+/// a real click, `preventDefault()` on `pointerdown` suppresses the
+/// compatibility mouse events, and on `mousedown` suppresses the focus move.
+/// The events stay untrusted (`isTrusted === false`).
+const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
+    const el = this; \
+    const doc = el.ownerDocument; \
+    const view = doc.defaultView; \
+    const r = el.getBoundingClientRect(); \
+    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
+    const root = el.getRootNode(); \
+    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+    const target = (hit && el.contains(hit)) ? hit : el; \
+    const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
+    const base = { bubbles: true, cancelable: true, composed: true, view, \
+        clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
+    const P = (type, buttons, extra) => target.dispatchEvent(new view.PointerEvent(type, \
+        { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
+          width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
+    const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
+        { ...base, buttons, detail: 0, ...extra })); \
+    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
+    P('pointermove', 0); M('mousemove', 0); \
+    const compat = P('pointerdown', 1); \
+    if (compat && M('mousedown', 1, { detail: 1 })) { \
+        const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
+        if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
+    } \
+    P('pointerup', 0); \
+    if (compat) M('mouseup', 0, { detail: 1 }); \
+    M('click', 0, { detail: 1 }); \
+    return true; \
+}";
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 

@@ -8,26 +8,25 @@
 // checks, automatic installs, the channel, Check Now with its own windows
 // for what it found, and the last check.
 //
-// Beta only, and opt-in: Electron builds ship as Cua Spaces prereleases
-// (X.Y.Z-suffix, cd-cua-spaces.yml), which publish `beta*.yml`. Nothing
-// checks on its own unless the user turns automatic checks on (Settings →
-// About, `"autoUpdate": true` in settings.json, or CUA_SPACES_AUTO_UPDATE=1),
-// and only the beta channel is served. Stable releases still ship the Swift
-// app, updated by Sparkle; Check Now on Stable says so.
-//
-// At the Sparkle cutover (docs/sparkle-cutover.md) stable releases start
-// publishing `latest*.yml` and STABLE_FEED turns on; until then a build on
-// the stable channel never checks.
+// Opt-in: nothing checks on its own unless the user turns automatic checks
+// on (Settings → About, `"autoUpdate": true` in settings.json, or
+// CUA_SPACES_AUTO_UPDATE=1). The beta channel (prereleases, `beta*.yml`) is
+// served everywhere. The stable channel (`latest*.yml`) is served on Windows
+// and Linux, where stable releases ship the Electron app. On macOS stable
+// releases still ship the Swift app, updated by Sparkle; Check Now on Stable
+// says so until the Sparkle cutover (docs/sparkle-cutover.md) publishes
+// `latest-mac.yml` and STABLE_FEED turns on.
 import { app, BrowserWindow, dialog } from "electron";
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { electronUpdater } from "./electron-updater";
+import { recordUpdateChannel } from "./mesh-channel";
 import type { UpdaterDriving } from "./model/updates";
 import { readSettings, writeSettings } from "./settings";
 
 const POLL_MS = 4 * 60 * 60 * 1000;
 
-/** Off until stable releases publish an Electron feed (the cutover). */
+/** macOS only: off until stable releases publish the Electron macOS feed (the cutover). */
 export const STABLE_FEED = false;
 
 export type UpdateChannel = "stable" | "beta";
@@ -40,7 +39,12 @@ export const updateChannel = (): UpdateChannel => readSettings().updateChannel ?
 /** The feed file electron-updater reads: `beta*.yml` or `latest*.yml`. */
 export const feedChannel = (channel: UpdateChannel) => (channel === "beta" ? "beta" : "latest");
 
-export const channelServed = (channel: UpdateChannel, stableFeed = STABLE_FEED) => channel === "beta" || stableFeed;
+/** Stable Electron builds exist for Windows and Linux; macOS waits for STABLE_FEED. */
+export const channelServed = (
+  channel: UpdateChannel,
+  stableFeed = STABLE_FEED,
+  platform: NodeJS.Platform = process.platform,
+) => channel === "beta" || stableFeed || platform === "win32" || platform === "linux";
 
 /** A packaged build with a feed (electron-builder's app-update.yml); a development run has no updater. */
 export const hasFeed = () => app.isPackaged && existsSync(path.join(process.resourcesPath, "app-update.yml"));
@@ -75,6 +79,8 @@ export class ElectronUpdater implements UpdaterDriving {
 
   /** The updater for this build; null in a development run (no feed). */
   static start(): ElectronUpdater | null {
+    // Where the cua daemon and this machine's host read it (mesh-channel.ts).
+    if (app.isPackaged) recordUpdateChannel(updateChannel());
     if (!hasFeed()) return null;
     const u = new ElectronUpdater();
     u.schedule();
@@ -113,6 +119,7 @@ export class ElectronUpdater implements UpdaterDriving {
   set channel(channel: UpdateChannel) {
     if (readSettings().updateChannel === channel) return;
     writeSettings({ updateChannel: channel });
+    recordUpdateChannel(channel);
     this.loaded = null;
     this.schedule();
   }

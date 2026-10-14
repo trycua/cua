@@ -168,6 +168,35 @@ describe.skipIf(!built)("agents", () => {
     expect(p.view(now).rows[0]!.state).toBe("Running");
   });
 
+  it("answers an agent's detail and file for the page, and runs its changes with the native tools", async () => {
+    const { bridge } = makeBridge();
+    const detail = (await call(bridge, "agents.detail", { name: "ada" })) as { home: { path: string }[]; routines: { title: string }[]; thisMachine: unknown };
+    expect(shapeProblems("agents.detail", detail)).toEqual([]);
+    expect(detail.home.map((f) => f.path)).toEqual(["agents/ada/hermes/MEMORY.md"]);
+    expect(detail.routines.map((r) => r.title)).toEqual(["Morning"]);
+    const file = await call(bridge, "agents.readFile", { path: "agents/ada/hermes/MEMORY.md" });
+    expect(shapeProblems("agents.readFile", file)).toEqual([]);
+    expect((file as { text: string }).text).toBe("# Ada\n");
+
+    await call(bridge, "agents.addRoutine", { agent: "ada", title: "Inbox", prompt: "Sort my inbox", everyMinutes: null, dailyAt: null, weeklyOn: "mon 09:00" });
+    expect(daemon.calls.at(-1)).toBe("routine_add");
+    expect(daemon.args.at(-1)).toEqual({ agent: "ada", title: "Inbox", prompt: "Sort my inbox", weekly_on: "mon 09:00" });
+    await call(bridge, "agents.setRoutine", { id: "R1", enabled: false });
+    expect(daemon.args.at(-1)).toEqual({ id: "R1", enabled: false });
+    await call(bridge, "agents.allowComputer", { agent: "ada", machine: "relay:0123" });
+    expect(daemon.calls.at(-1)).toBe("computer_access_grant");
+    for (const [method, args] of [
+      ["agents.restoreFile", { path: "agents/ada/hermes/MEMORY.md", version: "v1" }],
+      ["agents.removeRoutine", { id: "R1" }],
+      ["agents.revokeComputer", { agent: "ada", machine: "relay:0123" }],
+    ] as const) {
+      expect(await call(bridge, method, args)).toBeNull();
+    }
+    expect(daemon.calls.slice(-3)).toEqual(["volume_restore", "routine_remove", "computer_access_revoke"]);
+    expect(await code(bridge, "agents.setRoutine", { id: "R1" })).toBe("bad_args");
+    expect(await code(makeBridge({ tools: null }).bridge, "agents.detail", { name: "ada" })).toBe("unsupported");
+  });
+
   it("pauses and resumes by name, one change at a time", async () => {
     const { bridge, model } = makeBridge();
     expect(await call(bridge, "agents.pause", { name: "ada" })).toBeNull();

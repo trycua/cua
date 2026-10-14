@@ -65,8 +65,8 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// macOS VMs running on this Mac now (Lume's, Spaces or not: Apple's
     /// license counts every one), when Lume says.
     func runningMacosVms() async -> Int?
-    /// This account's Cua Cloud rates (`Fleet.usagePricing()`), when known:
-    /// the New Space estimate. `nil` shows none.
+    /// This account's Cua Cloud rates, when known: the New Space estimate.
+    /// `nil` shows none (the live backend has no source for them).
     func cloudPricing() async -> AppCloudPricing?
     /// The SDK's teleport handle and the Space handle, for "Teleport an app".
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)?
@@ -77,6 +77,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// The Space's coding-agent runs as rows (the app core's mapping of the
     /// SDK's run records, attention first).
     func agentRuns(id: String) async throws -> [AppSpaceAgentRun]
+    /// One run's events after `cursor`, as the `agent_events` JSON
+    /// (`events`, `cursor`, `caught_up`, `status`, `phase`).
+    func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String
     /// The Space's latest thumbnail from the SDK's shared cache (the cua
     /// daemon's): no older than `maxAgeMs` (nil: any age), captured fresh
     /// when the cache is older; `nil` when there is none and the Space
@@ -113,6 +116,9 @@ public extension SpacesBackend {
     func shares(id: String) async throws -> [AppShareEntryInput] { [] }
     func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] { [] }
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput] { [] }
+    func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        throw FixtureError(message: "This Space's runs can't be read here")
+    }
     func lumeSource() async -> String? { nil }
     func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
@@ -395,13 +401,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         }.count
     }
 
-    public func cloudPricing() async -> AppCloudPricing? {
-        guard await cloudAvailable(), let fleet = try? cua.fleet(),
-              case .success(let got) = await withTimeout(seconds: Self.probeSeconds, { try await fleet.usagePricing() }),
-              let p = got
-        else { return nil }
-        return AppCloudPricing(vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd)
-    }
+    /// No estimate: the rates came from the retired Fleets API
+    /// (`Fleet.usagePricing()` on run.cua.ai), and the app does not offer
+    /// new cloud Spaces. New Space never waits on it.
+    public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         (cua.teleport(), try await cua.spaces().space(space: id))
@@ -435,6 +438,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     public func agentRuns(id: String) async throws -> [AppSpaceAgentRun] {
         let runs = try await cua.spaces().space(space: id).agentList()
         return appAgentRows(runsJson: runs.map(\.json))
+    }
+
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        try await cua.spaces().space(space: id).agentEvents(runId: runId, cursor: cursor, max: nil)
     }
 
     public func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? {
@@ -887,6 +894,13 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
         let (error, runs) = await MainActor.run { (agentRunsError, fixtureRuns[id] ?? []) }
         if let error { throw error }
         return appAgentRows(runsJson: runs)
+    }
+    /// `agent_events` pages, per run id: the whole run, caught up.
+    public var fixtureEvents: [String: String] = [:]
+    public func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
+        let page = await MainActor.run { fixtureEvents[runId] }
+        guard let page else { throw FixtureError(message: "no run \(runId) in \(id)") }
+        return page
     }
     public private(set) var sent: [String] = []
     public func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] {

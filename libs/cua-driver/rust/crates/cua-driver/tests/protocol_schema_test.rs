@@ -51,8 +51,21 @@ fn tools_list_schema_shape() {
     //! no `type_text_chars` either — the old Windows mirror asserted it was
     //! exposed, but that had never been run). The advertised schemas must still
     //! carry their expected knobs.
-    let mut d = RawDriver::spawn().expect("spawn source-built driver for schema test");
+    assert_tools_list_schema_shape(
+        RawDriver::spawn().expect("spawn source-built driver for schema test"),
+    );
+}
 
+#[cfg(target_os = "linux")]
+#[test]
+fn explicit_direct_tools_list_schema_shape() {
+    // Supported direct stdio transport. This does not replace the daemon gate.
+    assert_tools_list_schema_shape(
+        RawDriver::spawn_explicit_direct().expect("spawn source-built direct MCP driver"),
+    );
+}
+
+fn assert_tools_list_schema_shape(mut d: RawDriver) {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
@@ -61,6 +74,37 @@ fn tools_list_schema_shape() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array");
+    assert!(!tools.is_empty(), "tools/list must not be empty");
+    assert!(
+        list_resp["result"]["nextCursor"].is_null(),
+        "unread tool page"
+    );
+    let names: BTreeSet<&str> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), tools.len(), "duplicate tool name");
+    assert!(
+        names.contains("run_steps"),
+        "runtime-only batch tool missing"
+    );
+    let platform = if cfg!(target_os = "macos") {
+        cua_driver_contract::Platform::Macos
+    } else if cfg!(target_os = "windows") {
+        cua_driver_contract::Platform::Windows
+    } else {
+        cua_driver_contract::Platform::Linux
+    };
+    for tool in cua_driver_contract::manifest().tools {
+        if tool.platforms.contains(&platform) {
+            assert!(
+                names.contains(tool.name.as_str()),
+                "missing portable tool {}",
+                tool.name
+            );
+        }
+    }
+    eprintln!("linted {} live tool input schemas", tools.len());
 
     let properties = |name: &str| {
         &tools
@@ -93,9 +137,13 @@ fn tools_list_schema_shape() {
                 "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
             );
         }
-        for field in ["inputSchema", "outputSchema"] {
-            assert_string_enums(&tool[field], &format!("{name}.{field}"));
-        }
+        assert_string_enums(&tool["outputSchema"], &format!("{name}.outputSchema"));
+        let violations = cua_driver_testkit::vertex::input_schema_violations(schema);
+        assert!(
+            violations.is_empty(),
+            "{name} inputSchema is outside the Vertex AI Schema object (#4798):\n{}",
+            violations.join("\n")
+        );
     }
     assert!(
         undocumented.is_empty(),
@@ -190,8 +238,15 @@ fn tools_list_schema_shape() {
         // Chromium); foreground accepts that.
         "browser_click",
         "browser_pointer",
+        // Existing-profile attachment that would bring the browser forward
+        // (macOS Chrome); foreground accepts that.
+        "browser_prepare",
         // The batch's default for its steps' own delivery_mode.
-        "run_actions",
+        "run_steps",
+        // macOS desktop move_cursor refuses over a background app unless
+        // foreground is requested.
+        #[cfg(target_os = "macos")]
+        "move_cursor",
         // macOS set_value has no delivery ladder.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         "set_value",
@@ -203,6 +258,30 @@ fn tools_list_schema_shape() {
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
+    for tool in ["browser_click", "browser_pointer"] {
+        let tool = tools
+            .iter()
+            .find(|candidate| candidate["name"] == tool)
+            .unwrap_or_else(|| panic!("{tool} not found in tools/list"));
+        let description = tool["inputSchema"]["properties"]["delivery_mode"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{tool}.delivery_mode description missing"));
+        assert!(
+            description.contains("including Linux Chromium and macOS Chromium configurations"),
+            "{tool}.delivery_mode should name macOS and Linux: {description}"
+        );
+    }
+    let browser_click = tools
+        .iter()
+        .find(|tool| tool["name"] == "browser_click")
+        .expect("browser_click not found in tools/list");
+    assert!(
+        browser_click["description"].as_str().is_some_and(
+            |description| description.contains("including Linux Chromium configurations")
+        ),
+        "browser_click description should name Linux: {}",
+        browser_click["description"]
+    );
     let schema_tools: BTreeSet<&str> = tools
         .iter()
         .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())

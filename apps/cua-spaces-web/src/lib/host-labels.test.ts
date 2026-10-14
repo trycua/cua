@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { creatingLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
+import { creatingLine, leavesLine, globalShortcutLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
 
 describe("host labels", () => {
   it("names the local machine after its system", () => {
@@ -26,7 +26,7 @@ describe("host labels", () => {
     expect(osOfPlatform(undefined)).toBe("macos");
   });
 
-  it("keeps the menu bar and shortcut rows to the Mac", () => {
+  it("keeps the menu bar row to the Mac", () => {
     expect(showsMacShellSettings("MacIntel")).toBe(true);
     expect(showsMacShellSettings("Win32")).toBe(false);
     expect(showsMacShellSettings("Linux x86_64")).toBe(false);
@@ -40,6 +40,20 @@ describe("host labels", () => {
     // Elsewhere, or a failure in the core's own words: as it is.
     expect(creatingLine("Cua Cloud \u00b7 Starting\u2026", "linux")).toBe("Cua Cloud \u00b7 Starting\u2026");
     expect(creatingLine("This Mac can't reach its new VM", "linux")).toBe("This Mac can't reach its new VM");
+  });
+
+  it("names this computer in what leaves it on teleport", () => {
+    expect(leavesLine("191 KB leaves this Mac", "darwin")).toBe("191 KB leaves this Mac");
+    expect(leavesLine("191 KB leaves this Mac", "win32")).toBe("191 KB leaves this PC");
+    expect(leavesLine("191 KB leaves this Mac", "linux")).toBe("191 KB leaves this computer");
+    expect(leavesLine("3 saved items from the Keyvault", "win32")).toBe("3 saved items from the Keyvault");
+  });
+
+  it("says what the global shortcut does, or why it does nothing", () => {
+    expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: true })).toBe("Brings Cua Spaces to the front from any app.");
+    expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: false })).toBe(
+      "Another app is using \u2318\u21e7Space, so it does nothing here. Free it in that app, then open Settings again.",
+    );
   });
 
   it("says what keeps the Keyvault's key on each system", () => {

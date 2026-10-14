@@ -393,6 +393,7 @@ impl SpacesBuilder {
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
                 connections: tokio::sync::Mutex::new(HashMap::new()),
+                mesh: crate::mesh::MeshClients::default(),
                 #[cfg(feature = "spaces-hotspot")]
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
                 #[cfg(feature = "spaces-agents")]
@@ -648,6 +649,8 @@ pub(crate) struct Inner {
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
+    /// Mesh nodes for `relay:` Spaces ([`crate::mesh`]).
+    pub(crate) mesh: crate::mesh::MeshClients,
     #[cfg(feature = "spaces-hotspot")]
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
     #[cfg(feature = "spaces-agents")]
@@ -745,8 +748,21 @@ impl Spaces {
                 Ok(info)
             })
             .collect::<Result<_>>()?;
+        // A Space this machine provides is in the registry as a local Space,
+        // and its relay machine lists it again under the host: once, as the
+        // local one (CUA-1527).
+        let provided_here: std::collections::HashSet<String> =
+            cua_host::provided::load_provided(&cua_host::Host::new(self.home_dir()).paths().dir)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| out.iter().any(|i| i.id == p.local_space))
+                .map(|p| p.relay_machine)
+                .collect();
         let cache = self.inner.relay_cache.lock().expect("relay cache");
         for m in cache.iter() {
+            if provided_here.contains(&m.id) {
+                continue;
+            }
             let mut info = relay_info(m);
             self.apply_reported(&mut info, m.online);
             if !info.host.is_empty() {
@@ -871,6 +887,37 @@ impl Spaces {
     pub fn set_relay(&self, relay: Option<crate::relay::RelayAccount>) {
         *self.inner.relay.write().expect("relay") = relay;
         self.inner.relay_cache.lock().expect("relay cache").clear();
+    }
+
+    /// `e`, from a call on `space`, with the reason when the call failed
+    /// because the Space's mesh connection was cut (a revoked device, the
+    /// mesh turned off): a transport error alone ("broken pipe") does not
+    /// say why. Other errors are returned as they are.
+    pub async fn explain_mesh_cut(&self, space: &str, e: Error) -> Error {
+        if !matches!(e, Error::Env(cua_spacesd_client::Error::Transport(_))) {
+            return e;
+        }
+        let Ok(id) = self.resolve(space) else {
+            return e;
+        };
+        match self
+            .inner
+            .mesh
+            .cut_reason(&id.to_string(), Duration::from_secs(2))
+            .await
+        {
+            Some(reason) => Error::host(
+                "the mesh",
+                format!("the connection to {id} over the mesh was cut: {reason}"),
+            ),
+            None => e,
+        }
+    }
+
+    /// The mesh node of each relay this runtime reached over the mesh:
+    /// its peers and, per peer, the path (direct or relayed) and counters.
+    pub async fn mesh_status(&self) -> Vec<(String, cua_mesh::Status)> {
+        self.inner.mesh.status().await
     }
 
     pub(crate) fn relay(&self) -> Result<crate::relay::RelayAccount> {
@@ -1305,8 +1352,17 @@ impl Spaces {
     pub async fn space(&self, space: &str) -> Result<Space> {
         let id = self.resolve(space)?;
         let key = id.to_string();
-        if let Some(s) = self.inner.connections.lock().await.get(&key).cloned() {
-            return Ok(s);
+        // Bound first: the cache's guard must be gone before the lock is
+        // taken again below.
+        let cached = self.inner.connections.lock().await.get(&key).cloned();
+        if let Some(s) = cached {
+            match self.inner.mesh.stale(&key, crate::mesh::policy).await {
+                None => return Ok(s),
+                Some(reason) => {
+                    tracing::info!(space = %key, %reason, "the mesh went away; reconnecting");
+                    self.inner.connections.lock().await.remove(&key);
+                }
+            }
         }
         let name = match (&id, self.inner.registry.get(&key)?) {
             (_, Some(record)) => Some(record.name),
@@ -1407,6 +1463,33 @@ impl Spaces {
                         .unwrap_or_else(|| format!("http://{authority}"));
                     let mut o = ConnectOptions::parse(&url)?;
                     o.token = credential.token.clone();
+                    // A machine on a self-hosted (static-token) relay: the
+                    // mesh when the relay coordinates one (pairing with the
+                    // env token), the relay's HTTPS path otherwise.
+                    if let (cua_spacesd_client::EndpointKind::Relay { machine_id }, Some(token)) =
+                        (o.endpoint.kind().clone(), credential.token.as_deref())
+                    {
+                        let relay_url = o.endpoint.origin();
+                        let via = crate::mesh::Via::Static {
+                            relay: &relay_url,
+                            token,
+                        };
+                        if let crate::mesh::Route::Mesh(m) = crate::mesh::connect_options(
+                            &self.inner.mesh,
+                            crate::mesh::Via::Static {
+                                relay: &relay_url,
+                                token,
+                            },
+                            &machine_id,
+                            crate::mesh::policy(),
+                        )
+                        .await?
+                        {
+                            tracing::info!(machine = %machine_id, "relay Space over the mesh");
+                            self.inner.mesh.note_routed(&id.to_string(), &via);
+                            o = *m;
+                        }
+                    }
                     (Some(o), None)
                 } else {
                     // Added by an MCP URL: the token belongs to that server.
@@ -1448,15 +1531,37 @@ impl Spaces {
             }
             SpaceId::Relay { machine_id } => {
                 let relay = self.relay()?;
-                let url = cua_host::RelayClient::new(&relay.url)?.machine_url(machine_id);
-                // The account token rides in `authorization` and this
-                // device's session next to it, fetched (and refreshed) per
-                // call; the relay checks both and swaps them for its signed
-                // identity assertion.
-                let bearer = crate::relay::RelayBearer { account: relay };
-                let mut o = ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
-                o.token = credential.token.clone();
-                (Some(o), None)
+                // The WireGuard®-based mesh first (end to end, direct when
+                // possible); the relay's HTTPS path when the relay or the
+                // machine does not speak it yet (see `crate::mesh`).
+                match crate::mesh::connect_options(
+                    &self.inner.mesh,
+                    crate::mesh::Via::Account(&relay),
+                    machine_id,
+                    crate::mesh::policy(),
+                )
+                .await?
+                {
+                    crate::mesh::Route::Mesh(o) => {
+                        tracing::info!(machine = %machine_id, "relay Space over the mesh");
+                        self.inner
+                            .mesh
+                            .note_routed(&id.to_string(), &crate::mesh::Via::Account(&relay));
+                        (Some(*o), None)
+                    }
+                    crate::mesh::Route::Relay => {
+                        let url = cua_host::RelayClient::new(&relay.url)?.machine_url(machine_id);
+                        // The account token rides in `authorization` and
+                        // this device's session next to it, fetched (and
+                        // refreshed) per call; the relay checks both and
+                        // swaps them for its signed identity assertion.
+                        let bearer = crate::relay::RelayBearer { account: relay };
+                        let mut o =
+                            ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
+                        o.token = credential.token.clone();
+                        (Some(o), None)
+                    }
+                }
             }
             SpaceId::Local { name } => {
                 let sandbox = self.inner.sandboxes.connect(name).await?;

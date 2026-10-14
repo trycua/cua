@@ -111,6 +111,16 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
     }
 }
 
+/// A case of the parity flow `keyvault-unlock.json` (setup or unlock, Touch
+/// ID or a passphrase).
+func keyvaultUnlockCase(_ name: String) throws -> KeyvaultOverview {
+    let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
+    let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
+    let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
+    return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
+}
+
 func fixtureOverview() throws -> KeyvaultOverview {
     let url = ParityTests.dir.appendingPathComponent("keyvault-approve-deny.json")
     let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
@@ -392,8 +402,11 @@ struct ViewModelTests {
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
-                                    "experiment:web_ui"])
-        #expect(toggles.allSatisfy { $0.options.first { $0.id == "off" }?.active == true })
+                                    "experiment:classic_ui"])
+        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        #expect(toggles.allSatisfy { r in
+            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+        })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
         #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(3) == ["account", "general", "storage"])
@@ -701,7 +714,7 @@ struct ViewModelTests {
             lume: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             qemu: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             container: StorageVolume(availableBytes: 40 * gb, totalBytes: 100 * gb, name: "Colima"),
-            pulled: [])
+            pulled: [], linuxRuntimeDownloadBytes: 0)
         let model = makeModel(backend)
         await model.openNewSpace()
         let w = model.wizard
@@ -732,7 +745,8 @@ struct ViewModelTests {
     /// The new Space is in the list, the notch and the selection the moment
     /// Create is pressed, follows the SDK's progress, and hands over to the
     /// registry row when ready; nothing waits on the create to show it.
-    @Test func createShowsTheSpaceAtOnceAndFollowsItsProgress() async throws {
+    @Test(.serialized, arguments: [false, true])
+    func createShowsTheSpaceAtOnceAndFollowsItsProgress(openWhenReady: Bool) async throws {
         let backend = FixtureSpacesBackend()
         backend.holdCreates = true
         // Held after the pull; `ready` comes on release.
@@ -742,14 +756,20 @@ struct ViewModelTests {
             SpaceCreateProgress(phase: "ready", fraction: nil, detail: ""),
         ]
         let model = makeModel(backend)
+        var opened: [String] = []
+        let previous = WebUIWindowController.actions
+        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } }, openMain: {})
+        defer { WebUIWindowController.actions = previous }
         await model.refresh()
         await model.openNewSpace()
         let w = model.wizard
         w.send(.next)
         w.send(.next)
         w.send(.setName(name: "fresh"))
+        w.send(.setOpenWhenReady(on: openWhenReady))
         w.send(.next)
         let plan = w.view.plan
+        #expect(plan.openDesktop == openWhenReady)
         model.create(plan)
         // Synchronously, before the create has done anything.
         let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.name == "fresh" })
@@ -775,6 +795,9 @@ struct ViewModelTests {
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
+        try await waitUntil { opened == (openWhenReady ? ["local:fresh"] : []) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(opened == (openWhenReady ? ["local:fresh"] : []))
     }
 
     /// A failed create stays on its row with the reason until it is removed.
@@ -1157,13 +1180,7 @@ struct ViewModelTests {
         #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
     }
 
-    func unlockCase(_ name: String) throws -> KeyvaultOverview {
-        let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
-        let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-        let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
-        let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
-        return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
-    }
+    func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }
 
     @Test func passphraseSetupAndUnlockGoOnlyToTheBroker() async throws {
         let fake = FakeKeyvault(try unlockCase("setup-passphrase"))
@@ -1313,7 +1330,8 @@ struct ViewModelTests {
                                                       now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
                                                       host: nil, hostName: nil))
         creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"))
+            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing",
+            errorVariant: ""))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")
         #expect(appSpaceDetail(space: space).creditNotice == nil)

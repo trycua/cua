@@ -11,7 +11,7 @@
 
 import { UnsupportedOperationError } from "../adapter";
 import type { LoginItemStatus } from "../contracts/host";
-import type { DevicesInput, EnrollResult } from "../contracts/devices";
+import type { DevicesInput, EnrollResult, PairingCode } from "../contracts/devices";
 import type {
   AboutInput,
   DriveCacheInput,
@@ -58,6 +58,13 @@ export interface SettingsOperations {
   "devices.revoke": { args: { id: string }; result: null };
   /** Vouches for a machine that registered without an enrolled device's proof. */
   "devices.confirmMachine": { args: { id: string }; result: null };
+  /** A one-time link, QR code and install commands that add another
+   * computer to the account (or to `team`), from this enrolled device. */
+  "devices.createPairingCode": { args: { team?: string | null }; result: PairingCode };
+  /** The account's pairing codes, newest first (without the codes). */
+  "devices.pairingCodes": { args: Empty; result: PairingCode[] };
+  /** Revokes an unused pairing code (`pc_…`). */
+  "devices.revokePairingCode": { args: { id: string }; result: null };
 
   /** The Cua Volume's storage, mount and cache (`volume_storage`, `volume_mount_status`, `volume_cache_stats`). */
   "storage.get": { args: Empty; result: StorageInput };
@@ -83,6 +90,9 @@ export const SETTINGS_OPERATIONS = [
   "devices.rename",
   "devices.revoke",
   "devices.confirmMachine",
+  "devices.createPairingCode",
+  "devices.pairingCodes",
+  "devices.revokePairingCode",
   "storage.get",
   "storage.run",
 ] as const satisfies readonly SettingsOpName[];
@@ -179,6 +189,12 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
       await invoke("devices_confirm_machine", { id });
       return null;
     },
+    "devices.createPairingCode": ({ team }) => invoke<PairingCode>("devices_create_pairing_code", { team: team ?? null }),
+    "devices.pairingCodes": () => invoke<PairingCode[]>("devices_pairing_codes"),
+    "devices.revokePairingCode": async ({ id }) => {
+      await invoke("devices_revoke_pairing_code", { id });
+      return null;
+    },
 
     "storage.get": storage,
     "storage.run": async ({ request }) => {
@@ -230,6 +246,9 @@ export const SETTINGS_TAURI_COMMANDS = {
   "devices.rename": ["devices_rename"],
   "devices.revoke": ["devices_revoke"],
   "devices.confirmMachine": ["devices_confirm_machine"],
+  "devices.createPairingCode": ["devices_create_pairing_code"],
+  "devices.pairingCodes": ["devices_pairing_codes"],
+  "devices.revokePairingCode": ["devices_revoke_pairing_code"],
   "storage.get": ["get_environment", "agents_tool"],
   "storage.run": ["agents_tool", "drive_reveal", "host_open_settings"],
 } as const satisfies Record<SettingsOpName, readonly string[]>;

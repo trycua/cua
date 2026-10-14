@@ -6,15 +6,17 @@
  * (`onboarding.initial`, `.reduce`, `.view`, `.copy`), the same one the
  * SwiftUI and Tauri apps draw.
  *
- * One of the core's pages needs the native app, so a web host passes
- * through it with the answer a native user gets by not changing anything:
- * Menu bar (the notch), `presentation-picked` with the current setting.
- *
- * The pages left are Welcome (with the usage-data switch), Sign in, AI
- * agents (with the cua-driver card), Cua Volume (only with its experiment
+ * The pages are Welcome (with the usage-data switch), Sign in, AI agents
+ * (with the cua-driver card), Menu bar (where the app shows: the notch and
+ * the menu bar, or the menu bar only), Cua Volume (only with its experiment
  * on; `volume.ts` runs its commands), This machine (with the permissions
  * still to grant) and Done. The order, titles, buttons and answers are the
  * core's.
+ *
+ * Menu bar is a Mac's: the notch is the macOS app's (the SwiftUI app, and
+ * the Electron app's notch helper). Off a Mac there is no notch, so the
+ * flow passes through that page with the answer a user gets by not
+ * changing anything, `presentation-picked` with the current setting.
  *
  * Without the core, small TypeScript stand-ins keep the demo usable. They
  * are not the product's behaviour.
@@ -35,16 +37,30 @@ import type {
 } from "./contracts/onboarding";
 import type { SpaceOs } from "./contracts/spaces";
 
-/** The core's pages a web host passes through (see above). */
-export const NATIVE_ONLY_STEPS: readonly OnboardingStep[] = ["presentation"];
+/** Whether the host has the notch, so the Menu bar page has a choice to
+ * offer: the macOS app's (the same rule as Settings' "Spaces tab in the
+ * notch" row). */
+export function hasNotch(os: HostOs = hostOs()): boolean {
+  return os === "macos";
+}
 
-/** Done's summary facts about native-only pages; the web leaves them out. */
-const NATIVE_ONLY_FACTS = new Set(["cua command", "Shows in"]);
+/** The core's pages this host passes through (see above). */
+export function passedSteps(os: HostOs = hostOs()): readonly OnboardingStep[] {
+  return hasNotch(os) ? [] : ["presentation"];
+}
+
+/** Done's summary facts about pages the web passes through: the `cua`
+ * install is the SwiftUI app's own page, Shows in follows Menu bar. */
+function passedFacts(os: HostOs): Set<string> {
+  return new Set(hasNotch(os) ? ["cua command"] : ["cua command", "Shows in"]);
+}
 
 /** What the pass-through answers need from the host. */
 export interface OnboardingContext {
   /** The "Spaces tab in the notch" setting now (`menuBar`). */
   menuBar: boolean;
+  /** The system the app runs on (default: this host's). */
+  os?: HostOs;
   /** Sees every step the core takes, with the state before it (usage events). */
   observe?: (before: OnboardingFlowState, action: OnboardingAction) => void;
 }
@@ -68,8 +84,10 @@ function reduceOnce(core: CoreClient, state: OnboardingFlowState, action: Onboar
 }
 
 /**
- * The core's reducer, then past any native-only page: forward with its
- * default answer, or on back when the action was Back.
+ * The core's reducer, then past any page this host passes through: forward
+ * with its default answer, or on back when the action was Back. Landing on
+ * Menu bar, the choice starts from the setting now (it may have changed in
+ * Settings since the flow started), as the SwiftUI page does on appear.
  */
 export function onboardingReduce(
   core: CoreClient,
@@ -77,8 +95,9 @@ export function onboardingReduce(
   action: OnboardingAction,
   ctx: OnboardingContext,
 ): OnboardingFlowState {
+  const passed = passedSteps(ctx.os);
   let s = reduceOnce(core, state, action, ctx);
-  for (let guard = 0; guard < NATIVE_ONLY_STEPS.length + 1 && NATIVE_ONLY_STEPS.includes(s.step); guard++) {
+  for (let guard = 0; guard < passed.length + 1 && passed.includes(s.step); guard++) {
     const before = s.step;
     if (action.type === "back") {
       s = reduceOnce(core, s, { type: "back" }, ctx);
@@ -90,17 +109,23 @@ export function onboardingReduce(
     }
     if (s.step === before) break;
   }
+  if (s.step === "presentation" && state.step !== "presentation" && s.menuBar !== ctx.menuBar) {
+    s = reduceOnce(core, s, { type: "presentation-picked", menuBar: ctx.menuBar }, ctx);
+  }
   return s;
 }
 
-/** The page as drawn, without the native-only pages' dots and facts, in
- * the words of the system the app runs on (the tray off a Mac). */
+/** The page as drawn, without the dots and facts of the pages this host
+ * passes through, in the words of the system the app runs on (the tray off
+ * a Mac). */
 export function onboardingView(core: CoreClient, state: OnboardingFlowState, os: HostOs = hostOs()): OnboardingView {
   const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os }) ?? fallbackView(state, os);
+  const passed = passedSteps(os);
+  const facts = passedFacts(os);
   return {
     ...v,
-    dots: v.dots.filter((d) => !NATIVE_ONLY_STEPS.includes(d.step)),
-    summary: v.summary.filter((f) => !NATIVE_ONLY_FACTS.has(f.label)),
+    dots: v.dots.filter((d) => !passed.includes(d.step)),
+    summary: v.summary.filter((f) => !facts.has(f.label)),
   };
 }
 
@@ -149,11 +174,13 @@ export function permissionRows(core: CoreClient, hints: PermissionHint[]): Permi
 
 /**
  * One image per OS for the first Space: the core's picker catalog, first
- * published full image of each (the New Space picker's first rows).
+ * published full image of each (the New Space picker's first rows). No
+ * macOS image off macOS.
  */
-export function firstSpaceImages(core: CoreClient): SandboxImage[] {
+export function firstSpaceImages(core: CoreClient, os: HostOs = hostOs()): SandboxImage[] {
   const all = core.tryCall<SandboxImage[]>("wizard.pickerImages") ?? FALLBACK_IMAGES;
-  const order: SpaceOs[] = ["macos", "linux", "windows"];
+  // macOS images run on Lume (Apple silicon): not offered on Linux or Windows.
+  const order: SpaceOs[] = os === "macos" ? ["macos", "linux", "windows"] : ["linux", "windows"];
   return order.flatMap((os) => {
     const published = all.filter((i) => i.published && i.os === os && i.group === "canonical");
     const pick = published.find((i) => i.tier !== "slim") ?? published[0];
@@ -208,7 +235,8 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
     welcome: ["Welcome to Cua Spaces", "Computers for you and your agents.", "Get started"],
-    signin: ["Sign in", "Connect your machines and your team.", "Continue"],
+    signin: ["Sign in", "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.", "Continue"],
+    presentation: ["Where should Cua Spaces show up?", "You can change this in Settings.", "Continue"],
     mode: ["How will you use this machine?", "You can change this later.", "Continue"],
     done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };
@@ -230,6 +258,7 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
         ? [
             { label: "Account", value: s.identity ?? "not signed in" },
             { label: "AI agents", value: Array.isArray(s.agents) && s.agents.length ? s.agents.join(", ") : "none" },
+            { label: "Shows in", value: s.menuBar ? "Menu bar only" : "Notch and menu bar" },
             { label: "This machine", value: s.mode === "host" ? "Set up for unattended access" : "Access other machines" },
           ]
         : [],
@@ -238,6 +267,13 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
         ? [
             { mode: "client", label: "Access other machines", preselected: pre === "client" },
             { mode: "host", label: "Set up this machine for unattended access", preselected: pre === "host" },
+          ]
+        : [],
+    presentations:
+      s.step === "presentation"
+        ? [
+            { menuBar: false, title: "Notch and menu bar", id: "onboarding-notch", imageLabel: "The Spaces tiles open from the notch, and the menu bar menu", selected: !s.menuBar },
+            { menuBar: true, title: "Menu bar only", id: "onboarding-menu-bar", imageLabel: "The menu bar menu alone", selected: s.menuBar },
           ]
         : [],
     notice: s.step === "welcome" ? "Cua collects anonymous usage data. Change it here or in Settings, Privacy." : null,

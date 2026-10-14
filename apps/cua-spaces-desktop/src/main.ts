@@ -10,6 +10,7 @@ import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
+import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
 import { installBridgeIpc } from "./bridge/ipc";
@@ -21,7 +22,7 @@ import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, notchThumbnail, openSpaceFromNotch, type NotchFeedUi } from "./notch-feed";
+import { dropOnSpace, feedNotch, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
@@ -32,6 +33,7 @@ import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
 import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
+import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
 // Linux desktop entry in electron-builder.config.cjs.
@@ -85,8 +87,28 @@ function migrateSwiftApp() {
   }
 }
 
+/** One of the app's windows as the window-drop targets see it (one per window). */
+const dropWindows = new WeakMap<BrowserWindow, DropWindow>();
+function dropWindow(win: BrowserWindow): DropWindow {
+  let w = dropWindows.get(win);
+  if (!w) {
+    w = {
+      destroyed: () => win.isDestroyed(),
+      visible: () => win.isVisible() && !win.isMinimized(),
+      contentBounds: () => win.getContentBounds(),
+      zoom: () => win.webContents.getZoomFactor(),
+      number: () => windowNumberOf(win.getMediaSourceId()),
+      send: (event, payload) => {
+        if (!win.isDestroyed()) win.webContents.send(ELECTRON_EVENT_CHANNEL, { event, payload });
+      },
+    };
+    dropWindows.set(win, w);
+  }
+  return w;
+}
+
 /** The native host: the library, the model on it and the bridge. */
-async function startNativeHost(showRoute: (route: string) => void) {
+async function startNativeHost(showRoute: (route: string) => void, globalShortcut: GlobalShortcut | null) {
   const dir = nativeDir({
     platform: process.platform,
     arch: process.arch,
@@ -117,6 +139,15 @@ async function startNativeHost(showRoute: (route: string) => void) {
     viewers.closeAll();
   });
   const prompts = await electronKeyvaultPrompts(native);
+  // macOS: a real window dragged onto a Space tile in the main window (the
+  // notch's drag monitor follows it; window-drop.ts). Which Spaces take a drop is the core's rule.
+  const windowDrops =
+    process.platform === "darwin"
+      ? new WindowDropTargets((spaceId) => {
+          const space = env.model.spaces.find((s) => s.id === spaceId);
+          return !!space && native.appSpaceAcceptsDrop(space as Parameters<typeof native.appSpaceAcceptsDrop>[0]);
+        })
+      : null;
   const bridge = createBridge({
     model: env.model,
     supervisor: env.supervisor,
@@ -124,7 +155,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute }),
+    system: makeSystem({ native, showRoute, globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -132,6 +163,14 @@ async function startNativeHost(showRoute: (route: string) => void) {
         if (win instanceof BrowserWindow) setWindowBackground(win, color);
       },
       activate: () => app.focus({ steal: true }),
+      setDropTargets: (win, targets) => {
+        if (!windowDrops || !(win instanceof BrowserWindow)) return;
+        windowDrops.set(dropWindow(win), targets);
+        if (process.env.CUA_SPACES_NOTCH_DEBUG) {
+          const at = win.getContentBounds();
+          console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
+        }
+      },
       chooseFiles: async (win) => {
         // Files and folders at once where the picker allows it (macOS); Windows and Linux pick files.
         const properties: ("openFile" | "openDirectory" | "multiSelections")[] =
@@ -182,12 +221,18 @@ async function startNativeHost(showRoute: (route: string) => void) {
       openAccess: () => showRoute("/keyvault?view=access"),
       // Hides the indicator and the tiles' key; nothing is revoked or wiped.
       dismissAccess: () => model.keyvault.dismiss(),
-      // No window-drag monitor yet (no `teleport` below), so no drag commits.
-      teleport: (spaceId) => showRoute(`/spaces/${encodeURIComponent(spaceId)}`),
+      // A window dragged onto a tile: the Teleport review for its app there.
+      teleport: (spaceId, app) => void teleportFromNotch(model, notchUi, spaceId, app),
       drop: (spaceId, paths) => void dropOnSpace(model, notchUi, spaceId, paths),
     },
+    teleport: notchTeleport(() => model.backend.teleportHandle()),
+    windowTargets: windowDrops ?? undefined,
   });
-  if (notch) feedNotch(notch, model);
+  if (notch) {
+    feedNotch(notch, model);
+    // Window drags need the SDK: look again once it is in.
+    if (!model.startup.isReady) model.startup.onReady.push(() => notch.recheckPermission());
+  }
   return { env, bridge, background };
 }
 
@@ -237,22 +282,30 @@ if (!app.requestSingleInstanceLock()) {
   // The page's New Space wizard; Settings (the page's own route, without reloading it).
   const newSpace = () => tellMain("spaces.newRequested", { on: null });
   const openSettings = () => tellMain("settings.openRequested");
+  const gettingStarted = () => tellMain("checklist.openRequested");
 
   app.on("second-instance", showMain);
 
   app.whenReady().then(async () => {
     migrateSwiftApp();
     initTheme();
-    installMenu({ newSpace, settings: openSettings });
+    installMenu({ newSpace, settings: openSettings, gettingStarted });
     handleViewerKeyboard();
     if (process.platform !== "darwin") handleOverlayDim();
     const { webRoot } = handleAppProtocol();
     if (process.env.CUA_SPACES_LOG_STARTUP) console.log(`[cua-spaces] serving ${webRoot}`);
 
+    // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
+    const shortcut = E2E_DEMO
+      ? null
+      : installGlobalShortcut(process.platform, () => {
+          app.focus({ steal: true });
+          showMain();
+        });
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {
-        host = await startNativeHost(showRoute);
+        host = await startNativeHost(showRoute, shortcut);
       } catch (error) {
         // A broken install: say so plainly, never show the app without its data.
         const why = error instanceof Error ? error.message : String(error);

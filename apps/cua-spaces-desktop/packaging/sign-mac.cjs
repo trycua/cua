@@ -42,12 +42,24 @@ function osxSign() {
   return require(require.resolve("@electron/osx-sign", { paths: [path.dirname(lib)] }));
 }
 
-/** @param {import("@electron/osx-sign/dist/cjs/types").SignOptions} opts */
-async function sign(opts, load = osxSign) {
+/**
+ * Signs with `load()`'s `signAsync` (`@electron/osx-sign` in a build, a stand-in in tests).
+ * @param {import("@electron/osx-sign/dist/cjs/types").SignOptions} opts
+ */
+async function signWith(opts, load) {
   if (!fs.existsSync(DAEMON_ENTITLEMENTS)) throw new Error(`missing ${DAEMON_ENTITLEMENTS}`);
   const optionsForFile = opts.optionsForFile;
   const { signAsync } = load();
   await signAsync({ ...opts, optionsForFile: (file) => withDaemonIdentity(optionsForFile ? optionsForFile(file) : {}, file) });
 }
 
-module.exports = { sign, withDaemonIdentity, isDaemon, DAEMON_IDENTIFIER, DAEMON_ENTITLEMENTS };
+/**
+ * electron-builder's `mac.sign` hook. It is called as `sign(opts, packager)`;
+ * the packager is not used.
+ * @param {import("@electron/osx-sign/dist/cjs/types").SignOptions} opts
+ */
+async function sign(opts) {
+  await signWith(opts, osxSign);
+}
+
+module.exports = { sign, signWith, withDaemonIdentity, isDaemon, DAEMON_IDENTIFIER, DAEMON_ENTITLEMENTS };

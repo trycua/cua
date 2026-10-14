@@ -19,7 +19,7 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..")
@@ -43,11 +43,17 @@ function give_up(message) {
 
 // rustup's proxies and cargo-installed tools first, so the toolchain the
 // libs pin (apps/cua-spaces/rust-toolchain.toml, found upward from the
-// crate) is used even when a Homebrew rust is earlier on PATH.
+// crate) is used even when a Homebrew rust is earlier on PATH. On Windows
+// `sh` (Git Bash) answers with a POSIX path (`/c/Users/...`) that Node
+// cannot resolve, and rustup's proxies are in ~/.cargo/bin anyway.
 const extra = [join(homedir(), ".cargo", "bin")]
-const rustup = spawnSync("sh", ["-c", "command -v rustup"], { encoding: "utf8" }).stdout?.trim()
-if (rustup) extra.unshift(dirname(realpathSync(rustup)))
-const env = { ...process.env, CARGO_TARGET_DIR: target, PATH: [...extra, process.env.PATH].join(":") }
+if (process.platform !== "win32") {
+  const rustup = spawnSync("sh", ["-c", "command -v rustup"], { encoding: "utf8" }).stdout?.trim()
+  if (rustup && existsSync(rustup)) extra.unshift(dirname(realpathSync(rustup)))
+}
+// Windows names the variable `Path`; set the one the environment has.
+const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH"
+const env = { ...process.env, CARGO_TARGET_DIR: target, [pathKey]: [...extra, process.env[pathKey]].join(delimiter) }
 
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { cwd: crate, stdio: "inherit", env })

@@ -21,7 +21,7 @@ enum Fixtures {
 struct ProtocolTests {
     @Test func everyHostMessageDecodes() throws {
         let messages = try Fixtures.lines("host-messages.jsonl").map(HostMessage.decode)
-        #expect(messages.count == 6)
+        #expect(messages.count == 7)
         guard case .hello(let v, let motion, let radii) = messages[0] else { Issue.record("hello"); return }
         #expect(v == 1)
         #expect(motion.hoverDwellMs == 300 && motion.closeDamping == 1 && motion.contentScale == 0.96)
@@ -51,7 +51,8 @@ struct ProtocolTests {
         #expect(id == "local:aurora" && image?.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47]))
         #expect(messages[3] == .thumbnail(spaceId: "cloud:build", image: nil))
         #expect(messages[4] == .ghost(image: nil))
-        #expect(messages[5] == .quit)
+        #expect(messages[5] == .windowUnder(id: 7, x: 640.5, y: 412, below: 5120))
+        #expect(messages[6] == .quit)
     }
 
     /// A state with only the view: the rest defaults (shown, nothing else).
@@ -89,6 +90,7 @@ struct ProtocolTests {
             .action(.drop(spaceId: "local:aurora", paths: ["/Applications/Notes.app", "/Users/me/report.pdf"])),
             .stage(open: true),
             .error(message: "Electron speaks notch protocol 2; this helper speaks 1"),
+            .windowUnder(id: 7, window: 4242), .windowUnder(id: 8, window: nil),
         ]
         let expected = try Fixtures.lines("helper-messages.jsonl")
         #expect(messages.count == expected.count)

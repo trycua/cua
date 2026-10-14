@@ -9878,6 +9878,17 @@
        "repeatable": false,
        "short_name": "f",
        "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "For an uninstall of Cua Spaces: turns off the Spaces this machine provides and takes them off the relay too, instead of refusing while it provides any. The Spaces and their data stay on this machine",
+       "hidden": false,
+       "name": "uninstalling",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
       }
      ],
      "hidden": false,

@@ -1478,16 +1478,14 @@ mod tests {
         let ok = run_native_capture_worker(&GATE, Duration::from_secs(5), || Ok(7u8));
         assert_eq!(ok.expect("work result flows through the pooled worker"), 7);
 
-        let err: anyhow::Result<u8> = run_native_capture_worker(
-            &GATE,
-            Duration::from_secs(5),
-            || Err(anyhow::anyhow!("boom")),
-        );
-        assert!(
-            err.expect_err("work error flows through")
-                .to_string()
-                .contains("boom")
-        );
+        let err: anyhow::Result<u8> =
+            run_native_capture_worker(&GATE, Duration::from_secs(5), || {
+                Err(anyhow::anyhow!("boom"))
+            });
+        assert!(err
+            .expect_err("work error flows through")
+            .to_string()
+            .contains("boom"));
     }
 
     #[test]

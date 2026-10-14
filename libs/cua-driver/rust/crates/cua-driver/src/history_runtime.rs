@@ -422,8 +422,6 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
 }
 
 pub fn history_root() -> PathBuf {
-    // Keep history and its admission preference inside an explicitly selected
-    // driver home, without redirecting OS profile folders used for app discovery.
     if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()) {
         return PathBuf::from(home).join("computer-history");
     }

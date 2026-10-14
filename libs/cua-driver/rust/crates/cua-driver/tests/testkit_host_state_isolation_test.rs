@@ -10,10 +10,6 @@
 //! This binary contains exactly one test so it can safely point its own
 //! `HOME` (and the platform state variables) at a temporary directory before
 //! any daemon starts. The real user's files are never touched.
-//!
-//! Windows keeps its OS profile folders unchanged in the testkit. The driver's
-//! own `CUA_DRIVER_RS_HOME` must isolate History there too (#4137), and must not
-//! leak an inherited override on any platform.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -57,8 +53,6 @@ fn seed_admitted_host_home() -> tempfile::TempDir {
     std::env::set_var("HOME", home.path());
     std::env::set_var("CUA_DRIVER_RS_HOME", home.path().join(".cua-driver"));
     if cfg!(target_os = "windows") {
-        // Simulate a host entirely inside a disposable profile. Testkit must
-        // leave these values alone while isolating the driver-owned root.
         std::env::set_var("USERPROFILE", home.path());
         std::env::set_var("APPDATA", home.path().join("AppData").join("Roaming"));
         std::env::set_var("LOCALAPPDATA", home.path().join("AppData").join("Local"));
@@ -68,10 +62,6 @@ fn seed_admitted_host_home() -> tempfile::TempDir {
     home
 }
 
-/// With no daemon on this private endpoint, the status command reports whether
-/// the selected admission preference requires an experimental-history launch.
-/// This observes the real CLI's path resolution without admitting History or
-/// accessing an OS credential store.
 fn assert_admission_hint(driver_home: Option<&Path>, admitted: bool) {
     #[cfg(windows)]
     let socket = format!(r"\\.\pipe\cua-history-missing-{}", uuid::Uuid::new_v4());
@@ -107,9 +97,6 @@ fn testkit_daemons_ignore_host_history_admission() {
     }
     let host_home = seed_admitted_host_home();
 
-    // Default locations and an empty override retain the existing behavior.
-    // A nonempty override must ignore the admitted OS-profile state, and use
-    // the preference under the selected driver home when one is present.
     assert_admission_hint(None, true);
     assert_admission_hint(Some(Path::new("")), true);
     let empty_home = tempfile::tempdir().expect("empty driver home");

@@ -5,19 +5,19 @@ implementations, testkit, and helper crates.
 
 ## Crates
 
-| Crate                | Purpose                                                                          |
-| -------------------- | -------------------------------------------------------------------------------- |
-| `cua-driver`         | Main CLI/MCP daemon and hermetic integration tests                               |
-| `cua-driver-e2e`     | Desktop E2E suites that the canonical OS runners select; never shipped           |
-| `cua-driver-core`    | Shared protocol, tool models, config, and CDP helpers                            |
-| `platform-macos`     | macOS AX, capture, input, browser, and daemon support                            |
-| `platform-windows`   | Windows UIA, capture, input, overlay, and diagnostics                            |
-| `platform-linux`     | Linux AT-SPI, X11/Wayland, capture, and input support                            |
-| `cua-driver-testkit` | Test-only helpers for spawning the daemon and parsing responses                  |
-| `cua-driver-uia`     | Windows UIAccess worker                                                          |
-| `cursor-overlay`     | Cross-platform semantic cursor renderer and bounded compiled-theme loader        |
-| `cursor-theme-cli`   | Short-lived dotLottie validation, compilation, preview, and installation sidecar |
-| `pip-preview`        | Packaging preview helper                                                         |
+| Crate | Purpose |
+| --- | --- |
+| `cua-driver` | Main CLI/MCP daemon and hermetic integration tests |
+| `cua-driver-e2e` | Desktop E2E suites that the canonical OS runners select; never shipped |
+| `cua-driver-core` | Shared protocol, tool models, config, and CDP helpers |
+| `platform-macos` | macOS AX, capture, input, browser, and daemon support |
+| `platform-windows` | Windows UIA, capture, input, overlay, and diagnostics |
+| `platform-linux` | Linux AT-SPI, X11/Wayland, capture, and input support |
+| `cua-driver-testkit` | Test-only helpers for spawning the daemon and parsing responses |
+| `cua-driver-uia` | Windows UIAccess worker |
+| `cursor-overlay` | Cross-platform semantic cursor renderer and bounded compiled-theme loader |
+| `cursor-theme-cli` | Short-lived dotLottie validation, compilation, preview, and installation sidecar |
+| `pip-preview` | Packaging preview helper |
 
 Platform crates are selected with `cfg(target_os)` from the main driver crate.
 Keep platform-specific behavior inside the matching `platform-<os>` crate.

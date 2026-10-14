@@ -4,7 +4,7 @@ use cua_sdk::CuaError;
 use std::{
     io::{IsTerminal, Write},
     path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::Mutex,
     time::Duration,
 };
 
@@ -207,6 +207,60 @@ pub fn write_private(p: &std::path::Path, data: &[u8]) -> Result<(), CuaError> {
     std::fs::rename(&tmp, p).map_err(internal)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramState {
+    Idle,
+    Working,
+    Done,
+    Error,
+}
+
+#[derive(PartialEq)]
+enum Reported {
+    Nothing,
+    Status,
+    Cleared,
+}
+
+static PROGRAM_STATUS: Mutex<Reported> = Mutex::new(Reported::Nothing);
+
+pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
+    if std::io::stderr().is_terminal() {
+        let report = program_status_report(state, progress, msg);
+        write_program_status(&PROGRAM_STATUS, &mut std::io::stderr(), &report);
+    }
+}
+
+pub fn clear_program_status() {
+    write_program_status_clear(&PROGRAM_STATUS, &mut std::io::stderr());
+}
+
+fn write_program_status(reported: &Mutex<Reported>, out: &mut dyn Write, report: &str) {
+    let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
+    if *reported != Reported::Cleared {
+        let _ = out.write_all(report.as_bytes());
+        *reported = Reported::Status;
+    }
+}
+
+fn write_program_status_clear(reported: &Mutex<Reported>, out: &mut dyn Write) {
+    let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
+    if *reported == Reported::Status {
+        let _ = out.write_all(b"\x1b]7501;state=clear\x1b\\");
+    }
+    *reported = Reported::Cleared;
+}
+
+fn program_status_report(state: ProgramState, progress: Option<u8>, msg: &str) -> String {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let name = format!("{state:?}").to_lowercase();
+    let progress = progress.filter(|_| state == ProgramState::Working);
+    let progress = progress.map_or(String::new(), |p| format!(":progress={}", p.min(100)));
+    let msg = msg.replace(char::is_control, " ");
+    let msg = STANDARD.encode(&msg.trim()[..msg.trim().floor_char_boundary(2048)]);
+    format!("\x1b]7501;state={name}{progress}:app=cua:msg={msg}\x1b\\")
+}
+
 #[cfg(test)]
 mod secret_tests {
     use super::*;
@@ -288,6 +342,20 @@ mod secret_tests {
         let control = program_status_report(ProgramState::Error, None, "a\x1bb\u{85}c\n");
         assert_eq!(msg(&control), "a b c");
     }
+
+    #[test]
+    fn program_status_is_not_reported_after_it_is_cleared() {
+        let reported = Mutex::new(Reported::Nothing);
+        let mut out = Vec::new();
+        write_program_status_clear(&reported, &mut out);
+        assert!(out.is_empty());
+        let reported = Mutex::new(Reported::Nothing);
+        write_program_status(&reported, &mut out, "working");
+        write_program_status_clear(&reported, &mut out);
+        write_program_status(&reported, &mut out, "working again");
+        write_program_status_clear(&reported, &mut out);
+        assert_eq!(out, b"working\x1b]7501;state=clear\x1b\\");
+    }
 }
 
 /// Test helper: a private `CUA_HOME` and no `CUA_DEFAULT_*` in the
@@ -353,37 +421,4 @@ pub fn exit_on_ctrl_c() {
             std::process::exit(130);
         }
     });
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProgramState {
-    Idle,
-    Working,
-    Done,
-    Error,
-}
-
-static PROGRAM_STATUS_REPORTED: AtomicBool = AtomicBool::new(false);
-
-pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
-    if std::io::stderr().is_terminal() {
-        eprint!("{}", program_status_report(state, progress, msg));
-        PROGRAM_STATUS_REPORTED.store(true, Ordering::Relaxed);
-    }
-}
-
-pub fn clear_program_status() {
-    if PROGRAM_STATUS_REPORTED.load(Ordering::Relaxed) {
-        eprint!("\x1b]7501;state=clear\x1b\\");
-    }
-}
-
-fn program_status_report(state: ProgramState, progress: Option<u8>, msg: &str) -> String {
-    use base64::{Engine, engine::general_purpose::STANDARD};
-    let name = format!("{state:?}").to_lowercase();
-    let progress = progress.filter(|_| state == ProgramState::Working);
-    let progress = progress.map_or(String::new(), |p| format!(":progress={}", p.min(100)));
-    let msg = msg.replace(char::is_control, " ");
-    let msg = STANDARD.encode(&msg.trim()[..msg.trim().floor_char_boundary(2048)]);
-    format!("\x1b]7501;state={name}{progress}:app=cua:msg={msg}\x1b\\")
 }

@@ -233,8 +233,9 @@ async fn follow(
             if matches!(e.kind.as_str(), "turn_ended" | "exited") {
                 done = true;
             }
-            let detail = e.stop_reason.as_deref().or(e.text.as_deref());
-            if let Some(s) = run_state(&e.kind, detail, shown.0 == ProgramState::Working) {
+            let working = shown.0 == ProgramState::Working;
+            let stop_reason = e.stop_reason.as_deref();
+            if let Some(s) = run_state(&e.kind, stop_reason, e.text.as_deref(), working) {
                 shown = s;
             }
         }
@@ -247,7 +248,7 @@ async fn follow(
         if page.caught_up {
             let s = run.status().await?;
             if s.status != "running" && !done {
-                if let Some(s) = run_state(&s.status, Some(&s.reason), true) {
+                if let Some(s) = run_state(&s.status, None, Some(&s.reason), true) {
                     report(&s);
                 }
                 break;
@@ -258,14 +259,20 @@ async fn follow(
     Ok(cursor)
 }
 
-fn run_state(kind: &str, detail: Option<&str>, working: bool) -> Option<(ProgramState, String)> {
+fn run_state(
+    kind: &str,
+    stop_reason: Option<&str>,
+    detail: Option<&str>,
+    working: bool,
+) -> Option<(ProgramState, String)> {
     use ProgramState::*;
     let detail = detail.unwrap_or_default();
-    Some(match (kind, detail) {
+    Some(match (kind, stop_reason) {
         ("turn_started", _) => (Working, "working".into()),
-        ("turn_ended", "" | "end_turn") => (Done, "turn done".into()),
-        ("turn_ended", "cancelled") | ("idle", _) => (Idle, detail.into()),
-        ("turn_ended", _) => (Error, format!("turn ended ({detail})")),
+        ("turn_ended", None | Some("" | "end_turn")) => (Done, "turn done".into()),
+        ("turn_ended", Some("cancelled")) => (Idle, "cancelled".into()),
+        ("turn_ended", Some(reason)) => (Error, format!("turn ended ({reason})")),
+        ("idle", _) => (Idle, detail.into()),
         ("exited", _) if !working => return None,
         ("error" | "exited" | "failed" | "crashed", _) => (Error, format!("{kind}: {detail}")),
         _ => return None,
@@ -745,43 +752,56 @@ mod tests {
     fn turn_events_and_run_statuses_map_to_program_states() {
         use ProgramState::*;
         assert_eq!(
-            run_state("turn_started", Some("fix it"), false),
+            run_state("turn_started", None, Some("fix it"), false),
             Some((Working, "working".into()))
         );
         assert_eq!(
-            run_state("turn_ended", Some("end_turn"), true),
+            run_state("turn_ended", Some("end_turn"), None, true),
             Some((Done, "turn done".into()))
         );
         assert_eq!(
-            run_state("turn_ended", None, true),
+            run_state("turn_ended", None, None, true),
             Some((Done, "turn done".into()))
         );
         assert_eq!(
-            run_state("turn_ended", Some("cancelled"), true),
+            run_state("turn_ended", Some("cancelled"), None, true),
             Some((Idle, "cancelled".into()))
         );
         assert_eq!(
-            run_state("turn_ended", Some("max_tokens"), true),
+            run_state("turn_ended", Some("max_tokens"), None, true),
             Some((Error, "turn ended (max_tokens)".into()))
         );
         assert_eq!(
-            run_state("error", Some("boom"), true),
+            run_state("error", None, Some("boom"), true),
             Some((Error, "error: boom".into()))
         );
-        assert_eq!(run_state("exited", Some("code 1"), false), None);
+        assert_eq!(run_state("exited", None, Some("code 1"), false), None);
         assert_eq!(
-            run_state("exited", Some("code 1"), true),
+            run_state("exited", None, Some("code 1"), true),
             Some((Error, "exited: code 1".into()))
         );
         assert_eq!(
-            run_state("crashed", Some("oom"), true),
+            run_state("crashed", None, Some("oom"), true),
             Some((Error, "crashed: oom".into()))
         );
         assert_eq!(
-            run_state("idle", Some("waiting for a follow-up"), true),
+            run_state("idle", None, Some("waiting for a follow-up"), true),
             Some((Idle, "waiting for a follow-up".into()))
         );
-        assert_eq!(run_state("message", Some("hi"), true), None);
+        assert_eq!(run_state("message", None, Some("hi"), true), None);
+    }
+
+    #[test]
+    fn turn_end_text_is_not_a_stop_reason() {
+        use ProgramState::*;
+        assert_eq!(
+            run_state("turn_ended", None, Some("All done."), true),
+            Some((Done, "turn done".into()))
+        );
+        assert_eq!(
+            run_state("turn_ended", Some("max_tokens"), Some("All done."), true),
+            Some((Error, "turn ended (max_tokens)".into()))
+        );
     }
 
     #[test]

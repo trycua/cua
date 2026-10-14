@@ -83,7 +83,7 @@ async def run_single_task(
         task_index: Task variant index (default: 0)
         split: Dataset split (default: "train")
         agent_fn: Optional agent function that takes (screenshot, task_config)
-                  and returns an Action. If None and oracle=False, returns after setup.
+                  and returns an Action. Required when oracle=False; otherwise the run fails closed after setup.
         max_steps: Maximum steps per task (default: 100)
         oracle: Run oracle/solver mode (default: False)
 

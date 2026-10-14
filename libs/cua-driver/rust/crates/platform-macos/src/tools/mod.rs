@@ -13,6 +13,7 @@ mod kill_app;
 mod launch_app;
 mod list_apps;
 mod list_windows;
+mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;
@@ -26,6 +27,7 @@ mod type_text;
 // through GetWindowStateTool.
 mod check_permissions;
 mod cursor_tools;
+mod desktop_pointer_guard;
 mod get_accessibility_tree;
 mod get_config;
 mod get_cursor_position;
@@ -81,13 +83,36 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     window_target_candidates_for_pid(windows, pid)
 }
 
+/// Smallest edge, in points, of a window a pid-only action may mean. Below it
+/// the window is a 0x0 or 1x1 helper surface, never a document or dialog.
+const MIN_TARGET_EDGE_PT: f64 = 2.0;
+
+/// Whether `window` is a window a pid-only action could mean: on screen and
+/// of real size. LibreOffice's off-screen `VCL ImplGetDefaultWindow`, its
+/// untitled off-screen helpers, and Chrome's closed omnibox popup are layer-0
+/// windows WindowServer lists but no user can see, type into, or click.
+fn is_visible_target(window: &crate::windows::WindowInfo) -> bool {
+    window.is_on_screen
+        && window.bounds.width >= MIN_TARGET_EDGE_PT
+        && window.bounds.height >= MIN_TARGET_EDGE_PT
+}
+
 fn window_target_candidates_for_pid(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i32,
 ) -> Vec<WindowTargetCandidate> {
-    windows
+    let mut windows: Vec<_> = windows
         .into_iter()
         .filter(|window| window.pid == pid)
+        .collect();
+    // Only visible windows compete. When none is visible (the app is hidden,
+    // its only window is minimized or on another Space) keep them all, so a
+    // single real window still resolves and several still refuse.
+    if windows.iter().any(is_visible_target) {
+        windows.retain(is_visible_target);
+    }
+    windows
+        .into_iter()
         .map(|window| WindowTargetCandidate {
             window_id: u64::from(window.window_id),
             transient_for: None,
@@ -134,6 +159,80 @@ mod pid_window_target_tests {
                 if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
     }
+
+    fn off_screen(
+        mut window: crate::windows::WindowInfo,
+        title: &str,
+    ) -> crate::windows::WindowInfo {
+        window.is_on_screen = false;
+        window.title = title.into();
+        window
+    }
+
+    #[test]
+    fn off_screen_helpers_do_not_make_a_document_ambiguous() {
+        // LibreOffice: the document plus `VCL ImplGetDefaultWindow` and an
+        // untitled helper, both off screen (bench CDB-G03, CDB-S02).
+        let candidates = window_target_candidates_for_pid(
+            [
+                window(1680, 42),
+                off_screen(window(1679, 42), "VCL ImplGetDefaultWindow"),
+                off_screen(window(1678, 42), ""),
+            ],
+            42,
+        );
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 1680
+        ));
+    }
+
+    #[test]
+    fn zero_size_windows_do_not_compete() {
+        let mut helper = window(9, 42);
+        helper.bounds.width = 0.0;
+        helper.bounds.height = 0.0;
+        let candidates = window_target_candidates_for_pid([window(7, 42), helper], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 7
+        ));
+    }
+
+    #[test]
+    fn two_visible_documents_stay_ambiguous_despite_helpers() {
+        let candidates = window_target_candidates_for_pid(
+            [
+                window(7, 42),
+                window(8, 42),
+                off_screen(window(9, 42), "VCL ImplGetDefaultWindow"),
+            ],
+            42,
+        );
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+
+    #[test]
+    fn an_app_with_no_visible_window_keeps_its_windows() {
+        // A hidden app or a minimized single window still resolves.
+        let candidates = window_target_candidates_for_pid([off_screen(window(7, 42), "Doc")], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 7
+        ));
+    }
+}
+
+/// The window a pid-only keyboard action means when several visible windows
+/// remain: the app's key window (`AXFocusedWindow`), which is where AppKit
+/// sends process-scoped key events anyway. `None` leaves the call refused.
+fn pid_focused_window(pid: i64) -> Option<u64> {
+    let pid = i32::try_from(pid).ok()?;
+    crate::ax::bindings::focused_window_id_of_pid(pid).map(u64::from)
 }
 
 fn pid_window_guarded<T: Tool + 'static>(
@@ -144,6 +243,19 @@ fn pid_window_guarded<T: Tool + 'static>(
         Box::new(tool),
         candidates.clone(),
     ))
+}
+
+/// [`pid_window_guarded`] for keyboard tools: when several visible windows
+/// remain, a pid-only key goes to the app's key window, as AppKit would route
+/// it, and the result names that window. Without a key window it still refuses.
+fn pid_keyboard_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(
+        PidOnlyWindowTargetGuard::new(Box::new(tool), candidates.clone())
+            .with_fallback_resolver(Arc::new(pid_focused_window)),
+    )
 }
 
 pub use check_permissions::{
@@ -193,6 +305,39 @@ pub(crate) fn background_refusal_result(
 /// Exclusive per-process ownership of one background mutation. Callers must
 /// keep this value alive through actuator dispatch, focus restoration, and
 /// target-bound verification.
+/// The window a pid-only call means: the app's focused window, else its
+/// frontmost on-screen window. Fills `window_id` for tools that need one
+/// when the caller named only the app's pid.
+pub(crate) fn default_window_for_pid(args: &mut serde_json::Value) {
+    let Some(object) = args.as_object_mut() else {
+        return;
+    };
+    if object
+        .get("window_id")
+        .is_some_and(|value| !value.is_null())
+    {
+        return;
+    }
+    let Some(pid) = object
+        .get("pid")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return;
+    };
+    let window_id = crate::ax::bindings::focused_window_id_of_pid(pid).or_else(|| {
+        crate::windows::all_windows()
+            .into_iter()
+            .filter(|window| window.pid == pid && window.is_on_screen && window.layer == 0)
+            .filter(|window| window.bounds.width >= 2.0 && window.bounds.height >= 2.0)
+            .max_by_key(|window| window.z_index)
+            .map(|window| window.window_id)
+    });
+    if let Some(window_id) = window_id {
+        object.insert("window_id".into(), serde_json::json!(window_id));
+    }
+}
+
 pub(crate) struct BackgroundMutationLease {
     pid: i32,
     _guard: tokio::sync::OwnedMutexGuard<()>,
@@ -455,18 +600,26 @@ fn point_within_rect([rx, ry, rw, rh]: [f64; 4], x: f64, y: f64) -> bool {
     rw > 0.0 && rh > 0.0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
+/// Default long-edge cap for screenshots; see [`DriverConfig::max_image_dimension`].
+pub const DEFAULT_MAX_IMAGE_DIMENSION: u32 = 1366;
+
 /// Runtime-mutable driver configuration persisted across calls within a session.
 pub struct DriverConfig {
-    /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
-    /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
+    /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom:
     /// the long edge is downscaled to this before encoding.
+    ///
+    /// Default 1366. High-resolution Claude models read images up to 2576 px
+    /// at ~w*h/750 tokens each, so a 1568x882 capture costs ~1.8k tokens and a
+    /// 1366x768 one ~1.4k; Anthropic's computer-use guidance names 1366x768 as
+    /// a lower-cost size with strong performance. Callers that need more
+    /// detail use `zoom` or a per-call/session `max_image_dimension`.
     pub max_image_dimension: u32,
 }
 
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
-            max_image_dimension: 1568,
+            max_image_dimension: DEFAULT_MAX_IMAGE_DIMENSION,
         }
     }
 }
@@ -686,6 +839,32 @@ impl ToolState {
     }
 }
 
+/// The target pid of an element-addressable call. An explicit `pid` wins; a
+/// call that carries only an `element_token` takes the pid the token was
+/// minted for, as the schemas promise ("the token carries it").
+pub(super) fn target_pid(
+    state: &ToolState,
+    args: &serde_json::Value,
+) -> Result<i32, cua_driver_core::protocol::ToolResult> {
+    use cua_driver_core::tool_args::ArgsExt;
+    if args.get("pid").is_some_and(|pid| !pid.is_null()) {
+        return args.require_i32("pid");
+    }
+    if let Some(pid) = state.snapshots.pid_for_token(args) {
+        return Ok(pid);
+    }
+    if args
+        .get("element_token")
+        .is_some_and(|token| !token.is_null())
+    {
+        return Err(cua_driver_core::element_token::stale_token_without_pid());
+    }
+    Err(cua_driver_core::protocol::ToolResult::error(
+        "Missing required integer field: pid. Pass pid, or pass an element_token from the \
+         current get_window_state (a token names its own pid).",
+    ))
+}
+
 pub(super) fn screenshot_scale(
     state: &ToolState,
     args: &serde_json::Value,
@@ -865,15 +1044,15 @@ pub fn register_all(
         drag::DragTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         type_text::TypeTextTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         press_key::PressKeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         hotkey::HotkeyTool::new(state.clone()),
         &pid_window_candidates,
     ));

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! First run: Welcome, Sign in, AI agents, where Cua Spaces shows up, Cua
+//! First run: Welcome, Command line (only while the app's bundled `cua`
+//! needs installing), Sign in, AI agents, where Cua Spaces shows up, Cua
 //! Volume (only with its experiment on, Settings, Experiments; hidden
 //! where the drive cannot mount, Windows), This machine, Done. One step per
 //! page with page dots; every write asks first (the shells run the writes,
@@ -15,6 +16,7 @@ use crate::drive_settings::{
     storage_reduce, storage_section,
 };
 use crate::experiments::Experiments;
+use crate::installer::{CliInstallPlan, InstallMethod};
 use crate::model::SpaceOs;
 use crate::settings::{SettingsOption, SettingsRow, TelemetryInput};
 
@@ -24,6 +26,8 @@ use crate::settings::{SettingsOption, SettingsRow, TelemetryInput};
 pub enum OnboardingStep {
     /// Welcome.
     Welcome,
+    /// Install the bundled `cua`, while its plan needs it.
+    Cli,
     /// Sign in to Cua.
     Signin,
     /// Coding agents: cua skills and the cua MCP server.
@@ -41,10 +45,9 @@ pub enum OnboardingStep {
 }
 
 /// Page order.
-/// There is no command-line page: the app installs its bundled `cua` on
-/// first launch ([`OnboardingAction::CliInstalled`]).
-pub const STEPS: [OnboardingStep; 7] = [
+pub const STEPS: [OnboardingStep; 8] = [
     OnboardingStep::Welcome,
+    OnboardingStep::Cli,
     OnboardingStep::Signin,
     OnboardingStep::Agents,
     OnboardingStep::Presentation,
@@ -58,6 +61,7 @@ impl OnboardingStep {
     pub fn label(self) -> &'static str {
         match self {
             OnboardingStep::Welcome => "Welcome",
+            OnboardingStep::Cli => "Command line",
             OnboardingStep::Presentation => "Menu bar",
             OnboardingStep::Signin => "Sign in",
             OnboardingStep::Agents => "AI agents",
@@ -68,14 +72,22 @@ impl OnboardingStep {
     }
 }
 
-/// The pages this run shows, in order: [`STEPS`] without Cua Volume while
+/// The pages this run shows, in order: [`STEPS`] without Command line
+/// unless the bundled `cua` needs installing, and without Cua Volume while
 /// its experiment is off, or where it cannot mount (Windows).
 pub fn steps(s: &OnboardingState) -> Vec<OnboardingStep> {
     STEPS
         .iter()
         .copied()
+        .filter(|st| *st != OnboardingStep::Cli || cli_shown(s))
         .filter(|st| *st != OnboardingStep::Drive || drive_shown(s))
         .collect()
+}
+
+fn cli_shown(s: &OnboardingState) -> bool {
+    s.cli_plan
+        .as_ref()
+        .is_some_and(|p| p.source.is_some() && !p.up_to_date)
 }
 
 /// The Cua Volume page shows: the Cua Volume experiment is on, everywhere
@@ -132,8 +144,17 @@ pub enum OnboardingMode {
 pub struct OnboardingState {
     /// Page.
     pub step: OnboardingStep,
-    /// Where `cua` was installed on first launch, when it was.
+    /// Where `cua` was installed, when it was.
     pub cli_target: Option<String>,
+    /// The bundled `cua`'s install plan, as the shell read it.
+    #[serde(default)]
+    pub cli_plan: Option<CliInstallPlan>,
+    /// Continue on Command line: the shell is installing.
+    #[serde(default)]
+    pub cli_installing: bool,
+    /// Why the install failed.
+    #[serde(default)]
+    pub cli_error: Option<String>,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
     /// in the notch".
     #[serde(default)]
@@ -193,6 +214,12 @@ pub struct OnboardingState {
     /// while Cua Volume is on. Off until the shell says otherwise.
     #[serde(default)]
     pub experiments: Experiments,
+    /// The run's start was counted (`onboarding_shown`, Welcome shown):
+    /// when Welcome showed on a machine whose usage notice was already
+    /// shown, else when Welcome was left. Once per run, however often
+    /// Welcome shows again (Back).
+    #[serde(default)]
+    pub run_counted: bool,
 }
 
 fn ticked() -> bool {
@@ -217,6 +244,21 @@ pub enum OnboardingAction {
     CliInstalled {
         /// Where.
         target: Option<String>,
+    },
+    /// The bundled `cua`'s install plan, read or installed (any page).
+    CliPlanned {
+        /// The plan.
+        plan: CliInstallPlan,
+    },
+    /// Continue (`install`) or Skip from Command line.
+    CliDone {
+        /// Install.
+        install: bool,
+    },
+    /// The Command line page's install failed.
+    CliInstallFailed {
+        /// Why.
+        error: String,
     },
     /// A presentation card was picked (it stays on the page).
     PresentationPicked {
@@ -305,6 +347,10 @@ pub enum OnboardingAction {
         /// The setting.
         telemetry: TelemetryInput,
     },
+    /// Welcome is on screen (each time it shows; after `telemetry-loaded`).
+    /// On a machine that already showed the usage notice, with usage data
+    /// on, the run's start counts now rather than when Welcome is left.
+    WelcomeShown,
     /// Welcome's "Share anonymous usage data" switch (not while the
     /// environment decides). The shell writes the setting.
     UsageDataToggled {
@@ -328,6 +374,9 @@ pub fn initial(
     OnboardingState {
         step: OnboardingStep::Welcome,
         cli_target: None,
+        cli_plan: None,
+        cli_installing: false,
+        cli_error: None,
         menu_bar: false,
         identity,
         agents: vec![],
@@ -347,6 +396,7 @@ pub fn initial(
         launch_at_login: true,
         telemetry: None,
         experiments: Experiments::default(),
+        run_counted: false,
     }
 }
 
@@ -409,8 +459,41 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
     use OnboardingStep::*;
     let mut n = s.clone();
     match (s.step, a) {
-        (Welcome, OnboardingAction::Start) => n.step = Signin,
+        (Welcome, OnboardingAction::Start) => {
+            n.step = next(s, Welcome);
+            n.run_counted = true;
+        }
+        (Welcome, OnboardingAction::WelcomeShown) => {
+            if s.shares_usage() && s.telemetry.as_ref().is_some_and(|t| t.notice_shown) {
+                n.run_counted = true;
+            }
+        }
         (_, OnboardingAction::CliInstalled { target }) => n.cli_target = target.clone(),
+        (_, OnboardingAction::CliPlanned { plan }) => {
+            n.cli_plan = Some(plan.clone());
+            if plan.up_to_date {
+                n.cli_target = Some(plan.target.clone());
+            }
+            if s.step == Cli && !cli_shown(&n) {
+                n.cli_installing = false;
+                n.step = next(s, Cli);
+            }
+            if s.step != Welcome && !cli_shown(s) && cli_shown(&n) {
+                n.step = Cli;
+            }
+        }
+        (Cli, OnboardingAction::CliDone { install }) if !s.cli_installing => {
+            n.cli_error = None;
+            if *install {
+                n.cli_installing = true;
+            } else {
+                n.step = next(s, Cli);
+            }
+        }
+        (Cli, OnboardingAction::CliInstallFailed { error }) if s.cli_installing => {
+            n.cli_installing = false;
+            n.cli_error = Some(error.clone());
+        }
         (Presentation, OnboardingAction::PresentationPicked { menu_bar }) => n.menu_bar = *menu_bar,
         (Presentation, OnboardingAction::PresentationDone) => n.step = next(s, Presentation),
         (_, OnboardingAction::SignedIn { identity }) => n.identity = Some(identity.clone()),
@@ -421,6 +504,7 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
         }
         (Mode, OnboardingAction::ModeChosen { mode }) => {
             n.mode = Some(*mode);
+            n.launch_at_login = *mode == OnboardingMode::Host;
             n.step = Done;
         }
         (_, OnboardingAction::DriveChecked { os, status }) => {
@@ -552,7 +636,7 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
             t.enabled = *on;
             n.telemetry = Some(t);
         }
-        (step, OnboardingAction::Back) if step != Welcome => {
+        (step, OnboardingAction::Back) if step != Welcome && !s.cli_installing => {
             let all = steps(s);
             if let Some(i) = all.iter().position(|x| *x == step).filter(|i| *i > 0) {
                 n.step = all[i - 1];
@@ -974,12 +1058,11 @@ pub struct OnboardingCopy {
     pub permissions_title: String,
     /// The permission rows' button.
     pub open_settings: String,
-    /// The Sign in page's Teams line ("Teams · coming soon").
+    /// The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
     pub teams: String,
-    /// Its link ("Join the waitlist").
+    /// Its link ("Open the account app").
     pub teams_link: String,
-    /// The link's URL: the website's Teams waitlist (the app collects
-    /// nothing).
+    /// The link's URL: the account app, which administers teams.
     pub teams_url: String,
 }
 
@@ -1017,7 +1100,7 @@ pub fn copy() -> OnboardingCopy {
             crate::settings::TEAMS_VALUE.to_lowercase()
         ),
         teams_link: crate::settings::TEAMS_BUTTON.into(),
-        teams_url: crate::settings::TEAMS_WAITLIST_URL.into(),
+        teams_url: crate::settings::TEAMS_URL.into(),
     }
 }
 
@@ -1050,15 +1133,60 @@ pub fn installed_at_text(target: &str) -> String {
     format!("Installed at {target}")
 }
 
-/// The flow as drawn.
+fn cli_lede(plan: &CliInstallPlan) -> String {
+    let verb = match plan.method {
+        Some(InstallMethod::Symlink) => "Links",
+        _ => "Copies",
+    };
+    if plan.on_path {
+        format!("{verb} cua to {}.", plan.target)
+    } else {
+        format!(
+            "{verb} cua to {} and adds {} to PATH in {}.",
+            plan.target,
+            plan.bin_dir,
+            plan.path_profile.as_deref().unwrap_or("your shell profile")
+        )
+    }
+}
+
+/// The flow as drawn, in a Mac's words.
 pub fn view(s: &OnboardingState) -> OnboardingView {
+    view_on(s, SpaceOs::Macos)
+}
+
+/// Where the app stays once the window closes: the menu bar on a Mac, the
+/// tray elsewhere.
+pub fn done_lede(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Macos => "Cua Spaces is in your menu bar.",
+        _ => "Cua Spaces is in your system tray.",
+    }
+}
+
+/// [`view`] in the words of the system the app runs on (`os`).
+pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
     use crate::spaces::sidebar::Fact;
     use OnboardingStep::*;
+    let cli = s.cli_plan.as_ref().map(cli_lede).unwrap_or_default();
     let (title, lede, primary) = match s.step {
         Welcome => (
             "Welcome to Cua Spaces",
             "Computers for you and your agents.",
             "Get started",
+        ),
+        Cli => (
+            if s.cli_plan.as_ref().is_some_and(|p| p.on_path) {
+                "Install the cua command"
+            } else {
+                "Install the cua command and add it to your PATH"
+            },
+            cli.as_str(),
+            if s.cli_installing {
+                "Installing\u{2026}"
+            } else {
+                "Continue"
+            },
         ),
         Presentation => (
             "Where should Cua Spaces show up?",
@@ -1067,7 +1195,7 @@ pub fn view(s: &OnboardingState) -> OnboardingView {
         ),
         Signin => (
             "Sign in",
-            "Connect your machines and your team.",
+            "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
             "Continue",
         ),
         Agents => (
@@ -1091,11 +1219,7 @@ pub fn view(s: &OnboardingState) -> OnboardingView {
             "You can change this later.",
             "Continue",
         ),
-        Done => (
-            "You're all set",
-            "Cua Spaces is in your menu bar.",
-            "Start using Cua Spaces",
-        ),
+        Done => ("You're all set", done_lede(os), "Start using Cua Spaces"),
     };
     let summary = if s.step == Done {
         let mut facts = vec![
@@ -1181,8 +1305,10 @@ pub fn view(s: &OnboardingState) -> OnboardingView {
         title: title.into(),
         lede: lede.into(),
         primary_label: primary.into(),
-        can_skip: s.step == Agents || (s.step == Signin && s.identity.is_none()),
-        can_back: s.step != Welcome,
+        can_skip: (s.step == Cli && !s.cli_installing)
+            || s.step == Agents
+            || (s.step == Signin && s.identity.is_none()),
+        can_back: s.step != Welcome && !s.cli_installing,
         show_mark: s.step == Welcome,
         preselected_mode: s.installer_mode.unwrap_or(OnboardingMode::Client),
         summary,
@@ -1258,6 +1384,42 @@ mod tests {
                 },
             },
         )
+    }
+
+    /// The last page says where the app stays: the menu bar on a Mac, the
+    /// tray on Windows and Linux.
+    #[test]
+    fn done_names_the_menu_bar_only_on_a_mac() {
+        let done = OnboardingState {
+            step: OnboardingStep::Done,
+            ..initial(None, None)
+        };
+        assert_eq!(view(&done).lede, "Cua Spaces is in your menu bar.");
+        assert_eq!(view_on(&done, SpaceOs::Macos), view(&done));
+        for os in [SpaceOs::Windows, SpaceOs::Linux] {
+            assert_eq!(
+                view_on(&done, os).lede,
+                "Cua Spaces is in your system tray."
+            );
+        }
+    }
+
+    #[test]
+    fn signin_explains_account_access_and_allows_skipping() {
+        let s = reduce(&initial(None, None), &OnboardingAction::Start);
+        for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
+            let v = view_on(&s, os);
+            assert_eq!(v.title, "Sign in");
+            assert_eq!(
+                v.lede,
+                "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it."
+            );
+            assert!(v.can_skip);
+        }
+        assert_eq!(
+            reduce(&s, &OnboardingAction::SigninDone).step,
+            OnboardingStep::Agents
+        );
     }
 
     /// Cua Volume off (the default): no Volume page, dot, Done line or
@@ -1349,10 +1511,193 @@ mod tests {
 
     use super::*;
 
+    fn plan(up_to_date: bool, on_path: bool) -> CliInstallPlan {
+        CliInstallPlan {
+            source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+            target: "/h/.local/bin/cua".into(),
+            bin_dir: "/h/.local/bin".into(),
+            up_to_date,
+            on_path,
+            path_profile: Some("/h/.zshrc".into()),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn no_command_line_page_and_the_presentation_choice_before_this_machine() {
-        assert!(!STEPS.iter().any(|s| s.label() == "Command line"));
+    fn the_command_line_page_asks_before_installing() {
+        let planned = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: plan(false, false),
+            },
+        );
+        assert_eq!(planned.cli_target, None, "nothing installed yet");
+        let s = reduce(&planned, &OnboardingAction::Start);
+        assert_eq!(s.step, OnboardingStep::Cli);
+        let v = view(&s);
+        assert_eq!(v.title, "Install the cua command and add it to your PATH");
+        assert_eq!(
+            v.lede,
+            "Copies cua to /h/.local/bin/cua and adds /h/.local/bin to PATH in /h/.zshrc."
+        );
+        assert_eq!(v.primary_label, "Continue");
+        assert!(v.can_skip && v.can_back);
+        assert!(
+            v.dots
+                .iter()
+                .any(|d| d.label == "Command line" && d.current)
+        );
+        let skipped = reduce(&s, &OnboardingAction::CliDone { install: false });
+        assert_eq!(skipped.step, OnboardingStep::Signin);
+        assert!(!skipped.cli_installing, "Skip installs nothing");
+        assert_eq!(
+            reduce(&skipped, &OnboardingAction::Back).step,
+            OnboardingStep::Cli
+        );
+        let went_on = reduce(
+            &reduce(&s, &OnboardingAction::CliDone { install: true }),
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
+            },
+        );
+        assert_eq!(went_on.step, OnboardingStep::Signin);
+        assert_eq!(went_on.cli_target.as_deref(), Some("/h/.local/bin/cua"));
+        assert!(
+            view(&went_on)
+                .dots
+                .iter()
+                .all(|d| d.label != "Command line")
+        );
+        let on_path = reduce(
+            &s,
+            &OnboardingAction::CliPlanned {
+                plan: plan(false, true),
+            },
+        );
+        assert_eq!(view(&on_path).title, "Install the cua command");
+        for p in [
+            plan(true, true),
+            CliInstallPlan {
+                source: None,
+                ..plan(false, false)
+            },
+        ] {
+            let s = reduce(
+                &reduce(
+                    &initial(None, None),
+                    &OnboardingAction::CliPlanned { plan: p },
+                ),
+                &OnboardingAction::Start,
+            );
+            assert_eq!(s.step, OnboardingStep::Signin, "current or not bundled");
+        }
+        let current = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
+            },
+        );
+        assert_eq!(current.cli_target.as_deref(), Some("/h/.local/bin/cua"));
+        let linked = reduce(
+            &s,
+            &OnboardingAction::CliPlanned {
+                plan: CliInstallPlan {
+                    method: Some(InstallMethod::Symlink),
+                    ..plan(false, true)
+                },
+            },
+        );
+        assert_eq!(view(&linked).lede, "Links cua to /h/.local/bin/cua.");
+    }
+
+    #[test]
+    fn continue_waits_on_the_command_line_page_until_the_install_finishes() {
+        let s = reduce(
+            &reduce(
+                &initial(None, None),
+                &OnboardingAction::CliPlanned {
+                    plan: plan(false, false),
+                },
+            ),
+            &OnboardingAction::Start,
+        );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert_eq!(installing.step, OnboardingStep::Cli);
+        assert!(installing.cli_installing);
+        let v = view(&installing);
+        assert_eq!(v.primary_label, "Installing\u{2026}");
+        assert!(!v.can_back && !v.can_skip);
+        for a in [
+            OnboardingAction::CliDone { install: true },
+            OnboardingAction::CliDone { install: false },
+            OnboardingAction::Back,
+        ] {
+            assert_eq!(
+                reduce(&installing, &a),
+                installing,
+                "{a:?} while installing"
+            );
+        }
+        let failed = reduce(
+            &installing,
+            &OnboardingAction::CliInstallFailed {
+                error: "Permission denied".into(),
+            },
+        );
+        assert_eq!(failed.step, OnboardingStep::Cli);
+        assert!(!failed.cli_installing);
+        assert_eq!(failed.cli_error.as_deref(), Some("Permission denied"));
+        assert_eq!(failed.cli_target, None);
+        assert!(view(&failed).can_skip && view(&failed).can_back);
+        let again = reduce(&failed, &OnboardingAction::CliDone { install: true });
+        assert!(again.cli_installing);
+        assert_eq!(again.cli_error, None);
+        let installed = reduce(
+            &again,
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
+            },
+        );
+        assert_eq!(installed.step, OnboardingStep::Signin);
+        assert!(!installed.cli_installing);
+        assert_eq!(installed.cli_target.as_deref(), Some("/h/.local/bin/cua"));
+    }
+
+    #[test]
+    fn a_plan_that_arrives_after_get_started_still_shows_the_command_line_page() {
+        let started = reduce(&initial(None, None), &OnboardingAction::Start);
+        assert_eq!(started.step, OnboardingStep::Signin);
+        let s = reduce(
+            &started,
+            &OnboardingAction::CliPlanned {
+                plan: plan(false, false),
+            },
+        );
+        assert_eq!(s.step, OnboardingStep::Cli);
+        assert_eq!(
+            reduce(&s, &OnboardingAction::CliDone { install: false }).step,
+            OnboardingStep::Signin
+        );
+        let again = reduce(
+            &s,
+            &OnboardingAction::CliPlanned {
+                plan: plan(false, false),
+            },
+        );
+        assert_eq!(again.step, OnboardingStep::Cli);
+        let current = reduce(
+            &started,
+            &OnboardingAction::CliPlanned {
+                plan: plan(true, true),
+            },
+        );
+        assert_eq!(current.step, OnboardingStep::Signin);
+    }
+
+    #[test]
+    fn no_command_line_page_without_a_plan_and_the_presentation_choice_before_this_machine() {
         let mut s = volume_on();
+        assert!(view(&s).dots.iter().all(|d| d.label != "Command line"));
         s = reduce(
             &s,
             &OnboardingAction::CliInstalled {
@@ -1431,6 +1776,42 @@ mod tests {
                 .then(|| "Turn on Cua Volume in File System Extensions.".into()),
             settings_url: (state == "needs_approval")
                 .then(|| "x-apple.systempreferences:ext".into()),
+        }
+    }
+
+    #[test]
+    fn launch_at_login_defaults_to_the_chosen_mode() {
+        for installer_mode in [
+            None,
+            Some(OnboardingMode::Client),
+            Some(OnboardingMode::Host),
+        ] {
+            for mode in [OnboardingMode::Client, OnboardingMode::Host] {
+                let mut s = initial(installer_mode, None);
+                for action in [
+                    OnboardingAction::Start,
+                    OnboardingAction::SigninDone,
+                    OnboardingAction::AgentsDone { configured: vec![] },
+                    OnboardingAction::PresentationDone,
+                    OnboardingAction::ModeChosen { mode },
+                ] {
+                    s = reduce(&s, &action);
+                }
+                assert_eq!(s.step, OnboardingStep::Done);
+                let expected = mode == OnboardingMode::Host;
+                assert_eq!(s.launch_at_login, expected);
+                let checkbox = view(&s).launch_at_login.unwrap();
+                assert_eq!(checkbox.checked, expected);
+                assert_eq!(checkbox.note, crate::login_item::NOTE_WITHOUT_VOLUME);
+                s = reduce(
+                    &s,
+                    &OnboardingAction::LaunchAtLoginToggled { on: !expected },
+                );
+                assert_eq!(view(&s).launch_at_login.unwrap().checked, !expected);
+                s = reduce(&s, &OnboardingAction::Back);
+                s = reduce(&s, &OnboardingAction::ModeChosen { mode });
+                assert_eq!(s.launch_at_login, expected);
+            }
         }
     }
 

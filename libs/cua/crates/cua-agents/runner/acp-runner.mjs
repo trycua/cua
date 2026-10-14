@@ -15,10 +15,14 @@
 // answered with the most permissive "allow" option: the sandbox is the
 // boundary. The runner advertises no fs or terminal capability, so agents use
 // their own tools. Nothing here parses harness-specific output.
+//
+// One thing is provider-specific: run.json may carry a `keyCheck` (see
+// checkKey below) so a rejected API key ends the first turn in seconds.
 
 import * as acp from "@agentclientprotocol/sdk";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
@@ -110,6 +114,57 @@ function onUpdate(update) {
 // ---- the agent -------------------------------------------------------------
 
 const env = { ...process.env, ...(cfg.env ?? {}), ...secrets };
+
+// A rejected API key must not cost minutes. Claude Code retries a 401 ten
+// times with growing pauses (about 3 minutes) and its ACP adapter reports
+// nothing meanwhile, so the run reads "working" until the last retry fails.
+// When the SDK names a cheap, read-only request for the run's key
+// (cfg.keyCheck: url, headers with ${NAME} references into the run's env,
+// keyEnv), ask the provider once, in parallel with the agent's start. Only
+// a definitive "this key is invalid" (HTTP 401, or a 403 that says so, with
+// the provider's JSON error body) counts: no key, a base-URL or sign-in
+// override, a network error, a timeout, a 429 or a 5xx all resolve to null
+// and the run goes on exactly as before, so the check can never block one.
+const KEY_CHECK_TIMEOUT_MS = 3000;
+
+function providerMessage(error) {
+  let m = error?.message;
+  if (typeof m !== "string") return "";
+  // OpenAI echoes a masked copy of the key ("sk-proj-****abcd"): drop it.
+  m = m.replace(/:?\s*\S*\*{3,}\S*/g, ".").replace(/\bsk-[\w-]{6,}/g, "").trim();
+  return (m.split(/(?<=[.!?])\s+/)[0] ?? "").slice(0, 200);
+}
+
+async function checkKey(spec) {
+  if (!spec?.url || !spec.keyEnv) return null;
+  const key = env[spec.keyEnv];
+  if (typeof key !== "string" || key.length === 0) return null;
+  if ((spec.skipIfEnv ?? []).some((k) => env[k])) return null;
+  for (const f of spec.skipIfFile ?? []) {
+    try {
+      if (fs.statSync(f.replace(/^~(?=\/)/, os.homedir())).size > 0) return null;
+    } catch {}
+  }
+  const headers = {};
+  for (const [k, v] of Object.entries(spec.headers ?? {})) {
+    headers[k] = String(v).replace(/\$\{([A-Z0-9_]+)\}/g, (_, n) => env[n] ?? "");
+  }
+  try {
+    const signal = AbortSignal.timeout(spec.timeoutMs ?? KEY_CHECK_TIMEOUT_MS);
+    const res = await fetch(spec.url, { headers, redirect: "manual", signal });
+    if (res.status !== 401 && res.status !== 403) return null;
+    const error = JSON.parse(await res.text())?.error;
+    if (!error || typeof error !== "object") return null;
+    const invalid = error.type === "authentication_error" || error.code === "invalid_api_key";
+    if (res.status === 403 && !invalid) return null;
+    const why = providerMessage(error) || "the API key was rejected.";
+    return { status: res.status, message: `Failed to authenticate. ${spec.provider ?? "Provider"} API Error: ${res.status} ${why}` };
+  } catch {
+    return null;
+  }
+}
+const keyCheck = checkKey(cfg.keyCheck).catch(() => null);
+
 const agentLog = fs.openSync(P("agent.log"), "a");
 // Resolve ~/.cua/bin links: some agents (Antigravity's .par) find their
 // sibling files relative to argv[0].
@@ -330,6 +385,15 @@ await client
       state.turn += 1;
       save({ status: "running", queued: queue.length });
       emit("turn_started", { prompt: msg.text, files: msg.files ?? [] });
+      const rejected = await keyCheck;
+      if (rejected) {
+        // The same record a failed prompt leaves, without the harness's
+        // retries: one error, the turn ends, the supervisor notifies once.
+        emit("error", { message: rejected.message, data: { errorKind: "authentication_failed", status: rejected.status, source: "key_check" } });
+        save({ status: "idle", stopReason: "error", queued: queue.length });
+        emit("turn_ended", { stopReason: "error" });
+        return;
+      }
       let res;
       try {
         res = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: blocks(msg.text, msg.files) });

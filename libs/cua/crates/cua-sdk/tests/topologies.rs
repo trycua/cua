@@ -42,6 +42,13 @@ enum Topology {
 }
 
 async fn world(t: Topology) -> (World, Arc<Cua>) {
+    world_with_relay(t, None).await
+}
+
+async fn world_with_relay(
+    t: Topology,
+    relay: Option<cua_spaces::RelayAccount>,
+) -> (World, Arc<Cua>) {
     let env = fixtures::start_env(Some(TOKEN), None).await;
     // Port forwards on a direct sandbox go over the driver's /tunnel.
     env.mock
@@ -59,6 +66,7 @@ async fn world(t: Topology) -> (World, Arc<Cua>) {
         ..Default::default()
     })
     .unwrap();
+    runtime.spaces().set_relay(relay);
     let (cua, daemon) = match t {
         Topology::Embedded => {
             // Host local public URLs in-process: never reach a daemon the
@@ -487,6 +495,48 @@ async fn suite(t: Topology) {
     assert_eq!(fenv.transport(), expected);
     let out = fenv.run(cmd("echo", &["gw"])).await.unwrap();
     assert_eq!(out.stdout, b"gw\n");
+    let spaces = cua.spaces();
+    let direct_space = spaces
+        .add(w.env.url.clone(), Some(TOKEN.into()), None)
+        .await
+        .unwrap();
+    let mut cat = cmd("cat", &[]);
+    cat.stdin = true;
+    let p = spaces
+        .space(direct_space.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .unwrap()
+        .spawn(cat)
+        .await
+        .unwrap();
+    p.write_stdin(b"over stdin".to_vec()).await.unwrap();
+    p.close_stdin().await.unwrap();
+    assert_eq!(p.wait().await.unwrap().stdout, b"over stdin");
+    spaces.remove(direct_space.id).await.unwrap();
+    let cloud_space = spaces
+        .add(format!("cloud:{}", fsb.info().name), None, None)
+        .await
+        .unwrap();
+    let cenv = spaces
+        .space(cloud_space.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .unwrap();
+    assert_eq!(
+        cenv.run(cmd("echo", &["space"])).await.unwrap().stdout,
+        b"space\n"
+    );
+    assert!(
+        cenv.current_ws_headers()
+            .await
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == "authorization")
+    );
+    spaces.remove(cloud_space.id).await.unwrap();
     let svc = fsb.service("env".into()).unwrap();
     // Cloud: signed service URLs, no Fleet vocabulary outside the details.
     let signed = svc.url().await.unwrap();
@@ -801,4 +851,157 @@ async fn daemon_rejects_wrong_token_and_reports_missing_daemon() {
     tokio::time::timeout(Duration::from_secs(5), h.wait())
         .await
         .expect("daemon stopped");
+}
+
+async fn discovery_refusal(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(cua_host::StaticToken("invalid-token".into())),
+        )),
+    )
+    .await;
+    let error = cua.spaces().list().await.unwrap_err();
+    match error {
+        CuaError::Unauthenticated(message) => assert_eq!(
+            message,
+            "Relay authentication failed. Sign in again to refresh your machines."
+        ),
+        other => panic!("unexpected discovery refusal: {other:?}"),
+    }
+}
+
+// Exercise the same public SDK route used by the native app, including a
+// daemon that retains its own cached session while the relay restarts.
+async fn discovery_session_recovery(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    relay.add_account("account", "owner", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "account",
+            &cua_host::relay::RegisterRequest {
+                id: "sdk-roster-machine".into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    relay.require_devices(true);
+    relay.fresh_sign_in("owner");
+    let tokens = Arc::new(cua_host::StaticToken("account".into()));
+    let device = Arc::new(
+        cua_host::DeviceAuth::new(
+            &relay.url,
+            tokens.clone(),
+            Arc::new(cua_host::MemoryKeySlot::default()),
+            "client",
+        )
+        .unwrap(),
+    );
+    device.enroll().await.unwrap();
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(&relay.url, tokens).with_device(device.clone())),
+    )
+    .await;
+    let rows = cua.spaces().list().await.unwrap();
+    assert!(rows.iter().any(|row| row.id == "relay:sdk-roster-machine"));
+    let before = device.session().await.unwrap();
+    relay.forget_sessions();
+    let rows = cua
+        .spaces()
+        .list()
+        .await
+        .expect("same runtime recovers its roster");
+    assert!(rows.iter().any(|row| row.id == "relay:sdk-roster-machine"));
+    assert_ne!(device.session().await.unwrap(), before);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_embedded() {
+    discovery_session_recovery(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_daemon_socket() {
+    discovery_session_recovery(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_session_recovery_daemon_loopback() {
+    discovery_session_recovery(Topology::DaemonLoopback).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_embedded() {
+    discovery_refusal(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_daemon_socket() {
+    discovery_refusal(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_daemon_loopback() {
+    discovery_refusal(Topology::DaemonLoopback).await;
+}
+
+/// A `cua auth login` session as relay account tokens, as the daemon and
+/// the apps configure it (`SessionTokens`).
+struct Session(cua_auth::Session);
+
+#[async_trait::async_trait]
+impl cua_host::AccountTokens for Session {
+    async fn access_token(&self) -> cua_host::Result<String> {
+        self.0
+            .access_token(false)
+            .await
+            .map_err(|e| cua_host::Error::Unauthenticated(e.to_string()))
+    }
+    async fn signed_in(&self) -> bool {
+        !matches!(self.0.credentials(), Ok(None))
+    }
+}
+
+/// Signed out (an empty session store), the list is this machine's Spaces
+/// (no relay error): the apps show local Spaces before anyone signs in.
+async fn signed_out_lists(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let store = tempfile::tempdir().unwrap();
+    let session = cua_auth::Session::new(
+        cua_auth::Oidc::from_env(),
+        cua_auth::Store::File(store.path().join("credentials.json")),
+    );
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(Session(session)),
+        )),
+    )
+    .await;
+    let listed = cua.spaces().list().await.unwrap();
+    assert!(
+        listed.iter().all(|s| !s.id.starts_with("relay:")),
+        "{listed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_embedded() {
+    signed_out_lists(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_socket() {
+    signed_out_lists(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_loopback() {
+    signed_out_lists(Topology::DaemonLoopback).await;
 }

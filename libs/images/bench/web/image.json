@@ -201,7 +201,9 @@
       "audio.per_app",
       "clipboard.files",
       "clipboard.image",
-      "teleport.*",
+      "teleport.*"
+    ],
+    "features_not_applicable": [
       "volume.mount"
     ],
     "feature_attributes": {

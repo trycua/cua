@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/trycua/cua/compare/lume-v0.6.0...lume-v0.6.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **lume:** share SSH event loop infrastructure ([#3272](https://github.com/trycua/cua/issues/3272)) ([ea4abe6](https://github.com/trycua/cua/commit/ea4abe672afc166fa42dcbd991e36749c44edf54))
+* **spaces-macos:** make a spare Mac a Spaces host you can use from another Mac ([#4512](https://github.com/trycua/cua/issues/4512)) ([410578a](https://github.com/trycua/cua/commit/410578a4a18e91fbee5d0a169342e3fb669a5bb9))
+
 ## [0.6.0](https://github.com/trycua/cua/compare/lume-v0.5.3...lume-v0.6.0) (2026-10-01)
 
 

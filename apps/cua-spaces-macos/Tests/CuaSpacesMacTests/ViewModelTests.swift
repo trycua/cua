@@ -26,7 +26,24 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         switch command {
         case .setDisabled(let disabled): current.status?.disabled = disabled
         case .setAutoWipe(let on): current.status?.autoWipe = on
-        case .approve(let id, _), .deny(let id): current.pending.removeAll { $0.id == id }
+        case .approve(let id, let items):
+            let asked = current.pending.first { $0.id == id }
+            current.pending.removeAll { $0.id == id }
+            let grant = KvGrant(id: "grant-\(id)", requestId: id, callerFp: asked?.callerFp ?? "",
+                                callerDisplay: asked?.callerDisplay ?? "",
+                                items: items ?? asked?.items.map(\.id) ?? [], targets: asked?.request.targets ?? [],
+                                actions: [], createdMs: 1_800_000_000_000, notAfterMs: 1_800_003_600_000,
+                                usesLeft: nil, revoked: false, agent: nil)
+            current.grants.append(grant)
+            return .granted(grant: grant)
+        case .deny(let id): current.pending.removeAll { $0.id == id }
+        case .revokeGrant(let id):
+            var count: UInt32 = 0
+            for i in current.grants.indices where (id == "*" || current.grants[i].id == id) && !current.grants[i].revoked {
+                current.grants[i].revoked = true
+                count += 1
+            }
+            return .revoked(count: count)
         case .setLocked(let ids, let locked):
             // The broker's rule: an identity provider always asks.
             var changed: [String] = [], skipped: [String] = []
@@ -45,6 +62,11 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
             }
             return .deleted(count: UInt32(ids.count), wiped: wiped)
         case .setSkipUnlockPrompt(let on): current.status?.skipUnlockPrompt = on
+        case .setup:
+            current.availability = "ready"
+            current.status?.initialized = true
+            current.status?.unlocked = true
+            return .recoveryKey(key: "WXYZ-2345")
         case .browse:
             current.namesVisible = true
             current.items = KeyvaultFixtures.items().filter { n in current.items.contains { $0.id == n.id } }
@@ -87,6 +109,16 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         current.availability = "locked"
         current.status?.unlocked = false
     }
+}
+
+/// A case of the parity flow `keyvault-unlock.json` (setup or unlock, Touch
+/// ID or a passphrase).
+func keyvaultUnlockCase(_ name: String) throws -> KeyvaultOverview {
+    let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
+    let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
+    let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
+    return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
 }
 
 func fixtureOverview() throws -> KeyvaultOverview {
@@ -302,7 +334,7 @@ struct ViewModelTests {
         await h.submit()
         var panel = h.panel
         #expect(panel.toggles.map(\.on) == [false, true])
-        #expect(panel.toggles.map(\.enabled) == [true, false], "the last setting on stays on")
+        #expect(panel.toggles.map(\.enabled) == [true, true], "both may be off")
         #expect(panel.limits?.contains("Apple\u{2019}s license allows two per Mac") == true)
         #expect(panel.providedEmpty == "None yet")
         #expect(panel.permissions.isEmpty, "no desktop, no screen permissions")
@@ -369,11 +401,15 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
-        #expect(toggles.allSatisfy { $0.options.first { $0.id == "off" }?.active == true })
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
+                                    "experiment:classic_ui"])
+        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        #expect(toggles.allSatisfy { r in
+            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+        })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
-        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(3) == ["account", "general", "storage"])
+        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(4) == ["account", "teams", "general", "storage"])
         #expect(appSettingsLoad(path: model.settingsPath).experiments.cuaVolume, "saved")
         #expect(model.onboarding.state.experiments.cuaVolume)
         let toggled = telemetry.recorded.compactMap { s -> String? in
@@ -398,13 +434,45 @@ struct ViewModelTests {
         #expect(steps == ["signed_in"])
     }
 
+    /// A sign-in that never finishes: Cancel stops it, a timeout fails it,
+    /// and each counts by its kind only (never the message).
+    @Test func aStuckSignInCanBeCancelledAndTimesOut() async throws {
+        let telemetry = FixtureTelemetry()
+        let account = StuckAccount()
+        let model = makeModel(account: account, telemetry: telemetry)
+        let first = Task { await model.beginSignIn() }
+        try await waitUntil { if case .waiting = model.signIn { true } else { false } }
+        #expect(model.signIn == .waiting(userCode: "ABCD-EFGH"))
+        #expect(model.signInURL?.absoluteString == "https://cua.ai/device")
+        model.cancelSignIn()
+        #expect(model.signIn == .idle)
+        #expect(model.signInURL == nil)
+        first.cancel()
+
+        model.signInTimeout = .milliseconds(50)
+        let second = Task { await model.beginSignIn() }
+        try await waitUntil { if case .failed = model.signIn { true } else { false } }
+        #expect(model.signIn == .failed(message: "The sign-in timed out. Try again."))
+        second.cancel()
+        let kinds = telemetry.recorded.compactMap { s -> String? in
+            if case let .signInFailed(kind) = s { return kind }
+            return nil
+        }
+        #expect(kinds == ["cancelled", "timeout"])
+    }
+
+    func waitUntil(_ done: @MainActor () -> Bool) async throws {
+        for _ in 0..<200 where !done() { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(done())
+    }
+
     @Test func settingsPageAndAccountFromTheCore() async {
         let account = FixtureAccount()
         let agents = FixtureAgentSetup()
         let model = makeModel(account: account, agents: agents)
         await model.loadSettings()
         let page = model.settingsPage
-        #expect(page.sections.map(\.id) == ["account", "general", "runtimes", "privacy", "agents"])
+        #expect(page.sections.map(\.id) == ["account", "teams", "general", "runtimes", "privacy", "agents"])
         // Settings, Runtimes: macOS VMs picks runtime.lume.
         let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
         #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
@@ -453,13 +521,49 @@ struct ViewModelTests {
         #expect(appDropSentText(files: files) == "notes.txt (1.0 KB) verified in /home/cua/Downloads/notes.txt")
     }
 
+    /// Only This machine: the window stays on the empty home. One click creates
+    /// that system's default Space when this Mac can run it, and opens the
+    /// sheet on the core's refusal when it cannot.
+    @Test func thisMachineAloneOpensTheEmptyHome() async {
+        let backend = FixtureSpacesBackend(rows: [])
+        let model = makeModel(backend, host: FixtureHost())
+        await model.refresh()
+        #expect(model.selection == nil)
+        #expect(model.spaces.contains { $0.id == "this-mac" })
+
+        await model.openNewSpace(quick: .linux)
+        #expect(!model.showingNewSpace)
+        for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(backend.created.first?.image == "ghcr.io/trycua/linux:24.04")
+        #expect(backend.created.first?.on == "local")
+
+        let refused = FixtureSpacesBackend(rows: [])
+        refused.fixtureBackends = ["docker"]
+        let mac = makeModel(refused, host: FixtureHost())
+        await mac.refresh()
+        await mac.openNewSpace(quick: .macos)
+        #expect(mac.showingNewSpace)
+        #expect(mac.wizard.view.placementError == "This Mac cannot run Lume Spaces.")
+        #expect(refused.created.isEmpty)
+
+        let both = FixtureSpacesBackend(rows: [])
+        both.fixtureBackends = ["docker", "lume"]
+        let ready = makeModel(both, host: FixtureHost())
+        await ready.refresh()
+        await ready.openNewSpace(quick: .macos)
+        #expect(!ready.showingNewSpace)
+        for _ in 0..<50 where both.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(both.created.first?.image == "ghcr.io/trycua/macos:26")
+        #expect(both.created.first?.on == "local")
+    }
+
     @Test func refreshBuildsTheSidebarFromTheCore() async {
         let model = makeModel()
         await model.refresh()
         let titles = model.sidebar.sections.map(\.title)
         #expect(titles == ["Cua Cloud", "This Mac", "Connected"])
         // The container hostname defers to the name in the id.
-        #expect(model.spaces.contains { $0.name == "Aurora" })
+        #expect(model.spaces.contains { $0.name == "aurora" })
         // An unreachable Space is dimmed and cannot stream.
         let builder = model.spaces.first { $0.id == "cloud:builder" }!
         #expect(model.detail(builder).canStream == false)
@@ -470,7 +574,7 @@ struct ViewModelTests {
         let model = makeModel()
         await model.refresh()
         model.query = "auro"
-        #expect(model.sidebar.sections.flatMap(\.rows).map(\.name) == ["Aurora"])
+        #expect(model.sidebar.sections.flatMap(\.rows).map(\.name) == ["aurora"])
         model.query = "zzz"
         #expect(model.sidebar.emptyText == "No matches")
     }
@@ -497,6 +601,44 @@ struct ViewModelTests {
         #expect(backend.created.first?.name == "demo")
         #expect(backend.created.first?.cpus == cpus)
         #expect(backend.created.first?.memoryMb == 4096)
+    }
+
+    /// A create on another of your machines (gamma-4). The
+    /// machine lists the half-created Space as a record of its own ("Stopped,
+    /// Linux on gamma-4") while the create runs: still one row, and a failure
+    /// names that machine, not this Mac.
+    @Test func aCreateOnAnotherMachineIsOneRowNextToItsMachinesRecord() async throws {
+        let name = "e2e-1005-gamma-macos"
+        let record = AppSpaceRow(id: "relay:96fe/space-46e0", name: name, provider: "relay", spacesdVersion: "",
+                                 features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
+                                 imageDigest: nil, kind: nil, arch: nil, reachable: false, error: nil,
+                                 host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil)
+        let backend = FixtureSpacesBackend(rows: [record])
+        backend.holdCreates = true
+        let model = makeModel(backend)
+        await model.refresh()
+        #expect(model.spaces.filter { $0.name == name }.map(\.id) == [record.id], "listed on its own before the create")
+
+        let args = AppCreateSpaceArgs(image: "ghcr.io/trycua/macos:26", on: "host:96fe", kind: .vm, runtime: .auto,
+                                      name: name, cpus: nil, memoryMb: nil, diskGb: nil, spacesd: true, gpu: nil)
+        let create = Task { try await model.runCreate(args, os: .macos, pendingId: "pending:gamma") }
+        for _ in 0..<100 where model.creates.pending.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        await model.refresh()
+        #expect(model.spaces.filter { $0.name == name }.map(\.id) == ["pending:gamma"])
+        #expect(model.creates.pending.first?.host == "96fe")
+        #expect(model.creates.pending.first?.hostName == "gamma-4 Mac Studio")
+
+        backend.createError = "Local Network access is not available: cua cannot reach the VM at 192.168.64.45:3211 (No route to host (os error 65))"
+        await backend.releaseCreate()
+        _ = try? await create.value
+        let failed = model.spaces.filter { $0.name == name }
+        #expect(failed.map(\.id) == ["pending:gamma"])
+        #expect(failed.first?.detail.hasPrefix("gamma-4 Mac Studio can't reach its new VM because") == true)
+
+        // Removed from the list: the machine's record is what is left.
+        model.delete(try #require(failed.first))
+        #expect(model.spaces.filter { $0.name == name }.map(\.id) == [record.id])
     }
 
     /// Run on lists this Mac only while no cloud is connected (and without
@@ -572,7 +714,7 @@ struct ViewModelTests {
             lume: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             qemu: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             container: StorageVolume(availableBytes: 40 * gb, totalBytes: 100 * gb, name: "Colima"),
-            pulled: [])
+            pulled: [], linuxRuntimeDownloadBytes: 0)
         let model = makeModel(backend)
         await model.openNewSpace()
         let w = model.wizard
@@ -603,7 +745,8 @@ struct ViewModelTests {
     /// The new Space is in the list, the notch and the selection the moment
     /// Create is pressed, follows the SDK's progress, and hands over to the
     /// registry row when ready; nothing waits on the create to show it.
-    @Test func createShowsTheSpaceAtOnceAndFollowsItsProgress() async throws {
+    @Test(.serialized, arguments: [false, true])
+    func createShowsTheSpaceAtOnceAndFollowsItsProgress(openWhenReady: Bool) async throws {
         let backend = FixtureSpacesBackend()
         backend.holdCreates = true
         // Held after the pull; `ready` comes on release.
@@ -613,17 +756,23 @@ struct ViewModelTests {
             SpaceCreateProgress(phase: "ready", fraction: nil, detail: ""),
         ]
         let model = makeModel(backend)
+        var opened: [String] = []
+        let previous = WebUIWindowController.actions
+        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } }, openMain: {})
+        defer { WebUIWindowController.actions = previous }
         await model.refresh()
         await model.openNewSpace()
         let w = model.wizard
         w.send(.next)
         w.send(.next)
         w.send(.setName(name: "fresh"))
+        w.send(.setOpenWhenReady(on: openWhenReady))
         w.send(.next)
         let plan = w.view.plan
+        #expect(plan.openDesktop == openWhenReady)
         model.create(plan)
         // Synchronously, before the create has done anything.
-        let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.name == "Fresh" })
+        let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.name == "fresh" })
         #expect(row.id.hasPrefix("pending:") && row.progress == 10 && row.trailing == "1%")
         #expect(model.notch.view.activity?.kind == .provisioning)
         if plan.openDesktop {
@@ -646,6 +795,9 @@ struct ViewModelTests {
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
+        try await waitUntil { opened == (openWhenReady ? ["local:fresh"] : []) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(opened == (openWhenReady ? ["local:fresh"] : []))
     }
 
     /// A failed create stays on its row with the reason until it is removed.
@@ -663,7 +815,7 @@ struct ViewModelTests {
         model.create(w.view.plan)
         var row: AppSidebarRow?
         for _ in 0..<200 {
-            row = model.sidebar.sections.flatMap(\.rows).first { $0.name == "Broken" }
+            row = model.sidebar.sections.flatMap(\.rows).first { $0.name == "broken" }
             if row?.trailing == "no local runtime found" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -929,7 +1081,7 @@ struct ViewModelTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(backend.powerRequests.map(\.id) == [aurora.id], "one press")
-        #expect(row(aurora.id)?.statusText == "Suspended")
+        #expect(row(aurora.id)?.statusText == "Stopped")
         #expect(model.creates.powering.isEmpty, "settled once the registry showed it off")
 
         let off = try #require(model.spaces.first { $0.id == aurora.id })
@@ -1028,13 +1180,7 @@ struct ViewModelTests {
         #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
     }
 
-    func unlockCase(_ name: String) throws -> KeyvaultOverview {
-        let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
-        let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-        let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
-        let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
-        return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
-    }
+    func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }
 
     @Test func passphraseSetupAndUnlockGoOnlyToTheBroker() async throws {
         let fake = FakeKeyvault(try unlockCase("setup-passphrase"))
@@ -1162,30 +1308,56 @@ struct ViewModelTests {
         #expect(notch.view.phase == .closed)
     }
 
-    /// Settings hides Cua Cloud billing and offers the Teams waitlist (the
-    /// website); a cloud create refused for want of credit shows one line
-    /// and no Add credit.
-    @Test func billingIsHiddenAndTeamsOpensTheWaitlist() async throws {
+    /// Settings hides Cua Cloud billing and shows the real Teams section
+    /// (the Spaces API: name with alias fallback, members, pending invites
+    /// marked "(Invited)", the account app for invites and billing); a cloud
+    /// create refused for want of credit shows one line and no Add credit.
+    @Test func billingIsHiddenAndTeamsComeFromTheSpacesAPI() async throws {
         var opened: [URL] = []
         BillingBrowser.open = { opened.append($0) }
         let model = makeModel(account: FixtureAccount(identity: "you@example.com"),
                               billing: FixtureBilling(balanceCents: 742))
+        model.teamsReader = FixtureTeams([
+            AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
+                         members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
+                                   AppTeamPersonInput(email: "grace@example.com", role: "member")],
+                         invites: ["linus@example.com"]),
+        ])
         await model.loadSettings()
         let rows = model.settingsPage.sections.flatMap(\.rows)
         #expect(!rows.contains { $0.id == "billing" })
         #expect(!rows.contains { $0.id == "default-location" })
-        let teams = rows.first { $0.id == "teams" }
-        #expect(teams?.value == "Coming soon" && teams?.button == "Join the waitlist")
-        await model.press(row: "teams")
-        #expect(opened.map(\.absoluteString) == ["https://cua.ai/teams"])
+        #expect(!rows.contains { $0.value == "Coming soon" || $0.button == "Join the waitlist" })
+        let team = model.settingsPage.sections.first { $0.id == "teams" }!.rows
+        #expect(team[0].label == "acme", "the alias stands in for a missing name")
+        #expect(team[0].value == "Owner \u{b7} Teams plan \u{b7} 3 seats")
+        #expect(team.first { $0.label == "linus@example.com" }?.value == "(Invited)")
+        #expect(team.first { $0.label == "grace@example.com" }?.value == "Member")
+        await model.press(row: "teams-manage")
+        await model.press(row: "teams-billing")
+        #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
         var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: []),
                                        action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
-                                                      now: 0, image: nil, kind: nil, hostArch: nil, gpu: false))
+                                                      now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
+                                                      host: nil, hostName: nil))
         creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"))
+            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
+            errorVariant: ""))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")
         #expect(appSpaceDetail(space: space).creditNotice == nil)
     }
+}
+
+/// An account whose browser sign-in never finishes.
+final class StuckAccount: AccountRunning, @unchecked Sendable {
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt {
+        SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device")) {
+            try await Task.sleep(for: .seconds(3600))
+            return nil
+        }
+    }
+    func signOut() async throws {}
 }

@@ -77,7 +77,7 @@ sentence naming the call that targets each one
 (`get_window_state(pid, window_id=<that id>)`). When one overlaps the window
 the screenshot is taken from the screen (`screenshot_composited:true`) so the
 menu or dialog is visible; the window's own drawable never shows them. The
-payload states its frame (`coordinate_frame:"window"`, `frame_note`): `x`/`y`
+payload states its frame (`coordinate_frame:"window"`, plus `frame_note` with `verbose:true`): `x`/`y`
 of the pointer tools are pixels of THIS screenshot. Closed menus are listed
 with a `description` ("closed menu with N items…") and are not walked;
 click the menu (a real press) and read the popup by its window_id.
@@ -211,6 +211,12 @@ doctor` now probes `org.a11y.Bus` for real (not just "is there a bus?")
    session-process environ and the `/run/user/<uid>/bus` socket). Running the
    daemon as root against a user session is the Linux analogue of the Windows
    "Session 0" isolation problem.
+
+`get_window_state` returns one compact markdown tree capped at 250 actionable
+nodes by default (`full_output:true` restores 5 000 nodes and both forms), and
+`since:<snapshot_id>` returns only added/changed/removed rows. The focused
+element is not reported on Linux yet, so an unchanged read says only
+`no change since …`.
 
 An empty AT-SPI walk is now surfaced honestly: `get_window_state` sets
 `degraded: true` + a `degraded_reason` (instead of a bare `elements: []`) so a

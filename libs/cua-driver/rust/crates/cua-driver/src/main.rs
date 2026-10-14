@@ -32,6 +32,7 @@ mod perception_cli;
 mod private_worker;
 mod proxy;
 mod release_channel;
+mod release_source;
 mod responsibility;
 mod sdk_adapter;
 mod serve;
@@ -42,14 +43,36 @@ mod updater;
 mod version_check;
 
 use std::sync::Arc;
+use tracing_subscriber::EnvFilter;
 
 fn init_logging() {
-    use tracing_subscriber::EnvFilter;
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(EnvFilter::from_env("CUA_LOG").add_directive(tracing::Level::WARN.into()))
+        .with_env_filter(log_filter(&std::env::var("CUA_LOG").unwrap_or_default()))
         .init();
     telemetry::register_stdio_observer();
+}
+
+fn log_filter(cua_log: &str) -> EnvFilter {
+    EnvFilter::builder().parse_lossy(format!("warn,{cua_log}"))
+}
+
+#[cfg(test)]
+mod log_filter_tests {
+    use super::log_filter;
+
+    #[test]
+    fn cua_log_sets_the_level_and_warn_is_the_default() {
+        assert_eq!(log_filter("").to_string(), "warn");
+        assert_eq!(log_filter("info").to_string(), "info");
+        assert_eq!(log_filter("debug").to_string(), "debug");
+        assert_eq!(log_filter("cua_driver=loud").to_string(), "warn");
+        let scoped = log_filter("cua_driver=info").to_string();
+        assert!(
+            scoped.contains("cua_driver=info") && scoped.contains("warn"),
+            "{scoped}"
+        );
+    }
 }
 
 fn configure_startup_permission_mode(

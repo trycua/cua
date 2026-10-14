@@ -76,6 +76,8 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(m["aliases"], ["cua-desktop-linux"])
         self.assertIn("desktop_stream", m["features_required"])
         self.assertIn("teleport.*", m["features_optional"])
+        # The Linux OS image applies every feature it lists.
+        self.assertEqual(m["features_not_applicable"], [])
         # The X11 desktop pins its presence cursor-shape backends.
         self.assertIn("presence.cursor_shape", m["features_required"])
         self.assertEqual(m["feature_attributes"]["presence.cursor_shape"],

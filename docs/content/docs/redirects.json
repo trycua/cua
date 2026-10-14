@@ -167,6 +167,11 @@
     "cua-sdk/reference/sandbox/pool": "cua-sdk/reference/python/pool",
     "cua-sdk/reference/sandbox/runtime-support": "cua-sdk/reference/runtime-support",
     "cua-sdk/reference/sandbox/typescript": "cua-sdk/reference/typescript",
+    "cua/reference/agent-sdk": "cua-sdk/guides/migrate-from-deprecated-packages",
+    "cua/reference/computer-sdk": "cua-sdk/guides/migrate-from-deprecated-packages",
+    "cuabot": "cua-sdk/guides/migrate-from-deprecated-packages",
+    "cuabot/cuabot": "cua-sdk/guides/migrate-from-deprecated-packages",
+    "cuabot/install": "cua-sdk/guides/migrate-from-deprecated-packages",
     "fleets/concepts": "fleets",
     "fleets/concepts/how-fleet-images-work": "fleets/guides/images",
     "fleets/concepts/pools-claims-and-guest-services": "fleets",
@@ -409,6 +414,9 @@
     "cua-sdk/reference/spaces/drive": "cua-sdk/reference/spaces/volume",
     "cua-sdk/reference/spaces/drive-sync": "cua-sdk/reference/spaces/volume-sync",
     "cua-sdk/reference/spaces/drive-app-core": "cua-sdk/reference/spaces/volume-app-core",
-    "use-cua-with/iflytek": "cua-driver/guides/connect-your-agent"
+    "use-cua-with/iflytek": "cua-driver/guides/connect-your-agent",
+    "spaces/teams": "spaces/guides/teams",
+    "spaces/teams/machines": "spaces/guides/teams/machines",
+    "spaces/teams/faq": "spaces/guides/teams/faq"
   }
 }

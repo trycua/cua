@@ -168,6 +168,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/golden/about.json"),
     ),
     (
+        "agent-keys",
+        include_str!("../parity/agent-keys.json"),
+        include_str!("../parity/golden/agent-keys.json"),
+    ),
+    (
         "your-cloud",
         include_str!("../parity/your-cloud.json"),
         include_str!("../parity/golden/your-cloud.json"),
@@ -191,6 +196,16 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         "placement-picker",
         include_str!("../parity/placement-picker.json"),
         include_str!("../parity/golden/placement-picker.json"),
+    ),
+    (
+        "machines",
+        include_str!("../parity/machines.json"),
+        include_str!("../parity/golden/machines.json"),
+    ),
+    (
+        "checklist",
+        include_str!("../parity/checklist.json"),
+        include_str!("../parity/golden/checklist.json"),
     ),
 ];
 
@@ -671,9 +686,13 @@ pub mod frame {
                 str_of(&v["settingsShortcut"])
             ),
             format!(
-                "empty: {} / {}",
+                "empty: {} / {} / {} ({}) / {} ({})",
                 str_of(&v["emptyTitle"]),
-                str_of(&v["emptyAction"])
+                str_of(&v["emptyDetail"]),
+                str_of(&v["emptyAction"]),
+                str_of(&v["emptyLinuxDetail"]),
+                str_of(&v["emptyMacosAction"]),
+                str_of(&v["emptyMacosDetail"])
             ),
             format!("volume: {}", opt_str(&v["volumeLabel"])),
         ])
@@ -1602,6 +1621,52 @@ pub mod frame {
         })
     }
 
+    /// Settings, Agents: one line per row, then the section's words.
+    pub fn agent_keys(v: &Value) -> Value {
+        let rows: Vec<Value> = v["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                Value::String(format!(
+                    "{} | {} | {} | {} | {} | {} | added {} | {}",
+                    str_of(&r["title"]),
+                    str_of(&r["env"]),
+                    str_of(&r["provider"]),
+                    str_of(&r["status"]),
+                    str_of(&r["actionLabel"]),
+                    opt_str(&r["removeLabel"]),
+                    r["addedMs"]
+                        .as_u64()
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "-".into()),
+                    str_of(&r["detail"]),
+                ))
+            })
+            .collect();
+        json!({
+            "title": v["title"],
+            "intro": v["intro"],
+            "rows": rows,
+            "addOther": format!("{} ({})", str_of(&v["addOtherLabel"]), str_of(&v["otherHelp"])),
+            "notice": v["notice"],
+            "canEdit": v["canEdit"],
+            "added": v["addedLabel"],
+        })
+    }
+
+    /// The add or replace sheet.
+    pub fn agent_key_form(v: &Value) -> Value {
+        json!({
+            "title": v["title"],
+            "lede": v["lede"],
+            "name": format!("{} / {} / {}", opt_str(&v["nameLabel"]), opt_str(&v["namePlaceholder"]), opt_str(&v["nameError"])),
+            "value": format!("{} / {} / {}", str_of(&v["valueLabel"]), str_of(&v["valuePlaceholder"]), str_of(&v["valueHelp"])),
+            "buttons": format!("{} {} | {}", str_of(&v["saveLabel"]), if v["canSave"] == true { "on" } else { "off" }, str_of(&v["cancelLabel"])),
+            "sets": format!("{} {}", str_of(&v["provider"]), opt_str(&v["env"])),
+        })
+    }
+
     /// Settings, About (and the Sparkle channels its choice allows).
     pub fn about(v: &Value, channels: &Value) -> Value {
         let check = |on: &Value, label: &Value, enabled: bool| {
@@ -1835,11 +1900,14 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "drive-storage" => run_drive_storage(&flow, h),
         "notifications" => run_notifications(&flow, h),
         "about" => run_about(&flow, h),
+        "agent-keys" => run_agent_keys(&flow, h),
         "your-cloud" => run_your_cloud(&flow, h),
         "telemetry-funnel" => run_telemetry(&flow, h),
         "launch-at-login" => run_launch_at_login(&flow, h),
         "experiments" => run_experiments(&flow, h),
         "placement-picker" => run_placement_picker(&flow, h),
+        "machines" => run_machines(&flow, h),
+        "checklist" => run_checklist(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -2848,6 +2916,151 @@ fn run_stream_section(f: &Value, h: &dyn Host) -> Result<Value, String> {
 
 /// A Space detail's facts, one frame per case: a registry row, and the
 /// memory and storage use when the case has any.
+/// The Machines page for each case: one line per row (name, online, the
+/// device merged in, or a device of its own), and the "Run on" choices.
+fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for case in f["cases"].as_array().into_iter().flatten() {
+        let rows = c(
+            h,
+            "machines.merge",
+            json!({ "input": { "machines": case["machines"], "devices": case["devices"], "now": f["now"] } }),
+        )?;
+        let rows = rows.as_array().cloned().unwrap_or_default();
+        let lines: Vec<String> = rows
+            .iter()
+            .map(|r| {
+                let state = if r["online"].as_bool() == Some(true) {
+                    "online"
+                } else {
+                    "offline"
+                };
+                let with = match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
+                    (Some(true), _) => " (a device)".to_string(),
+                    (_, Some(d)) => format!(" + {d}"),
+                    _ => String::new(),
+                };
+                format!(
+                    "{} [{}] {state}{with}",
+                    str_of(&r["name"]),
+                    str_of(&r["id"])
+                )
+            })
+            .collect();
+        let run_on: Vec<&str> = rows
+            .iter()
+            .filter(|r| {
+                r["current"].as_bool() != Some(true) && r["deviceOnly"].as_bool() != Some(true)
+            })
+            .map(|r| str_of(&r["id"]))
+            .collect();
+        frames.push(json!({ "case": case["name"], "rows": lines, "runOn": run_on }));
+    }
+    for page in f["pages"].as_array().into_iter().flatten() {
+        let rows = c(h, "machines.pageRows", json!({ "input": page["input"] }))?;
+        frames.push(json!({ "page": page["name"], "rows": page_lines(&rows) }));
+    }
+    Ok(json!({ "flow": "machines", "frames": frames }))
+}
+
+/// The Machines page's rows (`machines.pageRows`), one line each: name,
+/// id, how it is reached, its system, online, the device in it or a
+/// device of its own, its desktop's Space, and whether it stopped sharing.
+fn page_lines(rows: &Value) -> Vec<String> {
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let state = if r["online"].as_bool() == Some(true) {
+                "online"
+            } else {
+                "offline"
+            };
+            let mut line = format!(
+                "{} [{}] {} {} {state}",
+                str_of(&r["name"]),
+                str_of(&r["id"]),
+                str_of(&r["via"]),
+                if str_of(&r["os"]).is_empty() {
+                    "?"
+                } else {
+                    str_of(&r["os"])
+                },
+            );
+            if r["current"].as_bool() == Some(true) {
+                line.push_str(" (this machine)");
+            }
+            match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
+                (Some(true), _) => line.push_str(" (a device)"),
+                (_, Some(d)) => line.push_str(&format!(" + {d}")),
+                _ => {}
+            }
+            if let Some(s) = r["spaceId"].as_str() {
+                line.push_str(&format!(" desktop {s}"));
+            }
+            if r["stoppedSharing"].as_bool() == Some(true) {
+                line.push_str(" (stopped sharing)");
+            }
+            line
+        })
+        .collect()
+}
+
+/// The checklist for each case: the Machines page from the case's page
+/// input, what `checklist.observeFrom` reads from it and the case's Spaces
+/// and agents, the count after that observation on the stored progress,
+/// and after merging progress kept elsewhere before.
+fn run_checklist(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for case in f["cases"].as_array().into_iter().flatten() {
+        let rows = c(h, "machines.pageRows", json!({ "input": case["page"] }))?;
+        let seen = json!({
+            "machines": rows,
+            "spaces": case["page"]["spaces"],
+            "agents": case["agents"],
+            "runs": case["runs"],
+        });
+        let action = c(h, "checklist.observeFrom", json!({ "seen": seen }))?;
+        let t = c(
+            h,
+            "checklist.reduce",
+            json!({ "state": case["state"], "action": action }),
+        )?;
+        let view = c(h, "checklist.view", json!({ "state": t["state"] }))?;
+        let events: Vec<&str> = t["signals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|s| str_of(&s["step"]))
+            .collect();
+        let mut frame = json!({
+            "case": case["name"],
+            "observe": {
+                "otherMachine": action["otherMachine"],
+                "hasSpace": action["hasSpace"],
+                "agentRan": action["agentRan"],
+            },
+            "progress": view["progress"],
+            "events": events,
+        });
+        if !case["earlier"].is_null() {
+            let merged = c(
+                h,
+                "checklist.reduce",
+                json!({ "state": t["state"], "action": { "type": "merge", "state": case["earlier"] } }),
+            )?;
+            let view = c(h, "checklist.view", json!({ "state": merged["state"] }))?;
+            frame["merged"] = json!({
+                "progress": view["progress"],
+                "visible": view["visible"],
+                "events": merged["signals"].as_array().map_or(0, |s| s.len()),
+            });
+        }
+        frames.push(frame);
+    }
+    Ok(json!({ "flow": "checklist", "frames": frames }))
+}
+
 fn run_space_facts(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let mut frames = Vec::new();
     for case in f["cases"].as_array().into_iter().flatten() {
@@ -3219,8 +3432,9 @@ fn run_drive_onboarding(f: &Value, h: &dyn Host) -> Result<Value, String> {
 /// each frame is one reducer step and the signals the core derives from it
 /// (`telemetry.*`), which every shell sends the same way.
 fn run_telemetry(f: &Value, h: &dyn Host) -> Result<Value, String> {
-    let mut frames =
-        vec![json!({ "at": "launch", "signals": c(h, "telemetry.launched", json!({}))? })];
+    let mut frames = vec![
+        json!({ "at": "launch", "signals": c(h, "telemetry.launched", f.get("launch").cloned().unwrap_or(json!({})))? }),
+    ];
     for run in ["onboarding", "skipping", "no-usage-data"] {
         let mut st = c(
             h,
@@ -3438,6 +3652,47 @@ fn run_notifications(f: &Value, h: &dyn Host) -> Result<Value, String> {
         frames.push(json!({ "step": step["step"], "view": frame::notifications(&plan, &view) }));
     }
     Ok(json!({ "flow": "notifications", "frames": frames }))
+}
+
+fn run_agent_keys(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for step in f["sections"].as_array().into_iter().flatten() {
+        let view = c(h, "agentKeys.view", json!({ "input": step["input"] }))?;
+        frames.push(json!({ "step": step["step"], "section": frame::agent_keys(&view) }));
+    }
+    let input = &f["saved"];
+    for step in f["forms"].as_array().into_iter().flatten() {
+        let view = c(
+            h,
+            "agentKeys.form",
+            json!({ "input": input, "form": step["form"] }),
+        )?;
+        frames.push(json!({ "step": step["step"], "form": frame::agent_key_form(&view) }));
+    }
+    for step in f["removes"].as_array().into_iter().flatten() {
+        let confirm = c(
+            h,
+            "agentKeys.removeConfirm",
+            json!({ "input": input, "env": step["env"] }),
+        )?;
+        let confirm = if confirm.is_object() {
+            Value::String(format!(
+                "{} | {} | {} | {}",
+                str_of(&confirm["title"]),
+                str_of(&confirm["message"]),
+                str_of(&confirm["confirmLabel"]),
+                str_of(&confirm["cancelLabel"])
+            ))
+        } else {
+            Value::Null
+        };
+        frames.push(json!({ "step": step["step"], "confirm": confirm }));
+    }
+    for name in f["names"].as_array().into_iter().flatten() {
+        let problem = c(h, "agentKeys.nameProblem", json!({ "name": name }))?;
+        frames.push(json!({ "name": name, "problem": problem }));
+    }
+    Ok(json!({ "flow": "agent-keys", "frames": frames }))
 }
 
 fn run_about(f: &Value, h: &dyn Host) -> Result<Value, String> {

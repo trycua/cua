@@ -24,7 +24,7 @@ pub fn app_rows_to_spaces(rows: Vec<AppSpaceRow>, now_ms: i64) -> Vec<AppSpace> 
     core::spaces::rows_to_spaces(&rows, now_ms)
 }
 
-/// "brave-otter" as "Brave Otter".
+/// A Space name as shown: as typed, trimmed.
 #[uniffi::export]
 pub fn app_display_name(name: String) -> String {
     core::spaces::display_name(&name)
@@ -399,6 +399,22 @@ pub fn app_host_panel(state: Option<AppHostState>) -> AppHostPanelView {
     core::host::panel(state.as_ref())
 }
 
+/// What to do with the host when the signed-in account changes (`None`:
+/// nobody is signed in; never pass `None` for "could not tell").
+#[uniffi::export]
+pub fn app_host_account_step(
+    state: AppHostState,
+    account: Option<AppHostAccount>,
+) -> AppHostAccountStep {
+    core::host::account_step(&state, account.as_ref())
+}
+
+/// The account id (else email) host resume names the signed-in account by.
+#[uniffi::export]
+pub fn app_host_account_key(account: AppHostAccount) -> String {
+    account.key()
+}
+
 /// Permission panes still to grant, as rows.
 #[uniffi::export]
 pub fn app_host_permission_rows(permissions: Vec<AppHostPermissionInput>) -> Vec<AppPermissionRow> {
@@ -510,6 +526,10 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
             })
             .collect(),
         spaces_audit_error: status.spaces_audit_error,
+        paused_signed_out: status.paused_signed_out,
+        owner: status.owner,
+        owner_email: status.owner_email,
+        account: None,
     }
 }
 
@@ -896,6 +916,50 @@ pub fn app_notifications_view(
 #[uniffi::export]
 pub fn app_notifications_from_json(json: String) -> Result<Vec<AppNotificationInput>> {
     from_json("notifications", &json)
+}
+
+// ---- Settings, Agents (provider keys) --------------------------------------
+
+/// Settings, Agents: the rows for the keys the daemon reported.
+#[uniffi::export]
+pub fn app_agent_keys_view(input: AppAgentKeysInput) -> AppAgentKeysView {
+    core::agent_keys::view(&input)
+}
+
+/// The add or replace sheet.
+#[uniffi::export]
+pub fn app_agent_key_form(
+    input: AppAgentKeysInput,
+    form: AppAgentKeyFormInput,
+) -> AppAgentKeyFormView {
+    core::agent_keys::form(&input, &form)
+}
+
+/// The question before removing the key `env` (`None`: none is saved).
+#[uniffi::export]
+pub fn app_agent_key_remove_confirm(
+    input: AppAgentKeysInput,
+    env: String,
+) -> Option<AppAgentKeyConfirm> {
+    core::agent_keys::remove_confirm(&input, &env)
+}
+
+/// Why `name` can't hold an Other key (`None`: it can).
+#[uniffi::export]
+pub fn app_agent_key_name_problem(name: String) -> Option<String> {
+    core::agent_keys::name_problem(&name)
+}
+
+/// The section's input from JSON (`agent_keys.list`'s answer, camelCase).
+#[uniffi::export]
+pub fn app_agent_keys_input_from_json(json: String) -> Result<AppAgentKeysInput> {
+    from_json("agent keys input", &json)
+}
+
+/// A sheet input from JSON (parity flows).
+#[uniffi::export]
+pub fn app_agent_key_form_input_from_json(json: String) -> Result<AppAgentKeyFormInput> {
+    from_json("agent key form", &json)
 }
 
 // ---- Settings, About and updates ------------------------------------------
@@ -1425,7 +1489,7 @@ pub fn app_notch_estimated_progress(elapsed_ms: i64, estimate_ms: u32) -> u32 {
 /// The page chrome.
 #[uniffi::export]
 pub fn kv_page(overview: KeyvaultOverview, now_ms: i64) -> KvPage {
-    core::keyvault::view::page(&overview, now_ms)
+    core::keyvault::view::page_on(&overview, now_ms, core::model::SpaceOs::this_host())
 }
 
 /// The always-visible signal while Keyvault sign-ins are live in a Space
@@ -1505,7 +1569,7 @@ pub fn kv_vault_reduce(
 /// the batch bar.
 #[uniffi::export]
 pub fn kv_vault_view(overview: KeyvaultOverview, state: KvVaultState, now_ms: i64) -> KvVaultView {
-    core::keyvault::vault::view(&overview, &state, now_ms)
+    core::keyvault::vault::view_on(&overview, &state, now_ms, core::model::SpaceOs::this_host())
 }
 
 /// The selection without what the vault no longer holds.
@@ -1626,7 +1690,7 @@ pub fn kv_duration(ms: i64) -> String {
 /// when the daemon can use the OS key store, else a passphrase.
 #[uniffi::export]
 pub fn kv_credential_form(overview: KeyvaultOverview) -> Option<KvCredentialForm> {
-    core::keyvault::credential::credential_form(&overview)
+    core::keyvault::credential::credential_form_on(&overview, core::model::SpaceOs::this_host())
 }
 
 /// The passphrase fields' hint and whether the form can be sent. Pure: the
@@ -1664,21 +1728,40 @@ pub struct KeyvaultClient {
     inner: core::keyvault::client::KeyvaultCommands,
 }
 
+/// `$CUA_HOME`, else `.cua` in the user's home: `$HOME`, or on Windows
+/// (where `HOME` is usually unset) `%USERPROFILE%`, as the daemon finds it.
+/// Without it the Keyvault was looked for at a relative `.cua` on Windows
+/// and read as "not running".
+fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    let set = |k: &str| var(k).filter(|v| !v.is_empty());
+    if let Some(h) = set("CUA_HOME") {
+        return PathBuf::from(h);
+    }
+    let base = set("HOME")
+        .or_else(|| set("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join(".cua");
+    // A non-production `CUA_ENV` has its own home, where its daemon serves
+    // the Keyvault (`~/.cua/envs/staging`).
+    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
+        .unwrap_or_default()
+        .home_subdir()
+    {
+        Some(sub) => base.join(sub),
+        None => base,
+    }
+}
+
 #[uniffi::export]
 impl KeyvaultClient {
     /// The broker in `cua_home` (`None`: `$CUA_HOME`, else `~/.cua`).
     #[uniffi::constructor]
     pub fn new(cua_home: Option<String>) -> Arc<Self> {
-        let home = cua_home.map(PathBuf::from).unwrap_or_else(|| {
-            std::env::var_os("CUA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::var_os("HOME")
-                        .map(PathBuf::from)
-                        .unwrap_or_default()
-                        .join(".cua")
-                })
-        });
+        let home = cua_home
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_cua_home(|k| std::env::var_os(k)));
         Arc::new(Self {
             inner: core::keyvault::client::KeyvaultCommands::for_cua_home(&home),
         })
@@ -1793,6 +1876,107 @@ pub fn app_billing_status(status: cua_sdk::FleetBillingStatus) -> AppBillingStat
     }
 }
 
+/// The account's relay allowance this month (`GET /v1/usage` on the relay
+/// `devices` uses, as `cua usage` reads it) with `account_token`; none
+/// from a relay that meters nothing. Both Spaces apps read it here.
+#[uniffi::export]
+pub async fn app_relay_usage(
+    devices: Arc<cua_sdk::Devices>,
+    account_token: String,
+) -> Result<Option<AppRelayUsage>> {
+    let relay = devices.relay_url();
+    cua_sdk::support::run(async move {
+        let usage = cua_host::RelayClient::new(&relay)?
+            .usage(&account_token)
+            .await?;
+        Ok(usage.map(relay_usage))
+    })
+    .await
+}
+
+fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
+    core::relay_usage::checked(core::relay_usage::RelayUsage {
+        metered: u.metered,
+        period: u.period,
+        plan: u.plan,
+        team: u.team.map(|t| core::relay_usage::RelayUsageTeam {
+            id: t.id,
+            seats: t.seats,
+        }),
+        live_sessions: u.live_sessions,
+        live_sessions_limit: u.live_sessions_limit,
+        hours_used: u.hours_used,
+        hours_limit: u.hours_limit,
+        my_hours_used: u.my_hours_used,
+        soft_limit_reached: u.soft_limit_reached,
+        reasons: u.reasons,
+        upgrade_url: u.upgrade_url,
+    })
+}
+
+/// The account's Teams (the organizations of `GET /v1/me` on the Spaces
+/// API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
+/// with its members and pending invites, read with `account_token`.
+/// Both Spaces apps read Teams here; Settings words them
+/// (`app_settings_page`'s `teams`).
+#[uniffi::export]
+pub async fn app_teams(account_token: String) -> Result<AppTeamsInput> {
+    cua_sdk::support::run(async move {
+        let snapshot = cua_host::spaces_api::SpacesApiClient::current()?
+            .teams(&account_token)
+            .await?;
+        Ok(teams_input(snapshot, cua_home::env::account_app_url()))
+    })
+    .await
+}
+
+fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) -> AppTeamsInput {
+    core::teams::TeamsInput {
+        account_app_url,
+        state: core::teams::TeamsState::Ready {
+            teams: s
+                .teams
+                .into_iter()
+                .map(|t| core::teams::TeamInput {
+                    id: t.org.id,
+                    alias: t.org.alias,
+                    name: t.org.name,
+                    role: t.org.role,
+                    plan: t.org.plan,
+                    seats: t.org.seats,
+                    members: t
+                        .members
+                        .into_iter()
+                        .map(|m| core::teams::TeamPersonInput {
+                            email: m.email,
+                            role: m.role,
+                        })
+                        .collect(),
+                    invites: t.invites.into_iter().map(|i| i.email).collect(),
+                })
+                .collect(),
+        },
+        // The apps fill the saved team in from their settings.
+        current_team_id: None,
+    }
+}
+
+/// The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
+/// `https://app.cua.ai`, or `https://app.staging.cua.ai` under
+/// `CUA_ENV=staging`): billing, plans and team administration, which the
+/// apps open in the browser.
+#[uniffi::export]
+pub fn app_account_app_url() -> String {
+    cua_home::env::account_app_url()
+}
+
+/// Settings' "Relay usage" row and the notice past the allowance; none
+/// when the relay meters nothing.
+#[uniffi::export]
+pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
+    core::relay_usage::view(&usage)
+}
+
 /// Reads the settings file (defaults when missing or damaged).
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -1804,6 +1988,35 @@ pub fn app_settings_load(path: String) -> AppSettings {
 pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
     core::settings::save(std::path::Path::new(&path), &settings)
         .map_err(|e| CuaError::Internal(e.to_string()))
+}
+
+/// The settings with the New UI as a launch of `version` shows it: the
+/// user's choice, else the default for the update channel and version
+/// (again after the channel changes).
+#[uniffi::export]
+pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
+    core::settings::resolve_new_ui(&settings, &version)
+}
+
+/// The update channel of an install's first launch, from the file's
+/// `channel`: Beta for a prerelease, else unchanged.
+#[uniffi::export]
+pub fn app_settings_first_launch_channel(
+    channel: AppUpdateChannel,
+    version: String,
+) -> AppUpdateChannel {
+    core::settings::first_launch_channel(channel, &version)
+}
+
+/// The settings after a Settings, Experiments row's choice (the switches,
+/// and the New UI's "Use classic UI" saved as the user's choice).
+#[uniffi::export]
+pub fn app_settings_choose_experiment(
+    settings: AppSettings,
+    row: String,
+    option: String,
+) -> AppSettings {
+    core::settings::choose_experiment(&settings, &row, &option)
 }
 
 /// The Settings page.
@@ -2129,8 +2342,8 @@ pub fn app_host_looks_like_listen(value: String) -> bool {
     core::host::looks_like_listen(&value)
 }
 
-/// Puts the app's bundled `cua` on PATH on first launch (there is no
-/// onboarding page for it). The same installer the Tauri app runs;
+/// Puts the app's bundled `cua` on PATH after the first run's Command
+/// line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
 /// [`plan`](Self::plan) reads what installing would do without writing.
 #[derive(uniffi::Object)]
 pub struct AppCliInstaller {
@@ -2192,13 +2405,15 @@ impl AppCliInstaller {
 /// `version`, lets the app show the first-run notice itself (nothing is
 /// sent before it has been shown once), and records `app_launched` (on a
 /// first run, once the notice shows). Call once at launch, before the
-/// first `Cua`. Returns whether the notice was already shown here.
+/// first `Cua`. `onboarding_eligible`: the first run is still to finish
+/// (`app_launched` carries it). Returns whether the notice was already
+/// shown here.
 #[uniffi::export]
-pub fn app_telemetry_start(version: String) -> bool {
+pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -> bool {
     let t = cua_telemetry::global();
     t.set_product("spaces_app", &version);
     t.set_notice_mode(cua_telemetry::NoticeMode::External);
-    core::telemetry::start(t)
+    core::telemetry::start_with(t, onboarding_eligible)
 }
 
 /// Records `signals` on the SDK's telemetry client (the switch, the notice
@@ -2211,8 +2426,8 @@ pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
 
 /// The app started (`app_launched`).
 #[uniffi::export]
-pub fn app_telemetry_launched() -> Vec<AppTelemetrySignal> {
-    core::telemetry::launched()
+pub fn app_telemetry_launched(onboarding_eligible: Option<bool>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::launched(onboarding_eligible)
 }
 
 /// A Spaces app feature (a fixed name).
@@ -2238,6 +2453,13 @@ pub fn app_telemetry_onboarding(
     action: AppOnboardingAction,
 ) -> Vec<AppTelemetrySignal> {
     core::telemetry::onboarding(&state, &action)
+}
+
+/// A sign-in failed (`message`, which never leaves: only its kind) or was
+/// cancelled (none).
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failed(message.as_deref())
 }
 
 /// "Start using Cua Spaces".
@@ -2318,6 +2540,61 @@ pub fn app_telemetry_enroll(
     action: AppEnrollAction,
 ) -> Vec<AppTelemetrySignal> {
     core::telemetry::enroll(&state, &action)
+}
+
+// ---- Getting started and the command palette -----------------------------
+
+/// The getting-started checklist after `action`, and its usage events.
+#[uniffi::export]
+pub fn app_checklist_reduce(
+    state: AppChecklistState,
+    action: AppChecklistAction,
+) -> AppChecklistTransition {
+    core::checklist::reduce(&state, &action)
+}
+
+/// What the app shows as the checklist's `Observe` (every UI the same).
+#[uniffi::export]
+pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction {
+    core::checklist::observe_from(&seen)
+}
+
+/// The Machines page's rows: this machine, your machines, your devices of
+/// their own, each computer once.
+#[uniffi::export]
+pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePageRow> {
+    core::machines::page_rows(&input)
+}
+
+/// Machines page input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPageInput> {
+    from_json("machines page input", &json)
+}
+
+/// Checklist state from JSON, steps as words (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
+    from_json("checklist state", &json)
+}
+
+/// The getting-started checklist as drawn.
+#[uniffi::export]
+pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
+    core::checklist::view(&state)
+}
+
+/// The default keyboard shortcuts (the shared UI's `keybindings.json`).
+#[uniffi::export]
+pub fn app_keybindings() -> Vec<AppKeybinding> {
+    core::palette::keybindings()
+}
+
+/// The command palette's matches for `query`, best first, as indices into
+/// `entries`.
+#[uniffi::export]
+pub fn app_palette_rank(entries: Vec<AppPaletteEntry>, query: String) -> Vec<u32> {
+    core::palette::rank(&entries, &query)
 }
 
 // ---- Fixtures ----------------------------------------------------------------
@@ -2515,5 +2792,141 @@ mod size_limit_tests {
         );
         assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
         assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
+    }
+}
+
+#[cfg(test)]
+mod keyvault_home_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn home(vars: &[(&str, &str)]) -> PathBuf {
+        default_cua_home(|k| {
+            vars.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| OsString::from(v))
+        })
+    }
+
+    /// Windows has no `HOME`: the Keyvault is in the profile's `.cua`, where
+    /// the daemon serves it, not a relative `.cua` (which read as "the Cua
+    /// daemon is not running").
+    #[test]
+    fn the_keyvault_is_found_where_the_daemon_serves_it() {
+        assert_eq!(
+            home(&[("USERPROFILE", r"C:\Users\ada")]),
+            PathBuf::from(r"C:\Users\ada").join(".cua")
+        );
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("USERPROFILE", "ignored")]),
+            PathBuf::from("/home/ada/.cua")
+        );
+        assert_eq!(
+            home(&[("CUA_HOME", "/srv/cua"), ("HOME", "/home/ada")]),
+            PathBuf::from("/srv/cua")
+        );
+        assert_eq!(
+            home(&[("HOME", ""), ("USERPROFILE", r"C:\Users\ada")]),
+            PathBuf::from(r"C:\Users\ada").join(".cua")
+        );
+    }
+
+    /// Under `CUA_ENV=staging` the daemon (and so its Keyvault) lives in
+    /// `~/.cua/envs/staging`; the client must look there, not in the prod
+    /// home (CUA-1528).
+    #[test]
+    fn the_keyvault_follows_cua_env() {
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua").join("envs/staging")
+        );
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua")
+        );
+        assert_eq!(
+            home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
+            PathBuf::from("/srv/cua")
+        );
+    }
+}
+
+#[cfg(test)]
+mod teams_tests {
+    use super::*;
+    use cua_host::spaces_api::{ApiInvite, ApiMember, ApiOrg, TeamDetail, TeamsSnapshot};
+
+    #[test]
+    fn a_snapshot_becomes_the_cores_teams_input() {
+        let snapshot = TeamsSnapshot {
+            email: "ada@example.com".into(),
+            plan: "pro".into(),
+            teams: vec![TeamDetail {
+                org: ApiOrg {
+                    id: "o1".into(),
+                    alias: "acme".into(),
+                    name: "".into(),
+                    role: "admin".into(),
+                    plan: "teams".into(),
+                    status: "active".into(),
+                    seats: 3,
+                    features: vec!["team_machines".into()],
+                },
+                members: vec![ApiMember {
+                    sub: "u1".into(),
+                    email: "ada@example.com".into(),
+                    role: "admin".into(),
+                }],
+                invites: vec![ApiInvite {
+                    id: "i1".into(),
+                    email: "cy@example.com".into(),
+                }],
+            }],
+        };
+        let input = teams_input(snapshot, "https://app.cua.ai".into());
+        let rows = core::teams::rows(&input);
+        assert_eq!(rows[0].label, "acme");
+        assert_eq!(rows[2].label, "cy@example.com");
+        assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
+    }
+}
+
+#[cfg(test)]
+mod relay_usage_tests {
+    use super::*;
+
+    #[test]
+    fn the_relays_answer_reaches_the_core_with_only_https_upgrade_links() {
+        let raw: cua_host::RelayUsage = serde_json::from_value(serde_json::json!({
+            "metered": true, "period": "2026-10", "plan": "free",
+            "team": { "id": "acme", "seats": 3 },
+            "live_sessions": 2, "live_sessions_limit": 2, "hours_used": 21.0, "hours_limit": 20,
+            "my_hours_used": 4.5, "soft_limit_reached": true, "reasons": ["hours"],
+            "upgrade_url": "https://cua.ai/pricing"
+        }))
+        .unwrap();
+        let u = relay_usage(raw.clone());
+        assert_eq!(
+            u.team.as_ref().map(|t| (t.id.as_str(), t.seats)),
+            Some(("acme", 3))
+        );
+        assert_eq!((u.live_sessions, u.live_sessions_limit), (2, Some(2)));
+        assert_eq!(
+            (u.hours_used, u.hours_limit, u.my_hours_used),
+            (21.0, Some(20.0), 4.5)
+        );
+        assert_eq!(u.reasons, vec!["hours".to_string()]);
+        let notice = app_relay_usage_view(u).unwrap().notice.unwrap();
+        assert_eq!(
+            notice.upgrade_url.as_deref(),
+            Some("https://cua.ai/pricing")
+        );
+        assert_eq!(notice.dismiss_key, "2026-10:hours");
+
+        let plain = relay_usage(cua_host::RelayUsage {
+            upgrade_url: Some("http://cua.ai/pricing".into()),
+            ..raw
+        });
+        assert_eq!(plain.upgrade_url, None);
     }
 }

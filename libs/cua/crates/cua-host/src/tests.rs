@@ -278,6 +278,42 @@ async fn direct_setup_serves_with_a_local_token_and_stop_stops_the_service() {
 }
 
 #[tokio::test]
+async fn relay_usage_is_none_where_the_relay_does_not_meter() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner", "user-1", None);
+    let f = fixture();
+    let status = f
+        .host()
+        .setup(f.relay_opts(&relay.url), &StaticToken("owner".into()))
+        .await
+        .unwrap();
+    let client = RelayClient::new(&relay.url).unwrap();
+    assert_eq!(client.usage("owner").await.unwrap(), None);
+
+    relay.set_usage(Some(serde_json::json!({
+        "metered": true, "period": "2026-10", "plan": "free",
+        "live_sessions": 2, "live_sessions_limit": 2, "hours_used": 20.5, "hours_limit": 20,
+        "my_hours_used": 20.5, "soft_limit_reached": true, "reasons": ["sessions", "hours"],
+        "upgrade_url": "https://cua.ai/pricing"
+    })));
+    let usage = client.usage("owner").await.unwrap().unwrap();
+    assert!(usage.soft_limit_reached);
+    assert_eq!(usage.live_sessions_limit, Some(2));
+    assert_eq!(usage.reasons, ["sessions", "hours"]);
+    assert!(usage.team.is_none());
+    // Only people have an allowance: a machine token is refused.
+    let machine_token = relay.machine_token(&status.machine_id.unwrap()).unwrap();
+    assert!(matches!(
+        client.usage(&machine_token).await.unwrap_err(),
+        Error::PermissionDenied(_)
+    ));
+    assert!(matches!(
+        client.usage("wrong").await.unwrap_err(),
+        Error::Unauthenticated(_)
+    ));
+}
+
+#[tokio::test]
 async fn relay_directory_lists_owned_and_shared_machines() {
     let relay = FakeRelay::start().await;
     relay.add_account("owner", "user-1", Some("ada@example.com"));
@@ -332,6 +368,64 @@ async fn remove_reports_a_refused_unregister_after_the_local_cleanup() {
     // Removed here, but the relay still lists it: that is what the error says.
     assert!(!p.dir.exists());
     assert!(relay.machine(&id).is_some());
+}
+
+/// Uninstalling the app (CUA-1521): a machine that provides Spaces is taken
+/// off the relay together with each Space's own relay machine, and nothing
+/// is left to run; a plain remove still refuses while it provides Spaces.
+#[tokio::test]
+async fn remove_for_uninstall_unregisters_the_machine_and_its_spaces_from_the_relay() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let status = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let id = status.machine_id.clone().unwrap();
+    // A Space it provides, attached to the relay as its own machine.
+    let reg = RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "acct-token",
+            &crate::relay::RegisterRequest {
+                id: "space-0001".into(),
+                name: "lin-local".into(),
+                host: Some(id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    crate::provided::save_provided(
+        &host.paths().dir,
+        &[crate::provided::ProvidedSpace {
+            relay_machine: "space-0001".into(),
+            local_space: "local:lin-local".into(),
+            name: "lin-local".into(),
+            machine_token: reg.machine_token,
+            relay_url: relay.url.clone(),
+            ..Default::default()
+        }],
+    )
+    .unwrap();
+    assert!(relay.machine("space-0001").is_some());
+
+    assert!(matches!(
+        host.remove().await.unwrap_err(),
+        Error::InvalidArgument(_)
+    ));
+    assert!(
+        relay.machine(&id).is_some(),
+        "a refused remove changes nothing"
+    );
+
+    host.remove_for_uninstall().await.unwrap();
+    assert!(relay.machine(&id).is_none(), "the host is off the relay");
+    assert!(relay.machine("space-0001").is_none(), "so is its Space");
+    assert!(!host.paths().dir.exists());
+    assert!(!f.manager.state().installed, "the service is gone");
 }
 
 #[tokio::test]
@@ -808,7 +902,8 @@ async fn a_spare_machine_provides_spaces_without_its_desktop() {
     assert!(host.policy().unwrap().unwrap().share_desktop);
     assert_eq!(status.spaces_audit.len(), 2);
 
-    // Apple's license caps macOS VMs at two; nothing at all is refused.
+    // Apple's license caps macOS VMs at two (both settings off is allowed:
+    // see `both_settings_off_stops_relay_sharing_and_one_on_can_resume`).
     let e = host
         .configure(HostSettingsChange {
             max_macos_vms: Some(3),
@@ -817,15 +912,6 @@ async fn a_spare_machine_provides_spaces_without_its_desktop() {
         .await
         .unwrap_err();
     assert!(e.to_string().contains("Apple"), "{e}");
-    let e = host
-        .configure(HostSettingsChange {
-            share_desktop: Some(false),
-            provide_spaces: Some(false),
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(matches!(e, Error::InvalidArgument(_)), "{e}");
 }
 
 fn spec_args(f: &Fixture) -> Vec<String> {
@@ -921,7 +1007,8 @@ async fn a_direct_desktop_host_starts_providing_spaces() {
     assert!(status.provide_spaces && status.share_desktop);
     assert!(spec_args(&f).iter().any(|a| a == "--direct-host-policy"));
     assert!(host.policy().unwrap().unwrap().provide_spaces);
-    // The desktop off as well is a spare machine; both off is refused.
+    // The desktop off as well is a spare machine; both off stops sharing
+    // (the direct service stops) and keeps the setup.
     let status = host
         .configure(HostSettingsChange {
             share_desktop: Some(false),
@@ -930,14 +1017,63 @@ async fn a_direct_desktop_host_starts_providing_spaces() {
         .await
         .unwrap();
     assert!(!status.share_desktop && status.provide_spaces);
-    let e = host
+    let status = host
         .configure(HostSettingsChange {
             provide_spaces: Some(false),
             ..Default::default()
         })
         .await
-        .unwrap_err();
+        .unwrap();
+    assert!(status.configured && !status.sharing && !status.service.running);
+    let e = host.start_sharing().await.unwrap_err();
     assert!(matches!(e, Error::InvalidArgument(_)), "{e}");
+}
+
+/// Turning both settings off while sharing over the relay stops
+/// advertising (the relay lists it as not sharing) and keeps the setup;
+/// with one on again, Resume sharing shares again.
+#[tokio::test]
+async fn both_settings_off_stops_relay_sharing_and_one_on_can_resume() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", None);
+    let f = fixture();
+    let host = f.host();
+    let status = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let id = status.machine_id.clone().unwrap();
+    assert!(relay.machine(&id).unwrap().sharing);
+    host.configure(HostSettingsChange {
+        share_desktop: Some(false),
+        provide_spaces: Some(false),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let status = host.status().await.unwrap();
+    assert!(status.configured && !status.share_desktop && !status.provide_spaces);
+    assert!(!status.sharing);
+    assert!(
+        !relay.machine(&id).unwrap().sharing,
+        "the relay says not sharing"
+    );
+    assert!(!host.policy().unwrap().unwrap().sharing);
+    assert!(host.start_sharing().await.is_err(), "nothing to share yet");
+
+    host.configure(HostSettingsChange {
+        provide_spaces: Some(true),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    assert!(
+        !host.status().await.unwrap().sharing,
+        "stays stopped until resumed"
+    );
+    let status = host.start_sharing().await.unwrap();
+    assert!(status.sharing && status.service.running);
+    assert!(relay.machine(&id).unwrap().sharing);
 }
 
 /// A relay registration can name the host a Space belongs to; only an
@@ -1437,4 +1573,136 @@ fn relay_url_for_prefers_flag_then_env_then_host_config() {
         crate::relay_url_for(Some("  "), home.path()),
         env.unwrap_or_else(|| "https://host.example".into())
     );
+}
+
+/// Signing out stops relay sharing: the service leaves the relay and is
+/// uninstalled (so it does not join again at login), the driver's policy
+/// refuses relayed clients, and the setup stays. The owner signing back in
+/// resumes it; another account cannot.
+#[tokio::test]
+async fn signing_out_pauses_relay_sharing_until_the_owner_signs_in() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let status = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let id = status.machine_id.clone().unwrap();
+    assert_eq!(status.owner.as_deref(), Some("user-1"));
+    assert_eq!(status.owner_email.as_deref(), Some("ada@example.com"));
+    assert!(!status.paused_signed_out);
+    relay.set_online(&id, true, "0.1.0");
+    let token_before = std::fs::read_to_string(host.paths().machine_token()).unwrap();
+
+    f.manager.calls.lock().unwrap().clear();
+    let paused = host.pause_signed_out().await.unwrap();
+    // Relay attach stops: the join service is gone, not just stopped.
+    assert_eq!(*f.manager.calls.lock().unwrap(), vec!["uninstall"]);
+    assert!(!paused.service.installed && !paused.service.running);
+    assert!(paused.paused_signed_out);
+    assert!(!paused.sharing, "paused reads as not sharing");
+    assert!(!host.policy().unwrap().unwrap().sharing);
+    // The setup is kept to resume from.
+    assert!(paused.configured);
+    assert_eq!(paused.machine_id.as_deref(), Some(id.as_str()));
+    assert_eq!(
+        std::fs::read_to_string(host.paths().machine_token()).unwrap(),
+        token_before
+    );
+    // Pausing twice is harmless.
+    assert!(host.pause_signed_out().await.unwrap().paused_signed_out);
+
+    // A settings change while paused never installs the service again.
+    f.manager.calls.lock().unwrap().clear();
+    host.configure(HostSettingsChange {
+        provide_spaces: Some(true),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    assert!(f.manager.calls.lock().unwrap().is_empty());
+    assert!(!f.manager.state().installed);
+
+    // Another account cannot resume the old account's registration.
+    let err = host.resume_signed_in("user-2").await.unwrap_err();
+    assert!(err.to_string().contains("another Cua account"), "{err}");
+    assert!(host.status().await.unwrap().paused_signed_out);
+    assert!(!f.manager.state().running);
+
+    // The owner can (by id or email).
+    let resumed = host.resume_signed_in("ADA@example.com").await.unwrap();
+    assert!(!resumed.paused_signed_out);
+    assert!(resumed.service.installed && resumed.service.running);
+    assert!(resumed.sharing);
+    assert!(host.policy().unwrap().unwrap().sharing);
+    let spec = f.manager.spec.lock().unwrap().clone().unwrap();
+    assert!(spec.args.join(" ").starts_with("join --relay"));
+}
+
+/// Stopped sharing stays stopped across a pause, and direct mode (no
+/// account involved) is never paused.
+#[tokio::test]
+async fn a_pause_keeps_the_owners_choice_and_skips_direct_mode() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", None);
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    host.stop_sharing().await.unwrap();
+    host.pause_signed_out().await.unwrap();
+    let resumed = host.resume_signed_in("user-1").await.unwrap();
+    assert!(resumed.service.running, "back on the relay");
+    assert!(
+        !host.policy().unwrap().unwrap().sharing,
+        "still not sharing"
+    );
+
+    let g = fixture();
+    let direct = g.host();
+    let mut o = SetupOptions::direct("10.1.2.3:3211".parse().unwrap());
+    o.driver_bin = Some(g.driver.clone());
+    direct.setup(o, &NoAccount).await.unwrap();
+    g.manager.calls.lock().unwrap().clear();
+    let s = direct.pause_signed_out().await.unwrap();
+    assert!(!s.paused_signed_out);
+    assert!(g.manager.calls.lock().unwrap().is_empty());
+}
+
+/// The mesh stays off on a hosted machine unless asked for: a setup without
+/// `CUA_MESH` installs the same service as before, and an explicit
+/// `CUA_MESH` at setup reaches the service.
+#[test]
+fn the_service_gets_cua_mesh_only_when_setup_was_given_it() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        ..Default::default()
+    };
+    let spec = host.service_spec(&config);
+    assert_eq!(
+        spec.env,
+        vec![("CUA_ENV_LOG".to_string(), "info".to_string())]
+    );
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(!json.contains("mesh"), "{json}");
+
+    let config = crate::HostConfig {
+        mesh: Some("prefer".into()),
+        ..config
+    };
+    let spec = host.service_spec(&config);
+    assert!(
+        spec.env
+            .contains(&("CUA_MESH".to_string(), "prefer".to_string()))
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(back.mesh.as_deref(), Some("prefer"));
 }

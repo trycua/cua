@@ -135,12 +135,11 @@ pub fn load_or_create_machine_id(path: &Path) -> std::io::Result<String> {
 
 /// The WebSocket URL of the relay's connect endpoint.
 pub fn connect_url(relay_url: &str) -> Result<String, String> {
-    let mut url =
-        url::Url::parse(relay_url).map_err(|e| format!("relay url {relay_url:?}: {e}"))?;
+    let mut url = url::Url::parse(relay_url).map_err(|_| "invalid relay URL".to_owned())?;
     let scheme = match url.scheme() {
         "wss" | "https" => "wss",
         "ws" | "http" => "ws",
-        other => return Err(format!("unsupported relay scheme {other:?}")),
+        _ => return Err("unsupported relay scheme".into()),
     };
     url.set_scheme(scheme)
         .map_err(|_| "cannot set scheme".to_owned())?;
@@ -177,7 +176,7 @@ pub async fn run(config: JoinConfig, shutdown: CancellationToken) {
         let end = session(&config, &shutdown).await;
         match &end {
             SessionEnd::Shutdown => return,
-            SessionEnd::Refused(reason) => tracing::warn!(%reason, "relay refused the machine"),
+            SessionEnd::Refused(reason) => tracing::warn!(%reason, "relay join refused"),
             SessionEnd::Lost(reason) => tracing::info!(%reason, "relay connection lost"),
         }
         // A session that stayed up for a while resets the backoff.
@@ -202,7 +201,7 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
     };
     let mut request = match url.as_str().into_client_request() {
         Ok(r) => r,
-        Err(e) => return SessionEnd::Refused(e.to_string()),
+        Err(_) => return SessionEnd::Refused("invalid relay WebSocket request".into()),
     };
     let headers = request.headers_mut();
     let header = |v: &str| http::HeaderValue::from_str(v).map_err(|e| e.to_string());
@@ -225,7 +224,7 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
         }
         _ => return SessionEnd::Refused("invalid header value".into()),
     }
-    let connect = tokio_tungstenite::connect_async(request);
+    let connect = crate::transport::connect(request);
     let socket = tokio::select! {
         r = tokio::time::timeout(Duration::from_secs(20), connect) => match r {
             Ok(Ok((socket, response))) => {
@@ -235,15 +234,12 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
                 }
                 socket
             }
-            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) => {
-                return SessionEnd::Refused(format!("HTTP {}", response.status()));
-            }
-            Ok(Err(e)) => return SessionEnd::Lost(e.to_string()),
+            Ok(Err(end)) => return end,
             Err(_) => return SessionEnd::Lost("connect timed out".into()),
         },
         _ = shutdown.cancelled() => return SessionEnd::Shutdown,
     };
-    tracing::info!(relay = %config.relay_url, machine = %config.machine_id, "joined relay");
+    tracing::info!(machine = %config.machine_id, "joined relay");
     let (inbound_tx, mut inbound_rx) = mpsc::channel(256);
     let (handle, mut driver) = mux::spawn(
         WsIo::new(socket),

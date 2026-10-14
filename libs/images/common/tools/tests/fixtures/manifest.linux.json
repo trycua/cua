@@ -90,6 +90,7 @@
       "system": "xfixes"
     }
   },
+  "features_not_applicable": [],
   "features_optional": [
     "hotspot",
     "relay_attach",

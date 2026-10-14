@@ -292,26 +292,28 @@ pub fn percent(permille: u32) -> String {
 }
 
 /// The selection the window shows: the chosen id if it still exists, else
-/// the first Space that is not this machine, else the first.
+/// the first Space that is not this machine (none: the empty home).
 pub fn effective_selection<'a>(spaces: &'a [Space], selected_id: &str) -> Option<&'a Space> {
     spaces
         .iter()
         .find(|s| s.id == selected_id)
         .or_else(|| spaces.iter().find(|s| s.id != THIS_MACHINE_ID))
-        .or_else(|| spaces.first())
+}
+
+/// Whether a search `query` keeps a row with these `fields` (a Space's
+/// name, detail and id): an empty query keeps every row, else any field
+/// holds the trimmed query, ignoring case. The sidebar's search and the
+/// web UI's Spaces filter box both use it.
+pub fn matches(query: &str, fields: &[&str]) -> bool {
+    let needle = query.trim().to_lowercase();
+    needle.is_empty() || fields.iter().any(|f| f.to_lowercase().contains(&needle))
 }
 
 /// Builds the sidebar for `spaces` filtered by `query`.
 pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView {
-    let needle = query.trim().to_lowercase();
     let visible: Vec<&Space> = spaces
         .iter()
-        .filter(|s| {
-            needle.is_empty()
-                || [&s.name, &s.detail, &s.id]
-                    .iter()
-                    .any(|f| f.to_lowercase().contains(&needle))
-        })
+        .filter(|s| matches(query, &[&s.name, &s.detail, &s.id]))
         .collect();
     let selected = effective_selection(spaces, selected_id).map(|s| s.id.clone());
     let sel = selected.as_deref();
@@ -337,7 +339,7 @@ pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView 
         })
         .collect();
     let empty_text = sections.is_empty().then(|| {
-        if needle.is_empty() {
+        if query.trim().is_empty() {
             "No Spaces yet".to_string()
         } else {
             "No matches".to_string()
@@ -712,7 +714,7 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
         message: if remove_only {
             "It is only removed from the list."
         } else {
-            "Its sandbox is deleted."
+            "Everything inside it, including its files, is deleted and can't be recovered."
         }
         .into(),
         confirm_label: delete_label.into(),
@@ -784,6 +786,9 @@ pub fn usage_text(used: u64, total: u64) -> String {
 /// The OS in words: the full string the Space reported ("Ubuntu 24.04.3
 /// LTS"), else its product name, else the family ("Linux").
 pub fn system_text(space: &Space) -> String {
+    if space.os == crate::model::SpaceOs::Unknown {
+        return space.os.label().into();
+    }
     [&space.os_pretty_name, &space.os_name]
         .into_iter()
         .flatten()
@@ -826,7 +831,24 @@ fn detail_facts(
     usage: Option<&SpaceUsage>,
     host_arch: Option<&str>,
 ) -> Vec<Fact> {
-    let mut facts = vec![fact("Status", status)];
+    let hint = space
+        .power
+        .as_ref()
+        .filter(|p| p.off && p.turning_on.is_none() && space.status == SpaceStatus::Suspended)
+        .filter(|_| !space.progress.as_ref().is_some_and(|p| p.error.is_some()))
+        .map(|p| super::off_hint(p.control).to_string());
+    // Unreachable: why, in the shell's words, as the Status row's help.
+    let why = space
+        .sdk
+        .as_ref()
+        .filter(|sdk| !sdk.reachable && status == UNREACHABLE)
+        .and_then(|sdk| sdk.error.as_deref())
+        .filter(|e| !e.trim().is_empty())
+        .map(crate::errors::plain_error);
+    let mut facts = vec![Fact {
+        help: hint.or(why),
+        ..fact("Status", status)
+    }];
     if let Some(place) = space
         .cloud_place
         .as_deref()
@@ -878,6 +900,9 @@ pub fn detail(space: &Space) -> SpaceDetail {
     detail_live(space, None, None)
 }
 
+/// The Status of a Space the app cannot reach (why is the row's help).
+const UNREACHABLE: &str = "Unreachable";
+
 /// The detail of `space` with its current memory and storage use.
 /// `host_arch` is this machine's CPU architecture (`arm64`, `x86_64`, ...):
 /// a local Space of another one shows a warning on its Architecture.
@@ -899,13 +924,14 @@ pub fn detail_live(
         _ if deleting || powered => status_text(space),
         (_, Some(p)) => match &p.error {
             Some(_) => "Failed".to_string(),
+            // Downloading with a byte count: the bytes line under the bar
+            // says how far ("15.2 of 22.2 GB"); an overall percentage here
+            // (the whole create's, 58%) would disagree with it (68%).
+            None if p.transfer.is_some() => p.label.clone(),
             None => format!("{} {}", p.label, percent(p.permille)),
         },
-        (Some(sdk), None) if !sdk.reachable => sdk
-            .error
-            .clone()
-            .filter(|e| !e.is_empty())
-            .unwrap_or_else(|| "Unreachable".into()),
+        // The probe's error is its help (the row's tooltip), not the value.
+        (Some(sdk), None) if !sdk.reachable => UNREACHABLE.into(),
         _ => status_text(space),
     };
     let preview_text = match (creating, &failed) {
@@ -1136,6 +1162,42 @@ mod tests {
     use super::*;
     use crate::model::SpaceRow;
 
+    /// Only This machine is not a Space to open: an empty id selects nothing,
+    /// choosing it does, and a real Space wins over it.
+    #[test]
+    fn matches_name_detail_or_id_ignoring_case_and_spaces() {
+        let f = ["Design Review", "Agent testing", "relay:mini/space-1"];
+        assert!(matches("", &f));
+        assert!(matches("   ", &f));
+        assert!(matches("  design ", &f));
+        assert!(matches("TESTING", &f));
+        assert!(matches("mini/", &f));
+        assert!(!matches("ubuntu", &f));
+        assert!(!matches("x", &[]));
+    }
+
+    #[test]
+    fn this_machine_alone_selects_nothing() {
+        use crate::host::this_machine_space;
+        use crate::model::SpaceOs;
+        let machine = this_machine_space(None, 0, SpaceOs::Macos);
+        assert!(effective_selection(std::slice::from_ref(&machine), "").is_none());
+        assert_eq!(
+            effective_selection(std::slice::from_ref(&machine), "this-mac").map(|s| s.id.as_str()),
+            Some("this-mac")
+        );
+        let real = super::super::row_to_space(&local_row("local:box", None, None, None), 0);
+        let both = [machine, real];
+        assert_eq!(
+            effective_selection(&both, "").map(|s| s.id.as_str()),
+            Some("local:box")
+        );
+        assert_eq!(
+            effective_selection(&both, "this-mac").map(|s| s.id.as_str()),
+            Some("this-mac")
+        );
+    }
+
     /// Sharing off (the default): no Share button; on: Share, between
     /// Picture in picture and Delete as before.
     #[test]
@@ -1186,6 +1248,34 @@ mod tests {
 
     fn fact_of<'a>(d: &'a SpaceDetail, label: &str) -> Option<&'a Fact> {
         d.facts.iter().find(|f| f.label == label)
+    }
+
+    /// A Space the app cannot reach says "Unreachable"; the probe's error
+    /// is the row's help (in plain words), never the Status itself.
+    #[test]
+    fn an_unreachable_space_says_unreachable_with_why_as_help() {
+        let x = crate::experiments::Experiments::default();
+        for (raw, why) in [
+            (
+                "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
+                "cua-spacesd is not available: relay:studio has no cua-spacesd (gRPC: relay assertion refused)",
+            ),
+            (
+                "transport: Connection refused (os error 61)",
+                crate::errors::DAEMON_NOT_RUNNING,
+            ),
+        ] {
+            let mut space = machine(&[], false);
+            space.sdk.as_mut().unwrap().error = Some(raw.into());
+            let d = detail_with(&space, None, None, &x);
+            let status = fact_of(&d, "Status").unwrap();
+            assert_eq!(status.value, "Unreachable");
+            assert_eq!(status.help.as_deref(), Some(why));
+        }
+        // No error: no help.
+        let d = detail_with(&machine(&[], false), None, None, &x);
+        assert_eq!(fact_of(&d, "Status").unwrap().value, "Unreachable");
+        assert_eq!(fact_of(&d, "Status").unwrap().help, None);
     }
 
     /// One of your machines on the relay, as the app's probe saw it.
@@ -1305,6 +1395,147 @@ mod tests {
         let direct =
             super::super::row_to_space(&local_row("direct:10.0.0.5:3211", None, None, None), 0);
         assert_eq!(shares_desktop(&direct), None);
+    }
+
+    /// The user's Macs after updating to 0.7.0: cua.local
+    /// (`relay:9e9d…`, "Mac.localdomain") shares, keeps its desktop
+    /// private, provides Spaces with none running and runs the cua-spacesd
+    /// of an older app (0.2.2); this Mac (`relay:b695…`) is not sharing.
+    const OTHER_MAC: &str = "9e9d969d41649428f693b403f6f8f225";
+    const THIS_MAC: &str = "b6953d14ff94b10fcbb38bdd13c47824";
+
+    fn roster_row(
+        id: &str,
+        name: &str,
+        version: &str,
+        features: &[&str],
+        reachable: bool,
+        error: Option<&str>,
+    ) -> Space {
+        let row: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": name,
+            "provider": id.split(':').next().unwrap(),
+            "spacesdVersion": version,
+            "features": features,
+            "os": "macos",
+            "reachable": reachable,
+            "error": error,
+        }))
+        .unwrap();
+        super::super::row_to_space(&row, 0)
+    }
+
+    /// One of your machines that is online and provides Spaces is listed
+    /// under "My machines" whatever it shares and whichever cua-spacesd it
+    /// runs: desktop off with Spaces on and none running (a current host
+    /// says so in its features), an older host that reports every feature
+    /// or whose probe was refused or has not answered yet.
+    #[test]
+    fn your_other_machine_is_listed_whatever_it_shares_or_runs() {
+        let other = format!("relay:{OTHER_MAC}");
+        let this = format!("relay:{THIS_MAC}");
+        let probes: [(&[&str], bool, Option<&str>); 4] = [
+            // Current cua-spacesd, desktop not shared: desktop features
+            // unsupported, host_spaces on.
+            (&["pty", "files", "host_spaces"], true, None),
+            // 0.2.2 reports the desktop's features to anyone.
+            (
+                &["pty", "desktop_stream", "window_stream", "host_spaces"],
+                true,
+                None,
+            ),
+            // Refused or unanswered: no features at all.
+            (&[], false, Some("permission denied: desktop not shared")),
+            (&[], false, None),
+        ];
+        for (features, reachable, error) in probes {
+            let spaces = vec![
+                roster_row(
+                    "local:space-753034eaaf",
+                    "Apple-Virtual-Machine-1.local",
+                    "0.1.1",
+                    &["pty"],
+                    true,
+                    None,
+                ),
+                roster_row(
+                    &other,
+                    "Mac.localdomain",
+                    "0.2.2",
+                    features,
+                    reachable,
+                    error,
+                ),
+                roster_row(
+                    &this,
+                    "Dillons-MacBook-Pro-2.local",
+                    "0.2.0",
+                    &[],
+                    false,
+                    None,
+                ),
+            ];
+            let listed = without_this_relay_machine(&spaces, Some(THIS_MAC));
+            let view = sidebar(&listed, "", "");
+            let mine = view
+                .sections
+                .iter()
+                .find(|s| s.title == "My machines")
+                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
+            assert_eq!(
+                mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+                [other.as_str()],
+                "{features:?} {error:?}"
+            );
+            assert!(view.sections.iter().any(|s| s.title == "This Mac"
+                && s.rows.iter().any(|r| r.id == "local:space-753034eaaf")));
+        }
+        // Desktop not shared but providing Spaces: its detail says so, with
+        // Spaces still offered (not hidden as "shares nothing").
+        let m = roster_row(
+            &other,
+            "Mac.localdomain",
+            "0.2.2",
+            &["pty", "host_spaces"],
+            true,
+            None,
+        );
+        assert_eq!(shares_desktop(&m), Some(false));
+        assert_eq!(
+            desktop_note(&m).as_deref(),
+            Some(
+                "Mac.localdomain isn\u{2019}t sharing its desktop. You can still create Spaces on it."
+            )
+        );
+    }
+
+    /// This Mac is left out by its exact relay machine id only: never by
+    /// a prefix, another case, or the other Mac's id.
+    #[test]
+    fn this_mac_is_excluded_only_by_its_exact_id() {
+        let spaces: Vec<Space> = [
+            format!("relay:{OTHER_MAC}"),
+            format!("relay:{THIS_MAC}"),
+            format!("relay:{THIS_MAC}0"),
+            "relay:b6953d14".to_string(),
+            format!("relay:{}", THIS_MAC.to_uppercase()),
+        ]
+        .iter()
+        .map(|id| roster_row(id, "Mac", "0.2.2", &[], true, None))
+        .collect();
+        let ids = |v: Vec<Space>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        let all = ids(spaces.clone());
+        let without = |own: &str| ids(without_this_relay_machine(&spaces, Some(own)));
+        let mut want = all.clone();
+        want.retain(|id| *id != format!("relay:{THIS_MAC}"));
+        assert_eq!(without(THIS_MAC), want);
+        // A prefix or a near miss of this Mac's id drops nothing else.
+        assert_eq!(without("b6953d14ff94"), all);
+        assert_eq!(without(&format!("relay:{THIS_MAC}")), all);
+        assert_eq!(without(&format!(" {THIS_MAC}")), all);
+        // Not set up as a host: nothing is dropped.
+        assert_eq!(ids(without_this_relay_machine(&spaces, None)), all);
     }
 
     /// This machine's own relay entry is dropped by id; another machine
@@ -1609,13 +1840,27 @@ mod tests {
         let off = powered("local:a", "stop", Some("stopped"), true);
         assert_eq!(
             (off.status, status_text(&off).as_str()),
-            (SpaceStatus::Suspended, "Off")
+            (SpaceStatus::Suspended, "Stopped")
         );
-        assert_eq!(off.detail, "Off");
+        assert_eq!(off.detail, "Stopped");
         let d = detail(&off);
         assert_eq!(
             (d.facts[0].value.as_str(), d.preview_text.as_str()),
-            ("Off", "Off")
+            ("Stopped", "Stopped")
+        );
+        // One word for off; how it is off is the Status fact's tooltip.
+        assert_eq!(
+            d.facts[0].help.as_deref(),
+            Some(super::super::off_hint(PowerControl::Stop))
+        );
+        let suspended = detail(&powered("local:b", "suspend", Some("suspended"), true));
+        assert_eq!(suspended.facts[0].value, "Stopped");
+        assert!(
+            suspended.facts[0]
+                .help
+                .as_deref()
+                .unwrap()
+                .starts_with("Suspended in memory")
         );
         let ids: Vec<DetailActionId> = d.actions.iter().map(|a| a.id).collect();
         assert_eq!(
@@ -1659,6 +1904,34 @@ mod tests {
             cancelling: false,
         });
         assert!(power_button(&s).is_none());
+    }
+
+    #[test]
+    fn a_download_status_has_one_measure_of_progress() {
+        let mut s = powered("pending:1", "", None, false);
+        s.power = None;
+        s.status = SpaceStatus::Provisioning;
+        let progress = |transfer: Option<&str>| crate::model::SpaceProgress {
+            phase: "pulling".into(),
+            permille: 580,
+            label: "Downloading image\u{2026}".into(),
+            error: None,
+            credit_url: None,
+            transfer: transfer.map(str::to_string),
+            cancellable: true,
+            cancelling: false,
+        };
+        // Bytes known: the bytes line says how far, not a second percentage.
+        s.progress = Some(progress(Some("15.2 of 22.2 GB \u{b7} 107 MB/s")));
+        let d = detail(&s);
+        assert_eq!(d.facts[0].value, "Downloading image\u{2026}");
+        assert_eq!(
+            d.progress_text.as_deref(),
+            Some("15.2 of 22.2 GB \u{b7} 107 MB/s")
+        );
+        // No bytes: the percentage is all there is.
+        s.progress = Some(progress(None));
+        assert_eq!(detail(&s).facts[0].value, "Downloading image\u{2026} 58%");
     }
 
     #[test]

@@ -54,6 +54,22 @@ on:
         description: "Verify and promote this already-staged stamp (lock.json) instead of building (needs push=true)"
         type: string
         default: ""
+  # cd-images-spacesd-release.yml (bench=osworld push=true) on every
+  # cua-spacesd release.
+  workflow_call:
+    inputs:
+      bench:
+        type: string
+        default: web
+      push:
+        type: boolean
+        default: false
+      amd64_runner:
+        type: string
+        default: ubuntu-24.04
+      promote_stamp:
+        type: string
+        default: ""
 
 concurrency:
   group: cd-bench-images-${{ github.ref }}-${{ inputs.bench || 'pr' }}
@@ -63,6 +79,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -80,7 +99,8 @@ jobs:
           for f in scripts/bench-images/*.sh libs/images/bench/*/vm/*.sh; do bash -n "$f"; done
 
   meta:
-    if: github.event_name == 'workflow_dispatch'
+    # A dispatch, or a call (which sees its caller's event).
+    if: github.event_name != 'pull_request'
     needs: checks
     runs-on: ubuntu-latest
     outputs:
@@ -152,7 +172,7 @@ jobs:
           echo "ASSUME=$assume" >>"$GITHUB_ENV"
       - name: cua CLI and the SDK binding for the smoke
         run: |
-          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli)
+          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
           cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
           install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           # The later jobs (index, verify, promote) reuse these instead of
@@ -217,7 +237,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/bench-cli/cua" ]; then
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            (cd libs/cua && cargo build --release -p cua-cli --features byoc) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           fi
       - name: cua images release (publish the indexes as immutable pins)
         run: |
@@ -283,7 +303,7 @@ jobs:
             cp "$RUNNER_TEMP/bench-cli/libcua_sdk.so" libs/cua/python/src/cua/
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli)
+            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
             cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
             install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
             rm -rf libs/cua/target
@@ -347,7 +367,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/bench-cli/cua" ]; then
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            (cd libs/cua && cargo build --release -p cua-cli --features byoc) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           fi
       - name: cua images release (promote <ver> and <ver>-disk; doctor evidence required)
         run: |
@@ -372,12 +392,22 @@ jobs:
       # The release's catalog step: move the catalog digests of the promoted
       # <ver> and <ver>-disk tags and record their sizes, then open a PR with
       # libs/images/sandbox-images.json, the promoted lock.json and the
-      # regenerated cua_bench/images.py. A PR opened
-      # with GITHUB_TOKEN does not trigger CI on its own; push to it (or close
-      # and reopen it) to run the required checks.
+      # regenerated cua_bench/images.py. The PR is opened with the release
+      # GitHub App (RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY, as
+      # release-please.yml and cd-images-spacesd-release.yml): this repo does
+      # not let GITHUB_TOKEN create pull requests, and a PR pushed and opened
+      # with GITHUB_TOKEN would not run its required checks anyway.
+      - name: Release app token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       - name: Catalog PR (sandbox-images.json and lock.json at the promoted digests)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           lock="libs/images/bench/$BENCH/lock.json"
@@ -396,7 +426,7 @@ jobs:
           git checkout -B "$branch"
           git add -- "${files[@]}"
           git commit -m "chore(images): catalog bench-$BENCH $STAMP"
-          git push -u origin "$branch" --force
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch" --force
           url="$(gh pr create --base main --head "$branch" \
             --title "chore(images): catalog bench-$BENCH $STAMP" \
             --body "The catalog step of ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}: \`libs/images/sandbox-images.json\` moves bench-$BENCH's promoted tags to their new digests with fresh sizes (\`record-image-sizes.py --refresh-digest\`), and \`$lock\` records the promoted stamp (with cua-bench's generated \`cua_bench/images.py\` pin)." \

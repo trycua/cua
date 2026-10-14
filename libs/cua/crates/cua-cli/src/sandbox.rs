@@ -132,8 +132,9 @@ pub struct CreateArgs {
     /// input: display, window manager and cua-driver) (repeatable).
     #[arg(long = "wait", visible_alias = "wait-for", value_parser = parse_wait)]
     wait: Vec<(WaitTarget, Option<String>)>,
-    /// Readiness budget in seconds, the wait for the image's cua-spacesd
-    /// included (default 600, with at most 120 of it for cua-spacesd).
+    /// Readiness budget in seconds, counted once the image is downloaded,
+    /// the wait for the image's cua-spacesd included (default 600, plus up
+    /// to 120 for cua-spacesd).
     #[arg(long)]
     ready_timeout: Option<u32>,
     /// Inject a freshly built binary once the sandbox is up:
@@ -1354,6 +1355,13 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
     }
 }
 
+/// Appended when `--on cloud` has no Cua cloud account: Spaces run on
+/// compute you bring, so point at the ways that need no Cua cloud.
+const BYO_COMPUTE_HINT: &str = "Cua Spaces run on computers you bring: this one (`--on local`), \
+     a machine you own (`cua auth login`, then `cua host setup --profile spare` on that machine \
+     and `--on host:<machine>` here), or your own cloud account (`cua cloud connect \
+     aws|gcp|modal`, then `--on aws`)";
+
 /// What a failed create kept: the sandbox ref, its cloud claim (pool and
 /// namespace) when it has one, and how to delete it.
 fn kept_message(i: &SandboxInfo) -> String {
@@ -1544,12 +1552,20 @@ async fn create(
     let sb = created
         .map_err(|e| match e {
             // The cloud came from a default: say how to sign in or go back.
-            CuaError::ProviderNotConfigured(m) => CuaError::ProviderNotConfigured(
-                match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
-                    Some(hint) => format!("{m}; {hint}"),
-                    None => m,
-                },
-            ),
+            // The cloud came from a default: say how to sign in or go back
+            // (once: some SDK paths have said it already).
+            CuaError::ProviderNotConfigured(mut m) => {
+                if let Some(hint) =
+                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
+                    && !m.contains(&hint)
+                {
+                    m = format!("{m}; {hint}");
+                }
+                if on == On::Cloud {
+                    m = format!("{m}. {BYO_COMPUTE_HINT}");
+                }
+                CuaError::ProviderNotConfigured(m)
+            }
             other => other,
         })
         .map_err(|e| on_backend(e, &label))?;
@@ -2061,9 +2077,29 @@ pub fn save_env_token(name: &str, token: Option<&str>) -> Result<(), CuaError> {
     )
 }
 
-/// A spacesd client for a named sandbox. Direct sandboxes use the
-/// remembered token (or `CUA_ENV_TOKEN`).
+/// Canonical `relay:<machine-id>` when `name` is a relay Space, including
+/// the legacy `space://relay/…` spelling. An invalid `relay:` spelling is
+/// `None`, so the sandbox path reports that ref error.
+pub(crate) fn relay_space_id(name: &str) -> Option<String> {
+    let r = cua_sandbox_core::refs::SandboxRef::parse(name).ok()?;
+    matches!(r, cua_sandbox_core::refs::SandboxRef::Relay { .. }).then(|| r.to_string())
+}
+
+/// A spacesd client for a named sandbox or a relay Space. Direct sandboxes
+/// use the remembered token (or `CUA_ENV_TOKEN`). A relay Space opens
+/// through the Spaces API; the sandboxes API does not attach those machines.
 pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>, CuaError> {
+    if let Some(id) = relay_space_id(name) {
+        // The SDK attaches the signed-in relay account only when its `host`
+        // feature is on. This binary reaches those Spaces the way `cua mcp` does.
+        crate::host::attach_relay_account(cua, || {
+            crate::host::daemon_relay_account(&crate::util::cua_home())
+        });
+        let spaces = cua.spaces();
+        // NotFound before dial, and the snapshot has the name space() dials with.
+        spaces.resolve(id.clone()).await?;
+        return spaces.space(id).await?.spacesd();
+    }
     let sbx = cua.sandboxes();
     let info = sbx.get(name.to_string()).await?;
     if info.location == "direct"
@@ -2082,6 +2118,14 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
         .iter()
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
+        .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
         .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
@@ -3023,6 +3067,157 @@ pub(crate) fn confirm_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use cua_sandbox_core::{
+        InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
+        RuntimeError,
+    };
+    use std::{collections::BTreeMap, sync::Mutex};
+
+    struct FakeRuntime {
+        port: u16,
+        started: Mutex<Vec<LocalStartSpec>>,
+        deleted: Mutex<Vec<String>>,
+        running: Mutex<BTreeMap<String, bool>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LocalRuntime for FakeRuntime {
+        fn backend(&self) -> String {
+            "fake".into()
+        }
+        async fn start(&self, spec: &LocalStartSpec) -> Result<LocalInstance, RuntimeError> {
+            self.started.lock().unwrap().push(spec.clone());
+            self.running.lock().unwrap().insert(spec.name.clone(), true);
+            Ok(LocalInstance {
+                name: spec.name.clone(),
+                backend: "fake".into(),
+                status: InstanceStatus::Running,
+                endpoints: self.endpoints(&spec.name).await?,
+            })
+        }
+        async fn stop(&self, name: &str) -> Result<(), RuntimeError> {
+            self.running.lock().unwrap().insert(name.into(), false);
+            Ok(())
+        }
+        async fn resume(&self, name: &str) -> Result<LocalInstance, RuntimeError> {
+            Ok(LocalInstance {
+                name: name.into(),
+                backend: "fake".into(),
+                status: InstanceStatus::Running,
+                endpoints: self.endpoints(name).await?,
+            })
+        }
+        async fn list(&self) -> Result<Vec<LocalSummary>, RuntimeError> {
+            Ok(vec![])
+        }
+        async fn status(&self, name: &str) -> Result<InstanceStatus, RuntimeError> {
+            match self.running.lock().unwrap().get(name) {
+                Some(true) => Ok(InstanceStatus::Running),
+                Some(false) => Ok(InstanceStatus::Stopped),
+                None => Err(RuntimeError::NotFound(name.into())),
+            }
+        }
+        async fn delete(&self, name: &str) -> Result<(), RuntimeError> {
+            self.deleted.lock().unwrap().push(name.into());
+            self.running.lock().unwrap().remove(name);
+            Ok(())
+        }
+        async fn endpoints(&self, _name: &str) -> Result<LocalEndpoints, RuntimeError> {
+            Ok(LocalEndpoints {
+                host: "127.0.0.1".into(),
+                ports: [(3211u16, self.port)].into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn post_create_registration_outage_does_not_enter_cleanup() {
+        let mut images = cua_image::testing::FakeRegistry::default();
+        images.index(
+            "ghcr.io/example/discovery:1",
+            &["amd64", "arm64"],
+            false,
+            None,
+        );
+        cua_image::resolve::set_source(Some(Arc::new(images)));
+        for daemon in [false, true] {
+            let home = tempfile::tempdir().unwrap();
+            let relay = cua_host::testing::FakeRelay::start().await;
+            let srv = cua_spacesd_client::testing::MockServer::start(Default::default()).await;
+            let local = Arc::new(FakeRuntime {
+                port: srv.addr.port(),
+                started: Mutex::new(vec![]),
+                deleted: Mutex::new(vec![]),
+                running: Mutex::new(BTreeMap::new()),
+            });
+            let runtime = cua_daemon::Runtime::new(cua_daemon::RuntimeConfig {
+                local: Some(local.clone()),
+                state_dir: Some(home.path().join("sandboxes")),
+                spaces_home: Some(home.path().join("spaces")),
+                ..Default::default()
+            })
+            .unwrap();
+            runtime
+                .spaces()
+                .set_relay(Some(cua_spaces::RelayAccount::new(
+                    &relay.url,
+                    Arc::new(cua_host::StaticToken("bad".into())),
+                )));
+            let server = if daemon {
+                Some(
+                    cua_daemon::server::start(
+                        runtime.clone(),
+                        cua_daemon::server::ServerConfig {
+                            socket_path: None,
+                            loopback: Some("127.0.0.1:0".parse().unwrap()),
+                            token: "fixture".into(),
+                            discovery_path: Some(home.path().join("daemon.json")),
+                            bridge_ticket_ttl: std::time::Duration::from_secs(30),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                )
+            } else {
+                None
+            };
+            let cua = match &server {
+                Some(server) => {
+                    Cua::connect(server.loopback_url.clone(), Some(server.token.clone())).unwrap()
+                }
+                None => Cua::from_runtime(runtime.clone()),
+            };
+            let mut options = SandboxCreateOptions::auto("ghcr.io/example/discovery:1");
+            options.on = Some("local".into());
+            options.kind = Some("container".into());
+            options.name = Some("created-once".into());
+            let sandbox = cua.sandboxes().create(options).await.unwrap();
+            assert!(cua.spaces().list().await.is_err());
+            // Exercise the actual registration and failure-cleanup seam used
+            // after create by --browser, without launching a real browser.
+            let registered = crate::browse::register_space(&cua, &sandbox.id()).await;
+            let succeeded = registered.is_ok();
+            if let Err(error) = registered {
+                failed_after_create(&sandbox, false, error).await;
+            }
+            assert_eq!(local.started.lock().unwrap().len(), 1);
+            assert!(
+                local.deleted.lock().unwrap().is_empty(),
+                "directory failure deleted the created sandbox"
+            );
+            assert!(succeeded);
+            assert!(home.path().join("sandboxes/created-once.json").exists());
+            assert_eq!(
+                cua.spaces().resolve(sandbox.id()).await.unwrap().id,
+                sandbox.id()
+            );
+            if let Some(server) = server {
+                server.shutdown();
+            }
+        }
+    }
 
     #[test]
     fn sidecar_and_registry_secret_flags_parse() {

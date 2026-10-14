@@ -492,13 +492,64 @@ pub fn set_value_in(pid: u32, xid: Option<u64>, idx: usize, value: &str) -> Resu
     if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
         match native::set_value_ref(&object_ref, value) {
             Ok(()) => return Ok(()),
-            Err(error) if native::is_no_value_route(&error) => return Err(error),
+            Err(error) if native::is_no_value_route(&error) => {
+                return select_option(&object_ref, value).unwrap_or(Err(error))
+            }
             Err(error) => tracing::debug!(
                 "cached element {idx} (pid {pid}) set_value failed, re-resolving: {error:#}"
             ),
         }
     }
     native::set_value(pid, idx, value)
+}
+
+/// A combo box or list without an editable value: pick the option `value`
+/// names through the element's `Selection`. `None` when it lists no
+/// selectable options (the caller keeps its no-value-route error).
+fn select_option(object_ref: &native::ObjectRef, value: &str) -> Option<Result<()>> {
+    match native::select_option_ref(object_ref, value) {
+        Ok(native::OptionPick::Picked { .. }) => Some(Ok(())),
+        Ok(native::OptionPick::NoMatch { options }) => Some(Err(no_such_option(value, &options))),
+        Ok(native::OptionPick::Unavailable) => None,
+        Err(error) => Some(Err(error)),
+    }
+}
+
+fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{}: no option {value:?}; options: {options:?}",
+        native::NO_SUCH_OPTION
+    )
+}
+
+/// The open popup of a snapshot-cached combo box: activate the option
+/// `value` names. `Ok(None)` when the popup lists no options yet.
+pub fn activate_option_in(
+    pid: u32,
+    xid: Option<u64>,
+    idx: usize,
+    value: &str,
+) -> Result<Option<String>> {
+    let object_ref = cache::cached_element(pid, xid, idx)
+        .and_then(|e| e.object_ref)
+        .ok_or_else(|| anyhow::anyhow!("element {idx} is no longer in the snapshot cache"))?;
+    match native::activate_option_ref(&object_ref, value)? {
+        native::OptionPick::Picked { name } => Ok(Some(name)),
+        native::OptionPick::NoMatch { options } => Err(no_such_option(value, &options)),
+        native::OptionPick::Unavailable => Ok(None),
+    }
+}
+
+/// Whether the popup of a snapshot-cached combo box is open.
+pub fn options_showing_in(pid: u32, xid: Option<u64>, idx: usize) -> bool {
+    cache::cached_element(pid, xid, idx)
+        .and_then(|e| e.object_ref)
+        .is_some_and(|object_ref| native::options_showing_ref(&object_ref))
+}
+
+/// AT-SPI role of a snapshot-cached element (`combo box`, `text`, ...).
+pub fn cached_role_in(pid: u32, xid: Option<u64>, idx: usize) -> Option<String> {
+    cache::cached_element(pid, xid, idx).map(|e| e.role)
 }
 
 /// Read the current value/text of a snapshot-cached element (for the

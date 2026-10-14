@@ -1133,16 +1133,21 @@ impl Broker {
                     .into(),
             );
         }
-        if cfg!(not(any(target_os = "macos", target_os = "windows"))) {
-            return Some("this platform has no OS key store protector yet".into());
+        if cfg!(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        ))) {
+            return Some("this platform has no OS key store protector".into());
         }
         None
     }
 
     /// Why this daemon cannot create a new OS key store protector (`None`: it
     /// can). On macOS only the signed Cua daemon may create one (red-team
-    /// F2), so this is checked here, before any presence prompt, rather
-    /// than discovered after the user confirmed.
+    /// F2); on Linux a desktop with no Secret Service on the session bus has
+    /// none to use. Checked here, before any presence prompt, rather than
+    /// discovered after the user confirmed.
     fn os_enroll_block(&self) -> Option<String> {
         if let Some(why) = self.os_use_block() {
             return Some(why);
@@ -1158,7 +1163,11 @@ impl Broker {
                                 .into()
                         })
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(target_os = "linux")]
+                {
+                    crate::protector::secret_service_available().err()
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 {
                     None
                 }
@@ -3653,10 +3662,19 @@ impl Broker {
                 .collect()
         };
         let mut wiped_ids = Vec::new();
+        let mut gone_ids: Vec<String> = Vec::new();
         let mut errors = Vec::new();
         for d in &live {
             match self.backend.wipe(&d.target, &d.import_id).await {
                 Ok(_) => wiped_ids.push(d.import_id.clone()),
+                // The Space or the import is gone (the user removed the
+                // Space, or the target's own expiry already wiped it): the
+                // copy no longer exists, so the delivery counts as wiped
+                // and must not block deleting the item.
+                Err(Error::NotFound(_)) => {
+                    gone_ids.push(d.import_id.clone());
+                    wiped_ids.push(d.import_id.clone());
+                }
                 Err(e) => errors.push(format!("{}: {e}", d.target)),
             }
         }
@@ -3673,7 +3691,14 @@ impl Broker {
         for d in live.iter().filter(|d| wiped_ids.contains(&d.import_id)) {
             let mut e = ev("target.wipe", caller, "ok");
             e.target = Some(d.target.clone());
-            e.detail = format!("import={}", d.import_id);
+            e.detail = if gone_ids.contains(&d.import_id) {
+                format!(
+                    "import={} already gone (target or import missing)",
+                    d.import_id
+                )
+            } else {
+                format!("import={}", d.import_id)
+            };
             Self::audit(&mut st, e);
         }
         if !errors.is_empty() {

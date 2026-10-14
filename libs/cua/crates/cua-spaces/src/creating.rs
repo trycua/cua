@@ -607,7 +607,11 @@ impl Spaces {
                 },
             }
         }
-        if !j.id.is_empty() {
+        let borrowed = j
+            .made
+            .iter()
+            .any(|m| matches!(m, Made::LocalSandbox { fresh: false, .. }));
+        if !j.id.is_empty() && !borrowed {
             let _ = self.inner.registry.remove(&j.id);
         }
         let mut msg = format!("Cancelled {}", display(&j.id, &j.name));

@@ -238,3 +238,48 @@ struct UpdatesTests {
         #expect(blocks.contains { if case .verbatim(let t) = $0 { t.contains("Andy Matuschak") } else { false } })
     }
 }
+
+/// A copy installed over the running app: Sparkle cannot authorize its
+/// installer for a process whose files are gone, so the app asks to relaunch.
+@Suite("Launched bundle")
+struct LaunchedBundleTests {
+    static func bundle(version: String) throws -> (URL, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("launched-\(UUID().uuidString)")
+        let app = root.appendingPathComponent("Cua Spaces.app")
+        try write(app, version: version)
+        return (app, app.appendingPathComponent("Contents/MacOS/CuaSpacesMac"))
+    }
+
+    static func write(_ app: URL, version: String) throws {
+        let macos = app.appendingPathComponent("Contents/MacOS")
+        try FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
+        try Data("binary \(version)".utf8).write(to: macos.appendingPathComponent("CuaSpacesMac"))
+        let info: NSDictionary = ["CFBundleShortVersionString": version, "CuaVersion": version]
+        try info.write(to: app.appendingPathComponent("Contents/Info.plist"))
+    }
+
+    @Test func theLaunchedCopyIsNotAReplacement() throws {
+        let (app, exe) = try Self.bundle(version: "0.5.0")
+        defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
+        #expect(LaunchedBundle(url: app, executable: exe).replacement() == nil)
+    }
+
+    @Test func aCopyInstalledOverTheRunningOneIsAReplacement() throws {
+        let (app, exe) = try Self.bundle(version: "0.5.0")
+        defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
+        let launched = LaunchedBundle(url: app, executable: exe)
+        // What dragging the new copy from the disk image does: the old
+        // bundle goes, the new one's files arrive.
+        try FileManager.default.removeItem(at: app)
+        try Self.write(app, version: "0.6.0")
+        #expect(launched.replacement() == LaunchedBundle.Replacement(version: "0.6.0"))
+    }
+
+    @Test func aDeletedCopyHasNoVersion() throws {
+        let (app, exe) = try Self.bundle(version: "0.5.0")
+        defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
+        let launched = LaunchedBundle(url: app, executable: exe)
+        try FileManager.default.removeItem(at: app)
+        #expect(launched.replacement() == LaunchedBundle.Replacement(version: nil))
+    }
+}

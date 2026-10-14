@@ -267,7 +267,8 @@ export function ThisMachinePanel({
               type="button"
               className={`${i === 0 ? "primary-button" : "secondary-button"}${a.destructive ? " danger" : ""}`}
               data-owns-enter
-              disabled={busy}
+              disabled={busy || a.enabled === false}
+              title={a.help ?? undefined}
               onClick={() => (a.confirm ? setConfirming(a) : run(a.id))}
             >
               {a.label}

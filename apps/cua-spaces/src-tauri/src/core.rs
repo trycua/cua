@@ -363,6 +363,7 @@ fn wizard_storage(
         qemu: vol(r.qemu),
         container: vol(r.container),
         pulled: r.pulled,
+        linux_runtime_download_bytes: r.linux_runtime_download_bytes,
     }
 }
 
@@ -449,7 +450,7 @@ impl SpaceRow {
             kind: (!info.kind.is_empty()).then_some(info.kind),
             arch: (!info.arch.is_empty()).then_some(info.arch),
             added_at: info.added_at,
-            os: None,
+            os: matches!(info.os.as_str(), "macos" | "windows" | "linux").then_some(info.os),
             reachable: false,
             error: None,
             host: (!info.host.is_empty()).then_some(info.host),
@@ -464,24 +465,10 @@ impl SpaceRow {
 
     fn connected(info: SpaceInfo, space: &Space) -> Self {
         let mut row = Self::from_info(info);
-        row.os = Some(os_name(space).into());
-        if let Some(name) = space
-            .capabilities()
-            .os
-            .as_ref()
-            .map(|o| o.name.clone())
-            .filter(|n| !n.is_empty())
-        {
-            row.os_name = Some(name);
-        }
-        if let Some(pretty) = space
-            .capabilities()
-            .os
-            .as_ref()
-            .map(|o| o.pretty_name.clone())
-            .filter(|n| !n.is_empty())
-        {
-            row.os_pretty_name = Some(pretty);
+        if let Some((family, name, pretty_name)) = space.reported_os() {
+            row.os = (!family.is_empty()).then(|| family.to_string());
+            row.os_name = (!name.is_empty()).then(|| name.to_string());
+            row.os_pretty_name = (!pretty_name.is_empty()).then(|| pretty_name.to_string());
         }
         if let Some((image, digest)) = space.image() {
             row.image = Some(image.to_string());
@@ -505,14 +492,6 @@ impl SpaceRow {
             .map(|f| f.name.clone())
             .collect();
         row
-    }
-}
-
-fn os_name(space: &Space) -> &'static str {
-    match space.os_family() {
-        pb::OsFamily::Macos => "macos",
-        pb::OsFamily::Windows => "windows",
-        _ => "linux",
     }
 }
 
@@ -1202,45 +1181,20 @@ impl AppCore {
 
     // ----------------------------------------------------------- cloud
 
-    /// `cloud_pricing`: this account's Cua Cloud rates (the SDK caches them
-    /// for five minutes). `None` when not signed in or Fleet gave no rates:
-    /// the wizard then shows no estimate.
+    /// `cloud_pricing`: always `None` (no estimate). The rates came from the
+    /// retired Fleets API (run.cua.ai), and the app does not offer new cloud
+    /// Spaces.
     pub async fn cloud_pricing(&self) -> Option<cua_spaces_app_core::wizard::CloudPricing> {
-        let fleet = self.fleet_client.as_ref()?;
-        match fleet.usage_pricing().await {
-            Ok(p) => p.map(|p| cua_spaces_app_core::wizard::CloudPricing {
-                vcpu_hour_usd: p.vcpu_hour_usd,
-                memory_gib_hour_usd: p.memory_gib_hour_usd,
-            }),
-            Err(e) => {
-                tracing::debug!("cloud pricing unavailable: {e}");
-                None
-            }
-        }
+        None
     }
 
-    /// `billing_status`: the account's Cua Cloud billing as the app core
-    /// takes it (Settings' Billing row). `None` without a Fleet client
-    /// (not signed in).
+    /// `billing_status`: always `None`. The Fleets billing API
+    /// (`GET /api/billing/status` on run.cua.ai) is retired, so the app no
+    /// longer calls it and Settings hides the Billing row.
     pub async fn billing_status(
         &self,
     ) -> CmdResult<Option<cua_spaces_app_core::billing::BillingStatus>> {
-        use cua_spaces_app_core::billing as b;
-        let Some(fleet) = self.fleet_client.as_ref() else {
-            return Ok(None);
-        };
-        let s = fleet.billing_status().await.map_err(msg)?;
-        Ok(Some(b::BillingStatus {
-            billing_enabled: s.billing_enabled,
-            card: s.card.map(|c| b::BillingCard {
-                brand: c.brand,
-                last4: c.last4,
-            }),
-            credit: s.credit.map(|c| b::BillingCredit {
-                balance_usd_cents: c.balance_usd_cents,
-            }),
-            billing_url: s.billing_url,
-        }))
+        Ok(None)
     }
 
     // ----------------------------------------------------------- local

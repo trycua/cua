@@ -234,7 +234,7 @@ export function MainWindow({
     startView === 'this-machine' || startView === 'host-setup' ? THIS_MACHINE_ID : null
   );
   const [query, setQuery] = useState('');
-  const [wizard, setWizard] = useState(
+  const [wizard, setWizard] = useState<boolean | 'linux' | 'macos'>(
     startView === 'new-space' || startView === 'new-space-resources'
   );
   useEffect(() => {
@@ -647,7 +647,7 @@ export function MainWindow({
               </ul>
             </div>
           ))}
-          {sidebar.emptyText && !sidebar.thisMachine && (
+          {sidebar.emptyText && !sidebar.thisMachine && !sync.rosterError && (
             <p className="dw-hint dw-nav-section">{sidebar.emptyText}</p>
           )}
           <ul className="dw-nav-list" aria-label="Agents">
@@ -797,6 +797,12 @@ export function MainWindow({
               />
             )}
 
+            {sync.rosterError && (
+              <div className="dw-banner" data-tone="error" role="alert">
+                {sync.rosterError}
+              </div>
+            )}
+
             {banner && (
               <div
                 className="dw-banner"
@@ -872,16 +878,27 @@ export function MainWindow({
               ) : !selected ? (
                 <div className="dw-empty">
                   <span className="dw-empty-art">
-                    <Sym name="square.grid.2x2" />
+                    <Sym name="desktopcomputer" />
                   </span>
-                  <h2>{chrome.emptyTitle}</h2>
-                  <button
-                    type="button"
-                    className="dw-btn dw-btn-primary dw-btn-lg"
-                    onClick={() => setWizard(true)}
-                  >
-                    {chrome.emptyAction}
-                  </button>
+                  <h2>{sync.rosterError ? "Spaces could not be loaded" : chrome.emptyTitle}</h2>
+                  {!sync.rosterError && (
+                    <>
+                      <p>{chrome.emptyDetail}</p>
+                      <div className="dw-empty-tiles">
+                        {([
+                          ['linux', chrome.emptyAction, chrome.emptyLinuxDetail],
+                          ['macos', chrome.emptyMacosAction, chrome.emptyMacosDetail],
+                        ] as const).map(([os, name, detail]) => (
+                          <button key={os} type="button" className="wz-tile" aria-label={`${name}, ${detail}`} onClick={() => setWizard(os)}>
+                            <span className="wz-tile-icon"><OsIconMark id={`os-${os}`} size={24} /></span>
+                            <span className="wz-tile-title">{name}</span>
+                            <span className="wz-tile-desc">{detail}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <button type="button" className="dw-btn dw-btn-quiet" onClick={() => setWizard(true)}>{chrome.newSpaceLabel}</button>
                 </div>
               ) : isHost ? (
                 <div className="dw-content-inner">
@@ -944,6 +961,7 @@ export function MainWindow({
             gpus={live ? gpus : null}
             onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
             startActions={startActions}
+            quick={typeof wizard === 'string' ? wizard : undefined}
             onCreate={startCreate}
             onAddByAddress={async (url, token, name) => {
               const id = await sync.addSpace(url, token, name);

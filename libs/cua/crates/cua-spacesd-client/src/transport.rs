@@ -173,6 +173,7 @@ pub(crate) struct ChannelConfig {
     pub gateway: Option<GatewayAuth>,
     pub connect_timeout: Duration,
     pub keepalive: Keepalive,
+    pub headers: Vec<(String, String)>,
 }
 
 /// Decides the transport order for `pref` and `endpoint`.
@@ -233,35 +234,31 @@ fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
         ep = ep
             .tls_config(
                 ClientTlsConfig::new()
-                    .with_webpki_roots()
+                    .trust_anchors(crate::tls::root_store()?.roots)
                     .domain_name(cfg.endpoint.host().to_string()),
             )
             .map_err(|e| Error::Transport(e.to_string()))?;
     }
     // Lazy: tonic reconnects transparently (with backoff) on the next call
     // after a connection drops.
-    let channel = ep.connect_lazy();
+    let channel = ep.connect_with_connector_lazy(crate::connector::ProxyConnector::new(
+        cfg.connect_timeout,
+        Some(cfg.keepalive.interval),
+    ));
     Ok(BoxCloneSyncService::new(
         channel.map_err(|e| Box::new(e) as BoxError),
     ))
 }
 
 fn grpc_web_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
-    use hyper_util::{
-        client::legacy::{Client, connect::HttpConnector},
-        rt::TokioExecutor,
-    };
-    let mut http = HttpConnector::new();
-    http.enforce_http(false);
-    http.set_connect_timeout(Some(cfg.connect_timeout));
-    http.set_keepalive(Some(cfg.keepalive.interval));
-    http.set_nodelay(true);
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    let http =
+        crate::connector::ProxyConnector::new(cfg.connect_timeout, Some(cfg.keepalive.interval));
     // Name the crypto provider explicitly: other crates in a dependency graph
     // (e.g. reqwest via oci-client) may enable a second rustls backend, and
     // rustls then refuses to pick a process default on its own.
     let https = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-        .map_err(|e| Error::Transport(e.to_string()))?
+        .with_tls_config(crate::tls::client_config()?)
         .https_or_http()
         .enable_http1()
         .wrap_connector(http);
@@ -409,6 +406,7 @@ pub(crate) struct HeaderInjector {
     principal: Option<HeaderValue>,
     gateway: Option<GatewayAuth>,
     claim: Option<HeaderValue>,
+    extra: Vec<(http::header::HeaderName, HeaderValue)>,
 }
 
 impl HeaderInjector {
@@ -445,12 +443,25 @@ impl HeaderInjector {
             .map(HeaderValue::from_str)
             .transpose()
             .map_err(|_| Error::InvalidEndpoint("claim".into()))?;
+        let extra = cfg
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let name = http::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| Error::InvalidEndpoint(format!("header name {name:?}")))?;
+                let mut value = HeaderValue::from_str(value)
+                    .map_err(|_| Error::InvalidEndpoint("header value".into()))?;
+                value.set_sensitive(true);
+                Ok((name, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             authorization,
             env_token_header,
             principal,
             gateway: cfg.gateway.clone(),
             claim,
+            extra,
         })
     }
 
@@ -478,6 +489,9 @@ impl HeaderInjector {
         }
         if let Some(p) = &self.principal {
             headers.insert(metadata::PRINCIPAL_BIN, p.clone());
+        }
+        for (name, value) in &self.extra {
+            headers.insert(name.clone(), value.clone());
         }
         Ok(())
     }
@@ -573,6 +587,7 @@ mod extra_header_tests {
             }),
             connect_timeout: Duration::from_secs(1),
             keepalive: Keepalive::default(),
+            headers: Vec::new(),
         }
     }
 

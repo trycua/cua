@@ -104,12 +104,14 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # keyserver.ubuntu.com, so a keyserver outage cannot break the build.
 # cua-driver's browser_prepare launches /usr/lib/chromium/chromium (a
 # root-owned package payload) with a driver-owned throwaway profile. The
-# managed policy turns off first-run noise, sign-in and password saving.
+# managed policy turns off first-run noise, sign-in and password saving, and
+# the "unsupported command-line flag" bar: the image picks the sandbox flags
+# per runtime (common/desktop/browser-sandbox.sh), not the user.
 # Per-arch pins: the PPA keeps only its newest build per arch, and the
 # arches do not always move together. CHROMIUM_VERSION, when set, wins.
 ARG CHROMIUM_VERSION=
-ARG CHROMIUM_VERSION_AMD64=154.0.8037.92-1xtradeb1.2404.1
-ARG CHROMIUM_VERSION_ARM64=154.0.8037.92-1xtradeb1.2404.1
+ARG CHROMIUM_VERSION_AMD64=155.0.8059.39-1xtradeb1.2404.1
+ARG CHROMIUM_VERSION_ARM64=155.0.8059.39-1xtradeb1.2404.1
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
     gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
@@ -129,7 +131,8 @@ RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtrade
  && mkdir -p /etc/chromium/policies/managed /etc/cua-image \
  && printf '%s\n' '{"BrowserSignin":0,"SyncDisabled":true,"PasswordManagerEnabled":false,' \
       '"PromotionsEnabled":false,"DefaultBrowserSettingEnabled":false,"MetricsReportingEnabled":false,' \
-      '"PrivacySandboxPromptEnabled":false,"TranslateEnabled":false}' \
+      '"PrivacySandboxPromptEnabled":false,"TranslateEnabled":false,' \
+      '"CommandLineFlagSecurityWarningsEnabled":false}' \
       >/etc/chromium/policies/managed/cua.json \
  && python3 -m json.tool /etc/chromium/policies/managed/cua.json >/dev/null \
  && test -x /usr/lib/chromium/chromium \
@@ -197,6 +200,7 @@ COPY linux/files/start-spacesd.sh linux/files/ensure-env-token.sh \
      linux/files/env-token-mode.sh linux/files/start-token-sync.sh \
      linux/files/start-audio.sh linux/files/cua-chromium /opt/cua/bin/
 COPY linux/files/pipewire/ /etc/pipewire/pipewire.conf.d/
+COPY linux/files/chromium.d/cua-sandbox /etc/chromium.d/cua-sandbox
 COPY linux/files/spacesd.healthcheck.sh /opt/cua/healthcheck.d/10-spacesd.sh
 COPY common/desktop/systemd/ linux/files/systemd/ /usr/lib/systemd/system/
 COPY linux/files/udev/ /usr/lib/udev/rules.d/

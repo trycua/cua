@@ -13,13 +13,14 @@ members = [
     "crates/platform-windows",
     "crates/platform-linux",
     "crates/cursor-overlay",
+    "crates/cua-cursor-motion",
     "crates/cursor-theme-cli",
     "crates/pip-preview",
     "crates/cua-perception",
 ]
 
 [workspace.package]
-version = "0.33.0"
+version = "0.35.4"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"

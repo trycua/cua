@@ -53,6 +53,7 @@ pub mod action_target;
 pub mod agent_cursor;
 pub mod authorization;
 pub mod background_input;
+pub mod batch_tools;
 pub mod browser;
 pub mod build_info;
 pub mod capture_mode;
@@ -93,6 +94,8 @@ pub mod recording_loader;
 pub mod recording_render;
 pub mod recording_tools;
 pub mod recording_zoom;
+#[cfg(feature = "script")]
+pub mod script_tool;
 pub mod server;
 pub mod session;
 pub mod session_authorization;
@@ -113,6 +116,7 @@ pub mod video_ffmpeg;
 pub mod walk_budget;
 pub mod window_inspection;
 pub mod window_observation;
+pub mod window_state_view;
 pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};

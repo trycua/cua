@@ -44,7 +44,7 @@ class TestCuaSandboxReleaseWiring(unittest.TestCase):
         self.assertNotIn("          - pypi/sandbox\n", workflow)
         self.assertNotIn('"pypi/sandbox")', workflow)
         self.assertNotIn("id: sandbox_version", workflow)
-        self.assertIn("          - pypi/sandbox-apps\n", workflow)
+        self.assertNotIn("          - pypi/sandbox-apps\n", workflow)
         auto_release = (REPO_ROOT / ".github/workflows/release-on-merge.yml").read_text()
         self.assertNotIn('["libs/python/cua-sandbox/"]', auto_release)
 

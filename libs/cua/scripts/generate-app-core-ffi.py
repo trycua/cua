@@ -50,11 +50,12 @@ TYPES = [
     ("driver_preview.rs", "driver_preview", ["PreviewSegment", "PreviewWindow", "DriverPreview", "DriverFrame"]),
     ("drive_mount_preview.rs", "drive_mount_preview", ["DriveMountPreview", "DriveMountFrame"]),
     ("about.rs", "about", ["UpdateChannel", "AboutInput", "AboutLinkId", "AboutLink", "AboutUpdates", "AboutView", "LaunchInput", "LaunchPlan", "DaemonCheck", "RefreshReport"]),
+    ("agent_keys.rs", "agent_keys", ["AgentKeyInput", "AgentKeysInput", "AgentKeyRow", "AgentKeysView", "AgentKeyFormInput", "AgentKeyFormView", "AgentKeyConfirm"]),
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
     ("window.rs", "window", ["ChromeInput", "MainChrome", "MenuItemId", "MenuItem", "MenuInput"]),
-    ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostActionId", "HostSettingChange", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
+    ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostAccount", "HostAccountStep", "HostActionId", "HostSettingChange", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
     ("installer.rs", "installer", ["InstallMethod", "CliInstallPlan", "CliInstallRequest"]),
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
@@ -64,6 +65,11 @@ TYPES = [
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
+    ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
+    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
+    ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
+    ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
+    ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "RelayUsageView"]),
 ]
 
 # FFI names that read better than the plain prefix.

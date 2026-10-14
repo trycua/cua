@@ -142,11 +142,7 @@ async fn maintenance_loop(shared: Arc<Shared>, mut shutdown: watch::Receiver<boo
             continue;
         }
         let config = cua_disk::CacheConfig::load();
-        let gc = config.auto_gc.then(|| cua_disk::GcOptions {
-            grace: cua_disk::gc::AUTO_GRACE,
-            budget: (config.budget == cua_disk::Budget::Off).then_some(cua_disk::Budget::Off),
-            ..Default::default()
-        });
+        let gc = crate::maintenance::daemon_gc_options(&config);
         let r =
             crate::maintenance::run(vmm.as_ref(), &state, cua_disk::Layout::default(), gc, false)
                 .await;
@@ -381,12 +377,20 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     }
     // Extension tasks (the Cua Spaces build: the persistent-agent
     // supervisor and the Keyvault socket beside `cua.sock`).
+    // Where they put their sockets: beside `cua.sock`, or on Windows (which
+    // has no Unix socket) in the home the discovery file is in.
     #[cfg(feature = "spaces")]
-    for a in shared.runtime.attached_extensions() {
-        tasks.extend(a.daemon_tasks(
-            &shared.runtime,
-            socket_path.as_ref().and_then(|p| p.parent()),
-        ));
+    {
+        let extension_dir = socket_path.as_ref().and_then(|p| p.parent()).or_else(|| {
+            config
+                .discovery_path
+                .as_deref()
+                .and_then(|p| p.parent())
+                .filter(|_| cfg!(windows))
+        });
+        for a in shared.runtime.attached_extensions() {
+            tasks.extend(a.daemon_tasks(&shared.runtime, extension_dir));
+        }
     }
     if let Some(p) = &config.discovery_path {
         Discovery {
@@ -463,10 +467,29 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
 
 fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
     let svc = Svc(shared.clone());
-    let grpc = tonic::service::Routes::new(SandboxServiceServer::new(svc.clone()))
-        .add_service(SpaceServiceServer::new(svc.clone()))
-        .add_service(RuntimeServiceServer::new(svc.clone()))
-        .add_service(DaemonServiceServer::new(svc.clone()));
+    // The clients' limit, not gRPC's 4 MiB default: a tool call can carry
+    // a full-size screenshot or file either way.
+    let limit = cua_spacesd_client::MAX_MESSAGE_BYTES;
+    let grpc = tonic::service::Routes::new(
+        SandboxServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
+        SpaceServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
+        RuntimeServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
+        DaemonServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    );
     #[cfg(feature = "spaces")]
     let grpc = grpc.add_service(
         cua_proto::env::v1::host_spaces_service_server::HostSpacesServiceServer::new(
@@ -626,6 +649,8 @@ impl Svc {
             let spaces = self.rt().spaces();
             let is_space = name.starts_with("space://")
                 || name.starts_with("relay:")
+                || (name.starts_with("direct:")
+                    && matches!(spaces.registry().get(name), Ok(Some(_))))
                 || (self.rt().record(name).await.is_err() && spaces.resolve(name).is_ok());
             if is_space {
                 let space = spaces.space(name).await?;

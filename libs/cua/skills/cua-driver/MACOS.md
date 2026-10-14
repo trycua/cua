@@ -479,11 +479,11 @@ window, and PID-routes its bounded checkbox-pixel fallback. The same control's
 state must verify after mutation; unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click.
 
-Standalone Chromium activates its window when CDP's trusted pointer route is
-used on macOS. The driver therefore returns
-`browser_input_trust_unavailable` before dispatch rather than falsely claiming
-background delivery. Use `input_route:"dom_event"` only when synthetic click
-semantics are acceptable. Embedded Electron has a separately bounded route;
+CDP's trusted pointer route (the `browser_click` and `browser_pointer`
+default) stays in the background on macOS Chrome: it delivers trusted events
+to the bound tab, even an inactive one, without activating or raising the
+browser window. Use `input_route:"dom_event"` only when synthetic events are
+acceptable; controls that check `event.isTrusted` ignore it. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
 
 For a declared session, typed browser click, type, and pointer mutations animate
@@ -512,6 +512,7 @@ starting point for new browser workflows.
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
 | `set_value refused (file_name_needs_rename)`                  | A file's name as Finder lists it: an AXValue write changes only the list, never the file                          | `click` the item, then with Finder frontmost send `press_key` return, `hotkey` cmd+a, `type_text` the full new name, `press_key` return, each with `scope:"desktop"`; re-read to confirm                                            |
+| `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | foreground `click` at the field's centre in screenshot pixels (with its `capture_id`), then `hotkey` cmd+a, `type_text` the full new name with its extension, `press_key` return, each with `delivery_mode:"foreground"`; a changed extension asks for confirmation first; check the folder listing |
 
 ## Example end-to-end task (macOS)
 

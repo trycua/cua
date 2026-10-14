@@ -103,6 +103,20 @@ on:
         description: "Only doctor and attest published disk children, ARCH@sha256:... comma separated (the strict VM doctor, report referrer and ledger entry); pushes no image"
         type: string
         default: ""
+  # cd-images-spacesd-release.yml on every cua-spacesd release. A called
+  # workflow sees the caller's event (workflow_run), so meta treats it like
+  # a dispatch.
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      spacesd_source:
+        type: string
+        default: local
+      spacesd_version:
+        type: string
+        default: latest
 
 concurrency:
   group: cd-image-linux-${{ github.ref }}
@@ -112,6 +126,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -145,7 +162,8 @@ jobs:
           publish=false
           case "$EVENT" in
             push) [[ "$REF" == refs/tags/linux-image-v* ]] && publish=true ;;
-            workflow_dispatch) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
+            # workflow_run: called by cd-images-spacesd-release.yml.
+            workflow_dispatch|workflow_run) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
             # Publishes only the tiers whose content changed (the changes job).
             schedule) publish=true ;;
           esac
@@ -233,7 +251,7 @@ jobs:
           key: cli-${{ matrix.arch }}
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-cli-linux-${{ matrix.arch }}
@@ -571,7 +589,7 @@ jobs:
           if gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n cua-cli-linux-amd64 -D "$RUNNER_TEMP/cli" 2>/dev/null; then
             install -m 0755 "$RUNNER_TEMP/cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release --locked -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            (cd libs/cua && cargo build --release --locked -p cua-cli --features byoc) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           fi
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
         with:
@@ -687,6 +705,8 @@ jobs:
       - run: scripts/images/test-schedule-scripts.sh
       - name: boot-qemu.sh SSH probe retries (fake ssh)
         run: libs/images/common/tests/test-ssh-retry.sh
+      - name: Browser sandbox choice per runtime (stubbed probes)
+        run: libs/images/common/tests/test-browser-sandbox.sh
       - name: Manifest generator, ledger and docs-gate tests
         run: |
           python3 -m unittest discover -s libs/images/common/tools/tests

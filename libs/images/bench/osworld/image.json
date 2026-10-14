@@ -94,7 +94,9 @@
       "audio.uplink",
       "audio.opus",
       "audio.per_app",
-      "teleport.*",
+      "teleport.*"
+    ],
+    "features_not_applicable": [
       "volume.mount"
     ],
     "codecs_required": [],

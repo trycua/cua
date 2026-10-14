@@ -356,7 +356,8 @@ pub fn profile_yaml(arch: &str, cpus: u32, memory_gib: u32) -> String {
          network:\n  address: false\n\
          kubernetes:\n  enabled: false\n\
          forceDiskImage: true\n\
-         docker:\n  default-runtime: runsc\n  runtimes:\n    runsc:\n      path: /usr/local/bin/runsc\n"
+         docker:\n  default-runtime: runsc\n  runtimes:\n    runsc:\n      path: /usr/local/bin/runsc\n      \
+         runtimeArgs:\n        - --allow-suid\n"
     )
 }
 
@@ -931,15 +932,25 @@ mod engine_impl {
     /// runtime only while its VM runs). Never boots or downloads anything:
     /// for views of what is there (disk use, downloaded images).
     pub async fn connect_if_up(cfg: ContainerConfig) -> Option<ContainerRuntime> {
-        match choose(cfg.clone(), LinuxSource::current()).await.ok()? {
-            Choice::System(rt) => Some(*rt),
-            Choice::Builtin(_) if running() => ContainerRuntime::connect(ContainerConfig {
-                endpoint: Some(endpoint()),
-                ..cfg
-            })
+        choose(cfg, LinuxSource::current())
             .await
-            .ok(),
-            Choice::Builtin(_) => None,
+            .ok()?
+            .connect_if_up()
+            .await
+    }
+
+    impl Choice {
+        pub async fn connect_if_up(self) -> Option<ContainerRuntime> {
+            match self {
+                Self::System(rt) => Some(*rt),
+                Self::Builtin(rt) if running() => ContainerRuntime::connect(ContainerConfig {
+                    endpoint: Some(endpoint()),
+                    ..rt.cfg.clone()
+                })
+                .await
+                .ok(),
+                Self::Builtin(_) => None,
+            }
         }
     }
 
@@ -1168,6 +1179,11 @@ mod tests {
         let y = profile_yaml("aarch64", 4, 4);
         assert!(y.contains("default-runtime: runsc"));
         assert!(y.contains("path: /usr/local/bin/runsc"));
+        // Setuid (`sudo`, `fusermount3`) works for the Space user (#4667).
+        assert!(
+            y.contains("      runtimeArgs:\n        - --allow-suid\n"),
+            "{y}"
+        );
         assert!(y.contains("vmType: vz"));
         assert!(y.contains("autoActivate: false"));
         assert!(y.contains("forceDiskImage: true"));

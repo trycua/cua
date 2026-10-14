@@ -11,6 +11,7 @@
     "hostArch": "arm64",
     "storage": {
       "reserveBytes": 5368709120,
+      "linuxRuntimeDownloadBytes": 477884184,
       "lume": {
         "availableBytes": 227633266688,
         "totalBytes": 536870912000,

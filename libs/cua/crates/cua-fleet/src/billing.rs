@@ -8,7 +8,7 @@
 //! open that page; Fleet refuses app tokens on its Stripe session routes
 //! (trycua/cloud#7933).
 
-use crate::{Error, FleetClient, Result, SdkError};
+use crate::{FleetClient, Result};
 use serde::{Deserialize, Serialize};
 
 /// The saved card, as Fleet describes it (never its number).
@@ -88,19 +88,28 @@ impl FleetClient {
         )
     }
 
-    /// The account's billing state. A Fleet without the route (404) or
-    /// with billing off answers [`BillingStatus::disabled`].
+    /// The account's billing state. Fleets is shut down, so this never
+    /// fails: a Fleet without the route (404), one that is gone (410, 5xx)
+    /// or unreachable, or with billing off, answers
+    /// [`BillingStatus::disabled`] and logs why.
     pub async fn billing_status(&self) -> Result<BillingStatus> {
-        match self.raw("GET", self.billing_url("status"), None).await? {
-            (200, body) => serde_json::from_value(body).map_err(|e| {
-                Error::InvalidArgument(format!("unexpected billing status from Fleet: {e}"))
+        match self.raw("GET", self.billing_url("status"), None).await {
+            Ok((200, body)) => serde_json::from_value(body).or_else(|e| {
+                tracing::warn!("billing status unavailable: unexpected Fleet reply: {e}");
+                Ok(BillingStatus::disabled())
             }),
-            (404, _) => Ok(BillingStatus::disabled()),
-            (status, body) => {
-                Err(
-                    SdkError::status("read billing status", status, body.to_string().as_bytes())
-                        .into(),
-                )
+            Ok((404, _)) => Ok(BillingStatus::disabled()),
+            Ok((status, _)) => {
+                tracing::warn!(
+                    "billing status unavailable: Cua Fleets is shut down (HTTP {status}); billing is managed at https://app.cua.ai"
+                );
+                Ok(BillingStatus::disabled())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "billing status unavailable: Cua Fleets is shut down ({e}); billing is managed at https://app.cua.ai"
+                );
+                Ok(BillingStatus::disabled())
             }
         }
     }

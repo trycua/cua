@@ -47,10 +47,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB (download 1.1 GB)",
+          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -103,10 +103,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB (download 1.1 GB)",
+          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -163,10 +163,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB (download 1.1 GB)",
+          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -223,10 +223,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.2 GB",
+          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": null,
+        "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -245,7 +245,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "2 cores",
         "disk": null,
         "fields": [
@@ -279,10 +279,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.2 GB",
+          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": null,
+        "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -339,10 +339,10 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.2 GB",
+          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": null,
+        "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -1191,7 +1191,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1249,7 +1249,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1303,7 +1303,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1361,7 +1361,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.5 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1770,7 +1770,7 @@
           "spacesd": true
         },
         "creating": "Creating macOS Tahoe 26. It appears in the list when it is ready.",
-        "failed": "Could not create the Space: not enough disk space",
+        "failed": "Could not create the Space: Not enough disk space for this Space. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
         "openDesktop": true,
         "summary": [
           "System: macOS Tahoe 26",

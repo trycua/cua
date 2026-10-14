@@ -1,0 +1,21 @@
+{
+  "id": "IR-01",
+  "title": "Create a workspace through a two-step form; a permission prompt appears between the steps",
+  "group": "IR",
+  "category": "interruptions",
+  "ability": "interruption_permission_prompt",
+  "dimension_tags": [
+    "interruption",
+    "modal_sheet",
+    "permission_prompt",
+    "form_fill"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "irmodal"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "Interruptions are simulated inside BenchLab (sheets, a non-activating panel, a WKWebView overlay); none is a real system prompt. Amendment 14."
+}

@@ -12,7 +12,7 @@
   "dependencies": {
     "@trycua/cua-driver": "0.30.2",
     "ai": "7.0.118",
-    "eve": "0.67.2",
+    "eve": "0.69.0",
     "zod": "4.1.12"
   },
   "devDependencies": {

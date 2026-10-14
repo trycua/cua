@@ -113,6 +113,21 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
         rec.push(check, &[&claim]).await;
     }
 
+    for name in &manifest.features_not_applicable {
+        if name.ends_with('*') || manifest.requires(name) {
+            continue;
+        }
+        let id = format!("capabilities.not_applicable.{name}");
+        let claim = format!("feature:{name}");
+        rec.skip(
+            &id,
+            &[&claim],
+            "not_applicable",
+            format!("{name} does not apply to this image"),
+        )
+        .await;
+    }
+
     // Claimed attribute values: the backends the image was built for (for
     // example presence.cursor_shape's hit_test/system/probe).
     for (name, want) in &manifest.feature_attributes {

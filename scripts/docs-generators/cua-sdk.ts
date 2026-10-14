@@ -321,7 +321,8 @@ export const PAGES: PageSpec[] = [
     title: 'Spacesd client',
     description: 'SpacesdClient: the cua-spacesd client for processes, files, the desktop and media in a sandbox.',
     intro:
-      '`sandbox.spacesd()` (or `cua.spacesd(url, token)` for any spacesd) returns a `SpacesdClient`. It picks native gRPC or gRPC-Web, sends the token and chunks transfers. Methods by task: [processes](/cua-sdk/reference/spacesd/shell), [files](/cua-sdk/reference/spacesd/files), [computer](/cua-sdk/reference/spacesd/computer) and [media](/cua-sdk/reference/spacesd/media).',
+      '`sandbox.spacesd()`, `space.spacesd()` (or `cua.spacesd(url, token)` for any spacesd) returns a `SpacesdClient`. It picks native gRPC or gRPC-Web, sends the token and chunks transfers. Methods by task: [processes](/cua-sdk/reference/spacesd/shell), [files](/cua-sdk/reference/spacesd/files), [computer](/cua-sdk/reference/spacesd/computer) and [media](/cua-sdk/reference/spacesd/media).',
+    members: [{ object: 'Space', title: 'From a Space', methods: ['spacesd'] }],
     items: ['SpacesdClient', 'SpacesdCapabilities', 'SpacesdFeature', 'SpacesdHttpRequest', 'SpacesdHttpResponse', 'SpacesdHttpHeader'],
     modules: ['spacesd', 'types'],
     python: [['`cua_sandbox` interfaces', `${PY}/interfaces`]],
@@ -462,7 +463,7 @@ export const PAGES: PageSpec[] = [
     title: 'Space',
     description: 'A connected Space: shell, files, tools, windows and the hotspot.',
     intro:
-      'A `Space` is a connected machine. Every primitive checks the spacesd feature it needs first and fails with `CapabilityMissing` when the Space lacks it. Streams, teleport and agents have their own pages.',
+      'Connected machine primitives; missing spacesd features return `CapabilityMissing`.',
     items: [
       'Space',
       'SpaceBashResult',
@@ -724,7 +725,7 @@ export const PAGES: PageSpec[] = [
     title: 'Spaces app core',
     description: 'The view models the Cua Spaces apps share: Space list, New Space wizard, teleport review, notch and Keyvault.',
     intro:
-      'The Tauri and SwiftUI Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Build your own Spaces UI on it. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
+      'The Cua Spaces apps render the same state from this core, so their behaviour cannot diverge. Each screen is a state record, a pure `*_reduce` function that applies an action or event, and a `*_view` that derives what to draw. The subpages cover one screen each; the shared formatters are on [Window, menu bar and Settings](/cua-sdk/reference/spaces/app-core/window).',
     items: ['cua_spaces_register'],
     modules: ['app_core', 'app_core_types'],
     catalog: true,
@@ -810,6 +811,7 @@ export const PAGES: PageSpec[] = [
       'AppCloudPricing',
       'AppGpuChoice',
       'AppGpuRow',
+      'AppRuntimeSwitch',
     ],
     prefixes: ['AppWizard', 'app_wizard_', 'AppAddress', 'AppStep'],
     spaces: true,
@@ -927,8 +929,8 @@ export const PAGES: PageSpec[] = [
     slug: 'spaces/app-core/experiments',
     title: 'Experiments',
     description: 'Settings > Experiments: the switches that hide Cua Volume, your own cloud and sharing until they are turned on.',
-    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_experiments_choose` applies a switch. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
-    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
+    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_settings_choose_experiment` applies a switch and saves the New UI choice ("Use classic UI"). `app_settings_resolve_new_ui` applies the New UI default for the update channel and version. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
+    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_settings_resolve_new_ui', 'app_settings_first_launch_channel', 'app_settings_choose_experiment', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
     prefixes: ['AppExperiment', 'app_experiments_'],
     spaces: true,
   },
@@ -995,13 +997,14 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
-    slug: 'spaces/app-core/billing',
-    title: 'Cua Cloud billing',
-    description: 'The Billing row in Settings and the out-of-credit notice on a refused cloud Space.',
+    slug: 'spaces/account-app-core',
+    title: 'App core: billing, relay usage and Teams',
+    description: 'The Billing and Relay usage rows in Settings, the out-of-credit and relay allowance notices, and the Teams section.',
     intro:
-      'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it.',
+      'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it. `app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does); `app_relay_usage_view` derives the Settings row and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade. Nothing stops at the limit. `app_teams` turns the account\'s `AppTeamsInput` into the Teams rows of Settings: the signed-in state, each team with its people and the role of each.',
     items: ['AppCreditNotice'],
-    prefixes: ['AppBilling', 'app_billing_'],
+    prefixes: ['AppBilling', 'app_billing_', 'AppRelay', 'app_relay_', 'AppTeam', 'app_teams'],
+    catalog: true,
     spaces: true,
   },
   {
@@ -1016,8 +1019,8 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/window',
     title: 'Window, menu bar and Settings',
-    description: 'The window chrome, a Space\'s toolbar and sections, the menu bar menu, Settings and the coding agents\' rows.',
-    intro: '`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space\'s sections; the agent functions turn `AgentSetup` results into Settings rows. `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.',
+    description: 'The window chrome, a Space\'s toolbar and sections, the menu bar menu and Settings.',
+    intro: '`app_main_chrome`, `app_menu_bar` and `app_settings_page` give the window chrome, the menu bar menu and the Settings page. `app_space_detail_copy` holds the words of a Space\'s sections. The coding agents\' rows of Settings are on [Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys). `app_login_item_launch_plan` decides when the apps turn on launch at login by themselves.',
     items: [
       'app_display_name',
       'app_display_path',
@@ -1039,6 +1042,7 @@ export const PAGES: PageSpec[] = [
       'AppTelemetryInput',
       'app_menu',
       'AppMenuInput',
+      'app_menu_input_from_json',
       'app_openable_count',
     ],
     prefixes: [
@@ -1055,10 +1059,6 @@ export const PAGES: PageSpec[] = [
       'AppSettingsOption',
       'app_settings_page',
       'app_settings_input_',
-      'AppAgentSetup',
-      'AppAgentSettingsRow',
-      'app_agent_setup',
-      'app_agent_settings_',
       'AppLoginItem',
       'app_login_item_',
     ],
@@ -1069,9 +1069,20 @@ export const PAGES: PageSpec[] = [
     title: 'Devices',
     description: 'Settings > Devices: this device\'s enrollment, the account\'s devices, Recent Access, and the enroll and approval sheets.',
     intro:
-      '`app_devices_view` derives the Devices page from `app_devices_input` (a `Devices.snapshot`): this device\'s enrollment, the account\'s devices with their buttons, approval prompts that ask for presence, and Recent Access in words. `app_enroll_reduce` / `app_enroll_view` drive the enroll sheet (sign in again, or a one-time code approved elsewhere); `app_approve_reduce` / `app_approve_view` drive the approval sheet, whose `request` goes to `Devices.approve` after Touch ID or the login password. `app_machine_access_notice` says why a device that is signed in but not enrolled cannot open the account\'s machines, for their greyed-out Connect.',
+      '`app_devices_view` derives the Devices page from `app_devices_input` (a `Devices.snapshot`): this device\'s enrollment, the account\'s devices with their buttons, approval prompts that ask for presence, and Recent Access in words. `app_enroll_reduce` / `app_enroll_view` drive the enroll sheet (sign in again, or a one-time code approved elsewhere); `app_approve_reduce` / `app_approve_view` drive the approval sheet, whose `request` goes to `Devices.approve` after Touch ID or the login password; `app_confirm_presence` asks for that confirmation with the system\'s own prompt (Touch ID or the login password on macOS, Windows Hello, polkit on Linux). `app_machine_access_notice` says why a device that is signed in but not enrolled cannot open the account\'s machines, for their greyed-out Connect.',
     items: ['AppAuditInput', 'AppActivityRow', 'AppBannerTone', 'AppThisDevice', 'AppEnrollmentKind', 'AppApprovalPrompt', 'AppMachineInput', 'AppUnconfirmedMachine', 'app_machine_access_notice', 'AppMachineAccessNotice'],
     prefixes: ['AppDevice', 'app_devices_', 'AppEnroll', 'app_enroll_', 'AppApprove', 'app_approve_'],
+    modules: ['presence'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/agent-keys',
+    title: 'Settings, Agents',
+    description: 'Settings > Agents: the coding agents\' rows, the provider keys saved in the keychain, and the add or replace sheet.',
+    intro:
+      'The `app_agent_setup*` and `app_agent_settings_*` functions turn `AgentSetup` results into the coding agents\' rows. `app_agent_keys_view` derives the key rows from `app_agent_keys_input_from_json` (the daemon\'s `agent_keys.list` answer: each saved key\'s provider, the variable a run gets it as, its last four characters and when it was added). `app_agent_key_form` drives the add or replace sheet, with `app_agent_key_name_problem` for an Other key\'s variable name; `app_agent_key_remove_confirm` is the confirmation before a key is removed.',
+    items: [],
+    prefixes: ['AppAgentSetup', 'AppAgentSettingsRow', 'app_agent_setup', 'app_agent_settings_', 'AppAgentKey', 'app_agent_key'],
     spaces: true,
   },
   {
@@ -1082,6 +1093,26 @@ export const PAGES: PageSpec[] = [
       '`app_share_view` derives the Share sheet from `AppShareInput` (the Space and its `Space.shares`): one row per person with a role menu, the email field and why sharing is unavailable. `app_share_reduce` applies an action; its `request` goes to `Space.share` or `Space.unshare`, which ask for presence first.',
     items: [],
     prefixes: ['AppShare', 'app_share_', 'AppRoleOption'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/machines-app-core',
+    title: 'Machines page',
+    description: 'The Machines page\'s rows: this machine, your machines and your devices, each computer once.',
+    intro:
+      '`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.',
+    items: ['AppDeviceIn'],
+    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'app_machines_'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-checklist-palette',
+    title: 'Getting started and the command palette',
+    description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
+    intro:
+      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. The host app keeps the one `AppChecklistState`. `app_checklist_observe_from` reads what the app shows (the [Machines page](/cua-sdk/reference/spaces/machines-app-core) rows, the Spaces, the agents) as the same `Observe` action in every UI. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, what the app shows now, or progress merged from another copy) and returns the new state with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
+    items: [],
+    prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
     spaces: true,
   },
   {
@@ -2048,9 +2079,10 @@ function itemTable(items: Array<Item & { href: string }>, page: string): string[
 }
 
 /**
- * A catalog page's compact index: one line of item links per subpage (the
- * summaries live on each item's own section), so large catalogs stay under
- * the page budget.
+ * A catalog page's compact index: one line per subpage, its title linking to
+ * it, then the names of its items (each one's section is on that page, under
+ * its name), so large catalogs stay under the page budget. The catalog page's
+ * own items keep their anchor links.
  */
 function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: RenderContext): string[] {
   const groups = new Map<string, Array<Item & { href: string }>>();
@@ -2062,7 +2094,12 @@ function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: R
   const out: string[] = [];
   for (const [target, group] of groups) {
     const spec = rc.pages.find((p) => pageRoute(p.slug) === target || target.endsWith(`/${p.slug}`));
-    out.push(`**${spec ? spec.title : target}**: ${group.map((i) => `[\`${i.name}\`](${relLink(i.href, page)})`).join(', ')}`, '');
+    const title = spec ? spec.title : target;
+    if (target === pageRoute(page)) {
+      out.push(`**${title}**: ${group.map((i) => `[\`${i.name}\`](${relLink(i.href, page)})`).join(', ')}`, '');
+    } else {
+      out.push(`**[${title}](${target})**: ${group.map((i) => `\`${i.name}\``).join(', ')}`, '');
+    }
   }
   return out;
 }
@@ -2082,7 +2119,7 @@ function renderObjectPage(p: Placed, rc: RenderContext, version: string): string
   for (const item of p.items) body.push(...renderItem(item, rc));
   if (spec.catalog) {
     const items = catalogItems(spec.slug, rc);
-    body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page. Methods are listed on their object.`, '');
+    body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.`, '');
     body.push(...catalogIndex(items, spec.slug, rc), '');
   }
   const needsCallout = body.some((l) => l.includes('<Callout'));

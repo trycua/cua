@@ -1,0 +1,6 @@
+# Ruff settings for the Cua Driver Bench harness. Inherits the repository settings.
+# The task pack is excluded: its files are pinned by digest (task manifests, evaluator
+# oracles and the harness pins), so they are kept byte for byte as released. So is the helper arm's adapter, whose
+# sha256 is pinned in pins.json (claude_cu_helper.adapter_sha256) and checked before every helper run.
+extend = "../../pyproject.toml"
+extend-exclude = ["taskpack", "automated-eval/macos_bench/tools/claude_cu_helper/cu_helper_mcp.py"]

@@ -609,7 +609,7 @@ const SEND_FILE_INSTRUCTIONS: &str = "The same transfer the Cua Spaces pop-out's
 
 const LIST_TOOLS_INSTRUCTIONS: &str = "Lists the tools of an MCP service INSIDE the Space. `service` is any service the Space declares (an MCP server the image runs, reached over streamable HTTP; no spacesd needed) or `driver`, the spacesd's own cua-driver registry (screenshot, click, type, launch apps, accessibility, ...). The default is `driver`, or the only declared service of a Space without spacesd. With no `name`, returns a scannable overview; pass name=<substring> for full input schemas. Then invoke them with call_tool. The reply names every service the Space exposes.";
 
-const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: env_from_host names provider key variables from this server's environment; host credential files are never copied.";
+const AGENT_START_INSTRUCTIONS: &str = "Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Agents) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.";
 
 const AGENT_EVENTS_INSTRUCTIONS: &str = "Normalized events (install, session, turn_started, message, thought, tool_call, tool_update, plan, usage, permission, turn_ended, error, exited, ...) after `cursor`. Pass the returned cursor back to continue; caught_up=true means nothing more is written yet. The same kinds for every harness.";
 
@@ -993,8 +993,8 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::SpaceOnly>(),
         Spec {
             category: Category::Agents,
-            result: "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
-            instructions: "Every harness: readiness, what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
+            result: "JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Agents) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.",
+            instructions: "Every harness: readiness (including whether a credential is available, with a hint when not), what it installs, which key variables it reads, which endpoint wire formats it takes, and its known limits; plus the event kinds and statuses.",
             capabilities: &["agent.capabilities"],
             sdk_symbol: "space.agents.harnessCapabilities()",
             rust_symbol: "agents::capabilities",
@@ -1457,7 +1457,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::DriveStorageSet>(),
         Spec {
             category: Category::Volume,
-            result: "JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`.",
+            result: "JSON: `enabled`, `state` (`off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`), `method` (`nfs`, `fuse`, `fskit`, `none`), `path`, `volume_name`, `detail`, `settings_url`; plus the Spaces' own: `volumes` (mounted in a Space: `space`, `mount_path`, `backend`, `principal`) and `volume_errors` (each `space` and `error`: why a Space has no Cua Volume, for example no /dev/fuse in a container on runc).",
             errors: &["forbidden"],
             instructions: "Only for the user. The drive can appear as a volume (Finder on macOS, a FUSE mount on Linux); it is off until the user turns it on with volume_mount.",
             capabilities: &["drive.admin"],

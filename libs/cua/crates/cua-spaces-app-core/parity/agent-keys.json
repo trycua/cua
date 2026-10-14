@@ -1,0 +1,52 @@
+{
+  "name": "agent-keys",
+  "about": "Settings, Agents: the provider keys agents in your Spaces get. Anthropic and OpenAI always have a row (Not set until a key is saved; then its last four characters, when it was added, Replace and Remove); any other key has a row by its variable name. A build that can't keep keys, or a daemon that can't be read, says why instead of offering the buttons. Then the add or replace sheet for each kind of key (a new Other key asks for the variable and refuses names a shell or loader reads), the question before removing a key, and which variable names can hold a key.",
+  "sections": [
+    { "step": "nothing saved", "input": { "keys": [] } },
+    {
+      "step": "an Anthropic key saved",
+      "input": { "keys": [{ "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "0000", "addedMs": 1790000000000 }] }
+    },
+    {
+      "step": "both providers, an Other key and a short key",
+      "input": {
+        "keys": [
+          { "provider": "other", "env": "MISTRAL_API_KEY", "last4": "9z9z", "addedMs": 1790000200000 },
+          { "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "0000", "addedMs": 1790000000000 },
+          { "provider": "openai", "env": "OPENAI_API_KEY", "last4": "", "addedMs": 1790000100000 }
+        ]
+      }
+    },
+    {
+      "step": "this build can't keep keys",
+      "input": {
+        "keys": [],
+        "unavailable": "this build of cua keeps credentials in a file, and agent keys are only kept in the Keychain (a Cua-signed build of Cua Spaces does). Set the key for the Cua daemon instead"
+      }
+    },
+    { "step": "the daemon can't be read", "input": { "keys": [], "error": "The Cua daemon isn't running." } }
+  ],
+  "saved": {
+    "keys": [
+      { "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "0000", "addedMs": 1790000000000 },
+      { "provider": "other", "env": "MISTRAL_API_KEY", "last4": "9z9z", "addedMs": 1790000200000 }
+    ]
+  },
+  "forms": [
+    { "step": "add OpenAI, nothing typed", "form": { "provider": "openai" } },
+    { "step": "add OpenAI, a key typed", "form": { "provider": "openai", "hasValue": true } },
+    { "step": "replace Anthropic", "form": { "provider": "anthropic", "hasValue": true } },
+    { "step": "add another key, nothing typed", "form": { "provider": "other" } },
+    { "step": "add another key, a name a loader reads", "form": { "provider": "other", "name": "DYLD_INSERT_LIBRARIES", "hasValue": true } },
+    { "step": "add another key, not a variable name", "form": { "provider": "other", "name": "my-key", "hasValue": true } },
+    { "step": "add another key, a good name", "form": { "provider": "other", "name": "GEMINI_API_KEY", "hasValue": true } },
+    { "step": "add another key, a name already saved", "form": { "provider": "other", "name": "MISTRAL_API_KEY", "hasValue": true } },
+    { "step": "replace an Other key", "form": { "provider": "other", "env": "MISTRAL_API_KEY", "hasValue": true } }
+  ],
+  "removes": [
+    { "step": "remove Anthropic", "env": "ANTHROPIC_API_KEY" },
+    { "step": "remove an Other key", "env": "MISTRAL_API_KEY" },
+    { "step": "remove a key that isn't saved", "env": "OPENAI_API_KEY" }
+  ],
+  "names": ["GEMINI_API_KEY", "groq_key", "", "1KEY", "MY KEY", "PATH", "home", "LD_PRELOAD", "CUA_HOME", "NODE_OPTIONS", "BASH_FUNC_x"]
+}

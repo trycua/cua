@@ -9,7 +9,7 @@
  */
 
 /** Operating system a Space runs. */
-export type SpaceOs = "macos" | "windows" | "linux";
+export type SpaceOs = "macos" | "windows" | "linux" | "unknown";
 
 /**
  * Lifecycle status of a Space.

@@ -96,10 +96,10 @@
     },
     {
       "frame": {
-        "canPlan": true,
-        "entry": "slack",
+        "canPlan": false,
+        "entry": null,
         "error": null,
-        "move": "app_with_state",
+        "move": null,
         "permille": 0,
         "planSensitive": [],
         "report": null,

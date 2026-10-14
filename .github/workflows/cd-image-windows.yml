@@ -31,6 +31,18 @@ on:
       mem:
         type: string
         default: "4G"
+  # cd-images-spacesd-release.yml (stage=publish) on every cua-spacesd release.
+  workflow_call:
+    inputs:
+      stage:
+        type: string
+        default: build
+      base:
+        type: string
+        default: "ghcr.io/trycua/windows@sha256:a2966dac6c68a60f67addcc2c23db40ca1048a37616b1d6d39abc25dab9ce1f4"
+      mem:
+        type: string
+        default: "4G"
 
 permissions:
   contents: read
@@ -40,6 +52,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   CARGO_BUILD_JOBS: "4"
@@ -65,10 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -136,7 +148,7 @@ jobs:
           key: cli-amd64
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-cli-linux-amd64

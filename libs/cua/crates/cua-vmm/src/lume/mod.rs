@@ -1096,6 +1096,64 @@ pub async fn apply_macos_env(
     })
 }
 
+/// How long `lume get` may take when no `lume serve` answers.
+const CLI_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// A VM's status from `lume get <name> --format json`, for when `lume serve`
+/// is not running.
+async fn cli_status(bin: &std::path::Path, name: &str) -> Result<Status> {
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.args(["get", name, "--format", "json"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(CLI_STATUS_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| VmmError::Timeout {
+            name: name.to_string(),
+            secs: CLI_STATUS_TIMEOUT.as_secs(),
+            detail: format!("lume get {name}"),
+        })??;
+    parse_cli_get(
+        name,
+        out.status.success(),
+        out.status.code(),
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+/// The status in `lume get --format json` output (a one-element array, or
+/// an object), or not found when Lume says it has no such VM.
+fn parse_cli_get(
+    name: &str,
+    success: bool,
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<Status> {
+    if !success {
+        if format!("{stdout}\n{stderr}").contains("not found") {
+            return Err(VmmError::NotFound(name.into()));
+        }
+        return Err(VmmError::Command {
+            cmd: format!("lume get {name}"),
+            code,
+            stderr: crate::exec::tail(stderr, 2000),
+        });
+    }
+    let v: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| VmmError::other(format!("lume get {name}: unreadable output: {e}")))?;
+    let vm = match &v {
+        serde_json::Value::Array(a) => a.iter().find(|vm| vm["name"] == name).or(a.first()),
+        o => Some(o),
+    };
+    vm.and_then(|vm| vm["status"].as_str())
+        .map(map_status)
+        .ok_or_else(|| VmmError::other(format!("lume get {name}: no status in its output")))
+}
+
 fn map_status(s: &str) -> Status {
     match s {
         "running" => Status::Running,
@@ -1539,12 +1597,19 @@ impl Runtime for LumeRuntime {
     }
 
     async fn status(&self, name: &str) -> Result<Status> {
-        let vm = self
-            .client
-            .get(name)
-            .await?
-            .ok_or_else(|| VmmError::NotFound(name.into()))?;
-        Ok(map_status(&vm.status))
+        match self.client.get(name).await {
+            Ok(Some(vm)) => Ok(map_status(&vm.status)),
+            Ok(None) => Err(VmmError::NotFound(name.into())),
+            // No `lume serve` answers (after a reboot it is not running until
+            // something starts it). The `lume` CLI reads the VM's state from
+            // its directory without a server, so a status check does not have
+            // to start one.
+            Err(e @ VmmError::Missing { .. }) => match lume_bin() {
+                Some(bin) => cli_status(&bin, name).await,
+                None => Err(e),
+            },
+            Err(e) => Err(e),
+        }
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
@@ -1575,6 +1640,10 @@ impl Runtime for LumeRuntime {
     }
 
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {
+        // As in `delete`: a `lume serve` that exited (a crash, an update,
+        // `lume stop` on a VM it hosted) is started again rather than leave a
+        // running Space that cannot be opened.
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)
@@ -1588,6 +1657,7 @@ impl Runtime for LumeRuntime {
     /// Linux disk VMs use the SSH endpoint from their spec, so callers should
     /// build an [`crate::SshExec`] from `Instance::endpoints.ssh`.
     async fn guest_exec(&self, name: &str) -> Result<Option<Arc<dyn GuestExec>>> {
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)
@@ -1608,6 +1678,48 @@ impl Runtime for LumeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_get_reads_the_status_lume_reports() {
+        let stopped = r#"[{"name":"cua-box","status":"stopped","os":"macOS"}]"#;
+        assert_eq!(
+            parse_cli_get("cua-box", true, Some(0), stopped, "").unwrap(),
+            Status::Stopped
+        );
+        let running = r#"{"name":"cua-box","status":"running"}"#;
+        assert_eq!(
+            parse_cli_get("cua-box", true, Some(0), running, "").unwrap(),
+            Status::Running
+        );
+        let gone = "Error: Virtual machine not found: cua-box";
+        assert!(matches!(
+            parse_cli_get("cua-box", false, Some(1), gone, ""),
+            Err(VmmError::NotFound(_))
+        ));
+        assert!(matches!(
+            parse_cli_get("cua-box", false, Some(1), "", "permission denied"),
+            Err(VmmError::Command { .. })
+        ));
+        assert!(parse_cli_get("cua-box", true, Some(0), "[]", "").is_err());
+    }
+
+    /// A VM stopped by a reboot, asked through the `lume` CLI (a stand-in
+    /// script) because no `lume serve` runs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cli_status_runs_lume_get() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("lume");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\n[ \"$1 $2 $3 $4\" = 'get cua-box --format json' ] || exit 2\n\
+             echo '[{\"name\":\"cua-box\",\"status\":\"stopped\"}]'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(cli_status(&bin, "cua-box").await.unwrap(), Status::Stopped);
+    }
 
     #[test]
     fn base_names_match_the_python_runtime() {

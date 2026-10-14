@@ -475,6 +475,7 @@ mod tests {
                 email: Some("ada@example.com".into()),
                 name: None,
                 role: "owner".into(),
+                ..Default::default()
             }),
             ..Default::default()
         });
@@ -513,6 +514,7 @@ mod tests {
                     email: Some("ada@example.com".into()),
                     name: Some(name.into()),
                     role: "owner".into(),
+                    ..Default::default()
                 }),
                 ..Default::default()
             });

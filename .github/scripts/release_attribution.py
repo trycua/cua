@@ -890,6 +890,49 @@ def asset_checksums(asset_dir: Path | None) -> list[dict[str, Any]]:
     return assets
 
 
+def merging_maintainer_squash_coauthor(
+    pull: Mapping[str, Any],
+    name: str,
+    github: GitHubClient,
+    repository: str,
+    internal_handles: set[str],
+) -> str | None:
+    """The internal maintainer behind a GitHub-generated squash co-author trailer.
+
+    When a maintainer pushes commits onto someone else's pull request and then
+    squash-merges it, GitHub writes ``Co-authored-by: <commit author name>
+    <account email>`` using that account's own (often private) email, which no
+    commit in the pull request carries. Such a trailer resolves to the merging
+    account only when every one of these holds:
+
+    - that account merged the pull request;
+    - it is listed in ``internalHandles`` (so no external contributor's credit
+      can be claimed or moved this way); and
+    - one of the pull request's commits is linked by GitHub to that account and
+      its git author name is exactly the trailer's name.
+
+    Anything else stays unresolved and fails closed.
+    """
+    number = int(pull.get("number") or 0)
+    if not number:
+        return None
+    merged_by = pull.get("merged_by")
+    if not merged_by:
+        merged_by = github.pull(repository, number).get("merged_by")
+    merger = str((merged_by or {}).get("login") or "").strip()
+    if not merger or merger.lower() not in internal_handles:
+        return None
+    wanted = name.strip().lower()
+    if not wanted:
+        return None
+    for item in github.pull_commits(repository, number):
+        linked = str((item.get("author") or {}).get("login") or "").strip()
+        author_name = str(((item.get("commit") or {}).get("author") or {}).get("name") or "")
+        if linked.lower() == merger.lower() and author_name.strip().lower() == wanted:
+            return merger
+    return None
+
+
 def _change_contributors(
     pull: Mapping[str, Any],
     commit: CommitRecord,
@@ -929,6 +972,10 @@ def _change_contributors(
             continue
         identity = f"{match.group('name').strip()} <{email}>".lower()
         login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
+        if not login:
+            login = merging_maintainer_squash_coauthor(
+                pull, match.group("name"), github, repository, internal
+            )
         if not login:
             raise ReleaseError(
                 f"commit {commit.sha} has unresolved human coauthor {email}; "

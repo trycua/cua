@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cua Driver · Cursor motion lab</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./lab.css" />
+  </head>
+  <body>
+    <header class="bar" id="bar">
+      <a class="brand" href="#/">
+        <span class="brand-wordmark">cua</span>
+        <span class="brand-surface">Driver · Cursor motion lab</span>
+      </a>
+      <nav class="tabs">
+        <a href="#/" data-route="gallery">Gallery</a>
+        <a href="#/compare" data-route="compare">Compare picked <span id="pick-count"></span></a>
+        <a href="#/sheet" data-route="sheet">Contact sheet</a>
+      </nav>
+      <div class="controls">
+        <label
+          >Set
+          <select id="set"></select>
+        </label>
+        <label
+          >Scene
+          <select id="scene"></select>
+        </label>
+        <label
+          >Timing
+          <select id="timing">
+            <option value="native">Native</option>
+            <option value="fitts">Fitts (distance-aware)</option>
+            <option value="fixed">Fixed 1.43 s (Codex-like)</option>
+          </select>
+        </label>
+        <label class="speed"
+          >Speed
+          <input id="speed" type="range" min="0.25" max="2" step="0.05" value="1" />
+          <output id="speed-out">1.00x</output>
+        </label>
+        <label class="check"><input id="show-path" type="checkbox" /> Path</label>
+        <button id="shuffle" type="button" title="New random seed">Shuffle seed</button>
+        <button id="replay" type="button">Replay</button>
+      </div>
+    </header>
+    <main id="view"></main>
+    <script type="module" src="./lab.js"></script>
+  </body>
+</html>

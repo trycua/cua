@@ -81,23 +81,34 @@ fn main() {
         r#"{"method":"call","name":"set_agent_cursor_enabled","args":{"enabled":true}}"#,
     );
 
-    // 4. set_agent_cursor_motion — tune knobs.
+    // 4. set_agent_cursor_motion: tune knobs, style, timing and effects.
     let r4 = req(
         &mut pipe,
-        r#"{"method":"call","name":"set_agent_cursor_motion","args":{"start_handle":0.4,"arc_size":0.3,"spring":0.8,"glide_duration_ms":500}}"#,
+        r#"{"method":"call","name":"set_agent_cursor_motion","args":{"session":"parity","start_handle":0.4,"arc_size":0.3,"spring":0.8,"glide_duration_ms":500,"style":"dc-comet-swoop","timing":"fixed","effects":{"trail":false}}}"#,
     );
     let v4: serde_json::Value = serde_json::from_str(r4.trim()).unwrap();
-    let t4 = extract_text(&v4);
-    println!("Motion resp: {t4:?}");
-    assert!(
-        t4.starts_with("✅ cursor motion: startHandle=0.4 endHandle=")
-            && t4.contains("arcSize=0.3")
-            && t4.contains("spring=0.8")
-            && t4.contains("glideDurationMs=500"),
-        "Motion text doesn't match Swift format: {t4:?}"
-    );
+    println!("Motion resp: {:?}", extract_text(&v4));
+    let motion = v4
+        .pointer("/result/structuredContent/motion")
+        .expect("structuredContent.motion");
+    assert_eq!(motion["start_handle"], 0.4);
+    assert_eq!(motion["arc_size"], 0.3);
+    assert_eq!(motion["spring"], 0.8);
+    assert_eq!(motion["glide_duration_ms"], 500.0);
+    assert_eq!(motion["style"], "comet_swoop");
+    assert_eq!(motion["timing"], "fixed");
+    assert_eq!(motion["effects"]["trail"], false);
+    assert!(motion["effects"]["ripple"].is_boolean());
 
-    println!("\n✅ PASS: set_agent_cursor_enabled + set_agent_cursor_motion match Swift");
+    // 5. An unknown style is a tool error.
+    let r5 = req(
+        &mut pipe,
+        r#"{"method":"call","name":"set_agent_cursor_motion","args":{"session":"parity","style":"zigzag"}}"#,
+    );
+    let e5 = extract_text(&serde_json::from_str(r5.trim()).unwrap());
+    assert!(e5.contains("zigzag"), "Unknown-style error wrong: {e5:?}");
+
+    println!("\n✅ PASS: set_agent_cursor_enabled + set_agent_cursor_motion");
 }
 
 #[cfg(not(target_os = "windows"))]

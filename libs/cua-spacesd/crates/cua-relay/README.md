@@ -49,6 +49,29 @@ unaffected (no relay in the path). See `cua-machine-seal` and
 `cua_teleport::send`/`cua_spaces_ext::daemon::keyvault` for the current
 state of this work.
 
+## Hosted-machine proxy transport
+
+The host join uses `HTTPS_PROXY` for `wss`/`https` relay URLs and `HTTP_PROXY`
+for `ws`/`http`, with `ALL_PROXY` as fallback. Each uppercase variable takes
+precedence over its lowercase spelling, including when empty; an empty
+scheme-specific value still permits `ALL_PROXY`. `NO_PROXY`/`no_proxy` uses
+hyper-util's domain, IP and CIDR matching, without resolving names for CIDRs.
+There is no automatic localhost bypass. Bypass is evaluated before validating
+the selected proxy. These settings must be inherited by the join process.
+
+This host transport supports unauthenticated HTTP proxies returning status 200
+to CONNECT. HTTPS/SOCKS proxies, proxy URL credentials, paths and queries are
+rejected. Proxy use in a CGI environment (`REQUEST_METHOD` present) is rejected.
+A selected proxy failure never falls back to a direct connection. Native origin
+TLS verification is unchanged, including platform trust configuration such as
+`SSL_CERT_FILE` on OpenSSL platforms. HTTP CONNECT itself is not encrypted;
+use a `wss` relay URL for origin encryption. A `ws` origin remains plaintext
+inside the tunnel. Controller/SDK proxy support is separate from this host path.
+
+The existing 20-second connection deadline and reconnect backoff also cover
+proxy dialing and CONNECT. Diagnostics report the failed stage or HTTP status
+without printing proxy credentials, relay URL queries or response bodies.
+
 ## How it works
 
 ```text

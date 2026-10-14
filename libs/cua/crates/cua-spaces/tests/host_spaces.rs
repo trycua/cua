@@ -368,6 +368,36 @@ async fn the_host_creates_attaches_lists_and_deletes_with_an_audit() {
     assert_eq!(actions[3].1, "<bob@example.com> (bob)");
 }
 
+/// A Space this machine provides is listed once, as its local Space: its
+/// relay machine (it joined the relay as its own) is not listed again under
+/// the host (CUA-1527). Another device of the account still sees the relay one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_provided_space_is_listed_once_on_the_host_that_provides_it() {
+    let f = fixture(HostProfile::Spare).await;
+    let attach = f.register("ada-token", "space-ada00001").await;
+    let space = f.create(&ada(), "linux", attach).await.unwrap();
+    f.spaces.set_relay(Some(cua_spaces::RelayAccount::new(
+        &f.relay.url,
+        Arc::new(StaticToken("ada-token".into())),
+    )));
+    let listed = f.spaces.list_all().await.unwrap();
+    let ids: Vec<&str> = listed.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&space.local_space.as_str()), "{ids:?}");
+    assert!(
+        !ids.contains(&"relay:space-ada00001"),
+        "the same Space is not listed twice: {ids:?}"
+    );
+
+    // Another device of the account has no local copy: it lists the relay one.
+    let (_host, other, _dir) = client_fixture(&f).await;
+    let theirs = other.list_all().await.unwrap();
+    assert!(
+        theirs.iter().any(|s| s.id == "relay:space-ada00001"),
+        "{:?}",
+        theirs.iter().map(|s| &s.id).collect::<Vec<_>>()
+    );
+}
+
 /// An image whose cua-spacesd predates relay_attach: the create fails
 /// saying the image is too old to be reached from other devices and needs
 /// republishing, and leaves nothing behind.
@@ -1176,6 +1206,23 @@ async fn a_host_that_stopped_sharing_says_so_and_lists_its_state() {
     let (host, spaces, _other) = client_fixture(&f).await;
     let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
     relay.stop_sharing("ada-token", &host).await.unwrap();
+
+    // "Run on" lists it as the Machines page does (connected) and says it
+    // is not sharing, instead of calling it offline.
+    let hosts = spaces.hosts().await.unwrap();
+    let listed = hosts
+        .iter()
+        .find(|h| h.name == "Mac mini (spare)")
+        .expect("still listed");
+    assert!(listed.online, "the relay sees it connected: {listed:?}");
+    assert!(
+        listed
+            .limits
+            .iter()
+            .any(|l| l.resource == cua_spaces::host_spaces::STOPPED_SHARING
+                && l.reason.contains("stopped sharing: ask its owner")),
+        "{listed:?}"
+    );
 
     let e = spaces
         .create(on_host("Mac mini (spare)"))

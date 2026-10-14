@@ -12,6 +12,9 @@ from typing import Sequence
 from release_reference_docs import reference_paths
 
 BODY_MARKER = r"Documented against Lume \*\*\S+\*\*\."
+# The CLI-shape oracle the generator writes next to the pages; it records
+# the documented version too.
+CLI_SPEC = "scripts/docs-generators/cli-specs/lume.json"
 
 
 def lume_reference_paths(root: Path) -> tuple[str, ...]:
@@ -36,6 +39,10 @@ def sync_lume_release_docs(root: Path) -> None:
                 content, BODY_MARKER, f"Documented against Lume **{version}**.", path
             )
         path.write_text(content)
+    spec = root / CLI_SPEC
+    if spec.exists():
+        content = replace_once(spec.read_text(), r'^ "version": "[^"]*"$', f' "version": "{version}"', spec)
+        spec.write_text(content)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

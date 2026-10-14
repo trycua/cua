@@ -228,6 +228,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = home
         env["CUA_HOME"] = home
+        env["CUA_DAEMON_NO_RELAY"] = "1"
         env["CUA_SPACES_TELEPORT_HOME"] = fx.fields["teleport_host_home"]
         env["CUA_SPACES_AGENT_CREDENTIALS_HOME"] = "none"
         daemon.environment = env

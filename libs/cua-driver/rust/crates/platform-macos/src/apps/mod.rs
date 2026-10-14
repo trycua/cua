@@ -972,6 +972,7 @@ pub fn frontmost_pid() -> Option<i32> {
 /// Used as the belt-and-braces step in `LaunchAppTool` when the target
 /// has self-activated despite the focus-steal observer.
 pub fn activate_pid(pid: i32) -> bool {
+    crate::window_change_detector::end_tail();
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     unsafe {
         match NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {

@@ -988,6 +988,36 @@ pub async fn devices_confirm_machine(state: State<'_, AppState>, id: String) -> 
     state.0.devices()?.confirm_machine(&id).await
 }
 
+/// Makes a one-time link, QR code and install commands that add another
+/// computer to the account (or to `team`): "Add a machine".
+#[tauri::command]
+pub async fn devices_create_pairing_code(
+    state: State<'_, AppState>,
+    team: Option<String>,
+) -> CmdResult<crate::devices::PairingCodeView> {
+    state.0.devices()?.create_pairing_code(team).await
+}
+
+/// The account's Teams, for "Add a machine" and "Share".
+#[tauri::command]
+pub async fn teams_list(state: State<'_, AppState>) -> CmdResult<crate::devices::TeamsListView> {
+    state.0.devices()?.teams().await
+}
+
+/// The account's pairing codes, newest first (without the codes).
+#[tauri::command]
+pub async fn devices_pairing_codes(
+    state: State<'_, AppState>,
+) -> CmdResult<Vec<crate::devices::PairingCodeView>> {
+    state.0.devices()?.pairing_codes().await
+}
+
+/// Revokes an unused pairing code.
+#[tauri::command]
+pub async fn devices_revoke_pairing_code(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    state.0.devices()?.revoke_pairing_code(&id).await
+}
+
 /// Posts a system notification (a device asks for approval).
 #[tauri::command]
 pub fn devices_notify(app: AppHandle, title: String, body: String) -> CmdResult<()> {

@@ -17,14 +17,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
@@ -48,14 +48,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
@@ -87,14 +87,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Sharing · 2 connected"
@@ -123,14 +123,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Host service stopped"
@@ -142,7 +142,7 @@
         "emptyText": null,
         "sections": [
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac"
+          "<os-linux> aurora | Running | This Mac"
         ],
         "selectedId": "this-mac",
         "thisMachine": null
@@ -180,7 +180,7 @@
       "frame": {
         "actions": [],
         "canStream": false,
-        "confirm": "Delete This machine? | Its sandbox is deleted. | Delete Space / Keep",
+        "confirm": "Delete This machine? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: This Mac",
           "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -203,7 +203,7 @@
           "open: Open [-] ?Open the desktop in its own window (primary)"
         ],
         "canStream": true,
-        "confirm": "Delete Research Box? | Delete Permanently deletes it and everything Cua created for it in AWS · us-west-2. Remove from List keeps it running there. | Delete Permanently / Remove from List / Cancel",
+        "confirm": "Delete research-box? | Delete Permanently deletes it and everything Cua created for it in AWS · us-west-2. Remove from List keeps it running there. | Delete Permanently / Remove from List / Cancel",
         "facts": [
           "Status: Running",
           "Location: AWS · us-west-2",
@@ -217,7 +217,7 @@
           "Agents",
           "Teleport"
         ],
-        "title": "Research Box"
+        "title": "research-box"
       }
     },
     {
@@ -231,9 +231,9 @@
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete Their Box? | It runs in Google Cloud · us-central1 and was created on another device. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another device: delete it there, or remove it from this list.) / Remove from List / Cancel",
+        "confirm": "Delete their-box? | It runs in Google Cloud · us-central1 and was created on another device. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another device: delete it there, or remove it from this list.) / Remove from List / Cancel",
         "facts": [
-          "Status: offline",
+          "Status: Unreachable ?offline",
           "Location: Google Cloud · us-central1",
           "Identifier: relay:cloud-0000000000000e01 [copy relay:cloud-0000000000000e01 doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Linux"
@@ -241,7 +241,7 @@
         "isHost": false,
         "previewText": "Not reachable",
         "sections": [],
-        "title": "Their Box"
+        "title": "their-box"
       }
     },
     {
@@ -255,7 +255,7 @@
           "open: Open [-] ?Open the desktop in its own window (primary)"
         ],
         "canStream": true,
-        "confirm": "Delete Aurora? | Its sandbox is deleted. | Delete Space / Keep",
+        "confirm": "Delete aurora? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: Running",
           "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -268,7 +268,7 @@
           "Agents",
           "Teleport"
         ],
-        "title": "Aurora"
+        "title": "aurora"
       }
     },
     {
@@ -282,16 +282,16 @@
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete Builder? | Its sandbox is deleted. | Delete Space / Keep",
+        "confirm": "Delete builder? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
-          "Status: timed out",
+          "Status: Unreachable ?timed out",
           "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Linux"
         ],
         "isHost": false,
         "previewText": "Not reachable",
         "sections": [],
-        "title": "Builder"
+        "title": "builder"
       }
     },
     {
@@ -581,7 +581,7 @@
         "account: Not signed in",
         "signIn: Sign in",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
         "volume: Volume"
       ]
     },
@@ -594,7 +594,7 @@
         "account: API key",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
         "volume: Volume"
       ]
     },
@@ -607,7 +607,7 @@
         "account: ada@example.com",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
         "volume: Volume"
       ]
     },
@@ -667,7 +667,10 @@
         "= Settings",
         "# Account (account)",
         "- sign-in text: Cua account [Sign in to Cua]",
-        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# Teams (teams)",
+        "- teams text: Teams = Sign in to see your teams",
+        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
+        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
         "# General (general)",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
@@ -682,7 +685,10 @@
         "- api-key text: Signed in via API key = client-123",
         "- sign-in text: Cua account [Try again]",
         "- sign-in-error error: The code expired",
-        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# Teams (teams)",
+        "- teams text: Teams = Sign in to see your teams",
+        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
+        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
         "# General (general)",
         "- notch choice: Spaces tab in the notch {Show|*Hide}",
         "- welcome text: Welcome [Show again]",
@@ -698,7 +704,10 @@
         "= Settings",
         "# Account (account)",
         "- sign-in-code text: Enter this code in your browser = WXYZ-1234 [Cancel]",
-        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# Teams (teams)",
+        "- teams text: Teams = Sign in to see your teams",
+        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
+        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
         "# General (general)",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
@@ -719,7 +728,10 @@
         "= Settings",
         "# Account (account)",
         "- account text: ada@example.com [Sign out]",
-        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# Teams (teams)",
+        "- teams text: Teams = Manage your team in the account app",
+        "- teams-manage text: Invite people, roles and plans [Manage team] < https://app.cua.ai/team>",
+        "- teams-billing text: Billing [Billing and plans] < https://app.cua.ai/billing>",
         "# General (general)",
         "- notch choice: Spaces tab in the notch {*Show|Hide}",
         "- welcome text: Welcome [Show again]",
@@ -787,7 +799,7 @@
         "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Connect your machines and your team.",
+        "lede": "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],
@@ -809,7 +821,7 @@
         "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Connect your machines and your team.",
+        "lede": "Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.",
         "notice": null,
         "noticeLink": null,
         "presentations": [],

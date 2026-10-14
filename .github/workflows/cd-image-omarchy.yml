@@ -65,6 +65,17 @@ on:
         type: choice
         options: [edge]
         default: edge
+  # cd-images-spacesd-release.yml on every cua-spacesd release. A called
+  # workflow sees the caller's event (workflow_run), so meta treats it like
+  # a dispatch.
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      series:
+        type: string
+        default: edge
 
 concurrency:
   group: cd-image-omarchy-${{ github.ref }}
@@ -74,6 +85,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -103,7 +117,8 @@ jobs:
           publish=false
           case "$EVENT" in
             push) [[ "$REF" == refs/tags/omarchy-image-v* ]] && publish=true ;;
-            workflow_dispatch) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
+            # workflow_run: called by cd-images-spacesd-release.yml.
+            workflow_dispatch|workflow_run) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
             # Publishes only when the content changed (the build job decides).
             schedule) publish=true ;;
           esac
@@ -146,7 +161,7 @@ jobs:
           workspaces: libs/cua
       - name: Build the cua CLI
         working-directory: libs/cua
-        run: cargo build --release --locked -p cua-cli
+        run: cargo build --release --locked -p cua-cli --features byoc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cua-cli-linux-amd64

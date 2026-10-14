@@ -20,6 +20,16 @@ on:
           - cua-spacesd
           - cua-sdk
           - cua-spaces
+          - agent
+          - core
+          - bench
+          - bench-ui
+          - som
+          - sandbox-apps
+          - train
+          - npm-core
+          - npm-playground
+          - cuabot
       bump:
         description: "Version bump for the selected component"
         required: true
@@ -38,6 +48,11 @@ permissions:
 concurrency:
   group: release-please-main
   cancel-in-progress: false
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
   release-please:
@@ -63,7 +78,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-perception, cua-driver-rs, lume, sandbox, cua-spacesd, cua-sdk or cua-spaces when forcing a bump type."
+          echo "::error::Select a component (not automatic) when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -259,7 +274,8 @@ jobs:
             elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/lume/reference
+              git add docs/content/docs/lume/reference \
+                scripts/docs-generators/cli-specs/lume.json
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
             elif [[ "$SPACESD" == "true" ]]; then
               # Release Please bumps the workspace version in Cargo.toml; the
@@ -273,9 +289,18 @@ jobs:
               COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
             elif [[ "$SDK" == "true" ]]; then
               # Release Please bumps VERSION, pyproject, __init__, package.json
-              # and package-lock.json together; only validation runs here.
+              # and package-lock.json together; the stamped docs and the other
+              # lockfiles that lock the checkout's SDK follow here.
+              PREVIOUS=$(git show origin/main:libs/cua/VERSION)
+              python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
+              SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
-              COMMIT_MESSAGE="chore(cua-sdk): synchronize release metadata"
+              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk docs/content/docs/fleets scripts/docs-generators/cli-specs/cua.json
+              if [[ -n "$SDK_LOCKS" ]]; then
+                mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
+                git add -- "${SDK_LOCK_PATHS[@]}"
+              fi
+              COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation and lockfiles"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
               # The Sandbox reference records the package version, so regenerate

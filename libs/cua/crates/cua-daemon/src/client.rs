@@ -3,6 +3,7 @@
 use crate::{
     Discovery, Error, Result, SandboxRecord,
     convert::{dur, info_from_pb, probe_to_pb, provider_to_pb},
+    identity::version_key,
     runtime::CreateRequest,
 };
 use cua_proto::daemon::v1::{
@@ -178,15 +179,24 @@ impl DaemonClient {
 
     fn runtime(&self) -> RuntimeServiceClient<Chan> {
         RuntimeServiceClient::new(self.channel.clone())
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
     fn daemon(&self) -> DaemonServiceClient<Chan> {
         DaemonServiceClient::new(self.channel.clone())
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
-    /// The raw Spaces client.
+    /// The raw Spaces client. Messages up to
+    /// [`cua_spacesd_client::MAX_MESSAGE_BYTES`], as on the Space's own
+    /// connection: a full-size screenshot (`get_desktop_state` of a 6K
+    /// display) is larger than gRPC's 4 MiB default.
     pub fn spaces(&self) -> SpaceServiceClient<Chan> {
         SpaceServiceClient::new(self.channel.clone())
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
     fn map(e: tonic::Status) -> Error {
@@ -847,19 +857,6 @@ pub fn cua_binary() -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|d| d.join(exe))
         .find(|p| p.is_file())
-}
-
-/// `major.minor.patch` of a version string; a pre-release sorts before its
-/// release. `None` when it does not parse.
-fn version_key(version: &str) -> Option<(u64, u64, u64, bool)> {
-    let version = version.trim().trim_start_matches('v');
-    let (core, pre) = match version.split_once('-') {
-        Some((core, _)) => (core, true),
-        None => (version.split('+').next().unwrap_or(version), false),
-    };
-    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let key = (parts.next()??, parts.next()??, parts.next()??, !pre);
-    parts.next().is_none().then_some(key)
 }
 
 /// Whether a daemon reporting `running` is older than a client at `ours`.

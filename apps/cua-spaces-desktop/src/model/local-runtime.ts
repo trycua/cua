@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 /** Why New Space cannot run anything on this machine, in the words of its OS. */
 
 const DOCKER_DESKTOP_URL = "https://docs.docker.com/desktop/setup/install/windows-install/";

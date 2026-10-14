@@ -513,7 +513,13 @@ impl AppSessions {
         let m = provider
             .manifest(&app_ref, None, scope.transfer())
             .map_err(|e| Error::TeleportRefused(format!("{app}: {e}")))?;
-        Ok(TeleportManifest::from_transfer(provider.id(), scope, m))
+        let mut tm = TeleportManifest::from_transfer(provider.id(), scope, m);
+        // Microsoft Edge goes through the Chrome provider but keeps its own
+        // name, so the approval, the capture and the export read Edge's profile.
+        if cua_teleport::layout::chrome::is_edge(app) {
+            tm.app = app.to_ascii_lowercase();
+        }
+        Ok(tm)
     }
 
     /// Writes the approved items as a session bundle (through the provider's
@@ -712,7 +718,12 @@ impl SpaceTeleport for Space {
                 self.id()
             )));
         }
-        self.require(&format!("teleport.{}", approval.app))?;
+        self.require(&format!(
+            "teleport.{}",
+            sessions
+                .provider_id(&approval.app)
+                .unwrap_or_else(|| approval.app.clone())
+        ))?;
         // Local, read-only pre-check: a clear "no such provider" error
         // before the network round trip, not a second capture path.
         sessions.resolve_checked(&approval.app)?;

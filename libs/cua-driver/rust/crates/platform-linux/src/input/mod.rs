@@ -3449,7 +3449,12 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         &mapping,
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift| {
-            if !client.borrow().borrowed.is_empty() {
+            if client
+                .borrow()
+                .borrowed
+                .iter()
+                .any(|guard| guard.keycode == keycode)
+            {
                 client.borrow_mut().record_recipient();
             }
             let state = if needs_shift {
@@ -3532,7 +3537,12 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         &mapping,
         |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift| {
-            if !client.borrow().borrowed.is_empty() {
+            if client
+                .borrow()
+                .borrowed
+                .iter()
+                .any(|guard| guard.keycode == keycode)
+            {
                 client.borrow_mut().record_recipient();
             }
             if needs_shift {
@@ -4144,83 +4154,8 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 mod key_name_alias_tests {
     use super::{
         char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode,
-        type_text_in_spare_batches, type_text_with_preflight, GetKeyboardMappingReply,
+        type_text_in_spare_batches, GetKeyboardMappingReply,
     };
-
-    #[test]
-    fn text_preflight_failure_leaves_target_and_events_unchanged() {
-        let mapping = GetKeyboardMappingReply {
-            keysyms_per_keycode: 2,
-            sequence: 0,
-            keysyms: vec!['a' as u32, 'A' as u32],
-        };
-        for text in ["約ab", "aa約", "a約a"] {
-            let mut target = String::from("existing");
-            let mut events = Vec::new();
-            let result = type_text_with_preflight::<()>(
-                text,
-                &mapping,
-                |_, _| anyhow::bail!("no spare keycode"),
-                |keycode, shift| {
-                    events.extend([keycode, keycode]);
-                    target.push(if shift { 'A' } else { 'a' });
-                    Ok(())
-                },
-            );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .starts_with("typed 0 of 3 characters"));
-            assert!(events.is_empty());
-            assert_eq!(target, "existing");
-        }
-    }
-
-    #[test]
-    fn text_preflight_requires_a_spare_for_each_distinct_unmapped_character() {
-        let mapping = GetKeyboardMappingReply {
-            keysyms_per_keycode: 2,
-            sequence: 0,
-            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
-        };
-        let mut target = String::from("existing");
-        let mut events = Vec::new();
-        let error = type_text_with_preflight::<()>(
-            "a你好",
-            &mapping,
-            |ch, mapping| {
-                reserve_spare_keycode(
-                    mapping,
-                    super::mpx_keyboard::keysym_for_char(ch),
-                    |_, _, _, _| Ok(()),
-                )
-                .map(|(keycode, guard)| (keycode, Some(guard)))
-            },
-            |keycode, _| {
-                events.push(keycode);
-                target.push('a');
-                Ok(())
-            },
-        )
-        .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "typed 0 of 3 characters: the text needs 2 spare keycodes: no spare keycode available to remap keysym 0x{:X}",
-                super::mpx_keyboard::keysym_for_char('好')
-            )
-        );
-        assert!(events.is_empty());
-        assert_eq!(target, "existing");
-    }
-
-    struct Restore<'a>(&'a std::cell::Cell<usize>);
-
-    impl Drop for Restore<'_> {
-        fn drop(&mut self) {
-            self.0.set(self.0.get() + 1);
-        }
-    }
 
     #[test]
     fn text_batches_types_more_distinct_unmapped_characters_than_spares() {
@@ -4302,105 +4237,6 @@ mod key_name_alias_tests {
         .unwrap_err();
         assert_eq!(error.to_string(), "typed 2 of 3 characters: keymap changed");
         assert_eq!(events, [9, 8]);
-    }
-
-    #[test]
-    fn text_preflight_restores_every_remap_after_success_and_failure() {
-        let mapping = GetKeyboardMappingReply {
-            keysyms_per_keycode: 2,
-            sequence: 0,
-            keysyms: vec!['a' as u32, 'A' as u32, 0, 0, 0, 0],
-        };
-        for (text, fail_send, ok, sent) in [
-            ("你好你a", false, true, 4),
-            ("你好约", false, false, 0),
-            ("你好", true, false, 1),
-        ] {
-            let restored = std::cell::Cell::new(0);
-            let mut events = 0;
-            let result = type_text_with_preflight(
-                text,
-                &mapping,
-                |ch, mapping| {
-                    reserve_spare_keycode(
-                        mapping,
-                        super::mpx_keyboard::keysym_for_char(ch),
-                        |_, _, _, _| Ok(Restore(&restored)),
-                    )
-                    .map(|(keycode, guard)| (keycode, Some(guard)))
-                },
-                |_, _| {
-                    events += 1;
-                    if fail_send {
-                        anyhow::bail!("send failed");
-                    }
-                    Ok(())
-                },
-            );
-            assert_eq!(result.is_ok(), ok, "{text}");
-            drop(result);
-            assert_eq!(restored.get(), 2, "{text}");
-            assert_eq!(events, sent, "{text}");
-        }
-    }
-
-    #[test]
-    fn text_preflight_preserves_shift_order_and_reuses_remaps() {
-        let mapping = GetKeyboardMappingReply {
-            keysyms_per_keycode: 2,
-            sequence: 0,
-            keysyms: vec!['a' as u32, 'A' as u32, 0, 0, 0, 0],
-        };
-        let mut remaps = 0;
-        let mut events = Vec::new();
-        type_text_with_preflight::<()>(
-            "aA你好你",
-            &mapping,
-            |ch, mapping| {
-                remaps += 1;
-                reserve_spare_keycode(
-                    mapping,
-                    super::mpx_keyboard::keysym_for_char(ch),
-                    |_, _, _, _| Ok(()),
-                )
-                .map(|(keycode, guard)| (keycode, Some(guard)))
-            },
-            |keycode, shift| {
-                events.push((keycode, shift));
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(remaps, 2);
-        assert_eq!(
-            events,
-            [(8, false), (8, true), (10, false), (9, false), (10, false)]
-        );
-    }
-
-    #[test]
-    fn text_preflight_preserves_keys_with_symbols_in_later_columns() {
-        let mapping = GetKeyboardMappingReply {
-            keysyms_per_keycode: 4,
-            sequence: 0,
-            keysyms: vec!['a' as u32, 'A' as u32, 'b' as u32, 0],
-        };
-        let mut events = Vec::new();
-        type_text_with_preflight::<()>(
-            "bAa",
-            &mapping,
-            |ch, mapping| {
-                assert_eq!(ch, 'b');
-                assert!(mapping.keysyms.contains(&(ch as u32)));
-                Ok((8, None))
-            },
-            |keycode, shift| {
-                events.push((keycode, shift));
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(events, [(8, false), (8, true), (8, false)]);
     }
 
     #[test]

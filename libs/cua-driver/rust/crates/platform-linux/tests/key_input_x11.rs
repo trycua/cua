@@ -481,18 +481,6 @@ fn keysyms_of(conn: &RustConnection, keycode: u8) -> Result<Vec<u32>> {
     Ok(conn.get_keyboard_mapping(keycode, 1)?.reply()?.keysyms)
 }
 
-fn bind(conn: &RustConnection, keycodes: &[u8], keysym: u32) -> Result<()> {
-    for &keycode in keycodes {
-        let per = conn
-            .get_keyboard_mapping(keycode, 1)?
-            .reply()?
-            .keysyms_per_keycode;
-        conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
-    }
-    conn.get_input_focus()?.reply()?;
-    Ok(())
-}
-
 struct Typed {
     result: Result<()>,
     pings: Vec<[u32; 5]>,
@@ -611,20 +599,17 @@ fn xtest_text_ignores_a_late_reply_to_an_earlier_ping() -> Result<()> {
     Ok(())
 }
 
-/// A client that takes `_NET_WM_PING` but never answers costs one timeout per
-/// text, and its keys may still be unread, so the borrowed keycode stays bound.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
-fn xtest_text_keeps_the_keycode_bound_for_a_client_that_never_answers() -> Result<()> {
+fn xtest_text_restores_the_keycode_of_a_client_that_never_answers() -> Result<()> {
     let (conn, screen) = connect()?;
     let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
     let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |_, _| Ok(()))?;
     clear_active_window(&conn, root)?;
     typed.result?;
-    let keycode = typed.presses[0];
-    let still_bound = keysyms_of(&conn, keycode)?.contains(&NI);
-    bind(&conn, &[keycode], 0)?;
-    assert!(still_bound, "keycode {keycode} restored without a reply");
+    assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
+    assert_eq!(spare_keycodes(&conn)?, before);
     assert_eq!(
         typed.pings.len(),
         1,

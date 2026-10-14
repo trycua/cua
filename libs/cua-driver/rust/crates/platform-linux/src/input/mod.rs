@@ -4561,23 +4561,12 @@ impl TextClient {
 
     /// Restores the text's borrowed keycodes once the clients have read their
     /// keys. A client without the protocol gets the restore at once; one that
-    /// does not answer keeps the keycodes bound, since its keys may be unread.
-    fn release(&mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
-        if guards.is_empty() {
-            return;
+    /// does not answer gets it after its ping times out.
+    fn release(mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
+        for window in std::mem::take(&mut self.sent) {
+            self.ping(conn, window);
         }
-        let sent = std::mem::take(&mut self.sent);
-        let unanswered = sent
-            .into_iter()
-            .any(|window| self.ping(conn, window) == ClientSync::Unanswered);
-        if !unanswered {
-            return;
-        }
-        tracing::warn!(
-            keycodes = guards.len(),
-            "client did not confirm reading typed keys; leaving their borrowed keycodes bound"
-        );
-        guards.into_iter().for_each(std::mem::forget);
+        drop(guards);
     }
 }
 

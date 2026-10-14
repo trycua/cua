@@ -147,6 +147,10 @@ public final class AppModel {
     public let dropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
+    /// The running app's version: with it, the New UI's default follows
+    /// the update channel and the version (`appSettingsResolveNewUi`);
+    /// without it (tests, fixtures), the New UI is on only by choice.
+    let appVersion: String?
     /// Settings → About and the updater (none until `AppEnvironment`
     /// starts one).
     public var updates = UpdatesModel(updater: nil)
@@ -157,7 +161,7 @@ public final class AppModel {
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
                 billing: BillingRunning? = nil, devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
-                startup: StartupModel? = nil) {
+                startup: StartupModel? = nil, appVersion: String? = nil) {
         self.backend = backend
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
@@ -177,7 +181,9 @@ public final class AppModel {
         self.keyvault = keyvault
         self.onboarding = onboarding
         self.settingsPath = settingsPath
-        let settings = appSettingsLoad(path: settingsPath)
+        self.appVersion = appVersion
+        var settings = appSettingsLoad(path: settingsPath)
+        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
             defaultLocation: settings.defaultLocation, cloudAvailable: false,
@@ -1208,14 +1214,33 @@ public final class AppModel {
 
     /// A switch in Settings, Experiments: saved, recorded, and followed by
     /// the first run and an open New Space. Off hides; nothing is undone.
+    /// The New UI's switch ("Use classic UI") also saves the user's choice,
+    /// which later launches keep whatever the default becomes.
     public func chooseExperiment(row: String, option: String) {
         let before = settings.experiments
-        let after = appExperimentsChoose(experiments: before, row: row, option: option)
-        let signals = appTelemetryExperimentsChanged(before: before, after: after)
-        guard !signals.isEmpty else { return }
-        settings.experiments = after
+        let next = appSettingsChooseExperiment(settings: settings, row: row, option: option)
+        guard next != settings else { return }
+        settings = next
+        let after = next.experiments
         saveSettings()
-        telemetry?.record(signals)
+        telemetry?.record(appTelemetryExperimentsChanged(before: before, after: after))
+        applyExperiments(before: before, after: after)
+    }
+
+    /// Settings → About's channel, saved; with no choice of the user's, the
+    /// New UI follows the channel's default at once.
+    public func setUpdateChannel(_ channel: AppUpdateChannel) {
+        settings.updateChannel = channel
+        let before = settings.experiments
+        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
+        saveSettings()
+        if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
+    }
+
+    /// What follows a change of the switches: the first run, an open New
+    /// Space, and the New UI's window in place of the native one (or back).
+    private func applyExperiments(before: AppExperiments, after: AppExperiments) {
+        guard before != after else { return }
         onboarding.send(.experimentsLoaded(experiments: after))
         // New UI on: its window takes the native one's place; off: the reverse.
         if !before.webUi, after.webUi { openWebUI?() }

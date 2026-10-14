@@ -120,7 +120,10 @@ public enum AppEnvironment {
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
-                             startup: startup)
+                             startup: startup,
+                             // Fixtures (UI tests, captures) keep the classic UI
+                             // unless they turn the New UI on.
+                             appVersion: fixtures ? nil : info.version)
         if !fixtures {
             LiveLocalNetworkPermission().request()
             // Signed out is nil (setup signs in first); anything else (no
@@ -165,10 +168,7 @@ public enum AppEnvironment {
             : SparkleUpdater.start(channels: appAboutAllowedChannels(channel: channel))
         model.updates = UpdatesModel(updater: updater, channel: channel)
         model.updates.telemetry = telemetry
-        model.updates.saveChannel = { [weak model] channel in
-            model?.settings.updateChannel = channel
-            model?.saveSettings()
-        }
+        model.updates.saveChannel = { [weak model] channel in model?.setUpdateChannel(channel) }
         // End-to-end runs: check now, with no window unless one is found.
         if env["CUA_SPACES_UPDATE_CHECK"] == "background", let sparkle = updater as? SparkleUpdater {
             sparkle.checkInBackground()

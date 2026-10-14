@@ -402,8 +402,11 @@ struct ViewModelTests {
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
-                                    "experiment:web_ui"])
-        #expect(toggles.allSatisfy { $0.options.first { $0.id == "off" }?.active == true })
+                                    "experiment:classic_ui"])
+        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        #expect(toggles.allSatisfy { r in
+            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+        })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
         #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(3) == ["account", "general", "storage"])

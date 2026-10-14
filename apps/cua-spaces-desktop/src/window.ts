@@ -11,6 +11,7 @@ import { readSettings, writeSettings, type WindowBounds } from "./settings";
 import { DIM_CHANNEL, overlayColors, overlaySteps } from "./overlay";
 import { KEYBOARD_CHANNEL, applyKeyboard } from "./keyboard";
 import { BACKGROUND, resolvedTheme } from "./theme";
+import { showWhenReady } from "./show-when-ready";
 
 const TITLEBAR_HEIGHT = 40;
 // Room for the macOS traffic lights at x=16 plus a gap.
@@ -212,12 +213,14 @@ export function createMainWindow({ demo = false, remember = true }: { demo?: boo
   const bounds = hidden() ? { ...DEFAULT_SIZE, width: 1440, height: 900 } : remember ? restoredBounds() : { ...DEFAULT_SIZE };
   const win = appWindow({ ...bounds, title: "Cua Spaces" });
 
+  // performance.now() counts from process start.
   win.once("ready-to-show", () => {
-    // performance.now() counts from process start.
     readyToShowMs = performance.now();
     if (process.env.CUA_SPACES_LOG_STARTUP) {
       console.log(`[cua-spaces] ready-to-show ${readyToShowMs.toFixed(0)}ms after process start`);
     }
+  });
+  showWhenReady(win, () => {
     if (hidden()) return;
     if (bounds.maximized) win.maximize();
     win.show();

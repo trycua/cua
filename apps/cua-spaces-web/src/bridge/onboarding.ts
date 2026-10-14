@@ -174,11 +174,13 @@ export function permissionRows(core: CoreClient, hints: PermissionHint[]): Permi
 
 /**
  * One image per OS for the first Space: the core's picker catalog, first
- * published full image of each (the New Space picker's first rows).
+ * published full image of each (the New Space picker's first rows). No
+ * macOS image off macOS.
  */
-export function firstSpaceImages(core: CoreClient): SandboxImage[] {
+export function firstSpaceImages(core: CoreClient, os: HostOs = hostOs()): SandboxImage[] {
   const all = core.tryCall<SandboxImage[]>("wizard.pickerImages") ?? FALLBACK_IMAGES;
-  const order: SpaceOs[] = ["macos", "linux", "windows"];
+  // macOS images run on Lume (Apple silicon): not offered on Linux or Windows.
+  const order: SpaceOs[] = os === "macos" ? ["macos", "linux", "windows"] : ["linux", "windows"];
   return order.flatMap((os) => {
     const published = all.filter((i) => i.published && i.os === os && i.group === "canonical");
     const pick = published.find((i) => i.tier !== "slim") ?? published[0];
@@ -298,9 +300,9 @@ const FALLBACK_COPY: OnboardingCopy = {
   signInWaiting: "Waiting for the browser…",
   permissionsTitle: "Grant in System Settings",
   openSettings: "Open Settings",
-  teams: "Teams · coming soon",
-  teamsLink: "Join the waitlist",
-  teamsUrl: "https://cua.ai/teams",
+  teams: "Teams · manage them at app.cua.ai",
+  teamsLink: "Open the account app",
+  teamsUrl: "https://app.cua.ai/welcome",
 };
 
 const FALLBACK_IMAGES: SandboxImage[] = [

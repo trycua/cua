@@ -1492,6 +1492,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "core-foundation 0.10.1",
+ "cua-home",
  "cua-telemetry",
  "hex",
  "keyring",

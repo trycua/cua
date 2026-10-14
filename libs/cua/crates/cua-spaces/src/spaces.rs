@@ -748,8 +748,21 @@ impl Spaces {
                 Ok(info)
             })
             .collect::<Result<_>>()?;
+        // A Space this machine provides is in the registry as a local Space,
+        // and its relay machine lists it again under the host: once, as the
+        // local one (CUA-1527).
+        let provided_here: std::collections::HashSet<String> =
+            cua_host::provided::load_provided(&cua_host::Host::new(self.home_dir()).paths().dir)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| out.iter().any(|i| i.id == p.local_space))
+                .map(|p| p.relay_machine)
+                .collect();
         let cache = self.inner.relay_cache.lock().expect("relay cache");
         for m in cache.iter() {
+            if provided_here.contains(&m.id) {
+                continue;
+            }
             let mut info = relay_info(m);
             self.apply_reported(&mut info, m.online);
             if !info.host.is_empty() {

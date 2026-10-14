@@ -227,6 +227,7 @@ pub const METHODS: &[&str] = &[
     "paths.displayPaths",
     "devices.view",
     "machines.merge",
+    "machines.pageRows",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -275,6 +276,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.checklist",
     "checklist.reduce",
     "checklist.view",
+    "checklist.observeFrom",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -590,7 +592,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.pendingSummary" => out(kv::pending_summary(&a.get("pending")?)),
         "keyvault.pendingRows" => out(kv::pending_rows(&a.get("overview")?)),
         "keyvault.accessRows" => out(kv::access_rows(&a.get("overview")?, a.get("now")?)),
-        "keyvault.page" => out(kv::page(&a.get("overview")?, a.get("now")?)),
+        // `hostOs`: the shell's system, for its words (macOS when absent).
+        "keyvault.page" => out(kv::page_on(
+            &a.get("overview")?,
+            a.get("now")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "keyvault.sidebar" => out(browse::sidebar(&a.get("overview")?, a.get("now")?)),
         "keyvault.list" => out(browse::list(
             &a.get("overview")?,
@@ -602,10 +610,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("state")?,
             &a.get("action")?,
         )),
-        "keyvault.vaultView" => out(vault::view(
+        "keyvault.vaultView" => out(vault::view_on(
             &a.get("overview")?,
             &a.get("state")?,
             a.get("now")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "keyvault.vaultSource" => out(vault::vault_source(
             &a.get("overview")?,
@@ -635,10 +645,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.deleteConfirm" => {
             out(vault::delete_confirm(a.get("count")?, a.get("liveCopies")?))
         }
-        "keyvault.labels" => out(kv::labels()),
+        "keyvault.labels" => out(kv::labels_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "keyvault.recoveryKeyText" => out(kv::recovery_key_text(&a.get::<String>("key")?)),
-        "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form(
+        "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form_on(
             &a.get("overview")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "keyvault.passphraseCheck" => out(crate::keyvault::credential::passphrase_check(
             a.get("mode")?,
@@ -822,6 +837,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "host.parseAllowList" => out(host::parse_allow_list(&a.get::<String>("value")?)),
         "machines.merge" => out(machines::merge(
             &a.get::<Option<machines::MachinesInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "machines.pageRows" => out(machines::page_rows(
+            &a.get::<Option<machines::MachinesPageInput>>("input")?
                 .unwrap_or_default(),
         )),
         "devices.view" => out(devices::devices_view(
@@ -1041,6 +1060,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "checklist.view" => out(checklist::view(
             &a.get::<checklist::ChecklistState>("state")?,
         )),
+        "checklist.observeFrom" => out(checklist::observe_from(
+            &a.get::<Option<checklist::ChecklistSeen>>("seen")?
+                .unwrap_or_default(),
+        )),
         "palette.keybindings" => out(palette::keybindings()),
         "palette.rank" => out(palette::rank(
             &a.get::<Vec<palette::PaletteEntry>>("entries")?,
@@ -1131,6 +1154,23 @@ mod tests {
         assert_eq!(lede(Value::Null), "Cua Spaces is in your menu bar.");
         assert_eq!(lede(json!("linux")), "Cua Spaces is in your system tray.");
         assert_eq!(lede(json!("windows")), "Cua Spaces is in your system tray.");
+    }
+
+    /// `keyvault.labels` says what confirms in the shell's system's words
+    /// (`hostOs`), and in a Mac's when it names none.
+    #[test]
+    fn keyvault_words_follow_the_hosts_system() {
+        let note = |args: Value| {
+            call_value("keyvault.labels", args).unwrap()["confirmNote"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(note(json!({})), "Touch ID confirms in the Cua daemon.");
+        assert_eq!(
+            note(json!({ "hostOs": "windows" })),
+            "Windows Hello or your password confirms in the Cua daemon."
+        );
     }
 
     /// `agentKeys.view` and `agentKeys.form` say where keys stay in the shell's

@@ -59,6 +59,7 @@ import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestI
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -170,6 +171,7 @@ const MachineRowShape = ref(
     hostname: opt(str),
     presence: optNull(bool),
     accessNotice: optNull(MachineAccessNoticeShape),
+    merged: opt(bool),
   }),
 );
 
@@ -610,6 +612,29 @@ const PresenceCursorShape = ref(
   }),
 );
 
+/** The host's copy of the checklist (`ops/checklist.ts`). */
+const ChecklistAnswerShape = object({
+  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
+});
+
+/** One Machines row as the core lists it (`machines::MachinePageRow`). */
+const MachinePageRowShape = ref(
+  "MachinePageRow",
+  object({
+    id: str,
+    name: str,
+    online: bool,
+    os: str,
+    via: str,
+    current: bool,
+    device: nullable(str),
+    deviceOnly: bool,
+    spaceId: nullable(str),
+    stoppedSharing: bool,
+    lastSeen: nullable(num),
+  }),
+);
+
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
   "spaces.create": SpaceRowShape,
@@ -777,6 +802,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       upgradeUrl: nullable(str),
     }),
   ),
+  "checklist.get": ChecklistAnswerShape,
+  "checklist.send": ChecklistAnswerShape,
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -960,6 +987,7 @@ const WkMachinesShape = ref(
     presence: optNull(dict(bool)),
     deviceStates: optNull(dict(str)),
     accessNotice: optNull(MachineAccessNoticeShape),
+    rows: opt(list(MachinePageRowShape)),
   }),
 );
 
@@ -1144,6 +1172,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],
+  "checklist.get": OP_SHAPES["checklist.get"],
+  "checklist.send": OP_SHAPES["checklist.send"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

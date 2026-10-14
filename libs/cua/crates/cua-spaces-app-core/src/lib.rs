@@ -86,6 +86,7 @@ pub mod relay_usage;
 pub mod settings;
 pub mod share;
 pub mod spaces;
+pub mod teams;
 pub mod telemetry;
 pub mod teleport;
 mod util;

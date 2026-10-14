@@ -45,8 +45,10 @@ from pathlib import Path
 SCHEMA = 1
 PLATFORMS = ("darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64", "windows-arm64")
 VERSION = r"(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)"
-# Lazy: electron-builder puts an optional architecture after the version.
-EVERSION = r"(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+?)?)"
+# Lazy, and the suffix itself lazily optional (`??`): electron-builder puts an
+# optional architecture after the version, so a stable 1.2.3-x64.exe is
+# version 1.2.3 and arch x64, not a "1.2.3-x64" prerelease.
+EVERSION = r"(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+?)??)"
 
 PATTERNS = [
     ("cli", "tar.gz", re.compile(rf"^cua-cli-{VERSION}-(?P<platform>(?:darwin|linux)-(?:x64|arm64))\.tar\.gz$")),

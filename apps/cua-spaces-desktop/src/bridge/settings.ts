@@ -44,6 +44,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
+    // Teams from the Spaces API (read by `settings.get`).
+    teams: model.teams.input(),
     // No Cua Cloud billing in the apps (the row stays hidden).
     billing: undefined,
     loginItem:
@@ -63,7 +65,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
     lumeSource: model.lumeSource ?? undefined,
-    linuxSource: model.linuxSource ?? undefined,
+    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
+    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -111,6 +114,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   const load = async () => {
     parts().loginItem.read();
     if (!model.servicesIn) return;
+    // Teams: the account's organizations (a failure shows in its row).
+    await bounded(10, () => model.teams.reload());
     if (model.agents.coding.rows === null) await bounded(10, () => model.agents.coding.reload());
     const [lume, linux] = await Promise.all([bounded(5, () => model.backend.lumeSource()), bounded(5, () => model.backend.linuxSource())]);
     if (lume !== null) model.lumeSource = lume;
@@ -120,6 +125,10 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
     switch (row) {
+      case "team-current":
+        // Settings, Teams: the team to work in (saved; the option is its id).
+        save({ currentTeamId: option });
+        return;
       case "notch":
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });

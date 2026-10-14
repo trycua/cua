@@ -997,23 +997,14 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
-    slug: 'spaces/app-core/billing',
-    title: 'Cua Cloud billing',
-    description: 'The Billing row in Settings and the out-of-credit notice on a refused cloud Space.',
+    slug: 'spaces/account-app-core',
+    title: 'App core: billing, relay usage and Teams',
+    description: 'The Billing and Relay usage rows in Settings, the out-of-credit and relay allowance notices, and the Teams section.',
     intro:
-      'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it.',
+      'The apps take no payment details: the website handles credit and cards. `app_billing_status` turns `Fleet.billing_status` into the core\'s `AppBillingStatus`, which Settings shows as the credit left and "Manage billing" (the website billing page). A cloud Space that Fleet refuses for want of credit (`CuaError::CloudCreditExhausted`) shows `AppCreditNotice`: one line and "Add credit", which opens the same page. Local Spaces never depend on it. `app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does); `app_relay_usage_view` derives the Settings row and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade. Nothing stops at the limit. `app_teams` turns the account\'s `AppTeamsInput` into the Teams rows of Settings: the signed-in state, each team with its people and the role of each.',
     items: ['AppCreditNotice'],
-    prefixes: ['AppBilling', 'app_billing_'],
-    spaces: true,
-  },
-  {
-    slug: 'spaces/app-core/relay',
-    title: 'Relay usage',
-    description: 'The Relay usage row in Settings and the notice past the monthly relay allowance.',
-    intro:
-      '`app_relay_usage` reads the account\'s relay allowance this month from the relay (`GET /v1/usage`, as `cua usage` does) with the session\'s `Devices` and an account token. `app_relay_usage_view` derives the Settings row (`AppRelayUsageView`) and, past the allowance, `AppRelayAllowanceNotice`: one line with Upgrade, dismissed per month and reason. Nothing stops at the limit.',
-    items: [],
-    prefixes: ['AppRelay', 'app_relay_'],
+    prefixes: ['AppBilling', 'app_billing_', 'AppRelay', 'app_relay_', 'AppTeam', 'app_teams'],
+    catalog: true,
     spaces: true,
   },
   {
@@ -1105,11 +1096,21 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
+    slug: 'spaces/machines-app-core',
+    title: 'Machines page',
+    description: 'The Machines page\'s rows: this machine, your machines and your devices, each computer once.',
+    intro:
+      '`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.',
+    items: ['AppDeviceIn'],
+    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'app_machines_'],
+    spaces: true,
+  },
+  {
     slug: 'spaces/app-checklist-palette',
     title: 'Getting started and the command palette',
     description: 'The getting-started checklist, the command palette\'s ranking and the shared keyboard shortcuts.',
     intro:
-      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, or what the app shows now) and returns the new `AppChecklistState` with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
+      'App core functions beside the [Spaces app core](/cua-sdk/reference/spaces/app-core) screens. The host app keeps the one `AppChecklistState`. `app_checklist_observe_from` reads what the app shows (the [Machines page](/cua-sdk/reference/spaces/machines-app-core) rows, the Spaces, the agents) as the same `Observe` action in every UI. `app_checklist_reduce` applies a checklist action (a step done, shown, closed, opened again, what the app shows now, or progress merged from another copy) and returns the new state with the usage events it means; `app_checklist_view` derives the rows, title and progress. `app_palette_rank` orders the command palette\'s entries for a query, and `app_keybindings` lists the default keyboard shortcuts the apps share.',
     items: [],
     prefixes: ['AppChecklist', 'app_checklist_', 'AppKeybinding', 'app_keybindings', 'AppPaletteEntry', 'app_palette_'],
     spaces: true,

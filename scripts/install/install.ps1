@@ -10,7 +10,7 @@ Cua installer for Windows: the `cua` CLI, the Cua Spaces app and agent extras.
 
 At a console it first shows a numbered checklist of what to install. Items:
     cli         the cua CLI (always installed, except with -AppOnly)
-    spaces      the Cua Spaces app (macOS only for now; skipped here with a note)
+    spaces      the Cua Spaces app (the Electron app's setup.exe; off by default here, pick it or use -Select spaces)
     cua-driver  cua-driver MCP and skill for your agents (off by default)
     host        host this machine: `cua host setup` (off by default)
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
@@ -19,8 +19,9 @@ Reads release-artifacts.json (see scripts/install/README.md), downloads the
 artifacts for this machine, verifies their sha256 (and a minisign or cosign
 signature when available), installs `cua` to %LOCALAPPDATA%\Programs\cua\bin
 (or -Prefix\bin), then runs `cua auth login` when a user is at the console.
-Cua Spaces is macOS-only for now, so -AppOnly, -Mode and the `spaces` item
-install nothing here (the installer says so and goes on).
+-AppOnly, -Mode and the `spaces` item install the Cua Spaces app: its signed
+setup.exe for this machine's architecture, run silently (/S) after the sha256
+(and cosign, when available) check.
 
 .PARAMETER Select
 Preselect items (comma list: spaces, cua-driver, host); the checklist still shows.
@@ -49,7 +50,7 @@ Do not run `cua auth login` afterwards.
 .PARAMETER RequireSignature
 Fail unless a signature verifies.
 .PARAMETER Installer
-App installer to use: msi (default) or nsis.
+App installer to use: nsis (default, the Electron app's setup.exe) or msi (used only when a release has one).
 .PARAMETER DryRun
 Print what would happen; change nothing.
 .PARAMETER Yes
@@ -69,7 +70,7 @@ param(
     [switch]$ModifyPath,
     [switch]$NoOnboarding,
     [switch]$RequireSignature,
-    [ValidateSet('msi', 'nsis')][string]$Installer = 'msi',
+    [ValidateSet('msi', 'nsis')][string]$Installer = 'nsis',
     [switch]$DryRun,
     [switch]$Yes
 )
@@ -95,10 +96,9 @@ $LatestTag = 'cua-install-latest'
 $MinisignPubkey = $env:CUA_INSTALL_MINISIGN_PUBKEY
 $CuaItems = @('spaces', 'cua-driver', 'host')
 $script:Picked = $false
-# Cua Spaces ships for macOS only for now (cd-cua-spaces.yml builds no Windows
-# app): a selected `spaces` is skipped with a note. Set this to $true to bring
-# the Windows app back (Install-App is kept).
-$script:SpacesSupported = $false
+# Cua Spaces ships for Windows as the Electron app's NSIS setup.exe
+# (cd-cua-spaces.yml). Set this to $false to skip a selected `spaces` with a note.
+$script:SpacesSupported = $true
 
 function Get-Sha256Hex([string]$Path) {
     # .NET directly: Get-FileHash is missing when the Utility module is not
@@ -487,7 +487,7 @@ function Invoke-CuaInstall {
     Test-PairArgs
     $sel = Get-CuaSelection
     if ($sel.spaces -and -not $script:SpacesSupported) {
-        Write-Info 'Cua Spaces is macOS-only for now; skipping the app on Windows'
+        Write-Info 'Cua Spaces is not available on this platform; skipping the app'
         $sel.spaces = $false
     }
     if ($Version -and $Version.TrimStart('v') -notmatch '^\d+\.\d+\.\d+') { Stop-Install "-Version must look like 1.2.3, not '$Version'" }

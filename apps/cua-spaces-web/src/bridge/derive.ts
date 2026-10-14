@@ -36,6 +36,7 @@ import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRo
 import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
+import { hostOs, type HostOs } from "./host-os";
 
 /* ---- Spaces --------------------------------------------------------------- */
 
@@ -272,11 +273,14 @@ export interface Machine {
 /** Which machine a Space runs on: its relay host, the machine itself for
  * its own desktop (`relay:<machine>`), or this machine for a local Space;
  * undefined for cloud Spaces. */
-export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current">[]): string | undefined {
-  if (space.host) return space.host;
-  if (space.provider === "local") return machines.find((m) => m.current)?.id;
+export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current" | "host">[]): string | undefined {
+  const current = machines.find((m) => m.current);
+  // This computer's own relay machine id is this computer's row.
+  const here = (id: string) => (current?.host?.machineId && id === current.host.machineId ? current.id : id);
+  if (space.host) return here(space.host);
+  if (space.provider === "local") return current?.id;
   if (space.provider === "relay" && space.id.startsWith("relay:")) {
-    const own = space.id.slice("relay:".length);
+    const own = here(space.id.slice("relay:".length));
     if (machines.some((m) => m.id === own)) return own;
   }
   return undefined;
@@ -358,6 +362,7 @@ export function machinesInput(rows: MachineRow[], now: number): MachinesInput {
  * (`mergeMachines`). The device adds its detail and last session; a
  * device that is none of the machines stays a row of its own. */
 export function mergeMachineRows(rows: MachineRow[], core?: CoreClient, nowSecs = Math.floor(Date.now() / 1000)): MachineRow[] {
+  if (rows.some((r) => r.merged)) return rows;
   if (!rows.some((r) => r.device || r.presence != null)) return rows;
   const byId = new Map(rows.filter((r) => !r.device).map((r) => [r.id, r] as const));
   const devices = new Map(rows.filter((r) => r.device).map((r) => [r.id, r] as const));
@@ -591,12 +596,13 @@ export function keyvaultViews(
   overview: KeyvaultOverview,
   now: number,
   state: VaultState = INITIAL_VAULT_STATE,
+  os: HostOs = hostOs(),
 ): KeyvaultViews | null {
   if (core.status !== "ready") return null;
   return {
-    page: core.call<KvPage>("keyvault.page", { overview, now }),
+    page: core.call<KvPage>("keyvault.page", { overview, now, hostOs: os }),
     sidebar: core.call<KvSidebar>("keyvault.sidebar", { overview, now }),
-    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now }),
+    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now, hostOs: os }),
   };
 }
 

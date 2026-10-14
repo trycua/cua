@@ -162,7 +162,17 @@ describe.each([
       { id: "accessibility", label: "Accessibility", granted: true },
     ]);
     expect(rows).toEqual([{ id: "screen-recording", title: "Screen Recording", help: "Turn it on", settingsUrl: "x-apple.systempreferences:a" }]);
-    expect(firstSpaceImages(core).map((i) => i.os)).toEqual(["macos", "linux", "windows"]);
+    expect(firstSpaceImages(core, "macos").map((i) => i.os)).toEqual(["macos", "linux", "windows"]);
+  });
+});
+
+describe("the first Space's images per host", () => {
+  it.each([
+    ["macos", ["macos", "linux", "windows"]],
+    ["linux", ["linux", "windows"]],
+    ["windows", ["linux", "windows"]],
+  ] as const)("on %s", (os, expected) => {
+    expect(firstSpaceImages(noCore, os).map((i) => i.os)).toEqual(expected);
   });
 });
 
@@ -232,6 +242,18 @@ describe.skipIf(!wasmBuilt)("useOnboarding over the demo adapter", () => {
     });
     expect(adapter.state.onboarding).toMatchObject({ completed: true, mode: "client" });
     expect(readSavedOnboarding().state).toBeNull();
+  });
+
+  it("stops the pending browser sign-in when Sign in is skipped", async () => {
+    const { probe } = mount(await testCore());
+    await waitFor(() => expect(probe.flow.state).toBeTruthy());
+    act(() => probe.flow.send({ type: "start" }));
+    await act(async () => {
+      void probe.session.signIn().catch(() => {});
+    });
+    await waitFor(() => expect(["starting", "waiting"]).toContain(probe.session.data?.signIn.kind));
+    act(() => probe.flow.send({ type: "signin-done" }));
+    await waitFor(() => expect(probe.session.data?.signIn.kind).toBe("idle"));
   });
 
   it("drops the account when signed out", async () => {

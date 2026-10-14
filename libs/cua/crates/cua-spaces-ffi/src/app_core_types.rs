@@ -5765,12 +5765,11 @@ pub struct AppOnboardingCopy {
     pub permissions_title: String,
     /// The permission rows' button.
     pub open_settings: String,
-    /// The Sign in page's Teams line ("Teams · coming soon").
+    /// The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
     pub teams: String,
-    /// Its link ("Join the waitlist").
+    /// Its link ("Open the account app").
     pub teams_link: String,
-    /// The link's URL: the website's Teams waitlist (the app collects
-    /// nothing).
+    /// The link's URL: the account app, which administers teams.
     pub teams_url: String,
 }
 
@@ -6426,6 +6425,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 /// A pressed key combination.
@@ -6505,6 +6508,10 @@ pub struct AppSettingsInput {
     pub agents_busy: bool,
     /// Agents with an action running.
     pub agents_pending: Vec<String>,
+    /// Teams from the Spaces API (the host reads them), with the account
+    /// app's URL. None: the Teams section shows the production account
+    /// app's links only.
+    pub teams: Option<AppTeamsInput>,
     /// The account's Cua Cloud billing, once read (signed in).
     pub billing: Option<AppBillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
@@ -9055,6 +9062,75 @@ pub enum AppTelemetrySignal {
     },
 }
 
+/// One of the account's devices.
+pub type AppDeviceIn = core::machines::DeviceIn;
+#[uniffi::remote(Record)]
+pub struct AppDeviceIn {
+    /// `dev_…`.
+    pub id: String,
+    /// Its name (by default its hostname).
+    pub name: String,
+    /// `macos`, `windows`, `linux` (any case), or empty.
+    pub platform: String,
+    /// Last session (Unix seconds).
+    pub last_seen: Option<u64>,
+    /// This device.
+    pub current: bool,
+    /// `pending`, `enrolled`, `expired`, `revoked`, or empty.
+    pub state: String,
+}
+
+/// What [`page_rows`] reads: what a shell knows of its machines.
+pub type AppMachinesPageInput = core::machines::MachinesPageInput;
+#[uniffi::remote(Record)]
+pub struct AppMachinesPageInput {
+    /// The system this app runs on (names the first row "This Mac").
+    pub host_os: AppSpaceOs,
+    /// The Spaces list as the shell has it (registry rows as Spaces).
+    pub spaces: Vec<AppSpace>,
+    /// The account's devices (none while signed out).
+    pub devices: Vec<AppDeviceIn>,
+    /// The hostname each machine's cua-spacesd reported, by machine id.
+    pub hostnames: std::collections::HashMap<String, String>,
+    /// Whether the relay sees each machine connected now, by machine id.
+    pub presence: std::collections::HashMap<String, bool>,
+    /// Unix seconds.
+    pub now: u64,
+}
+
+/// One row of the Machines page.
+pub type AppMachinePageRow = core::machines::MachinePageRow;
+#[uniffi::remote(Record)]
+pub struct AppMachinePageRow {
+    /// The machine's id (`this-mac`, a relay machine id), or the device's
+    /// id for a device of its own.
+    pub id: String,
+    /// What the page calls it.
+    pub name: String,
+    /// Reached, connected to the relay, or (a device of its own) in a
+    /// session in the last [`DEVICE_ONLINE_SECS`].
+    pub online: bool,
+    /// `macos`, `linux`, `windows`, or empty when unknown.
+    pub os: String,
+    /// `local` (this machine) or `relay`.
+    pub via: String,
+    /// The machine this app runs on.
+    pub current: bool,
+    /// The device listed in this row, if any.
+    pub device: Option<String>,
+    /// A device that is none of the machines: listed, never a "Run on"
+    /// choice, and it has no Spaces or desktop of its own here.
+    pub device_only: bool,
+    /// The Spaces list's row that is this machine's own desktop
+    /// (`this-mac`, `relay:<machine>`), when there is one: the classic
+    /// UI's detail for it.
+    pub space_id: Option<String>,
+    /// Online, but its owner stopped sharing it.
+    pub stopped_sharing: bool,
+    /// The device's last session (Unix seconds), when it has a device.
+    pub last_seen: Option<u64>,
+}
+
 /// One step, in the order the checklist lists them
 /// ([`telemetry::CHECKLIST_STEPS`]).
 pub type AppChecklistStep = core::checklist::ChecklistStep;
@@ -9108,6 +9184,28 @@ pub enum AppChecklistAction {
         /// An agent exists or has run.
         agent_ran: bool,
     },
+    /// Progress kept elsewhere before (the web UI's own storage, another
+    /// copy of the file): its steps are ticked, and it stays closed or
+    /// shown if it was. Its events were recorded where it was ticked, so
+    /// none are recorded again.
+    Merge {
+        /// The other copy.
+        state: AppChecklistState,
+    },
+}
+
+/// What the app knows, for [`observe_from`].
+pub type AppChecklistSeen = core::checklist::ChecklistSeen;
+#[uniffi::remote(Record)]
+pub struct AppChecklistSeen {
+    /// The Machines page's rows ([`crate::machines::page_rows`]).
+    pub machines: Vec<AppMachinePageRow>,
+    /// The Spaces list.
+    pub spaces: Vec<AppSpace>,
+    /// Persistent agents listed.
+    pub agents: u32,
+    /// Agent runs listed in any Space.
+    pub runs: u32,
 }
 
 /// The state after an action and the usage events it means.
@@ -9178,6 +9276,63 @@ pub struct AppPaletteEntry {
     pub hint: Option<String>,
     /// Extra words it answers to ("create add").
     pub keywords: Option<String>,
+}
+
+/// A person on a team.
+pub type AppTeamPersonInput = core::teams::TeamPersonInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamPersonInput {
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+}
+
+/// One team, as the Spaces API describes it.
+pub type AppTeamInput = core::teams::TeamInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamInput {
+    pub id: String,
+    /// The org's slug.
+    pub alias: String,
+    /// Its display name (empty: use the alias).
+    pub name: String,
+    /// The account's role in it.
+    pub role: String,
+    /// `free`, `teams`, ...
+    pub plan: String,
+    /// Paid seats.
+    pub seats: i64,
+    pub members: Vec<AppTeamPersonInput>,
+    /// Pending invites' emails (only owners and admins can read them).
+    pub invites: Vec<String>,
+}
+
+/// `teams::TeamsState`.
+pub type AppTeamsState = core::teams::TeamsState;
+#[uniffi::remote(Enum)]
+pub enum AppTeamsState {
+    /// Not signed in.
+    SignedOut,
+    /// Signed in, but this host does not read teams: only the links.
+    Unread,
+    /// Being read.
+    Loading,
+    /// The read failed.
+    Failed { message: String },
+    /// The account's teams (maybe none).
+    Ready { teams: Vec<AppTeamInput> },
+}
+
+/// Settings' Teams input.
+pub type AppTeamsInput = core::teams::TeamsInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamsInput {
+    /// The account app for this environment (`https://app.cua.ai`, or
+    /// `https://app.staging.cua.ai` under `CUA_ENV=staging`).
+    pub account_app_url: String,
+    pub state: AppTeamsState,
+    /// The saved current team (`AppSettings::current_team_id`).
+    pub current_team_id: Option<String>,
 }
 
 /// The team whose allowance is pooled.

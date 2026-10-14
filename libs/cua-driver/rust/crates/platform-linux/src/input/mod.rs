@@ -3435,14 +3435,14 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let client = RefCell::new(TextClient::new(Some(window)));
-    let guards = type_text_with_preflight(
+    let client = RefCell::new(TextClient::new(&conn, Some(window)));
+    type_text_with_preflight(
         text,
         &mapping,
-        |ch, mapping| text_keycode(&conn, mapping, &mut client.borrow_mut(), ch),
+        |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift, borrowed| {
             if borrowed {
-                client.borrow_mut().record_recipient(&conn);
+                client.borrow_mut().record_recipient();
             }
             let state = if needs_shift {
                 KeyButMask::SHIFT
@@ -3495,7 +3495,6 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
-    client.into_inner().release(&conn, guards);
     Ok(())
 }
 
@@ -3518,14 +3517,14 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    let client = RefCell::new(TextClient::new(None));
-    let guards = type_text_with_preflight(
+    let client = RefCell::new(TextClient::new(&conn, None));
+    type_text_with_preflight(
         text,
         &mapping,
-        |ch, mapping| text_keycode(&conn, mapping, &mut client.borrow_mut(), ch),
+        |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
         |keycode, needs_shift, borrowed| {
             if borrowed {
-                client.borrow_mut().record_recipient(&conn);
+                client.borrow_mut().record_recipient();
             }
             if needs_shift {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
@@ -3544,7 +3543,6 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
     let _ = conn.get_input_focus()?.reply();
-    client.into_inner().release(&conn, guards);
     Ok(())
 }
 
@@ -4471,18 +4469,21 @@ fn keycode_for_keysym<'a>(
     Ok((keycode, Some(guard)))
 }
 
-fn text_keycode<'a>(
-    conn: &'a RustConnection,
+fn text_keycode(
+    client: &mut TextClient<'_>,
     mapping: &mut GetKeyboardMappingReply,
-    client: &mut TextClient,
     ch: char,
-) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+) -> Result<(u8, Option<()>)> {
     let keysym = mpx_keyboard::keysym_for_char(ch);
-    let (keycode, guard) = keycode_for_keysym(conn, mapping, keysym, &ch.to_string())?;
-    if guard.is_some() {
-        client.notice(conn);
+    let (keycode, guard) = keycode_for_keysym(client.conn, mapping, keysym, &ch.to_string())?;
+    let Some(guard) = guard else {
+        return Ok((keycode, None));
+    };
+    client.borrowed.push(guard);
+    if let Some(window) = client.recipient() {
+        client.ping(window);
     }
-    Ok((keycode, guard))
+    Ok((keycode, Some(())))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4492,58 +4493,58 @@ enum ClientSync {
     Unanswered,
 }
 
-struct TextClient {
+struct TextClient<'a> {
+    conn: &'a RustConnection,
     target: Option<Window>,
+    borrowed: Vec<RemappedKeycode<'a>>,
     sent: Vec<Window>,
     unanswered: Vec<Window>,
 }
 
-impl TextClient {
-    fn new(target: Option<Window>) -> Self {
+impl<'a> TextClient<'a> {
+    fn new(conn: &'a RustConnection, target: Option<Window>) -> Self {
         Self {
+            conn,
             target,
+            borrowed: Vec::new(),
             sent: Vec::new(),
             unanswered: Vec::new(),
         }
     }
 
-    fn recipient(&self, conn: &RustConnection) -> Option<Window> {
+    fn recipient(&self) -> Option<Window> {
         self.target.or_else(|| {
-            let cookie = conn.get_input_focus().ok()?;
+            let cookie = self.conn.get_input_focus().ok()?;
             cookie.reply().ok().map(|reply| reply.focus)
         })
     }
 
-    fn record_recipient(&mut self, conn: &RustConnection) {
-        if let Some(window) = self.recipient(conn) {
+    fn record_recipient(&mut self) {
+        if let Some(window) = self.recipient() {
             if !self.sent.contains(&window) {
                 self.sent.push(window);
             }
         }
     }
 
-    fn ping(&mut self, conn: &RustConnection, window: Window) -> ClientSync {
+    fn ping(&mut self, window: Window) -> ClientSync {
         if self.unanswered.contains(&window) {
             return ClientSync::Unanswered;
         }
-        let sync = sync_client(conn, Some(window));
+        let sync = sync_client(self.conn, Some(window));
         if sync == ClientSync::Unanswered {
             self.unanswered.push(window);
         }
         sync
     }
+}
 
-    fn notice(&mut self, conn: &RustConnection) {
-        if let Some(window) = self.recipient(conn) {
-            self.ping(conn, window);
-        }
-    }
-
-    fn release(mut self, conn: &RustConnection, guards: Vec<RemappedKeycode<'_>>) {
+impl Drop for TextClient<'_> {
+    fn drop(&mut self) {
         for window in std::mem::take(&mut self.sent) {
-            self.ping(conn, window);
+            self.ping(window);
         }
-        drop(guards);
+        self.borrowed.clear();
     }
 }
 

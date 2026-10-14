@@ -744,3 +744,71 @@ fn xtest_text_syncs_with_the_window_that_got_the_keys_when_focus_moves_after_the
     assert_eq!(spare_keycodes(&conn)?, before);
     Ok(())
 }
+
+struct DisplayWithoutXtest {
+    server: std::process::Child,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl DisplayWithoutXtest {
+    fn start() -> Result<(Self, RustConnection, usize)> {
+        let mut server = std::process::Command::new("Xvfb")
+            .args(["-displayfd", "1", "-extension", "XTEST", "-nolisten", "tcp"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()?;
+        let mut number = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(server.stdout.take().expect("piped stdout")),
+            &mut number,
+        )?;
+        let display = format!(":{}", number.trim());
+        let previous = std::env::var_os("DISPLAY");
+        std::env::set_var("DISPLAY", &display);
+        let (conn, screen) = x11rb::connect(Some(&display))?;
+        Ok((Self { server, previous }, conn, screen))
+    }
+}
+
+impl Drop for DisplayWithoutXtest {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(display) => std::env::set_var("DISPLAY", display),
+            None => std::env::remove_var("DISPLAY"),
+        }
+        let _ = self.server.kill();
+        let _ = self.server.wait();
+    }
+}
+
+#[test]
+#[ignore = "requires Xvfb"]
+fn xtest_text_syncs_before_restoring_when_sending_a_key_fails() -> Result<()> {
+    let (_display, conn, screen) = DisplayWithoutXtest::start()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| {
+            std::thread::sleep(Duration::from_millis(200));
+            assert_ne!(
+                spare_keycodes(&conn)?,
+                before,
+                "keycode restored before the pong"
+            );
+            pong(&conn, root, protocols, data)
+        },
+    )?;
+    assert!(typed.result.is_err(), "typing without XTEST succeeded");
+    assert!(typed.presses.is_empty(), "{:?}", typed.presses);
+    assert_eq!(
+        typed.pings.len(),
+        2,
+        "a ping after the binding and one before the restore"
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}

@@ -3383,9 +3383,35 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
 fn type_text_with_preflight<G>(
     text: &str,
     mapping: &GetKeyboardMappingReply,
-    mut remap: impl FnMut(char) -> Result<(u8, Option<G>)>,
+    mut remap: impl FnMut(char, &GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
     mut send: impl FnMut(u8, bool) -> Result<()>,
 ) -> Result<()> {
+    let needed = text
+        .chars()
+        .filter(|&ch| char_to_keycode_shift(mapping, mpx_keyboard::keysym_for_char(ch)).is_none())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let per = mapping.keysyms_per_keycode as usize;
+    let available = if per == 0 {
+        0
+    } else {
+        mapping
+            .keysyms
+            .chunks(per)
+            .filter(|syms| syms.iter().all(|&s| s == 0))
+            .count()
+    };
+    if needed > available {
+        bail!(
+            "typed 0 of {} characters: need {needed} spare keycodes, only {available} available",
+            text.chars().count()
+        );
+    }
+    let mut mapping = GetKeyboardMappingReply {
+        keysyms_per_keycode: mapping.keysyms_per_keycode,
+        sequence: mapping.sequence,
+        keysyms: mapping.keysyms.clone(),
+    };
     let mut guards = Vec::new();
     let mut resolved = std::collections::HashMap::new();
     let mut keys = Vec::new();
@@ -3393,15 +3419,17 @@ fn type_text_with_preflight<G>(
         let key = match resolved.get(&ch).copied() {
             Some(key) => key,
             None => {
-                let key = match char_to_keycode_shift(mapping, mpx_keyboard::keysym_for_char(ch)) {
+                let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
                     Some(key) => key,
                     None => {
-                        let (keycode, guard) = remap(ch).map_err(|error| {
+                        let (keycode, guard) = remap(ch, &mapping).map_err(|error| {
                             anyhow::anyhow!(
                                 "typed 0 of {} characters: {error:#}",
                                 text.chars().count()
                             )
                         })?;
+                        let idx = (keycode as usize - 8) * per;
+                        mapping.keysyms[idx..idx + per].fill(mpx_keyboard::keysym_for_char(ch));
                         guards.extend(guard);
                         (keycode, false)
                     }
@@ -3427,10 +3455,10 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     type_text_with_preflight(
         text,
         &mapping,
-        |ch| {
+        |ch, mapping| {
             keycode_for_keysym(
                 &conn,
-                &mapping,
+                mapping,
                 mpx_keyboard::keysym_for_char(ch),
                 &ch.to_string(),
             )
@@ -3512,10 +3540,10 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     type_text_with_preflight(
         text,
         &mapping,
-        |ch| {
+        |ch, mapping| {
             keycode_for_keysym(
                 &conn,
-                &mapping,
+                mapping,
                 mpx_keyboard::keysym_for_char(ch),
                 &ch.to_string(),
             )
@@ -4145,7 +4173,7 @@ mod key_name_alias_tests {
             let result = type_text_with_preflight::<()>(
                 text,
                 &mapping,
-                |_| anyhow::bail!("no spare keycode"),
+                |_, _| anyhow::bail!("no spare keycode"),
                 |keycode, shift| {
                     events.extend([keycode, keycode]);
                     target.push(if shift { 'A' } else { 'a' });
@@ -4162,20 +4190,53 @@ mod key_name_alias_tests {
     }
 
     #[test]
+    fn text_preflight_requires_a_spare_for_each_distinct_unmapped_character() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        let mut target = String::from("existing");
+        let mut events = Vec::new();
+        let error = type_text_with_preflight::<()>(
+            "a你好",
+            &mapping,
+            |_, _| panic!("insufficient capacity must fail before remapping"),
+            |keycode, _| {
+                events.push(keycode);
+                target.push('a');
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "typed 0 of 3 characters: need 2 spare keycodes, only 1 available"
+        );
+        assert!(events.is_empty());
+        assert_eq!(target, "existing");
+    }
+
+    #[test]
     fn text_preflight_preserves_shift_order_and_reuses_remaps() {
         let mapping = GetKeyboardMappingReply {
             keysyms_per_keycode: 2,
             sequence: 0,
-            keysyms: vec!['a' as u32, 'A' as u32],
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0, 0, 0],
         };
         let mut remaps = 0;
         let mut events = Vec::new();
         type_text_with_preflight::<()>(
-            "aA約約",
+            "aA你好你",
             &mapping,
-            |_| {
+            |_, mapping| {
                 remaps += 1;
-                Ok((9, None))
+                let index = mapping
+                    .keysyms
+                    .chunks(2)
+                    .rposition(|syms| syms == [0, 0])
+                    .unwrap();
+                Ok(((8 + index) as u8, None))
             },
             |keycode, shift| {
                 events.push((keycode, shift));
@@ -4183,8 +4244,11 @@ mod key_name_alias_tests {
             },
         )
         .unwrap();
-        assert_eq!(remaps, 1);
-        assert_eq!(events, [(8, false), (8, true), (9, false), (9, false)]);
+        assert_eq!(remaps, 2);
+        assert_eq!(
+            events,
+            [(8, false), (8, true), (10, false), (9, false), (10, false)]
+        );
     }
 
     #[test]

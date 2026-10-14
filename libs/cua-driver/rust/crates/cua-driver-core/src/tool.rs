@@ -829,17 +829,13 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
     {
         capabilities.push("input.delivery_mode".into());
     }
-    let accepts_scroll_coordinates = tool_name == "scroll"
+    if tool_name == "scroll"
         && ["x", "y"].iter().all(|field| {
             matches!(
                 input_schema["properties"][field]["type"].as_str(),
                 Some("number" | "integer")
             )
-        });
-    if accepts_scroll_coordinates
-        && !capabilities
-            .iter()
-            .any(|capability| capability == "input.scroll.coordinates")
+        })
     {
         capabilities.push("input.scroll.coordinates".into());
     }

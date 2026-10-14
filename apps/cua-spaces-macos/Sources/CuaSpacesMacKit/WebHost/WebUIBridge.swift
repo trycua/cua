@@ -89,7 +89,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
-        "notifications.list", "notifications.markAllRead",
+        "notifications.list", "notifications.markAllRead", "notifications.markRead",
         "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",

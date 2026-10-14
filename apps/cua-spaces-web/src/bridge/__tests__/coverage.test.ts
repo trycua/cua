@@ -107,6 +107,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "storage.run": { request: { kind: "clear-cache" } },
   "notifications.list": {},
   "notifications.markAllRead": {},
+  "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
   "spaces.usage": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },

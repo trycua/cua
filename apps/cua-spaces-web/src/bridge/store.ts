@@ -568,7 +568,7 @@ export class BridgeStore {
       this.createRequests.delete(pendingId);
       await this.refresh("spaces");
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
-      this.extras.record({ kind: "message", title: `${space.name} is ready` });
+      this.extras.record({ kind: "message", title: `${space.name} is ready`, space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;

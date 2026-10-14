@@ -1322,11 +1322,11 @@ pub enum DragButton {
 /// Middle-click at `(x, y)` with optional modifier keys.
 ///
 /// Posts an `OtherMouseDown` / `OtherMouseUp` pair with `CGMouseButton::Center`
-/// to the target pid through the same SkyLight + public-API postBoth path the
-/// left- and right-click primitives use. Window-local stamping mirrors
+/// to the target pid once through SkyLight, falling back to the public API
+/// only when the SPI is absent. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, None, None, modifiers)
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, CGMouseButton::Center)
 }
 
 pub fn middle_click_at_xy_with_window_local(
@@ -1338,60 +1338,20 @@ pub fn middle_click_at_xy_with_window_local(
     wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
-}
-
-fn middle_click_at_xy_inner(
-    pid: i32,
-    x: f64,
-    y: f64,
-    window_local: Option<(f64, f64)>,
-    wid: Option<u32>,
-    modifiers: &[&str],
-) -> anyhow::Result<()> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let point = CGPoint::new(x, y);
-    let flags = parse_modifier_flags(modifiers);
-    let click_group_id = wid.map(|_| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() as i64
-    });
-
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::OtherMouseDown,
-        point,
+    right_click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        modifiers,
         CGMouseButton::Center,
     )
-    .map_err(|_| anyhow::anyhow!("middle mouse down failed"))?;
-    set_explicit_flags(&down, flags);
-    let mode = if wid.is_some() {
-        MousePostMode::SkyLightPreferred
-    } else {
-        MousePostMode::Both
-    };
-    post_mouse_event_with_mode(pid, &down, window_local, wid, click_group_id, 1, 2, 3, mode);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
-    let up = CGEvent::new_mouse_event(
-        source,
-        CGEventType::OtherMouseUp,
-        point,
-        CGMouseButton::Center,
-    )
-    .map_err(|_| anyhow::anyhow!("middle mouse up failed"))?;
-    set_explicit_flags(&up, flags);
-    post_mouse_event_with_mode(pid, &up, window_local, wid, click_group_id, 1, 2, 3, mode);
-
-    Ok(())
 }
 
 /// Right-click at `(x, y)` with optional modifier keys (no window routing).
 pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, None, None, modifiers)
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, CGMouseButton::Right)
 }
 
 /// Like `right_click_at_xy` but stamps `CGEventSetWindowLocation` with the
@@ -1417,7 +1377,15 @@ pub fn right_click_at_xy_with_window_local(
     wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
+    right_click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        modifiers,
+        CGMouseButton::Right,
+    )
 }
 
 fn right_click_at_xy_inner(
@@ -1427,8 +1395,14 @@ fn right_click_at_xy_inner(
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     modifiers: &[&str],
+    button: CGMouseButton,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    let (down_type, up_type, button_number) = match button {
+        CGMouseButton::Center => (CGEventType::OtherMouseDown, CGEventType::OtherMouseUp, 2),
+        _ => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, 1),
+    };
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -1442,8 +1416,6 @@ fn right_click_at_xy_inner(
             .subsec_nanos() as i64
     });
 
-    // Prime cursor-tracking state at the target so AppKit hit-tests the
-    // right-down at the right NSView (same rationale as the left path).
     post_mouse_moved_primer(
         pid,
         &source,
@@ -1455,16 +1427,9 @@ fn right_click_at_xy_inner(
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::RightMouseDown,
-        point,
-        CGMouseButton::Right,
-    )
-    .map_err(|_| anyhow::anyhow!("right mouse down failed"))?;
+    let down = CGEvent::new_mouse_event(source.clone(), down_type, point, button)
+        .map_err(|_| anyhow::anyhow!("mouse down failed"))?;
     set_explicit_flags(&down, flags);
-    // button_number = 1 (right). Stamping 0 here routes the event as a left
-    // button-number on the receiving side even though the type is rightMouseDown.
     post_mouse_event_with_mode(
         pid,
         &down,
@@ -1472,19 +1437,14 @@ fn right_click_at_xy_inner(
         wid,
         click_group_id,
         1,
-        1,
+        button_number,
         3,
         MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(std::time::Duration::from_millis(28));
 
-    let up = CGEvent::new_mouse_event(
-        source,
-        CGEventType::RightMouseUp,
-        point,
-        CGMouseButton::Right,
-    )
-    .map_err(|_| anyhow::anyhow!("right mouse up failed"))?;
+    let up = CGEvent::new_mouse_event(source, up_type, point, button)
+        .map_err(|_| anyhow::anyhow!("mouse up failed"))?;
     set_explicit_flags(&up, flags);
     post_mouse_event_with_mode(
         pid,
@@ -1493,7 +1453,7 @@ fn right_click_at_xy_inner(
         wid,
         click_group_id,
         1,
-        1,
+        button_number,
         3,
         MousePostMode::SkyLightPreferred,
     );
@@ -1906,15 +1866,17 @@ mod tests {
         let capture = Capture::start(true);
         middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
         let routing = capture.window_routing();
-        assert_eq!(routing.len(), 2);
+        assert_eq!(routing.len(), 3);
         for fields in &routing {
             assert_eq!(&fields[..3], &[7, 7, 7]);
             assert_ne!(fields[3], 0, "window stamps require a click-group ID");
         }
         assert_eq!(routing[0][3], routing[1][3]);
+        assert_eq!(routing[1][3], routing[2][3]);
         assert_eq!(
             capture.posted(),
             [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
                 Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
                 Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
             ]
@@ -1928,6 +1890,7 @@ mod tests {
         assert_eq!(
             capture.posted(),
             [
+                Posted::new("MouseMoved", PostRoute::PublicPid, 0),
                 Posted::new("OtherMouseDown", PostRoute::PublicPid, 2),
                 Posted::new("OtherMouseUp", PostRoute::PublicPid, 2),
             ]
@@ -1938,7 +1901,15 @@ mod tests {
     fn window_less_middle_click_keeps_window_routing_unset() {
         let capture = Capture::start(true);
         middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
-        assert_eq!(capture.window_routing(), [[0; 4], [0; 4]]);
+        assert_eq!(capture.window_routing(), [[0; 4]; 3]);
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
+            ]
+        );
     }
 
     #[test]

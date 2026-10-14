@@ -16,17 +16,16 @@ use crate::Teleport;
 use cua_sdk::{CuaError, Result};
 
 pub(crate) fn ux_err(e: UxError) -> CuaError {
-    {
-        let m = e.to_string();
-        match e {
-            UxError::Unsupported(_) => CuaError::Unsupported(m),
-            UxError::Invalid(_) => CuaError::InvalidArgument(m),
-            UxError::NotApproved(_) => CuaError::TeleportRefused(m),
-            UxError::PermissionDenied(_) | UxError::HostEffectsRefused(_) => {
-                CuaError::PermissionDenied(m)
-            }
-            UxError::Io(_) => CuaError::Internal(m),
-        }
+    // The SDK error adds the same prefix as the UX one ("invalid argument:",
+    // "unsupported:", "permission denied:"), so those carry the bare message
+    // (it read "invalid argument: invalid argument: ..." before).
+    match e {
+        UxError::Unsupported(m) => CuaError::Unsupported(m),
+        UxError::Invalid(m) => CuaError::InvalidArgument(m),
+        UxError::NotApproved(m) => CuaError::TeleportRefused(m),
+        UxError::PermissionDenied(m) => CuaError::PermissionDenied(m),
+        e @ UxError::HostEffectsRefused(_) => CuaError::PermissionDenied(e.to_string()),
+        e @ UxError::Io(_) => CuaError::Internal(e.to_string()),
     }
 }
 

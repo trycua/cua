@@ -697,15 +697,21 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_confirm_machine() != 44995:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_devices_create_pairing_code() != 19274:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_device_id() != 58064:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_enroll() != 25682:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_devices_pairing_codes() != 10069:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_relay_url() != 39774:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_rename() != 59535:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2567,6 +2573,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_confirm_machine.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_confirm_machine.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_create_pairing_code.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_create_pairing_code.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_device_id.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2576,6 +2588,10 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_enroll.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_enroll.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_pairing_codes.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_pairing_codes.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_relay_url.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2592,6 +2608,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke_pairing_code.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke_pairing_code.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_snapshot.argtypes = (
     ctypes.c_uint64,
     ctypes.c_uint32,
@@ -4668,12 +4689,18 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_devices_check_enrolled.restype = ctype
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_confirm_machine.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_confirm_machine.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_create_pairing_code.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_create_pairing_code.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_device_id.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_device_id.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_enroll.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_enroll.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_pairing_codes.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_pairing_codes.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_relay_url.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_relay_url.restype = ctypes.c_uint16
@@ -4683,6 +4710,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.restype = ctypes.c_uint
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_snapshot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_snapshot.restype = ctypes.c_uint16
@@ -15169,19 +15199,20 @@ class LocalStorage:
     """
     What local Spaces have room for (see [`Local::storage`]).
 """
-    def __init__(self, *, host_arch:str, reserve_bytes:int, lume:typing.Optional[StorageVolume], qemu:typing.Optional[StorageVolume], container:typing.Optional[StorageVolume], pulled:typing.List[str]):
+    def __init__(self, *, host_arch:str, reserve_bytes:int, lume:typing.Optional[StorageVolume], qemu:typing.Optional[StorageVolume], container:typing.Optional[StorageVolume], pulled:typing.List[str], linux_runtime_download_bytes:int):
         self.host_arch = host_arch
         self.reserve_bytes = reserve_bytes
         self.lume = lume
         self.qemu = qemu
         self.container = container
         self.pulled = pulled
+        self.linux_runtime_download_bytes = linux_runtime_download_bytes
 
 
 
 
     def __str__(self):
-        return "LocalStorage(host_arch={}, reserve_bytes={}, lume={}, qemu={}, container={}, pulled={})".format(self.host_arch, self.reserve_bytes, self.lume, self.qemu, self.container, self.pulled)
+        return "LocalStorage(host_arch={}, reserve_bytes={}, lume={}, qemu={}, container={}, pulled={}, linux_runtime_download_bytes={})".format(self.host_arch, self.reserve_bytes, self.lume, self.qemu, self.container, self.pulled, self.linux_runtime_download_bytes)
     def __eq__(self, other):
         if self.host_arch != other.host_arch:
             return False
@@ -15195,6 +15226,8 @@ class LocalStorage:
             return False
         if self.pulled != other.pulled:
             return False
+        if self.linux_runtime_download_bytes != other.linux_runtime_download_bytes:
+            return False
         return True
 
 class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
@@ -15207,6 +15240,7 @@ class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
             qemu=_UniffiFfiConverterOptionalTypeStorageVolume.read(buf),
             container=_UniffiFfiConverterOptionalTypeStorageVolume.read(buf),
             pulled=_UniffiFfiConverterSequenceString.read(buf),
+            linux_runtime_download_bytes=_UniffiFfiConverterUInt64.read(buf),
         )
 
     @staticmethod
@@ -15217,6 +15251,7 @@ class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeStorageVolume.check_lower(value.qemu)
         _UniffiFfiConverterOptionalTypeStorageVolume.check_lower(value.container)
         _UniffiFfiConverterSequenceString.check_lower(value.pulled)
+        _UniffiFfiConverterUInt64.check_lower(value.linux_runtime_download_bytes)
 
     @staticmethod
     def write(value, buf):
@@ -15226,6 +15261,7 @@ class _UniffiFfiConverterTypeLocalStorage(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeStorageVolume.write(value.qemu, buf)
         _UniffiFfiConverterOptionalTypeStorageVolume.write(value.container, buf)
         _UniffiFfiConverterSequenceString.write(value.pulled, buf)
+        _UniffiFfiConverterUInt64.write(value.linux_runtime_download_bytes, buf)
 
 class _UniffiFfiConverterMapStringSequenceString(_UniffiConverterRustBuffer):
     @classmethod
@@ -15772,6 +15808,100 @@ class _UniffiFfiConverterTypeOverlayResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.previous_sha256, buf)
         _UniffiFfiConverterUInt64.write(value.size, buf)
         _UniffiFfiConverterString.write(value.restarted, buf)
+
+@dataclass
+class PairingCode:
+    """
+    A one-time code that adds a machine to the account ("Add a machine"
+    by link or QR code).
+"""
+    def __init__(self, *, id:str, code:typing.Optional[str], url:typing.Optional[str], install_sh:typing.Optional[str], install_powershell:typing.Optional[str], state:str, team:typing.Optional[str], created_at:int, expires_at:int, used_at:typing.Optional[int], machine:typing.Optional[str]):
+        self.id = id
+        self.code = code
+        self.url = url
+        self.install_sh = install_sh
+        self.install_powershell = install_powershell
+        self.state = state
+        self.team = team
+        self.created_at = created_at
+        self.expires_at = expires_at
+        self.used_at = used_at
+        self.machine = machine
+
+
+
+
+    def __str__(self):
+        return "PairingCode(id={}, code={}, url={}, install_sh={}, install_powershell={}, state={}, team={}, created_at={}, expires_at={}, used_at={}, machine={})".format(self.id, self.code, self.url, self.install_sh, self.install_powershell, self.state, self.team, self.created_at, self.expires_at, self.used_at, self.machine)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.code != other.code:
+            return False
+        if self.url != other.url:
+            return False
+        if self.install_sh != other.install_sh:
+            return False
+        if self.install_powershell != other.install_powershell:
+            return False
+        if self.state != other.state:
+            return False
+        if self.team != other.team:
+            return False
+        if self.created_at != other.created_at:
+            return False
+        if self.expires_at != other.expires_at:
+            return False
+        if self.used_at != other.used_at:
+            return False
+        if self.machine != other.machine:
+            return False
+        return True
+
+class _UniffiFfiConverterTypePairingCode(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return PairingCode(
+            id=_UniffiFfiConverterString.read(buf),
+            code=_UniffiFfiConverterOptionalString.read(buf),
+            url=_UniffiFfiConverterOptionalString.read(buf),
+            install_sh=_UniffiFfiConverterOptionalString.read(buf),
+            install_powershell=_UniffiFfiConverterOptionalString.read(buf),
+            state=_UniffiFfiConverterString.read(buf),
+            team=_UniffiFfiConverterOptionalString.read(buf),
+            created_at=_UniffiFfiConverterUInt64.read(buf),
+            expires_at=_UniffiFfiConverterUInt64.read(buf),
+            used_at=_UniffiFfiConverterOptionalUInt64.read(buf),
+            machine=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterOptionalString.check_lower(value.code)
+        _UniffiFfiConverterOptionalString.check_lower(value.url)
+        _UniffiFfiConverterOptionalString.check_lower(value.install_sh)
+        _UniffiFfiConverterOptionalString.check_lower(value.install_powershell)
+        _UniffiFfiConverterString.check_lower(value.state)
+        _UniffiFfiConverterOptionalString.check_lower(value.team)
+        _UniffiFfiConverterUInt64.check_lower(value.created_at)
+        _UniffiFfiConverterUInt64.check_lower(value.expires_at)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.used_at)
+        _UniffiFfiConverterOptionalString.check_lower(value.machine)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterOptionalString.write(value.code, buf)
+        _UniffiFfiConverterOptionalString.write(value.url, buf)
+        _UniffiFfiConverterOptionalString.write(value.install_sh, buf)
+        _UniffiFfiConverterOptionalString.write(value.install_powershell, buf)
+        _UniffiFfiConverterString.write(value.state, buf)
+        _UniffiFfiConverterOptionalString.write(value.team, buf)
+        _UniffiFfiConverterUInt64.write(value.created_at, buf)
+        _UniffiFfiConverterUInt64.write(value.expires_at, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.used_at, buf)
+        _UniffiFfiConverterOptionalString.write(value.machine, buf)
 
 @dataclass
 class PersistentAgentInfo:
@@ -24180,6 +24310,29 @@ class _UniffiFfiConverterTypeLoginAttempt:
     def write(cls, value: LoginAttempt, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+class _UniffiFfiConverterSequenceTypePairingCode(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypePairingCode.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypePairingCode.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypePairingCode.read(buf) for i in range(count)
+        ]
+
 
 class DevicesProtocol(typing.Protocol):
     """
@@ -24209,6 +24362,13 @@ class DevicesProtocol(typing.Protocol):
         member, not just this device.
 """
         raise NotImplementedError
+    async def create_pairing_code(self, team: typing.Optional[str],ttl_secs: typing.Optional[int]) -> PairingCode:
+        """
+        Makes a one-time code (link, QR, install commands) that adds another
+        computer to the account, or to `team` (from this enrolled device).
+        It expires after `ttl_secs` (30 minutes when `None`).
+"""
+        raise NotImplementedError
     def device_id(self, ) -> typing.Optional[str]:
         """
         This device's id, when it has a key (no network).
@@ -24220,6 +24380,11 @@ class DevicesProtocol(typing.Protocol):
         a fresh sign-in it is enrolled at once (replacing this machine's
         older device key, if any); otherwise the result carries a one-time
         code to approve from an enrolled device.
+"""
+        raise NotImplementedError
+    async def pairing_codes(self, ) -> typing.List[PairingCode]:
+        """
+        The account's pairing codes, newest first (without the codes).
 """
         raise NotImplementedError
     def relay_url(self, ) -> str:
@@ -24236,6 +24401,11 @@ class DevicesProtocol(typing.Protocol):
         """
         Revokes a device (from this enrolled device). Revoking this device
         also deletes its key.
+"""
+        raise NotImplementedError
+    async def revoke_pairing_code(self, id: str) -> None:
+        """
+        Revokes an unused pairing code (`pc_…`).
 """
         raise NotImplementedError
     async def snapshot(self, audit_limit: int) -> DevicesSnapshot:
@@ -24348,6 +24518,31 @@ class Devices(DevicesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def create_pairing_code(self, team: typing.Optional[str],ttl_secs: typing.Optional[int]) -> PairingCode:
+        """
+        Makes a one-time code (link, QR, install commands) that adds another
+        computer to the account, or to `team` (from this enrolled device).
+        It expires after `ttl_secs` (30 minutes when `None`).
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(team)
+
+        _UniffiFfiConverterOptionalUInt64.check_lower(ttl_secs)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalString.lower(team),
+            _UniffiFfiConverterOptionalUInt64.lower(ttl_secs),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypePairingCode.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_devices_create_pairing_code(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     def device_id(self, ) -> typing.Optional[str]:
         """
         This device's id, when it has a key (no network).
@@ -24377,6 +24572,23 @@ class Devices(DevicesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_devices_enroll(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def pairing_codes(self, ) -> typing.List[PairingCode]:
+        """
+        The account's pairing codes, newest first (without the codes).
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypePairingCode.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_devices_pairing_codes(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -24439,6 +24651,26 @@ class Devices(DevicesProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def revoke_pairing_code(self, id: str) -> None:
+        """
+        Revokes an unused pairing code (`pc_…`).
+"""
+
+        _UniffiFfiConverterString.check_lower(id)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(id),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
@@ -37667,6 +37899,7 @@ __all__ = [
     "NotificationInfo",
     "Overlay",
     "OverlayResult",
+    "PairingCode",
     "PersistentAgentInfo",
     "PersistentAgentOptions",
     "Point",

@@ -33,6 +33,17 @@ public enum MainSelection: Hashable {
     case drive
     /// The notifications feed.
     case notifications
+    /// Your machines: this one and the others that run your Spaces.
+    case machines
+    /// The getting-started checklist.
+    case gettingStarted
+}
+
+/// A detail action to run once that Space's detail shows (the checklist's
+/// Teleport and Share).
+public struct DetailRequest: Equatable {
+    public let spaceId: String
+    public let action: AppDetailActionId
 }
 
 /// The app's root model. It holds the core's Space list state and forwards
@@ -60,6 +71,10 @@ public final class AppModel {
     public var banner: String?
     public var bannerIsError = false
     public var showingNewSpace = false
+    /// The command palette (⌘K).
+    public var showingPalette = false
+    /// Run by the Space's detail when it shows (`DetailRequest`).
+    public var detailRequest: DetailRequest?
     public var confirmDeleteId: String?
     /// A teleport the notch started: the Space and the dropped app.
     public var pendingTeleport: PendingTeleport?
@@ -75,6 +90,8 @@ public final class AppModel {
     public let devices: DevicesModel
     /// Persistent agents, the Cua Volume and the notifications feed.
     public let persistent: PersistentModel
+    /// The getting-started checklist.
+    public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
     /// Settings, Agents: the provider keys agents get (kept by the daemon).
@@ -128,8 +145,14 @@ public final class AppModel {
     public private(set) var creates = AppCreatesState(pending: [], deleting: [], powering: [])
     /// Sidebar rows as targets for a dragged real window.
     public let dropTargets = SidebarDropTargets()
+    /// The New UI window's Space tiles, the same kind of target.
+    public let pageDropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
+    /// The running app's version: with it, the New UI's default follows
+    /// the update channel and the version (`appSettingsResolveNewUi`);
+    /// without it (tests, fixtures), the New UI is on only by choice.
+    let appVersion: String?
     /// Settings → About and the updater (none until `AppEnvironment`
     /// starts one).
     public var updates = UpdatesModel(updater: nil)
@@ -140,11 +163,13 @@ public final class AppModel {
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
                 billing: BillingRunning? = nil, devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
-                startup: StartupModel? = nil) {
+                startup: StartupModel? = nil, appVersion: String? = nil) {
         self.backend = backend
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
         self.persistent = PersistentModel(tools: backend as? AgentsToolRunning)
+        self.checklist = ChecklistModel(path: URL(fileURLWithPath: settingsPath)
+            .deletingLastPathComponent().appendingPathComponent("checklist.json").path)
         self.storage = StorageModel(tools: backend as? AgentsToolRunning)
         self.agentKeys = AgentKeysModel(tools: backend as? AgentsToolRunning)
         self.cloud = CloudModel(tools: backend as? CloudToolRunning)
@@ -158,7 +183,9 @@ public final class AppModel {
         self.keyvault = keyvault
         self.onboarding = onboarding
         self.settingsPath = settingsPath
-        let settings = appSettingsLoad(path: settingsPath)
+        self.appVersion = appVersion
+        var settings = appSettingsLoad(path: settingsPath)
+        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
             defaultLocation: settings.defaultLocation, cloudAvailable: false,
@@ -173,6 +200,7 @@ public final class AppModel {
         // The app core's usage events for each step (the Tauri app sends
         // the same ones): the first run, Settings, Storage, enrollment.
         onboarding.telemetry = telemetry
+        self.checklist.telemetry = telemetry
         self.storage.telemetry = telemetry
         self.devices.telemetry = telemetry
         // Live Keyvault sign-ins show left of the notch (and in the menu).
@@ -186,6 +214,7 @@ public final class AppModel {
             self.saveSettings()
         }
         self.host.onChange = { [weak self] in self?.recompose() }
+        followChecklist()
         // The first run's "Where should Cua Spaces show up?" is this setting.
         onboarding.onPresentation = { [weak self] menuBar in
             guard let self else { return }
@@ -243,6 +272,7 @@ public final class AppModel {
         dropTargets.isDropTarget = { [weak self] id in
             self?.spaces.first { $0.id == id }.map { appSpaceAcceptsDrop(space: $0) } ?? false
         }
+        pageDropTargets.isDropTarget = dropTargets.isDropTarget
     }
 
     // MARK: - Launch
@@ -326,6 +356,105 @@ public final class AppModel {
     /// The Spaces one of your machines provides (its detail lists them).
     public func hostedRows(_ machineId: String) -> [AppSidebarRow] {
         appHostedRows(spaces: spaces, machineSpaceId: machineId, selectedId: sidebar.selectedId ?? "")
+    }
+
+    // MARK: - Machines and getting started
+
+    /// The Machines page's rows (the core's `machines::page_rows`, which
+    /// the web UI lists too): This machine, the machines the Spaces list
+    /// shows (one sharing its desktop, one that provides Spaces), then
+    /// the account's devices that are none of them; each computer once.
+    public var machinePageRows: [AppMachinePageRow] {
+        let devices = self.devices.snapshot == nil ? [] : self.devices.input.devices.map {
+            AppDeviceIn(id: $0.id, name: $0.name, platform: $0.platform ?? "", lastSeen: $0.lastSeen,
+                        current: $0.current, state: $0.state)
+        }
+        return appMachinesPageRows(input: AppMachinesPageInput(
+            hostOs: .macos, spaces: spaces, devices: devices, hostnames: relayHostnames,
+            presence: self.devices.relayOnline, now: self.devices.nowSecs))
+    }
+
+    /// What each machine sharing its desktop (`relay:<machine>`) reported
+    /// as its hostname, by machine id: the page lists it and the device on
+    /// it once.
+    var relayHostnames: [String: String] {
+        var out: [String: String] = [:]
+        for space in spaces where space.id.hasPrefix("relay:") && space.host == nil {
+            if let name = backend.reportedHostname(id: space.id) { out[String(space.id.dropFirst(6))] = name }
+        }
+        return out
+    }
+
+    /// Your Spaces: neither This machine nor one of your machines.
+    var realSpaces: [AppSpace] {
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+    }
+
+    /// Agent runs seen in any Space (a Space's detail, the web UI's
+    /// Agents page): the checklist's "Run an agent".
+    public private(set) var agentRunsSeen = 0
+
+    /// A Space's agent runs were read: `count` of them.
+    public func sawAgentRuns(_ count: Int) {
+        if count > agentRunsSeen { agentRunsSeen = count }
+    }
+
+    /// Whether the persistent agents were read for the checklist.
+    private var checklistReadAgents = false
+
+    /// What the checklist ticks off from what the app shows: the core's
+    /// one reading (`checklist::observe_from`), whichever UI is open.
+    var checklistSeen: AppChecklistAction {
+        appChecklistObserveFrom(seen: AppChecklistSeen(
+            machines: machinePageRows, spaces: spaces,
+            agents: UInt32(persistent.agentCount), runs: UInt32(agentRunsSeen)))
+    }
+
+    /// Ticks the checklist off from what the app shows now, and again each
+    /// time that changes, whichever UI is open (or none).
+    func followChecklist() {
+        let seen = withObservationTracking { checklistSeen } onChange: { [weak self] in
+            DispatchQueue.main.async { self?.followChecklist() }
+        }
+        checklist.send(seen)
+    }
+
+    /// "Add a machine": New Space's "Connect by address".
+    public func openAddMachine() async {
+        await openNativeNewSpace()
+        wizard.send(.showAddress)
+    }
+
+    /// Getting started (the palette, Help): opens the checklist again.
+    public func openGettingStarted() {
+        checklist.send(.reopen)
+        selection = .gettingStarted
+    }
+
+    /// A checklist step's button.
+    public func runChecklistStep(_ step: AppChecklistStep) async {
+        switch step {
+        case .addMachine:
+            selection = .machines
+            await openAddMachine()
+        case .createSpace: await openNewSpace()
+        case .teleport: await openOnSpace(.teleport)
+        case .share: await openOnSpace(.share)
+        case .runAgent: selection = .agents
+        }
+    }
+
+    /// Opens `action` on the first Space that offers it now; without one,
+    /// New Space (no Space yet) or the first Space (to start it).
+    private func openOnSpace(_ action: AppDetailActionId) async {
+        let real = realSpaces
+        if real.isEmpty { return await openNewSpace() }
+        let ready = real.first { space in
+            detail(space).actions.contains { $0.id == action && $0.enabled }
+        }
+        let space = ready ?? real[0]
+        selection = .space(space.id)
+        if ready != nil { detailRequest = DetailRequest(spaceId: space.id, action: action) }
     }
 
 
@@ -557,6 +686,12 @@ public final class AppModel {
             recompose()
             loaded = true
             rosterError = nil
+            // The checklist's "Run an agent": read the persistent agents
+            // once (the Agents page reads them again when it opens).
+            if !checklistReadAgents, servicesIn, !checklist.state.done.contains(.runAgent) {
+                checklistReadAgents = true
+                Task { await persistent.loadAgents() }
+            }
             if selection == nil, let first = sidebar.selectedId { selection = .space(first) }
             // A preview for every running Space from the daemon's cache
             // (it survives restarts), before one is opened.
@@ -585,7 +720,11 @@ public final class AppModel {
     /// false when there is no New UI window to show it in. Set by the New UI
     /// window while the `web_ui` experiment is on.
     public var openWebNewSpace: ((_ on: String?) -> Bool)?
-    /// Closes the New UI window (the `web_ui` experiment was turned off).
+    /// Puts the New UI window in the native main window's place (the
+    /// `web_ui` experiment was turned on).
+    public var openWebUI: (() -> Void)?
+    /// Closes the New UI window and puts the native one in its place (the
+    /// `web_ui` experiment was turned off).
     public var closeWebUI: (() -> Void)?
 
     /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
@@ -761,7 +900,8 @@ public final class AppModel {
             v.map { AppStorageVolume(availableBytes: $0.availableBytes, totalBytes: $0.totalBytes, name: $0.name) }
         }
         return AppLocalStorage(reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu),
-                               container: volume(s.container), pulled: s.pulled)
+                               container: volume(s.container), pulled: s.pulled,
+                               linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes)
     }
 
     /// "Create Space": the new Space shows in the list and the notch at
@@ -776,7 +916,10 @@ public final class AppModel {
         let pendingId = "pending:\(UUID().uuidString.lowercased())"
         startCreate(args, os: plan.image.os, pendingId: pendingId, select: plan.openDesktop)
         // A failure stays on its row.
-        Task { _ = try? await followCreate(args, pendingId: pendingId) }
+        Task {
+            guard let id = try? await followCreate(args, pendingId: pendingId), plan.openDesktop else { return }
+            WebUIWindowController.actions?.openSpace(id)
+        }
     }
 
     /// Runs a create from the core's create arguments: the native sheet's
@@ -795,10 +938,6 @@ public final class AppModel {
 
     /// The pending row (selected when `open`).
     private func startCreate(_ args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: String, select open: Bool) {
-        // A Space on this Mac is reached over the local network (a macOS
-        // VM on vmnet): ask now, while the person who pressed Create is
-        // here, not when the VM boots after the download.
-        if args.on == "local" { host.requestLocalNetwork() }
         // A create on one of your machines (`host:<machine>`) says which, so
         // that machine's own record of the Space it is creating is not a
         // second row next to this one, and a failure names the machine.
@@ -865,7 +1004,8 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
-            sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error)))
+            sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
+                             errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
             throw error
         }
     }
@@ -994,8 +1134,8 @@ public final class AppModel {
     }
 
     /// The menu bar item's status line.
-    /// Counts the Spaces the user can open, the notch's count (This machine
-    /// only while it is shared and reachable).
+    /// Counts the Spaces the user can open, the notch's count (never This
+    /// machine or another of your machines, even while they provide Spaces).
     public var statusLine: String { appStatusLine(count: appOpenableCount(spaces: spaces)) }
 
     /// The menu bar item's menu: the count, Cua Volume's sync state next to
@@ -1122,16 +1262,36 @@ public final class AppModel {
 
     /// A switch in Settings, Experiments: saved, recorded, and followed by
     /// the first run and an open New Space. Off hides; nothing is undone.
+    /// The New UI's switch ("Use classic UI") also saves the user's choice,
+    /// which later launches keep whatever the default becomes.
     public func chooseExperiment(row: String, option: String) {
         let before = settings.experiments
-        let after = appExperimentsChoose(experiments: before, row: row, option: option)
-        let signals = appTelemetryExperimentsChanged(before: before, after: after)
-        guard !signals.isEmpty else { return }
-        settings.experiments = after
+        let next = appSettingsChooseExperiment(settings: settings, row: row, option: option)
+        guard next != settings else { return }
+        settings = next
+        let after = next.experiments
         saveSettings()
-        telemetry?.record(signals)
+        telemetry?.record(appTelemetryExperimentsChanged(before: before, after: after))
+        applyExperiments(before: before, after: after)
+    }
+
+    /// Settings → About's channel, saved; with no choice of the user's, the
+    /// New UI follows the channel's default at once.
+    public func setUpdateChannel(_ channel: AppUpdateChannel) {
+        settings.updateChannel = channel
+        let before = settings.experiments
+        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
+        saveSettings()
+        if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
+    }
+
+    /// What follows a change of the switches: the first run, an open New
+    /// Space, and the New UI's window in place of the native one (or back).
+    private func applyExperiments(before: AppExperiments, after: AppExperiments) {
+        guard before != after else { return }
         onboarding.send(.experimentsLoaded(experiments: after))
-        // New UI off: its window goes with it (the native one takes over).
+        // New UI on: its window takes the native one's place; off: the reverse.
+        if !before.webUi, after.webUi { openWebUI?() }
         if before.webUi, !after.webUi { closeWebUI?() }
         wizard.update(env: wizardEnv(from: wizard.env))
         // The Volume page went with Cua Volume: back to the Spaces.

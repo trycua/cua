@@ -7,7 +7,8 @@
 //!   for the client and falls back to the device flow when it does not, so
 //!   it works before and after that client change lands.
 //! - **Store**: the OS credential vault on Windows and on macOS for builds
-//!   signed by Cua (service `run.cua.ai`, account `cua-cli`), a 0600
+//!   signed by Cua (service `run.cua.ai`, `staging.run.cua.ai` for
+//!   `CUA_ENV=staging`; account `cua-cli`), a 0600
 //!   `~/.cua/credentials.json` elsewhere (Linux, and unsigned or ad-hoc
 //!   macOS builds, which macOS treats as a new app on every rebuild so
 //!   "Always Allow" never sticks) or with `CUA_CREDENTIAL_STORE=file`.
@@ -22,7 +23,9 @@
 //!   a sign-out or a token another process rotated is seen at once instead
 //!   of being refreshed twice.
 //!
-//! Configuration: `CUA_OIDC_ISSUER`, `CUA_OIDC_CLIENT_ID`; test hooks
+//! Configuration: `CUA_ENV` (`prod` or `staging`: the default issuer, the
+//! vault service and the cua home, so each environment keeps its own
+//! session), `CUA_OIDC_ISSUER` (wins over `CUA_ENV`), `CUA_OIDC_CLIENT_ID`; test hooks
 //! `CUA_OIDC_POLL_UNIT_MS`, `CUA_OIDC_REDIRECT_PORT`,
 //! `CUA_OIDC_LOGIN_TIMEOUT_SECS`.
 
@@ -33,7 +36,7 @@ use std::{
     time::Duration,
 };
 
-/// Default OIDC issuer (`CUA_OIDC_ISSUER`).
+/// The production OIDC issuer (`CUA_OIDC_ISSUER` and `CUA_ENV` change it).
 pub const DEFAULT_OIDC_ISSUER: &str = "https://auth.cua.ai/realms/cyclops-cs";
 /// Public OAuth client of the cua CLI and apps (`CUA_OIDC_CLIENT_ID`).
 pub const DEFAULT_CLIENT_ID: &str = "cua-cli";
@@ -41,8 +44,12 @@ const DEFAULT_SCOPE: &str = "openid profile offline_access";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh this long before expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
+/// The OS vault service of the session: `run.cua.ai` in production,
+/// another one per `CUA_ENV`, so environments never share a session.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-const KEYRING_SERVICE: &str = "run.cua.ai";
+fn keyring_service() -> &'static str {
+    cua_home::env::CuaEnv::current().keyring_service()
+}
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const KEYRING_ACCOUNT: &str = "cua-cli";
 /// The Spaces app's former session file under `~/.cua`.
@@ -78,6 +85,8 @@ pub enum Error {
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[allow(dead_code)]
+mod chunked;
 #[cfg(target_os = "macos")]
 mod macos_keychain;
 
@@ -404,7 +413,8 @@ impl Store {
             Store::TestKeychain(d) => format!("test keychain {}", d.display()),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             Store::Keyring => format!(
-                "OS credential vault (service {KEYRING_SERVICE}, account {KEYRING_ACCOUNT})"
+                "OS credential vault (service {}, account {KEYRING_ACCOUNT})",
+                keyring_service()
             ),
         }
     }
@@ -451,7 +461,7 @@ impl Store {
                 };
                 let items = macos_keychain::check_items(
                     macos_keychain::Keychain::Default,
-                    KEYRING_SERVICE,
+                    keyring_service(),
                     &wanted,
                     prompt,
                     signed_by_cua(),
@@ -476,7 +486,7 @@ impl Store {
         #[cfg(target_os = "macos")]
         for item in &self.check_keychain(false).items {
             if matches!(item.state, KeychainState::NeedsAccess)
-                && let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &item.account)
+                && let Ok(entry) = keyring::Entry::new(keyring_service(), &item.account)
             {
                 let _ = vault_delete(&entry);
             }
@@ -592,7 +602,7 @@ impl Store {
                     #[cfg(target_os = "macos")]
                     if macos_keychain::recover_staged(
                         macos_keychain::Keychain::Default,
-                        KEYRING_SERVICE,
+                        keyring_service(),
                         KEYRING_ACCOUNT,
                     ) {
                         return self.load_stored();
@@ -940,7 +950,7 @@ fn adopt_read(account: &str, text: &str) {
     if signed_by_cua() {
         let _ = macos_keychain::adopt(
             macos_keychain::Keychain::Default,
-            KEYRING_SERVICE,
+            keyring_service(),
             account,
             text.as_bytes(),
             true,
@@ -1068,14 +1078,14 @@ fn quiet() -> Option<macos_keychain::Quiet> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn vault_get(entry: &keyring::Entry) -> keyring::Result<String> {
+fn vault_get(entry: &VaultEntry) -> keyring::Result<String> {
     #[cfg(target_os = "macos")]
     let _quiet = quiet();
     entry.get_password()
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn vault_delete(entry: &keyring::Entry) -> keyring::Result<()> {
+fn vault_delete(entry: &VaultEntry) -> keyring::Result<()> {
     #[cfg(target_os = "macos")]
     let _quiet = quiet();
     entry.delete_credential()
@@ -1103,14 +1113,14 @@ fn auth_failed(e: &keyring::Error) -> bool {
     }
 }
 
-/// Writes the OS vault item `account` (service [`KEYRING_SERVICE`]). On
+/// Writes the OS vault item `account` (service [`keyring_service`]). On
 /// macOS the item trusts every Cua executable of this machine, so the app,
 /// the daemon and the CLI share it without a keychain prompt (see
 /// `macos_keychain`).
 #[cfg(target_os = "macos")]
 fn vault_set(account: &str, text: &str) -> Result<()> {
     let _quiet = quiet();
-    macos_keychain::set_generic_password(KEYRING_SERVICE, account, text.as_bytes()).map_err(|e| {
+    macos_keychain::set_generic_password(keyring_service(), account, text.as_bytes()).map_err(|e| {
         if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED && keychain_noninteractive() {
             Error::Store(KEYCHAIN_NEEDS_ACCESS.into())
         } else if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED {
@@ -1123,10 +1133,70 @@ fn vault_set(account: &str, text: &str) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn vault_set(account: &str, text: &str) -> Result<()> {
-    keyring::Entry::new(KEYRING_SERVICE, account)
+    VaultEntry::new(keyring_service(), account)
         .map_err(store_err)?
         .set_password(text)
         .map_err(store_err)
+}
+
+/// macOS stores each item whole.
+#[cfg(target_os = "macos")]
+type VaultEntry = keyring::Entry;
+
+/// Windows Credential Manager refuses an entry over 2,560 bytes, which a
+/// session exceeds, so a long value is chunked over several entries (see
+/// [`chunked`]); the surface matches `keyring::Entry`.
+#[cfg(target_os = "windows")]
+struct VaultEntry {
+    service: String,
+    account: String,
+}
+
+#[cfg(target_os = "windows")]
+struct WinSlots<'a>(&'a str);
+
+#[cfg(target_os = "windows")]
+impl chunked::Slots for WinSlots<'_> {
+    type Err = keyring::Error;
+    fn read(&self, name: &str) -> keyring::Result<Option<String>> {
+        match keyring::Entry::new(self.0, name)?.get_password() {
+            Ok(s) => Ok(Some(s)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    fn write(&self, name: &str, value: &str) -> keyring::Result<()> {
+        keyring::Entry::new(self.0, name)?.set_password(value)
+    }
+    fn remove(&self, name: &str) -> keyring::Result<()> {
+        match keyring::Entry::new(self.0, name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl VaultEntry {
+    fn new(service: &str, account: &str) -> keyring::Result<Self> {
+        Ok(Self {
+            service: service.into(),
+            account: account.into(),
+        })
+    }
+    fn get_password(&self) -> keyring::Result<String> {
+        chunked::get(&WinSlots(&self.service), &self.account)?.ok_or(keyring::Error::NoEntry)
+    }
+    fn set_password(&self, text: &str) -> keyring::Result<()> {
+        chunked::set(&WinSlots(&self.service), &self.account, text)
+    }
+    fn delete_credential(&self) -> keyring::Result<()> {
+        if chunked::delete(&WinSlots(&self.service), &self.account)? {
+            Ok(())
+        } else {
+            Err(keyring::Error::NoEntry)
+        }
+    }
 }
 
 /// Whether a keychain error is macOS refusing to show a prompt
@@ -1142,8 +1212,8 @@ fn interaction_not_allowed(e: &keyring::Error) -> bool {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn keyring_entry() -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(store_err)
+fn keyring_entry() -> Result<VaultEntry> {
+    VaultEntry::new(keyring_service(), KEYRING_ACCOUNT).map_err(store_err)
 }
 
 /// Whether a file store at `path` reads missing secrets from the OS
@@ -1178,8 +1248,8 @@ fn decode_secret(name: &str, text: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn secret_entry(name: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, &format!("{KEYRING_ACCOUNT}.{name}")).map_err(store_err)
+fn secret_entry(name: &str) -> Result<VaultEntry> {
+    VaultEntry::new(keyring_service(), &format!("{KEYRING_ACCOUNT}.{name}")).map_err(store_err)
 }
 
 /// Writes a file readable only by the owner (0600 on Unix), atomically.
@@ -1240,7 +1310,8 @@ impl Oidc {
         }
     }
 
-    /// From `CUA_OIDC_ISSUER` / `CUA_OIDC_CLIENT_ID` or the defaults.
+    /// From `CUA_OIDC_ISSUER` (else the `CUA_ENV` issuer) and
+    /// `CUA_OIDC_CLIENT_ID` (else `cua-cli`).
     pub fn from_env() -> Self {
         let get = |k: &str, d: &str| {
             std::env::var(k)
@@ -1249,7 +1320,7 @@ impl Oidc {
                 .unwrap_or_else(|| d.to_string())
         };
         Self::new(
-            get("CUA_OIDC_ISSUER", DEFAULT_OIDC_ISSUER),
+            cua_home::env::oidc_issuer(),
             get("CUA_OIDC_CLIENT_ID", DEFAULT_CLIENT_ID),
         )
     }

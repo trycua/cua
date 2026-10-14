@@ -25,6 +25,9 @@ import WebKit
 ///   alone (the view's `KeyCapture`), a click on the page, or the page's
 ///   "Stop controlling" gives it back. Scrolls go to the page until
 ///   it has the keyboard. The system pointer always stays as it is.
+/// - The viewer draws presence over the picture (`PresenceOverlay`, the
+///   native window's): the other participants' cursors and yours, published
+///   to them. The page draws none here (`presence.*` are Electron's).
 /// - A slot shows nothing until its first frame; the page shows
 ///   "Connecting…" under it. A stream that can't open or fails tells the
 ///   page (`video.surface` `failed`), which shows its fallback (Open window
@@ -110,6 +113,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         var layout = VideoSurfaceLayout.none
         var phase = VideoSurfacePhase.connecting
         var frames: AnyCancellable?
+        var presence: AnyCancellable?
         var bound = false
         init(_ update: VideoSurfaceUpdate) {
             id = update.surfaceId
@@ -163,7 +167,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
                                                  viewHeight: webView.bounds.height, flipped: webView.isFlipped)
         surface.view.interactive = u.interactive
         surface.view.input.isInteractive = u.interactive
-        surface.view.input.showsCursorOverlay = u.interactive
+        // The guest's cursor shows only where presence draws none of yours (the native window's rule).
+        surface.view.input.showsCursorOverlay = u.interactive && surface.view.presence?.presenceView == nil
         surface.view.apply(surface.layout)
         show(surface)
         // Keys never stay with a viewer that page UI covers or that left the screen.
@@ -172,6 +177,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
 
     private func attach(_ u: VideoSurfaceUpdate, in webView: WKWebView) -> Surface {
         let surface = Surface(u)
+        // Only the viewer joins presence (`openStream`), so only it draws it.
+        if u.tier == .full { surface.view.addPresence() }
         surface.view.isHidden = true
         surface.view.focusOwner = webView
         surface.view.input.keyboardHome = webView
@@ -231,6 +238,14 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         input.onInput = { [weak session] events in session?.send(events) }
         session.presentation.viewDidAttach()
         input.onDetach = { [weak session] in session?.presentation.viewDidDetach() }
+        if let overlay = surface.view.presence {
+            overlay.session = session
+            surface.presence = session.objectWillChange.receive(on: DispatchQueue.main).sink { [weak session, weak surface] _ in
+                guard let session, let surface else { return }
+                surface.view.syncPresence(with: session)
+            }
+            surface.view.syncPresence(with: session)
+        }
         surface.frames = session.$frame.receive(on: DispatchQueue.main).sink { [weak self, weak session, weak surface] frame in
             guard let self, let session, let surface else { return }
             let input = surface.view.input
@@ -307,6 +322,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.view.input.keyboardReturn.forget()
         watchClicksWhileDropped()
         surface.frames?.cancel()
+        surface.presence?.cancel()
+        surface.view.presence?.stop()
         surface.view.input.onDetach?()
         surface.view.input.onDetach = nil
         surface.view.input.onInput = nil
@@ -409,6 +426,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
 /// scrolls go to the page until it has the keyboard.
 final class VideoSurfaceView: NSView {
     let input = LiveStreamInputView()
+    /// The viewer's presence cursors, over the picture (none on tiles).
+    private(set) var presence: PresenceOverlayView?
     var interactive = false
     /// Where scrolls go while the viewer doesn't have the keyboard.
     weak var focusOwner: NSView?
@@ -431,6 +450,27 @@ final class VideoSurfaceView: NSView {
         frame = layout.container
         input.frame = layout.video
         input.layer?.cornerRadius = layout.radius
+        presence?.frame = layout.video
+    }
+
+    /// Adds the presence layer over the picture. It takes no clicks or keys
+    /// (its `hitTest` is nil), so input still reaches `input`.
+    func addPresence() {
+        guard presence == nil else { return }
+        let overlay = PresenceOverlayView(frame: input.frame)
+        addSubview(overlay, positioned: .above, relativeTo: input)
+        presence = overlay
+    }
+
+    /// What the presence layer draws, from its session (as the SwiftUI
+    /// `PresenceOverlay` reads it on every change).
+    func syncPresence(with session: LiveStreamSession) {
+        guard let presence else { return }
+        presence.surfaceSize = session.surfaceSize
+        presence.presenceView = session.presenceView
+        presence.windowID = session.presenceWindowID
+        presence.isStreamLive = session.status == .streaming
+        input.showsCursorOverlay = interactive && session.presenceView == nil
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {

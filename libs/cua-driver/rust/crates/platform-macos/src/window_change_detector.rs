@@ -244,6 +244,22 @@ pub fn end_tail() {
     drop(tail);
 }
 
+/// Advanced whenever the driver itself makes an app frontmost (bring_to_front,
+/// launch_app, any foreground delivery). The key-focus guard reverts a
+/// background target's self-activation only while this has not moved since
+/// the guard was armed, so it never undoes an activation the driver asked for.
+static INTENTIONAL_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record an activation the driver asked for.
+pub fn note_intentional_activation() {
+    INTENTIONAL_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The current intentional-activation epoch.
+pub fn intentional_epoch() -> u64 {
+    INTENTIONAL_EPOCH.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Take a late change recorded by a detached tail, if it is recent.
 fn take_late() -> Option<Late> {
     lock(&LATE)

@@ -39,6 +39,7 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
     act(() => probe.flow.send({ type: "start" }));
     act(() => probe.flow.send({ type: "signin-done" }));
     act(() => probe.flow.send({ type: "agents-done", configured: [] }));
+    act(() => probe.flow.send({ type: "presentation-done" }));
     const hostChoice = await screen.findByTestId("onboarding-host");
     expect(hostChoice).not.toHaveProperty("disabled", true);
     expect(screen.queryByText(/Available once this machine is set up/)).toBeNull();
@@ -67,6 +68,7 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
     act(() => probe.flow.send({ type: "start" }));
     act(() => probe.flow.send({ type: "signin-done" }));
     act(() => probe.flow.send({ type: "agents-done", configured: [] }));
+    act(() => probe.flow.send({ type: "presentation-done" }));
     fireEvent.click(await screen.findByTestId("onboarding-client"));
     expect(readSavedOnboarding().state).toMatchObject({ step: "done", mode: "client" });
   });

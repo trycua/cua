@@ -54,6 +54,10 @@ public final class NotchController {
     /// Its Dismiss: hide the indicator and the tiles' key (nothing is
     /// revoked or wiped).
     @ObservationIgnored public var onDismissAccess: (() -> Void)?
+    /// The header's list and Settings buttons; unset, `showMain` and
+    /// `showSettings`.
+    @ObservationIgnored public var onOpenList: (() -> Void)?
+    @ObservationIgnored public var onOpenSettings: (() -> Void)?
     /// Opens (or brings forward) the main window, which may have been
     /// closed while the notch stayed up. Set by the notch view.
     @ObservationIgnored public var showMain: (() -> Void)?
@@ -63,6 +67,12 @@ public final class NotchController {
     @ObservationIgnored public var onDropURLs: ((String, [URL]) -> Void)?
     /// The main window's Space rows, the other target for a window drag.
     @ObservationIgnored public var sidebar: SidebarDropTargets?
+    /// The New UI window's Space tiles, a target the same way (the page
+    /// reports where they are).
+    @ObservationIgnored public var pageTiles: SidebarDropTargets?
+    /// The dragged window's number: `start` and `end` carry it, `move`
+    /// doesn't, and the rows' cover check needs it on every event.
+    @ObservationIgnored private var draggedWindowId: UInt32?
     /// A Space's screenshot for its tile (the SDK's `Space.screenshot`).
     @ObservationIgnored public var thumbnail: ((String) async -> NSImage?)?
     /// Opens a URL (System Settings); tests capture it.
@@ -359,7 +369,10 @@ public final class NotchController {
         guard isShown else { return }
         let wasMove = trigger.kind == .move
         let now = clock()
-        if event.phase == "start" { draggedApp = event.app }
+        if event.phase == "start" {
+            draggedApp = event.app
+            draggedWindowId = event.window?.windowId
+        }
         if event.phase != "start", let frame = event.frame { feed(.frame(frame: frame), event) }
         switch event.phase {
         case "start":
@@ -372,20 +385,23 @@ public final class NotchController {
         default:
             feed(.cancel, event)
         }
-        // A moved window released over a Space row in the main window
-        // commits there; the notch drag then ends without a drop. A resize
-        // never targets a row.
-        guard let sidebar else { return }
+        // A moved window released over a Space row in the main window (or
+        // a Space tile in the New UI window) commits there; the notch drag
+        // then ends without a drop. A resize never targets a row.
+        let dragged = event.window?.windowId ?? draggedWindowId
+        if event.phase != "start", event.phase != "move" { draggedWindowId = nil }
         let isMove = event.phase == "end" ? wasMove : trigger.kind == .move
-        guard isMove else {
-            sidebar.handle(phase: "cancel", target: nil)
-            return
-        }
-        let target = sidebar.row(atGlobal: CGPoint(x: event.x, y: event.y), dragged: event.window?.windowId)
-        if let spaceId = sidebar.handle(phase: event.phase, target: target) {
-            model.send(.drag(event: .cancel))
-            onTeleport?(spaceId, event.app ?? draggedApp)
-            draggedApp = nil
+        for targets in [sidebar, pageTiles].compactMap({ $0 }) {
+            guard isMove else {
+                targets.handle(phase: "cancel", target: nil)
+                continue
+            }
+            let target = targets.row(atGlobal: CGPoint(x: event.x, y: event.y), dragged: dragged)
+            if let spaceId = targets.handle(phase: event.phase, target: target) {
+                model.send(.drag(event: .cancel))
+                onTeleport?(spaceId, event.app ?? draggedApp)
+                draggedApp = nil
+            }
         }
     }
 
@@ -455,8 +471,8 @@ extension NotchController: NotchSurface {
         model.send(.dismiss)
         NSApp.activate()
         switch button {
-        case .list: showMain?()
-        case .settings: showSettings?()
+        case .list: (onOpenList ?? showMain)?()
+        case .settings: (onOpenSettings ?? showSettings)?()
         }
     }
 

@@ -174,6 +174,10 @@ struct TicketPayload {
     p: String,
     e: u64,
     n: String,
+    /// The minting call's relay assertion `iat`, when relayed (the relay
+    /// refuses a ticket from before a revoke of `p`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<u64>,
 }
 
 /// What an external credential authorized.
@@ -204,6 +208,10 @@ pub struct RelayCaller {
     pub name: Option<String>,
     /// `owner` or `shared` (an editor).
     pub role: String,
+    /// The relay assertion's `iat` (seconds, relay clock). Tickets minted
+    /// for the call carry it, so the relay can refuse one that predates a
+    /// revoke of this account.
+    pub issued_at: u64,
 }
 
 /// The only calls a relayed caller may make on a machine that does not
@@ -479,6 +487,19 @@ impl Auth {
         principal_id: &str,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal_id, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a relayed call: records its assertion's
+    /// `iat` (`issued`) in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let expires_at = SystemTime::now() + ttl.min(MAX_TICKET_TTL);
         let exp_ms = expires_at
             .duration_since(UNIX_EPOCH)
@@ -490,6 +511,7 @@ impl Auth {
             p: principal_id.to_owned(),
             e: exp_ms,
             n: random_id(9),
+            a: issued,
         };
         let payload = serde_json::to_vec(&payload).expect("ticket payload serializes");
         let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1201,6 +1223,33 @@ mod tests {
             auth.validate_ticket(&ticket, TicketScope::Media),
             Err(TicketError::WrongScope)
         );
+    }
+
+    #[test]
+    fn a_relayed_ticket_records_the_assertion_time_and_still_validates() {
+        use base64::Engine as _;
+        let auth = Auth::new(Some("secret".into()));
+        let payload = |ticket: &str| -> serde_json::Value {
+            let body = ticket.split('.').nth(1).unwrap();
+            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(body)
+                .unwrap();
+            serde_json::from_slice(&raw).unwrap()
+        };
+        let (relayed, _) = auth.mint_ticket_issued(
+            TicketScope::Media,
+            "m",
+            "bob",
+            Some(1_791_773_000),
+            Duration::from_secs(60),
+        );
+        assert_eq!(payload(&relayed)["a"], 1_791_773_000);
+        assert_eq!(payload(&relayed)["p"], "bob");
+        let claims = auth.validate_ticket(&relayed, TicketScope::Media).unwrap();
+        assert_eq!(claims.principal_id, "bob");
+        // A local caller's ticket carries no `a` (same wire form as before).
+        let (local, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::from_secs(60));
+        assert!(payload(&local).get("a").is_none());
     }
 
     #[test]

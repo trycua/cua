@@ -64,6 +64,8 @@ cua-image.workspace = true
 cua-sandbox-core.workspace = true
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
 cua-host.workspace = true
+# `relay:` Spaces over the WireGuard®-based mesh.
+cua-mesh.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -96,6 +98,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 axum = { workspace = true, optional = true, features = ["json"] }
 
 [dev-dependencies]
+cua-mesh = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }

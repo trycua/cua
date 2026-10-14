@@ -12,7 +12,7 @@
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import type { Native } from "../native/load";
-import type { AppApprovalPrompt, AppDevicesInput, AppDevicesView, AppMachineAccessNotice, DevicesLike, DevicesSnapshot, RelayDevice } from "../native/generated/index";
+import type { AppApprovalPrompt, AppDevicesInput, AppDevicesView, AppMachineAccessNotice, DevicesLike, DevicesSnapshot, PairingCode, RelayDevice } from "../native/generated/index";
 import { words } from "./errors";
 
 /** What this machine is called on the relay: macOS's computer name ("Dana's MacBook Pro"), else the hostname. */
@@ -178,6 +178,21 @@ export class DevicesModel {
   async confirmMachine(id: string): Promise<void> {
     await this.relay().confirmMachine(id);
     await this.refresh();
+  }
+
+  /** A one-time link, QR code and install commands that add another computer to the account (or to `team`). */
+  createPairingCode(team: string | null): Promise<PairingCode> {
+    return this.relay().createPairingCode(team ?? undefined, undefined);
+  }
+
+  /** The account's pairing codes, newest first (without the codes). */
+  pairingCodes(): Promise<PairingCode[]> {
+    return this.relay().pairingCodes();
+  }
+
+  /** Revokes an unused pairing code (`pc_…`). */
+  revokePairingCode(id: string): Promise<void> {
+    return this.relay().revokePairingCode(id);
   }
 }
 

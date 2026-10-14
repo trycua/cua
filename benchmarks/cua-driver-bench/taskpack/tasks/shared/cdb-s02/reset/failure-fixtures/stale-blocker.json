@@ -1,0 +1,10 @@
+{
+  "id": "stale-blocker",
+  "description": "A blocker record leaked from a prior trial.",
+  "write": {
+    "path": "chat/blockers.json",
+    "replace": "\"blockers\": []",
+    "with": "\"blockers\": [{\"conflict_id\": \"LHP-C17\"}]"
+  },
+  "expected_failure": "changed"
+}

@@ -34,6 +34,7 @@ export interface StorageVolume {
 /** Where local Spaces are written and what is already pulled. */
 export interface LocalStorage {
   reserveBytes: number;
+  linuxRuntimeDownloadBytes?: number;
   lume: StorageVolume | null;
   qemu: StorageVolume | null;
   container: StorageVolume | null;

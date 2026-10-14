@@ -95,6 +95,9 @@ pub enum TelemetrySignal {
         /// GPU acceleration was turned on.
         #[serde(default)]
         gpu: bool,
+        /// The error enum's case name, when the shell sent one.
+        #[serde(default)]
+        error_variant: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -199,12 +202,39 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+// ---- Getting started -----------------------------------------------------------
+
+/// The getting-started checklist's steps, in the order it lists them.
+pub const CHECKLIST_STEPS: &[&str] = &[
+    "add_machine",
+    "create_space",
+    "teleport",
+    "share",
+    "run_agent",
+];
+
+/// What happens to the checklist itself.
+const CHECKLIST_EVENTS: &[&str] = &["shown", "completed", "dismissed", "reopened"];
+
+/// One getting-started checklist event as `cua_onboarding_step`
+/// `checklist_<event>`: `shown` (first time on screen), one of
+/// [`CHECKLIST_STEPS`] (that step done, once per install), `completed`
+/// (every step done), `dismissed` or `reopened`. Anything else: nothing.
+pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
+    if CHECKLIST_STEPS.contains(&event) || CHECKLIST_EVENTS.contains(&event) {
+        vec![step(&format!("checklist_{event}"), true)]
+    } else {
+        vec![]
+    }
+}
+
 // ---- First run ---------------------------------------------------------------
 
 /// A page's telemetry name.
 pub fn page_name(s: OnboardingStep) -> &'static str {
     match s {
         OnboardingStep::Welcome => "welcome",
+        OnboardingStep::Cli => "command_line",
         OnboardingStep::Signin => "signin",
         OnboardingStep::Agents => "agents",
         OnboardingStep::Presentation => "presentation",
@@ -296,6 +326,10 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
 fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static str) {
     match s.step {
         OnboardingStep::Welcome | OnboardingStep::Done => ("completed", "none"),
+        OnboardingStep::Cli => match a {
+            OnboardingAction::CliPlanned { .. } => ("completed", "installed"),
+            _ => ("skipped", "not_installed"),
+        },
         OnboardingStep::Signin => {
             if s.identity.as_deref().is_some_and(|i| !i.is_empty()) {
                 ("completed", "signed_in")
@@ -421,7 +455,8 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
     }
 }
 
-fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) -> TelemetrySignal {
+#[rustfmt::skip]
+fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: &str, now_ms: i64) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
         guest_os: p.os.as_str().into(),
@@ -435,6 +470,7 @@ fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) ->
         stalled: outcome == "error" && stalled,
         elapsed_ms: (now_ms - p.started_at).max(0) as u64,
         gpu: p.gpu,
+        error_variant: error_variant.into(),
     }
 }
 
@@ -478,29 +514,42 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
-                create_event(p, "ok", false, now_ms),
+                create_event(p, "ok", false, "", now_ms),
                 step("first_space_ready", true),
             ],
             _ => vec![],
         },
-        CreateAction::Fail { id, .. } => match find(id) {
+        CreateAction::Fail {
+            id,
+            error,
+            error_variant,
+        } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), now_ms)]
+                // The shell's enum case is often `Runtime` or none: the
+                // cause the app reads from the text (Local Network, Apple's
+                // VM limit, disk) says more.
+                let variant = crate::spaces::creating::failure_variant(
+                    error,
+                    Some(&p.phase),
+                    p.gpu,
+                    error_variant,
+                );
+                vec![create_event(p, "error", stalled(p), variant, now_ms)]
             }
             _ => vec![],
         },
         CreateAction::CancelDone { id } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             _ => vec![],
         },
         CreateAction::Dismiss { id } => match find(id) {
             Some(p) if p.space_id.is_none() && stalled(p) => {
-                vec![create_event(p, "error", true, now_ms)]
+                vec![create_event(p, "error", true, "", now_ms)]
             }
             _ => vec![],
         },
@@ -704,6 +753,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 stalled,
                 elapsed_ms,
                 gpu,
+                error_variant,
             } => Some(t.capture(events::space_create(
                 &events::SpaceCreate {
                     on: location,
@@ -712,6 +762,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                     last_phase: failed_phase,
                     stalled: *stalled,
                     gpu: *gpu,
+                    error_variant,
                 },
                 Outcome::from_word(outcome),
                 Duration::from_millis(*elapsed_ms),
@@ -841,6 +892,34 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checklist_events_are_fixed_steps_in_the_schema() {
+        let all: Vec<&str> = CHECKLIST_STEPS
+            .iter()
+            .chain(CHECKLIST_EVENTS)
+            .copied()
+            .collect();
+        for e in &all {
+            assert_eq!(steps_of(&checklist(e)), [format!("checklist_{e}")]);
+            #[cfg(feature = "telemetry")]
+            assert!(
+                cua_telemetry::schema::ONBOARDING_STEPS
+                    .contains(&format!("checklist_{e}").as_str()),
+                "checklist_{e} is not in cua-telemetry's step vocabulary"
+            );
+        }
+        for bad in [
+            "",
+            "Share",
+            "checklist_share",
+            "me@example.com",
+            "/Users/x",
+            "share ",
+        ] {
+            assert!(checklist(bad).is_empty(), "{bad:?} accepted");
+        }
+    }
     use crate::drive_settings::DriveMountInput;
     use crate::model::{SpaceOs, SpaceProvider};
     use crate::onboarding::{initial, reduce};
@@ -1025,6 +1104,51 @@ mod tests {
     }
 
     #[test]
+    fn installing_the_command_and_skipping_it_are_told_apart() {
+        let planned = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: crate::installer::CliInstallPlan {
+                    source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                    target: "/Users/alice/.local/bin/cua".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        let s = reduce(&planned, &OnboardingAction::Start);
+        assert_eq!(
+            pages(&onboarding(&planned, &OnboardingAction::Start))[1..],
+            ["welcome completed none", "command_line shown none"]
+        );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert!(onboarding(&s, &OnboardingAction::CliDone { install: true }).is_empty());
+        let installed = OnboardingAction::CliPlanned {
+            plan: crate::installer::CliInstallPlan {
+                source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                target: "/Users/alice/.local/bin/cua".into(),
+                up_to_date: true,
+                ..Default::default()
+            },
+        };
+        let done = onboarding(&installing, &installed);
+        assert_eq!(
+            pages(&done),
+            ["command_line completed installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&done).unwrap().contains("alice"));
+        let failed = OnboardingAction::CliInstallFailed {
+            error: "/Users/alice/.zshrc: Permission denied".into(),
+        };
+        assert!(onboarding(&installing, &failed).is_empty());
+        let skip = onboarding(&s, &OnboardingAction::CliDone { install: false });
+        assert_eq!(
+            pages(&skip),
+            ["command_line skipped not_installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&skip).unwrap().contains("alice"));
+    }
+
+    #[test]
     fn no_signal_carries_caller_text() {
         let s = reduce(&initial(None, None), &OnboardingAction::Start);
         let s = reduce(
@@ -1080,7 +1204,7 @@ mod tests {
         ] {
             let mut p = pending("pending:os", "booting", None);
             p.os = os;
-            let finished = create_event(&p, "ok", false, 2_000);
+            let finished = create_event(&p, "ok", false, "", 2_000);
             let finished = serde_json::to_value(finished).unwrap();
             let started = creates(
                 &CreatesState::default(),
@@ -1136,6 +1260,7 @@ mod tests {
                 stalled: false,
                 elapsed_ms: 47_000,
                 gpu: false,
+                error_variant: String::new(),
             }
         );
         assert_eq!(ready[1], step("first_space_ready", true));
@@ -1144,14 +1269,49 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:a".into(),
                 error: "boom at /Users/alice".into(),
+                error_variant: "InsufficientDisk".into(),
             },
             5_000,
         );
         assert!(matches!(
             &failed[0],
-            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, .. }
-                if failed_phase == "booting" && outcome == "error"
+            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
+                if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
+        // A cause the app reads from the text replaces the shell's generic case.
+        for (error, shell, want) in [
+            (
+                "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
+                "Runtime",
+                "LocalNetwork",
+            ),
+            (
+                "lume: The number of virtual machines exceeds the limit",
+                "",
+                "VmLimit",
+            ),
+            ("something else at /Users/alice", "Runtime", "Runtime"),
+            // A specific case from the shell stays.
+            (
+                "cua-spacesd timed out",
+                "SpacesdNotAvailable",
+                "SpacesdNotAvailable",
+            ),
+        ] {
+            let failed = creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: error.into(),
+                    error_variant: shell.into(),
+                },
+                5_000,
+            );
+            assert!(matches!(
+                &failed[0],
+                TelemetrySignal::SpaceCreate { error_variant, .. } if error_variant == want
+            ));
+        }
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
         let st = CreatesState {
@@ -1169,7 +1329,27 @@ mod tests {
         );
         assert!(matches!(
             &gone[0],
-            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, .. } if failed_phase == "pulling"
+            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, error_variant, .. }
+                if failed_phase == "pulling" && error_variant.is_empty()
+        ));
+        let mut cancelling = pending("pending:d", "pulling", None);
+        cancelling.cancelling = true;
+        let st = CreatesState {
+            pending: vec![cancelling],
+            deleting: vec![],
+            powering: vec![],
+        };
+        let cancelled = creates(
+            &st,
+            &CreateAction::CancelDone {
+                id: "pending:d".into(),
+            },
+            9_000,
+        );
+        assert!(matches!(
+            &cancelled[0],
+            TelemetrySignal::SpaceCreate { outcome, error_variant, .. }
+                if outcome == "cancelled" && error_variant.is_empty()
         ));
         // A failed (not stalled) row dismissed was already counted.
         let st = CreatesState {

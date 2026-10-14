@@ -63,26 +63,29 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
     lumeSource: model.lumeSource ?? undefined,
-    linuxSource: model.linuxSource ?? undefined,
+    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
+    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's "New UI (preview)": this app is the web UI, so its switch (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:web_ui", "experiment:web_ui-note"]);
+/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
+export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
 
 export function experimentsPage(model: AppModel) {
   const page = model.native.appExperimentsPage(model.settings.experiments);
   return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
 }
 
-/** `settings.get`'s answer: General, Experiments and the update channel (null: no updater). */
+/** `settings.get`'s answer: General, Experiments, the update channel (null:
+ * no updater) and the global shortcut (null: none here). */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
+    globalShortcut: parts.system?.globalShortcut?.() ?? null,
   };
 }
 

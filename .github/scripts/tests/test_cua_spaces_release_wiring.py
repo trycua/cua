@@ -89,6 +89,45 @@ class TestCuaSpacesReleaseWiring(unittest.TestCase):
         self.assertIn("release_please_spaces_preview.cjs", ci)
         self.assertIn(f'"{MACOS}/VERSION"', ci)
 
+    def test_nothing_is_published_before_verify_release_passes(self) -> None:
+        workflow = (REPO_ROOT / ".github/workflows/cd-cua-spaces.yml").read_text()
+        verify = workflow.split("\n  verify-release:\n", 1)[1].split("\n  installer-manifest:\n", 1)[0]
+        # It runs on the signed and notarized build of every platform.
+        self.assertIn(
+            "needs: [build-macos, electron-plan, electron-mac, electron-windows, electron-publish]",
+            verify,
+        )
+        self.assertIn("runs-on: macos-26", verify)
+        self.assertIn(f"{MACOS}/scripts/verify-release.sh --dir release", verify)
+        self.assertIn('--repo "$GITHUB_REPOSITORY"', verify)
+        self.assertIn("brew install osslsigncode", verify)
+        # installer-manifest publishes the release and the feeds only after it.
+        publish = workflow.split("\n  installer-manifest:\n", 1)[1]
+        self.assertIn("verify-release]", publish.split("\n", 3)[1])
+        self.assertIn("needs.verify-release.result == 'success'", publish)
+        # checksums.txt and release-artifacts.json cover every asset, the
+        # Electron Windows and Linux installers included (CUA-1507).
+        self.assertIn('gh release download "$TAG" --dir assets', publish)
+        self.assertIn("scripts/install/check_release_manifest.py --dir assets --component app", publish)
+        # verify-release reads the macOS build on tag runs too.
+        self.assertNotIn("Keep the macOS build (manual runs)", workflow)
+        script = (REPO_ROOT / MACOS / "scripts/verify-release.sh").read_text()
+        for check in (
+            "spctl -a -vv -t install",
+            "xcrun stapler validate",
+            "codesign --verify --deep --strict",
+            "osslsigncode verify",
+            "verify-appcast.sh",
+        ):
+            self.assertIn(check, script)
+        self.assertTrue((REPO_ROOT / MACOS / "scripts/certs/microsoft-identity-verification-root-2020.pem").is_file())
+
+    def test_cla_never_locks_a_release_please_pull_request(self) -> None:
+        # Release Please comments on the merged release PR when it tags the
+        # release; a locked one fails every run ("issue is locked").
+        cla = (REPO_ROOT / ".github/workflows/cla.yml").read_text()
+        self.assertIn("lock-pullrequest-aftermerge: false", cla)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -140,6 +140,9 @@ pub struct SandboxImage {
     /// How big it is per platform, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sizes: Option<ImageSizes>,
+    /// `false`: its guest cannot use GPU acceleration.
+    #[serde(default = "offered")]
+    pub gpu: bool,
 }
 
 /// The guest distribution a catalog image names: its id picks the OS icon
@@ -1212,6 +1215,8 @@ pub struct LocalStorage {
     pub container: Option<StorageVolume>,
     /// Catalog refs already pulled here.
     pub pulled: Vec<String>,
+    #[serde(default)]
+    pub linux_runtime_download_bytes: u64,
 }
 
 /// Create or connect by address.
@@ -1502,6 +1507,7 @@ fn image_of(state: &WizardState) -> SandboxImage {
             distro: None,
             arch: vec![],
             sizes: None,
+            gpu: true,
             ..base
         },
         None => base,
@@ -1940,7 +1946,8 @@ pub fn gpu_row(
     else {
         return (None, None);
     };
-    let on = state.gpu && choice.supported;
+    let supported = choice.supported && image.gpu;
+    let on = state.gpu && supported;
     let row = GpuRow {
         label: if choice.experimental {
             format!("{} (Experimental)", choice.label)
@@ -1948,10 +1955,11 @@ pub fn gpu_row(
             choice.label.clone()
         },
         on,
-        enabled: choice.supported,
+        enabled: supported,
         reason: (!choice.supported)
             .then(|| choice.reason.clone().filter(|r| !r.is_empty()))
-            .flatten(),
+            .flatten()
+            .or_else(|| (!image.gpu).then(|| format!("Not available for {}", image.name))),
         learn_more_label: "Learn more".into(),
         learn_more_url: choice.learn_more.clone(),
     };
@@ -2472,16 +2480,45 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
     let download = size
         .filter(|_| local && pulled == Some(false))
         .map(|s| s.download);
+    let runtime_download = env.storage.as_ref().map_or(0, |s| {
+        if local && image.local == Some(LocalEngine::Container) {
+            s.linux_runtime_download_bytes
+        } else {
+            0
+        }
+    });
+    let runtime_suffix = (runtime_download > 0).then(|| {
+        format!(
+            "includes {} one-time Linux runtime download, shared by Linux Spaces",
+            size_text(runtime_download)
+        )
+    });
     if let Some(s) = size {
         if bounds.is_none() {
+            let initial = s.unpacked.saturating_add(runtime_download);
+            let footprint = if image.local == Some(LocalEngine::Container) {
+                format!(
+                    "{}–{} initially; grows with use",
+                    size_text(initial),
+                    size_text(initial.saturating_add(s.disk).saturating_add(s.download))
+                )
+            } else {
+                size_text(s.disk)
+            };
             let value = match download {
-                Some(d) => format!("{} (download {})", size_text(s.disk), size_text(d)),
-                None => size_text(s.disk),
+                Some(d) => format!("{footprint} (download {})", size_text(d)),
+                None => footprint,
+            };
+            let value = match &runtime_suffix {
+                Some(suffix) => format!("{value}; {suffix}"),
+                None => value,
             };
             facts.push(fact_line("disk", "Disk", value));
         } else if let Some(d) = download {
             facts.push(fact_line("download", "Download", size_text(d)));
         }
+    } else if let Some(suffix) = runtime_suffix {
+        facts.push(fact_line("disk", "Disk", suffix));
     }
     let mut error = None;
     if local && let Some(v) = volume_of(image, env) {
@@ -2493,7 +2530,8 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
         let reserve = env.storage.as_ref().map_or(0, |s| s.reserve_bytes);
         let need = size
             .filter(|_| pulled == Some(false))
-            .map_or(0, |s| s.download.saturating_add(s.unpacked));
+            .map_or(0, |s| s.download.saturating_add(s.unpacked))
+            .saturating_add(runtime_download);
         if need > 0 && v.available_bytes < need.saturating_add(reserve) {
             error = Some(format!(
                 "Not enough space on {}: needs {}, {} available.",
@@ -2922,6 +2960,19 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             warning: None,
         });
     }
+    summary.extend(
+        disk.facts
+            .iter()
+            .find(|f| f.id == "disk")
+            .filter(|_| local && image.local == Some(LocalEngine::Container))
+            .map(|f| Fact {
+                label: f.label.clone(),
+                value: f.value.clone(),
+                copy: None,
+                help: f.help.clone(),
+                warning: None,
+            }),
+    );
     // One short line; nothing when the cloud rates are unknown.
     if let Some(value) = price.clone() {
         summary.push(Fact {
@@ -3260,6 +3311,46 @@ mod tests {
             Some("Needs a Mac with Apple silicon")
         );
         assert_eq!(v.plan.gpu, None);
+        e.gpus = Some(vec![lume_gpu(true)]);
+        let sequoia = reduce(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:15".into(),
+            },
+            &e,
+        );
+        let row = view(&sequoia, &e).gpu.expect("sequoia still shows the row");
+        assert!(!row.enabled && !row.on);
+        assert_eq!(
+            row.reason.as_deref(),
+            Some("Not available for macOS Sequoia 15")
+        );
+        let switched = reduce(&sequoia, &WizardAction::SetGpu { on: true }, &e);
+        assert_eq!(view(&switched, &e).plan.gpu, None);
+        let tahoe = reduce(
+            &sequoia,
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:26".into(),
+            },
+            &e,
+        );
+        assert!(view(&tahoe, &e).gpu.unwrap().enabled);
+        e.gpus = Some(vec![lume_gpu(false)]);
+        let row = view(&sequoia, &e).gpu.unwrap();
+        assert_eq!(
+            row.reason.as_deref(),
+            Some("Needs a Mac with Apple silicon")
+        );
+        e.gpus = Some(vec![lume_gpu(true)]);
+        let custom = reduce(
+            &sequoia,
+            &WizardAction::SetImageText {
+                text: "ghcr.io/me/macos:15".into(),
+            },
+            &e,
+        );
+        let row = view(&custom, &e).gpu.unwrap();
+        assert!(row.enabled && row.reason.is_none());
     }
 
     fn vol(gb: u64, name: &str) -> StorageVolume {
@@ -3281,6 +3372,7 @@ mod tests {
                 qemu: Some(vol(212, "Macintosh HD")),
                 container: Some(vol(40, "Colima")),
                 pulled: vec![],
+                linux_runtime_download_bytes: 0,
             }),
             ..env()
         }
@@ -3362,10 +3454,7 @@ mod tests {
 
     #[test]
     fn every_offered_image_has_sizes() {
-        for i in picker_images()
-            .into_iter()
-            .filter(|i| i.image_ref != "ghcr.io/trycua/macos:15")
-        {
+        for i in picker_images() {
             let s = i
                 .sizes
                 .as_ref()
@@ -3376,6 +3465,93 @@ mod tests {
                 i.image_ref
             );
         }
+    }
+
+    #[test]
+    fn container_footprint_includes_unpacked_image_and_writable_copy() {
+        let e = storage_env();
+        let s = on("ghcr.io/trycua/linux:24.04", &e);
+        let p = sizes("ghcr.io/trycua/linux:24.04", "arm64");
+        let v = view(&s, &e);
+        assert_eq!(
+            v.resource_facts[2].value,
+            format!(
+                "{}–{} initially; grows with use (download {})",
+                size_text(p.unpacked),
+                size_text(p.unpacked + p.disk + p.download),
+                size_text(p.download)
+            )
+        );
+    }
+
+    #[test]
+    fn first_linux_runtime_is_shared_and_included_in_summary() {
+        let mut e = storage_env();
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
+        let s = on("ghcr.io/trycua/linux:24.04", &e);
+        let v = view(&s, &e);
+        let p = sizes("ghcr.io/trycua/linux:24.04", "arm64");
+        assert!(v.resource_facts.iter().all(|f| f.label != "Linux runtime"));
+        assert!(v.summary.iter().all(|f| f.label != "Linux runtime"));
+        assert_eq!(v.summary.iter().filter(|f| f.label == "Disk").count(), 1);
+        assert!(v.resource_facts.iter().any(|f| {
+            f.label == "Disk"
+                && f.value
+                    .contains("includes 455 MB one-time Linux runtime download")
+        }));
+        assert!(v.summary.iter().any(|f| {
+            f.label == "Disk"
+                && f.value
+                    .contains("includes 455 MB one-time Linux runtime download")
+        }));
+        assert!(v.summary.iter().any(
+            |f| f.label == "Disk" && f.value.starts_with(&size_text(p.unpacked + (455 << 20)))
+        ));
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
+        assert!(
+            !view(&s, &e)
+                .summary
+                .iter()
+                .any(|f| f.value.contains("one-time Linux runtime download"))
+        );
+        let mac = on("ghcr.io/trycua/macos:15", &e);
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
+        assert!(
+            !view(&mac, &e)
+                .summary
+                .iter()
+                .any(|f| f.value.contains("one-time Linux runtime download"))
+        );
+        assert!(
+            view(&mac, &e)
+                .summary
+                .iter()
+                .all(|f| f.label != "Download" && f.label != "Disk")
+        );
+        let mut remote = s;
+        remote.placement = Location::Cloud;
+        assert!(
+            !view(&remote, &e)
+                .resource_facts
+                .iter()
+                .any(|f| f.value.contains("one-time Linux runtime download"))
+        );
+    }
+
+    #[test]
+    fn runtime_is_disclosed_without_catalog_sizes() {
+        let mut e = storage_env();
+        e.storage.as_mut().unwrap().linux_runtime_download_bytes = 455 << 20;
+        let s = on("ghcr.io/trycua/linux:24.04", &e);
+        let mut image = image_of(&s);
+        image.sizes = None;
+        let disk = disk_view(&s, &image, &e, SpaceOs::Linux);
+        assert_eq!(disk.facts.iter().filter(|f| f.id == "disk").count(), 1);
+        assert!(disk.facts.iter().any(|f| {
+            f.id == "disk"
+                && f.value
+                    .contains("includes 455 MB one-time Linux runtime download")
+        }));
     }
 
     #[test]
@@ -3392,7 +3568,12 @@ mod tests {
                 ("Architecture".into(), "ARM".into()),
                 (
                     "Disk".into(),
-                    format!("{} (download {})", size_text(p.disk), size_text(p.download))
+                    format!(
+                        "{}–{} initially; grows with use (download {})",
+                        size_text(p.unpacked),
+                        size_text(p.unpacked + p.disk + p.download),
+                        size_text(p.download)
+                    )
                 ),
                 ("Available".into(), "40 GB on Colima".into()),
             ]
@@ -3404,7 +3585,14 @@ mod tests {
         let mut pulled = e.clone();
         pulled.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/linux:24.04".into()];
         let v = view(&s, &pulled);
-        assert_eq!(v.resource_facts[2].value, size_text(p.disk));
+        assert_eq!(
+            v.resource_facts[2].value,
+            format!(
+                "{}–{} initially; grows with use",
+                size_text(p.unpacked),
+                size_text(p.unpacked + p.disk + p.download)
+            )
+        );
     }
 
     #[test]
@@ -3426,6 +3614,24 @@ mod tests {
         // Pulled, it needs nothing new.
         e.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/linux:24.04".into()];
         assert!(view(&s, &e).can_continue);
+        let mut mac = storage_env();
+        mac.storage.as_mut().unwrap().lume = Some(vol(20, "Macintosh HD"));
+        let sequoia = on("ghcr.io/trycua/macos:15", &mac);
+        let v = view(&sequoia, &mac);
+        let p = sizes("ghcr.io/trycua/macos:15", "arm64");
+        assert_eq!(
+            v.resources_error,
+            Some(format!(
+                "Not enough space on Macintosh HD: needs {}, 20 GB available.",
+                size_text(p.download + p.unpacked + 5 * GIB)
+            ))
+        );
+        assert!(!v.can_continue);
+        mac.storage.as_mut().unwrap().lume = Some(vol(60, "Macintosh HD"));
+        assert!(view(&sequoia, &mac).can_continue);
+        mac.storage.as_mut().unwrap().lume = Some(vol(20, "Macintosh HD"));
+        mac.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/macos:15".into()];
+        assert!(view(&sequoia, &mac).can_continue);
     }
 
     #[test]

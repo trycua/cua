@@ -13,6 +13,7 @@ description: "Set this machine up for unattended access."
 | Command | Description |
 | --- | --- |
 | [`cua host setup`](#cua-host-setup) | Set this machine up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. |
+| [`cua host pair`](#cua-host-pair) | Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. |
 | [`cua host config`](#cua-host-config) | Show or change what this machine shares: its own desktop, and whether it creates Spaces for your other devices. |
 | [`cua host status`](#cua-host-status) | Show whether this machine is set up, the service, and who is connected. |
 | [`cua host stop`](#cua-host-stop) | Stop sharing: disconnect everyone and refuse new connections. |
@@ -41,7 +42,8 @@ cua host setup [OPTIONS]
 
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="cua-host-setup--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai). |
+| <span id="cua-host-setup--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
+| <span id="cua-host-setup--pair"></span>`--pair` | string |  | Join with a one-time pairing code (or add-machine link) made in the Cua Spaces app or with `cua host pair`, instead of signing in here. The machine joins the account (or team) that made it. |
 | <span id="cua-host-setup--direct"></span>`--direct` | string |  | Serve directly on ip:port with a local env token (LAN / port-forwarded) instead of joining a relay. |
 | <span id="cua-host-setup--name"></span>`--name` | string |  | Display name (default: the host name). |
 | <span id="cua-host-setup--allow"></span>`--allow` | string |  | Also allow this account (id or email). Repeatable. |
@@ -71,6 +73,35 @@ cua host setup --direct 0.0.0.0:3211 --name studio-mac
 
 # A spare Mac on your tailnet that runs Spaces, without the relay (prints the command that adds it on your laptop)
 cua host setup --direct 100.101.102.103:3211 --profile spare
+
+# Add this machine with a one-time code from the Cua Spaces app (Add a machine) or `cua host pair`: no sign-in needed here
+cua host setup --pair K7QM-4XPB-2RHD
+```
+
+## `cua host pair`
+
+Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. Codes work once and expire (30 minutes by default). Run from an enrolled device.
+
+```text output
+cua host pair [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-host-pair--team"></span>`--team` | string |  | Add the machine for this team (its id). Experimental: needs CUA_EXPERIMENTAL_TEAMS=1. |
+| <span id="cua-host-pair--name"></span>`--name` | string |  | Name the machine gets (default: its own host name). |
+| <span id="cua-host-pair--expires"></span>`--expires` | integer | `30` | Minutes until the code expires (1 to 1440). |
+| <span id="cua-host-pair--revoke"></span>`--revoke` | string |  | Revoke an unused code by id (`pc_…`). |
+| <span id="cua-host-pair--relay"></span>`--relay` | string |  | Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production). |
+| <span id="cua-host-pair--list"></span>`--list` | boolean | `false` | List your codes (used, unused, revoked, expired) instead. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-host-pair"
+cua host pair
+cua host pair --name build-box --expires 60
+cua host pair --list
+cua host pair --revoke pc_0123456789abcdef
 ```
 
 ## `cua host config`
@@ -199,6 +230,7 @@ cua host remove [OPTIONS]
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-host-remove--force"></span>`--force` | `-f` | boolean | `false` | Skip the confirmation prompt. Required when there is no terminal to ask on (scripts, agents): without it nothing is removed. |
+| <span id="cua-host-remove--uninstalling"></span>`--uninstalling` |  | boolean | `false` | For an uninstall of Cua Spaces: turns off the Spaces this machine provides and takes them off the relay too, instead of refusing while it provides any. The Spaces and their data stay on this machine. |
 
 **Examples**
 

@@ -67,7 +67,7 @@ async fn a_cloud_create_out_of_credit_is_a_typed_error_with_the_billing_page() {
             );
             assert_eq!(
                 cua_spaces_app_core::billing::credit_notice(&m).map(|n| n.url),
-                Some("https://run.cua.ai/billing".into())
+                Some("https://app.cua.ai/billing".into())
             );
         }
         Err(e) => panic!("expected CloudCreditExhausted, got {e:?}"),

@@ -31,6 +31,7 @@
       "release-type": "simple",
       "component": "cua-driver-rs",
       "package-name": "cua-driver-rs",
+      "release-as": "0.35.4",
       "bump-minor-pre-major": true,
       "version-file": "rust/VERSION",
       "changelog-path": "rust/CHANGELOG.md",
@@ -443,6 +444,191 @@
           "type": "toml",
           "path": "/apps/cua-spaces/src-tauri/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cua-spaces-app')].version"
+        }
+      ]
+    },
+    "libs/python/agent": {
+      "release-type": "simple",
+      "component": "agent",
+      "package-name": "cua-agent",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-agent')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-bench/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-agent')].version"
+        }
+      ]
+    },
+    "libs/python/core": {
+      "release-type": "simple",
+      "component": "core",
+      "package-name": "cua-core",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-core')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-bench/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-core')].version"
+        }
+      ]
+    },
+    "libs/cua-bench": {
+      "release-type": "simple",
+      "component": "bench",
+      "package-name": "cua-bench",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-bench')].version"
+        }
+      ]
+    },
+    "libs/python/bench-ui": {
+      "release-type": "simple",
+      "component": "bench-ui",
+      "package-name": "cua-bench-ui",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-bench-ui')].version"
+        }
+      ]
+    },
+    "libs/python/som": {
+      "release-type": "simple",
+      "component": "som",
+      "package-name": "cua-som",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-som')].version"
+        }
+      ]
+    },
+    "libs/python/cua-sandbox-apps": {
+      "release-type": "simple",
+      "component": "sandbox-apps",
+      "package-name": "cua-sandbox-apps",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-sandbox-apps')].version"
+        }
+      ]
+    },
+    "libs/python/cua-train": {
+      "release-type": "simple",
+      "component": "train",
+      "package-name": "cua-train",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        }
+      ]
+    },
+    "libs/typescript/core": {
+      "release-type": "simple",
+      "component": "npm-core",
+      "package-name": "@trycua/core",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "libs/typescript/playground": {
+      "release-type": "simple",
+      "component": "npm-playground",
+      "package-name": "@trycua/playground",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "libs/cuabot": {
+      "release-type": "simple",
+      "component": "cuabot",
+      "package-name": "cuabot",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "exclude-paths": [
+        "libs/cuabot/Dockerfile",
+        "libs/cuabot/VERSION",
+        "libs/cuabot/.bumpversion.docker.cfg"
+      ],
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
         }
       ]
     }

@@ -1,0 +1,5 @@
+"use strict";
+const test = require("node:test"); const assert = require("node:assert/strict"); const fs = require("fs"); const os = require("os"); const path = require("path"); const { ManualStore } = require("../store.js");
+function scratch() { const root = fs.mkdtempSync(path.join(os.tmpdir(), "manual-")); fs.mkdirSync(path.join(root, "wiki")); fs.writeFileSync(path.join(root, "wiki", "articles.json"), JSON.stringify({ schema: "margin-lantern-manual/1", articles: [{ id: "MLM-27", title: "Overlay triage", summary: "summary", sections: [{ slug: "legacy-empty-layers", title: "Legacy empty layers", body: "rule" }] }] })); return root; }
+test("lists article metadata and returns complete sections", function () { const store = new ManualStore(scratch()); assert.deepEqual(store.list(), [{ id: "MLM-27", title: "Overlay triage", summary: "summary" }]); assert.equal(store.get("MLM-27").sections[0].slug, "legacy-empty-layers"); });
+test("unknown articles are rejected", function () { assert.throws(function () { new ManualStore(scratch()).get("MLM-99"); }, /unknown article/); });

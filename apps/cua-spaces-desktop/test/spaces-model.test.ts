@@ -269,6 +269,19 @@ describe("LiveSpacesBackend's runtime settings", () => {
     // Windows and Linux: no Lume, so Settings shows no macOS VMs row.
     expect(await backend("linux").lumeSource()).toBeNull();
     expect(await backend("win32").lumeSource()).toBeNull();
-    expect(await backend("linux").linuxSource()).toBe("auto");
+    // The built-in Linux runtime is a Mac thing too.
+    expect(await backend("darwin").linuxSource()).toBe("auto");
+    expect(await backend("linux").linuxSource()).toBeNull();
+    expect(await backend("win32").linuxSource()).toBeNull();
+  });
+});
+
+describe("LiveSpacesBackend and the retired Fleets API", () => {
+  it("New Space asks no Fleet for pricing, even with Fleet credentials set", async () => {
+    let fleetCalls = 0;
+    const cua = { fleet: () => (fleetCalls++, { usagePricing: async () => ({ vcpuHourUsd: 1, memoryGibHourUsd: 1 }) }) };
+    const backend = new LiveSpacesBackend({} as Native, cua as never, { FLEETS_TOKEN: "t" }, fetch, "darwin");
+    expect(await backend.cloudPricing()).toBeNull();
+    expect(fleetCalls).toBe(0);
   });
 });

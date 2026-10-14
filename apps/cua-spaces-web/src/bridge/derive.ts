@@ -33,8 +33,10 @@ import type {
   VaultView,
 } from "./contracts/keyvault";
 import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
+import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
+import { hostOs, type HostOs } from "./host-os";
 
 /* ---- Spaces --------------------------------------------------------------- */
 
@@ -271,11 +273,14 @@ export interface Machine {
 /** Which machine a Space runs on: its relay host, the machine itself for
  * its own desktop (`relay:<machine>`), or this machine for a local Space;
  * undefined for cloud Spaces. */
-export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current">[]): string | undefined {
-  if (space.host) return space.host;
-  if (space.provider === "local") return machines.find((m) => m.current)?.id;
+export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current" | "host">[]): string | undefined {
+  const current = machines.find((m) => m.current);
+  // This computer's own relay machine id is this computer's row.
+  const here = (id: string) => (current?.host?.machineId && id === current.host.machineId ? current.id : id);
+  if (space.host) return here(space.host);
+  if (space.provider === "local") return current?.id;
   if (space.provider === "relay" && space.id.startsWith("relay:")) {
-    const own = space.id.slice("relay:".length);
+    const own = here(space.id.slice("relay:".length));
     if (machines.some((m) => m.id === own)) return own;
   }
   return undefined;
@@ -357,6 +362,7 @@ export function machinesInput(rows: MachineRow[], now: number): MachinesInput {
  * (`mergeMachines`). The device adds its detail and last session; a
  * device that is none of the machines stays a row of its own. */
 export function mergeMachineRows(rows: MachineRow[], core?: CoreClient, nowSecs = Math.floor(Date.now() / 1000)): MachineRow[] {
+  if (rows.some((r) => r.merged)) return rows;
   if (!rows.some((r) => r.device || r.presence != null)) return rows;
   const byId = new Map(rows.filter((r) => !r.device).map((r) => [r.id, r] as const));
   const devices = new Map(rows.filter((r) => r.device).map((r) => [r.id, r] as const));
@@ -531,6 +537,9 @@ export function settingsPage(
     // The host's own settings (the SwiftUI app's): the core lays out the
     // Runtimes section, auto-connect and the Keyvault's auto-wipe as there.
     keyvaultAutoWipe: settings.hostSettings?.keyvaultAutoWipe ?? null,
+    keyvaultUnlockPrompt: settings.hostSettings?.keyvaultUnlockPrompt ?? null,
+    keyvaultSiteIcons: settings.hostSettings?.keyvaultSiteIcons ?? true,
+    keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
     lumeSource: settings.hostSettings?.lumeSource ?? null,
     linuxSource: settings.hostSettings?.linuxSource ?? null,
@@ -587,12 +596,13 @@ export function keyvaultViews(
   overview: KeyvaultOverview,
   now: number,
   state: VaultState = INITIAL_VAULT_STATE,
+  os: HostOs = hostOs(),
 ): KeyvaultViews | null {
   if (core.status !== "ready") return null;
   return {
-    page: core.call<KvPage>("keyvault.page", { overview, now }),
+    page: core.call<KvPage>("keyvault.page", { overview, now, hostOs: os }),
     sidebar: core.call<KvSidebar>("keyvault.sidebar", { overview, now }),
-    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now }),
+    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now, hostOs: os }),
   };
 }
 
@@ -670,4 +680,13 @@ export function orderRuns<T extends SpaceAgentRun>(core: CoreClient, runs: T[]):
     if (out.length === runs.length) return out;
   }
   return [...runs].sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status] || (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+/* ---- Relay usage ---------------------------------------------------------- */
+
+/** Settings' Relay usage row and the notice past the allowance (the core's
+ * `relayUsage.view`). No stand-in: without the core the page shows
+ * neither, rather than words of its own. */
+export function relayUsageView(core: CoreClient, usage: RelayUsage): RelayUsageView | null {
+  return core.tryCall<RelayUsageView | null>("relayUsage.view", { usage }) ?? null;
 }

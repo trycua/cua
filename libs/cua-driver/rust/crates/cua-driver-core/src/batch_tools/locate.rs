@@ -1,6 +1,6 @@
 //! Find windows and elements by description, wait for them, and check them.
 //!
-//! Used by `run_actions` steps that name their target (`role`, `name`, `app`,
+//! Used by `run_steps` steps that name their target (`role`, `name`, `app`,
 //! `window`) instead of carrying a token from an earlier read, and by the
 //! per-step `wait_for` / `expect` checks. Every read goes through the same
 //! [`ToolRegistry`] entry point a direct call uses (`list_windows`,

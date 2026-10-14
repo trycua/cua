@@ -160,6 +160,13 @@ pub fn pick_clamped(
 /// scroll container under the point or the reveal moved nothing; the caller
 /// then reports that background scroll is unavailable.
 ///
+/// Chromium exposes an `overflow: auto` element as a plain group, not an
+/// AXScrollArea, so the nearest scroll-role ancestor of a point inside an
+/// inner scroller is the page's AXWebArea. The groups between the hit
+/// element and that ancestor that clip content past their edge are tried
+/// first, innermost out; the scroll-role container is the last resort. The
+/// first one that moves wins, and the end is reported only when none moved.
+///
 /// # Safety
 ///
 /// Performs AX calls on `pid`'s elements; call from a blocking context.
@@ -171,33 +178,100 @@ pub unsafe fn reveal_scroll(
     distance: f64,
 ) -> Option<RevealOutcome> {
     let hit = element_at_screen_position(pid, point.0, point.1)?;
-    let container = scroll_container(hit);
+    let candidates = scroll_candidates(hit, direction);
     CFRelease(hit as CFTypeRef);
-    let (container, role) = container?;
-    let outcome = reveal_in(container, &role, window, direction, distance);
-    CFRelease(container as CFTypeRef);
-    outcome
+    let mut at_end = None;
+    let mut candidates = candidates.into_iter();
+    while let Some((container, role)) = candidates.next() {
+        let outcome = reveal_in(container, &role, window, direction, distance);
+        CFRelease(container as CFTypeRef);
+        match outcome {
+            Some(outcome) if !outcome.at_end => {
+                for (rest, _) in candidates {
+                    CFRelease(rest as CFTypeRef);
+                }
+                return Some(outcome);
+            }
+            // Keep the outermost end: the scroll-role container comes last.
+            Some(outcome) => at_end = Some(outcome),
+            None => {}
+        }
+    }
+    at_end
 }
 
-/// The nearest scroll container at or above `element`, retained.
-unsafe fn scroll_container(element: AXUIElementRef) -> Option<(AXUIElementRef, String)> {
+/// The elements at or above `element` to try, innermost first and retained:
+/// each one that clips content past its edge in `direction`, then the
+/// nearest scroll-role container. Empty without a scroll-role container.
+unsafe fn scroll_candidates(
+    element: AXUIElementRef,
+    direction: &str,
+) -> Vec<(AXUIElementRef, String)> {
+    let mut candidates = Vec::new();
     CFRetain(element as CFTypeRef);
     let mut current = element;
     for _ in 0..MAX_ASCENT {
         let role = copy_string_attr(current, "AXRole");
         match role.as_deref() {
             Some(role) if CONTAINER_ROLES.contains(&role) => {
-                return Some((current, role.to_owned()));
+                candidates.push((current, role.to_owned()));
+                return candidates;
             }
             Some("AXWindow") | Some("AXApplication") | None => break,
-            _ => {}
+            Some(role) => {
+                if clips_past_edge(current, direction) {
+                    CFRetain(current as CFTypeRef);
+                    candidates.push((current, role.to_owned()));
+                }
+            }
         }
-        let parent = copy_element_attr(current, "AXParent");
+        let Some(parent) = copy_element_attr(current, "AXParent") else {
+            CFRelease(current as CFTypeRef);
+            current = std::ptr::null_mut();
+            break;
+        };
         CFRelease(current as CFTypeRef);
-        current = parent?;
+        current = parent;
     }
-    CFRelease(current as CFTypeRef);
-    None
+    if !current.is_null() {
+        CFRelease(current as CFTypeRef);
+    }
+    for (candidate, _) in candidates {
+        CFRelease(candidate as CFTypeRef);
+    }
+    Vec::new()
+}
+
+/// Whether `element` holds content past its edge in `direction`: a direct
+/// child lies beyond it, or is a sliver clamped to it.
+unsafe fn clips_past_edge(element: AXUIElementRef, direction: &str) -> bool {
+    let Some(frame) = element_screen_rect(element).filter(|frame| real_size(*frame)) else {
+        return false;
+    };
+    let mut clips = false;
+    for child in copy_children(element) {
+        if !clips {
+            clips =
+                element_screen_rect(child).is_some_and(|rect| past_edge(frame, direction, rect));
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    clips
+}
+
+/// Whether `rect`, a child of the element with `frame`, lies past that
+/// frame's edge in `direction` or is a sliver clamped to that edge (how
+/// Chromium reports content scrolled out of an overflow container).
+pub fn past_edge(frame: Rect, direction: &str, rect: Rect) -> bool {
+    let [fx, fy, fw, fh] = frame;
+    let [x, y, w, h] = rect;
+    match direction {
+        "down" => y + h > fy + fh + 1.0 || (h <= 1.5 && y >= fy + fh - 2.5),
+        "up" => y < fy - 1.0 || (h <= 1.5 && y <= fy + 1.5),
+        "right" => x + w > fx + fw + 1.0 || (w <= 1.5 && x >= fx + fw - 2.5),
+        "left" => x < fx - 1.0 || (w <= 1.5 && x <= fx + 1.5),
+        _ => false,
+    }
 }
 
 unsafe fn reveal_in(
@@ -495,5 +569,20 @@ mod tests {
             intersect([0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 5.0, 5.0]),
             None
         );
+    }
+    #[test]
+    fn a_child_past_or_clamped_to_the_edge_marks_an_inner_scroller() {
+        let frame = [0.0, 100.0, 300.0, 128.0];
+        // A row below the visible area, and Chromium's 1 pt sliver clamped
+        // to the bottom edge for a row scrolled out of view.
+        assert!(past_edge(frame, "down", [0.0, 240.0, 300.0, 16.0]));
+        assert!(past_edge(frame, "down", [0.0, 227.0, 300.0, 1.0]));
+        // A visible row inside the frame is not.
+        assert!(!past_edge(frame, "down", [0.0, 110.0, 300.0, 16.0]));
+        // At the top nothing is above; a row above marks it for "up".
+        assert!(!past_edge(frame, "up", [0.0, 110.0, 300.0, 16.0]));
+        assert!(past_edge(frame, "up", [0.0, 60.0, 300.0, 16.0]));
+        assert!(past_edge(frame, "right", [250.0, 110.0, 100.0, 16.0]));
+        assert!(!past_edge(frame, "left", [0.0, 110.0, 300.0, 16.0]));
     }
 }

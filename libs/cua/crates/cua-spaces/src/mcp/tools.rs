@@ -75,9 +75,19 @@ pub(super) async fn call(
 ) -> ToolOutcome {
     // A former tool name (`drive_ls`) runs as the tool it now is.
     let tool = cua_spaces_contract::canonical(tool);
+    let space = arguments
+        .get("space")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     match dispatch(spaces, tool, arguments, broker).await {
         Ok(outcome) => outcome,
         Err(e) => {
+            // A call cut because the Space's mesh connection went away
+            // says why, not just "broken pipe".
+            let e = match &space {
+                Some(space) => spaces.explain_mesh_cut(space, e).await,
+                None => e,
+            };
             tracing::debug!(tool, error = %e, "tool failed");
             ToolOutcome::error(&e)
         }

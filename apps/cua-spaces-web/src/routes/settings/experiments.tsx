@@ -9,12 +9,12 @@ import { toastError } from "@/components/ui/toast";
 
 export const Route = createFileRoute("/settings/experiments")({ component: ExperimentsPage });
 
-/** "New UI (preview)" opens the SwiftUI app's web window: the Electron app is that UI, so it has no such switch. */
-const WEB_UI_ROWS = new Set(["experiment:web_ui", "experiment:web_ui-note"]);
+/** "Use classic UI" switches the SwiftUI app between its native window and this UI: the Electron app is only this UI, so it has no such switch. */
+const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
 
 /**
- * Settings, Experiments: one switch per experiment with its one line, all
- * off until turned on (`experiments::page`). Off only hides an experiment's
+ * Settings, Experiments: one switch per experiment with its one line
+ * (`experiments::page`), and "Use classic UI" on the Mac. Off only hides an experiment's
  * entry points; nothing set up is undone.
  */
 function ExperimentsPage() {

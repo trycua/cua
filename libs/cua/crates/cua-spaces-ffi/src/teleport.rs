@@ -294,8 +294,14 @@ impl Teleport {
             }
         }
         let paths: Vec<String> = selected.iter().map(|i| i.rel_path.clone()).collect();
+        // A Chromium variant (Microsoft Edge) is captured from its own profile.
+        let capture_app = if cua_teleport::layout::chrome::is_edge(&app_ref.app_id) {
+            app_ref.app_id.clone()
+        } else {
+            manifest.provider_id.clone()
+        };
         let spec = cua_keyvault::broker::ImportSpec {
-            app: manifest.provider_id.clone(),
+            app: capture_app,
             profile: None,
             sites: vec![],
             whole_app: true,

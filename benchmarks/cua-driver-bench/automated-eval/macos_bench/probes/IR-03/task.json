@@ -1,0 +1,21 @@
+{
+  "id": "IR-03",
+  "title": "Edit two notes; an unsaved-changes dialog appears on switching notes and on Done",
+  "group": "IR",
+  "category": "interruptions",
+  "ability": "interruption_unsaved_dialog",
+  "dimension_tags": [
+    "interruption",
+    "modal_sheet",
+    "unsaved_changes",
+    "list_select"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "irunsaved"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "Interruptions are simulated inside BenchLab (sheets, a non-activating panel, a WKWebView overlay); none is a real system prompt. Amendment 14."
+}

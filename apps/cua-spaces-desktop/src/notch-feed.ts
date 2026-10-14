@@ -12,11 +12,15 @@
 //   go, and the Space shown; a notification says what landed or why not.
 //   An app bundle among them opens the Teleport review for that app in that
 //   Space, as a drop on the Space's well does (`?dropped=` on its page).
+// - A real window dragged onto a tile (the SDK's window-drag monitor, which
+//   the notch model follows: `notchTeleport`) opens the Teleport review for
+//   that window's app in that Space, the same way as its bundle dropped there.
 import { basename } from "node:path";
 import { fileOffers, sendOffered } from "./bridge/files";
 import type { AppModel } from "./model/app-model";
 import { words } from "./model/errors";
-import type { Notch } from "./notch";
+import type { TeleportLike } from "./native/generated/index";
+import type { Notch, NotchTeleport } from "./notch";
 
 export interface NotchFeedUi {
   /** Shows a Space in the main window (its page); `dropped`: the names of the apps and files just dropped on its tile, which the page treats as a drop on the well. */
@@ -61,6 +65,45 @@ export async function dropOnSpace(model: AppModel, ui: NotchFeedUi, spaceId: str
     const what = files.length === 1 ? basename(files[0]!) : `${files.length} files`;
     ui.notify(`Couldn't send ${what} to ${name}`, words(error));
   }
+}
+
+/**
+ * A window dragged onto a tile committed to that Space: the Teleport review
+ * for its app (the SwiftUI app's `onTeleport`), as its bundle dropped on the
+ * tile. An app the SDK found no bundle for opens the Space only.
+ */
+export function teleportFromNotch(model: AppModel, ui: NotchFeedUi, spaceId: string, app: unknown): Promise<void> {
+  const path = (app as { hostPath?: unknown } | null)?.hostPath;
+  if (typeof path === "string" && isAppBundle(path)) return dropOnSpace(model, ui, spaceId, [path]);
+  openSpaceFromNotch(model, ui, spaceId);
+  return Promise.resolve();
+}
+
+/**
+ * The SDK's teleport handle as the notch model follows window drags with it,
+ * read when asked: none before the SDK is in (drags are then unsupported;
+ * check again once it is). Starting the monitor waits for its event tap, so
+ * it runs after the current task, never inside the notch's own calls.
+ */
+export function notchTeleport(handle: () => TeleportLike | null): NotchTeleport {
+  return {
+    windowDragSupported: () => handle()?.windowDragSupported() ?? false,
+    windowDragPermitted: () => handle()?.windowDragPermitted() ?? false,
+    requestWindowDragPermission: () => handle()?.requestWindowDragPermission() ?? false,
+    startWindowDrag: (listener) =>
+      new Promise((resolve, reject) =>
+        setImmediate(() => {
+          const teleport = handle();
+          if (!teleport) return reject(new Error("the cua SDK is not running"));
+          try {
+            resolve(teleport.startWindowDrag(listener as Parameters<TeleportLike["startWindowDrag"]>[0]));
+          } catch (error) {
+            reject(error);
+          }
+        }),
+      ),
+    captureWindowThumbnail: (windowId, maxWidth) => handle()?.captureWindowThumbnail(windowId, maxWidth) ?? null,
+  };
 }
 
 /**

@@ -26,10 +26,11 @@ export const KEYCHAIN_NONINTERACTIVE_ENV = "CUA_KEYCHAIN_NONINTERACTIVE";
 /** `CUA_DAEMON_KEEP` (cua-daemon's `identity::KEEP_ENV`): other apps' daemon executables this app replaced once. */
 export const DAEMON_KEEP_ENV = "CUA_DAEMON_KEEP";
 
-/** The cua home the daemon uses (`CUA_HOME`, else `~/.cua`). */
+/** The cua home the daemon uses (`CUA_HOME`, else `~/.cua`, or `~/.cua/envs/staging` for `CUA_ENV=staging`, as cua-home resolves it). */
 export function cuaHome(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CUA_HOME) return env.CUA_HOME;
-  return path.join(env.HOME || env.USERPROFILE || os.homedir(), ".cua");
+  const base = path.join(env.HOME || env.USERPROFILE || os.homedir(), ".cua");
+  return (env.CUA_ENV ?? "").trim().toLowerCase() === "staging" ? path.join(base, "envs", "staging") : base;
 }
 
 /** The daemon still starting (`daemon.starting`) and the one running (`daemon.json`), as their files name them. */

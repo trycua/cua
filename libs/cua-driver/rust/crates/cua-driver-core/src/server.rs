@@ -256,6 +256,9 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
+            // Not a browser-specific code: the shared background refusal is
+            // classified through `ToolErrorClass::BackgroundUnavailable`.
+            BrowserRefusalCode::BackgroundUnavailable => Self::Other,
         }
     }
 }
@@ -364,7 +367,7 @@ pub fn tool_operation(tool_name: &str, args: Option<&serde_json::Value>) -> Tool
         args.and_then(|value| value.get(key))
             .and_then(serde_json::Value::as_str)
     };
-    match tool_name {
+    match crate::tool::renamed_tool(tool_name).unwrap_or(tool_name) {
         "page" => match string_arg("action") {
             Some("execute_javascript") => ToolOperation::ExecuteJavascript,
             Some("get_text") => ToolOperation::GetText,
@@ -612,7 +615,9 @@ pub fn session_tool_context(
         return None;
     }
     let call = req.tool_call().ok()?;
-    let known_tool = call.name == "type_text_chars" || is_known_tool(&call.name);
+    let known_tool = call.name == "type_text_chars"
+        || crate::tool::renamed_tool(&call.name).is_some()
+        || is_known_tool(&call.name);
     let client_kind = match transport {
         crate::session::SessionTransport::Cli => crate::session::SessionClientKind::Cli,
         crate::session::SessionTransport::Daemon => crate::session::SessionClientKind::Direct,

@@ -35,6 +35,20 @@ final class FakeHost: HostRunning, @unchecked Sendable {
     func configure(change: HostSettingsChange) async throws -> HostStatus { FixtureHost.unconfigured }
 }
 
+final class FailingCli: CliInstallRunning, @unchecked Sendable {
+    let planned: AppCliInstallPlan
+    var installs = 0
+
+    init(plan: AppCliInstallPlan) { planned = plan }
+
+    func plan() async -> AppCliInstallPlan { planned }
+
+    func install(request: AppCliInstallRequest) async throws -> AppCliInstallPlan {
+        installs += 1
+        throw CuaError.Runtime(message: "Permission denied")
+    }
+}
+
 /// A temp directory with a fake bundled `cua` next to a fake app executable.
 /// Nothing outside it is read or written.
 struct TempInstall {
@@ -73,19 +87,25 @@ struct OnboardingTests {
         return o
     }
 
-    /// A fresh first run in a temp HOME: the bundled cua is installed with
-    /// no page, the shell profile puts it on PATH (a new shell resolves it),
-    /// and the pages never include a command-line one.
-    @Test func firstLaunchInstallsTheCliSilentlyOntoPath() async throws {
+    /// A fresh first run in a temp HOME: launching writes nothing; the
+    /// Command line page follows Welcome, and Continue installs the bundled
+    /// cua and the shell profile puts it on PATH (a new shell resolves it).
+    @Test func theCommandLinePageInstallsTheCliOntoPath() async throws {
         let tmp = try TempInstall()
         defer { tmp.remove() }
         let o = OnboardingModel(statePath: nil, cli: tmp.installer())
-        #expect(!o.view.dots.contains { $0.label == "Command line" })
-        await o.installCliSilently()
+        await o.planCli()
+        #expect(!FileManager.default.fileExists(atPath: tmp.home.path), "nothing written before the page")
+        #expect(o.view.step == .welcome)
+        o.send(.start)
+        #expect(o.view.step == .cli)
+        #expect(o.view.title == "Install the cua command and add it to your PATH")
+        #expect(!FileManager.default.fileExists(atPath: tmp.home.path), "nothing written on the page")
+        await o.finishCli(install: true)
+        #expect(o.view.step == .signin)
         let target = tmp.home.appendingPathComponent(".local/bin/cua").path
         #expect(FileManager.default.isExecutableFile(atPath: target))
         #expect(o.state.cliTarget == target)
-        #expect(o.view.step == .welcome, "no page was shown for it")
         // A new login shell with this HOME and the profile finds `cua`.
         let profile = tmp.home.appendingPathComponent(".zshrc").path
         let sh = Process()
@@ -100,8 +120,6 @@ struct OnboardingTests {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(sh.terminationStatus == 0)
         #expect(found == target)
-        // Walk every page: none is about the command line; Done shows where.
-        o.send(.start)
         o.send(.signinDone)
         o.send(.agentsDone(configured: []))
         #expect(o.view.step == .presentation)
@@ -112,8 +130,42 @@ struct OnboardingTests {
         #expect(o.cliShadowedBy == nil, "nothing else on PATH")
         // A second launch finds it current and writes nothing new.
         let again = OnboardingModel(statePath: nil, cli: tmp.installer())
-        await again.installCliSilently()
-        #expect(again.cliPlan?.upToDate == true && again.state.cliTarget == target)
+        await again.planCli()
+        #expect(again.state.cliPlan?.upToDate == true && again.state.cliTarget == target)
+        again.send(.start)
+        #expect(again.view.step == .signin, "no Command line page once current")
+    }
+
+    @Test func skippingTheCommandLinePageWritesNothing() async throws {
+        let tmp = try TempInstall()
+        defer { tmp.remove() }
+        let o = OnboardingModel(statePath: nil, cli: tmp.installer())
+        await o.planCli()
+        o.send(.start)
+        await o.finishCli(install: false)
+        #expect(o.view.step == .signin)
+        o.send(.back)
+        await o.finishCli(install: false)
+        #expect(o.view.step == .signin)
+        #expect(o.state.cliTarget == nil)
+        #expect(!FileManager.default.fileExists(atPath: tmp.home.path))
+    }
+
+    @Test func aFailedInstallStaysOnTheCommandLinePageAndSaysWhy() async throws {
+        let tmp = try TempInstall()
+        defer { tmp.remove() }
+        let cli = FailingCli(plan: await tmp.installer().plan())
+        let o = OnboardingModel(statePath: nil, cli: cli)
+        await o.planCli()
+        o.send(.start)
+        await o.finishCli(install: true)
+        #expect(o.view.step == .cli)
+        #expect(o.state.cliError?.contains("Permission denied") == true)
+        #expect(o.state.cliTarget == nil)
+        #expect(!o.state.cliInstalling && o.view.canSkip)
+        await o.finishCli(install: false)
+        #expect(o.view.step == .signin)
+        #expect(cli.installs == 1)
     }
 
     /// Another `cua` earlier on PATH (a stale Python cua-cli, say): Done
@@ -130,11 +182,12 @@ struct OnboardingTests {
         let o = OnboardingModel(statePath: nil,
                                 cli: tmp.installer(pathEnv: "\(stale.path):\(binDir):/usr/bin:/bin"))
         #expect(o.cliShadowedBy == nil, "nothing installed yet")
-        await o.installCliSilently()
+        await o.planCli()
+        o.send(.start)
+        await o.finishCli(install: true)
         let target = tmp.home.appendingPathComponent(".local/bin/cua").path
         #expect(o.state.cliTarget == target)
         #expect(o.cliShadowedBy == other.path)
-        o.send(.start)
         toMode(o)
         o.send(.modeChosen(mode: .client))
         #expect(o.view.step == .done)
@@ -145,7 +198,9 @@ struct OnboardingTests {
         let tmp = try TempInstall()
         defer { tmp.remove() }
         let o = OnboardingModel(statePath: nil, cli: tmp.installer(bundled: false))
-        await o.installCliSilently()
+        await o.planCli()
+        o.send(.start)
+        #expect(o.view.step == .signin, "no Command line page without a bundled cua")
         #expect(o.state.cliTarget == nil)
         #expect(!FileManager.default.fileExists(atPath: tmp.home.path))
     }

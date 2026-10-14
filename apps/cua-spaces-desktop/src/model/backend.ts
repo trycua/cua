@@ -27,6 +27,8 @@ import type {
   SpaceShares,
   SpaceWindow,
   SpaceLike,
+  SpacePresenceLike,
+  PresenceIdentity,
   TeleportLike,
 } from "../native/generated/index";
 import { words } from "./errors";
@@ -85,6 +87,8 @@ export interface SpacesBackend {
   teleportContext(id: string): Promise<{ teleport: TeleportLike; space: SpaceLike } | null>;
   /** The SDK's teleport handle, for drops (no Space needed). */
   teleportHandle(): TeleportLike | null;
+  /** Joins a Space's presence as `identity`, waiting up to `timeoutMs` for the roster. */
+  joinPresence(id: string, identity: PresenceIdentity, timeoutMs: number): Promise<SpacePresenceLike>;
   /** A Space's app icons in one call (`Space.appIcons`, through its one icon cache): 64 px PNG or SVG bytes, null where it has none. */
   appIcons(id: string, requests: SpaceAppIconRequest[]): Promise<(Uint8Array | null)[]>;
 }
@@ -363,8 +367,9 @@ export class LiveSpacesBackend implements SpacesBackend {
     this.native.configSet("runtime.lume", value);
   }
 
+  /** The built-in Linux runtime (a VM with Docker and gVisor) runs on a Mac only: elsewhere there is no setting, so Settings has no Linux row. */
   async linuxSource(): Promise<string | null> {
-    return this.config("runtime.linux");
+    return this.platform === "darwin" ? this.config("runtime.linux") : null;
   }
 
   async setLinuxSource(value: string): Promise<void> {
@@ -391,10 +396,13 @@ export class LiveSpacesBackend implements SpacesBackend {
     return runningMacosVms(answer);
   }
 
+  /**
+   * No estimate: the rates came from the retired Fleets API
+   * (`fleet().usagePricing()` on run.cua.ai), and the app does not offer new
+   * cloud Spaces. New Space never waits on it.
+   */
   async cloudPricing(): Promise<AppCloudPricing | null> {
-    if (!(await this.cloudAvailable())) return null;
-    const p = await bounded(PROBE_SECONDS, () => this.cua.fleet().usagePricing());
-    return p ? { vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd } : null;
+    return null;
   }
 
   async usage(id: string): Promise<AppSpaceUsage | null> {
@@ -468,6 +476,10 @@ export class LiveSpacesBackend implements SpacesBackend {
   teleportHandle(): TeleportLike {
     this.teleport ??= this.native.teleport(this.cua);
     return this.teleport;
+  }
+
+  async joinPresence(id: string, identity: PresenceIdentity, timeoutMs: number): Promise<SpacePresenceLike> {
+    return (await this.cua.spaces().space(id)).joinPresence(identity, BigInt(timeoutMs));
   }
 
   async appIcons(id: string, requests: SpaceAppIconRequest[]): Promise<(Uint8Array | null)[]> {

@@ -1846,6 +1846,9 @@ impl From<cua_spaces::Error> for CuaError {
         match e {
             cua_spaces::Error::Env(env) => env.into(),
             cua_spaces::Error::Fleet(f) => f.into(),
+            // The refusal's own words: `CuaError::TeleportRefused` says
+            // "teleport refused:" itself (not twice).
+            cua_spaces::Error::TeleportRefused(why) => CuaError::TeleportRefused(why),
             _ => tag_error(kind, message),
         }
     }
@@ -4156,6 +4159,27 @@ fn parse_conflict(conflict: Option<&str>) -> Result<cua_spaces::files::Conflict>
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = CuaError::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert!(matches!(err, CuaError::TeleportRefused(_)), "{err:?}");
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+    }
+
+    #[test]
+    fn an_embedded_insufficient_disk_becomes_insufficient_disk() {
+        let err = cua_spaces::Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::InsufficientDisk("need 52 GB".into()),
+        ));
+        assert_eq!(err.tag(), "insufficient_disk");
+        match CuaError::from(err) {
+            CuaError::InsufficientDisk(message) => assert!(message.contains("need 52 GB")),
+            other => panic!("expected InsufficientDisk, got {other:?}"),
+        }
+    }
 
     #[test]
     fn send_file_keeps_both_copies_unless_overwrite_is_explicit() {

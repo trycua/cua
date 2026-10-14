@@ -409,8 +409,9 @@ async fn sandbox_create_reports(daemon: bool) {
     let mut phases: Vec<Phase> = heard.iter().map(|p| p.phase).collect();
     phases.dedup();
     assert!(
-        phases.starts_with(&[Phase::Pulling, Phase::Booting])
-            || phases.windows(2).any(|w| w == [Phase::Pulling, Phase::Booting]),
+        phases
+            .windows(2)
+            .any(|w| w == [Phase::Pulling, Phase::Booting]),
         "{phases:?}"
     );
     let bytes: Vec<_> = heard.iter().filter_map(|p| p.bytes).collect();

@@ -47,9 +47,13 @@ def test_unix_local_uninstall_removes_owned_links_and_preserves_release(tmp_path
     release_cli = local_bin / "cua-driver"
     release_cli.symlink_to(release_home / "packages/current/cua-driver")
 
-    local_skill = home / ".agents/skills/cua-driver"
+    local_skill = home / ".agents/skills/cua-driver-local"
     local_skill.parent.mkdir(parents=True)
-    local_skill.symlink_to(local_home / "skills/cua-driver")
+    local_skill.symlink_to(local_home / "skills/cua-driver-local")
+    # Local installs before the skill rename linked under the shared name.
+    legacy_local_skill = home / ".claude/skills/cua-driver"
+    legacy_local_skill.parent.mkdir(parents=True)
+    legacy_local_skill.symlink_to(local_home / "skills/cua-driver")
 
     local_unit = home / ".config/systemd/user/cua-driver-local.service"
     release_unit = home / ".config/systemd/user/cua-driver.service"
@@ -91,6 +95,7 @@ def test_unix_local_uninstall_removes_owned_links_and_preserves_release(tmp_path
 
     assert not local_cli.exists() and not local_cli.is_symlink()
     assert not local_skill.exists() and not local_skill.is_symlink()
+    assert not legacy_local_skill.exists() and not legacy_local_skill.is_symlink()
     assert not local_home.exists()
     assert not local_cache.exists()
     assert not local_unit.exists()

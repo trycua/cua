@@ -319,9 +319,9 @@ if (-not $NoPathUpdate) {
     Write-Step "skipping User PATH update (-NoPathUpdate)"
 }
 
-# Agent skill pack symlinks: NOT auto-created. Run
-# `cua-driver skills install --local` to symlink agent dirs to the
-# staged copy at $StagedSkills above.
+# Agent skill pack symlinks: NOT auto-created. `cua-driver-local skills
+# install` links agent dirs under the distinct `cua-driver-local` skill name
+# so the local pack never collides with the released `cua-driver` skill.
 
 # ---------- Done -----------------------------------------------------------
 

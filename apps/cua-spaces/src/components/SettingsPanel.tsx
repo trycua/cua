@@ -426,6 +426,8 @@ export function SettingsPanel({
         return;
       case "billing":
       case "teams":
+      case "teams-manage":
+      case "teams-billing":
         if (row.linkUrl) onOpenExternal(row.linkUrl);
         return;
     }

@@ -678,6 +678,65 @@ fn xtest_text_restores_the_keycode_of_a_client_that_never_answers() -> Result<()
     Ok(())
 }
 
+/// With every spare keycode but one held, a text typed in batches rebinds that
+/// keycode for its next batch only after the client confirms it has read the
+/// keys of the first; a client that does not answer gets an error instead.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_rebinds_a_spare_keycode_only_after_the_client_confirms() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    let (&free, others) = spare
+        .split_last()
+        .expect("the test display has no spare keycode");
+    let per = conn
+        .get_keyboard_mapping(free, 1)?
+        .reply()?
+        .keysyms_per_keycode;
+    let bind = |keysym: u32| -> Result<()> {
+        for &keycode in others {
+            conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
+        }
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    };
+    bind(0x7e1)?;
+    let silent = type_with_pings(
+        &conn,
+        "\u{4f60}\u{597d}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |_, _| Ok(()),
+    )?;
+    let after_silent = spare_keycodes(&conn)?;
+    let answered = type_with_pings(
+        &conn,
+        "\u{4f60}\u{597d}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| pong(&conn, root, protocols, data),
+    )?;
+    bind(0)?;
+    clear_active_window(&conn, root)?;
+
+    let error = silent
+        .result
+        .expect_err("rebound a keycode the client had not confirmed");
+    assert!(
+        error.to_string().starts_with("typed 1 of 2 characters"),
+        "{error:#}"
+    );
+    assert_eq!(silent.presses, vec![free]);
+    assert_eq!(after_silent, vec![free]);
+    answered.result?;
+    assert_eq!(answered.presses, vec![free, free]);
+    assert_eq!(spare_keycodes(&conn)?, spare);
+    Ok(())
+}
+
 fn take_ping(conn: &RustConnection, window: Window, protocols: Atom, ping: Atom) -> Result<()> {
     conn.change_property32(
         PropMode::REPLACE,

@@ -188,6 +188,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["devices.createPairingCode", { team: null }],
       ["devices.pairingCodes", {}],
       ["devices.revokePairingCode", { id: "pc_fixture1" }],
+      ["teams.list", {}],
       ["storage.get", {}],
       ["storage.run", { request: { kind: "clear-cache" } }],
       ["notifications.list", {}],

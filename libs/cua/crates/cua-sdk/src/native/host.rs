@@ -971,11 +971,8 @@ impl Devices {
     }
 
     /// Makes a one-time code (link, QR, install commands) that adds another
-    /// computer to the account (from this enrolled device). It expires
-    /// after `ttl_secs` (30 minutes when `None`). `team` (an organization
-    /// id) is only echoed back: the relay's own teams are retired, and the
-    /// machine becomes a team machine once it joined, by sharing it with
-    /// `team:<id>` (the Spaces API).
+    /// computer to the account, or to `team` (from this enrolled device).
+    /// It expires after `ttl_secs` (30 minutes when `None`).
     pub async fn create_pairing_code(
         &self,
         team: Option<String>,
@@ -983,6 +980,9 @@ impl Devices {
     ) -> Result<PairingCode> {
         let auth = self.auth.clone();
         let tokens = self.tokens.clone();
+        // `team` (an organization id) is only echoed back: the relay's own
+        // teams are retired, and the machine becomes a team machine once it
+        // joined, by sharing it with `team:<id>` (the Spaces API).
         run(async move {
             let session = auth.session().await?;
             let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;

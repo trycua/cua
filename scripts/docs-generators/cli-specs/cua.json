@@ -11348,7 +11348,7 @@
      "usage": "cua team show [OPTIONS] <TEAM>"
     },
     {
-     "abstract": "Invite someone by email: cua.ai emails them an invitation",
+     "abstract": "Invite someone by email: cua.ai emails them an invitation. Manage invites at app.cua.ai/team",
      "after_help": "Examples:\n  cua team invite AIGIS dillon@example.com\n  cua team invite AIGIS ops@example.com --role admin",
      "aliases": [],
      "arguments": [
@@ -11736,6 +11736,48 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua team remove-machine [OPTIONS] <TEAM> <MACHINE>"
+    },
+    {
+     "abstract": "The team's audit log. Audit export is coming soon; for now see the account app (app.cua.ai)",
+     "after_help": "Examples:\n  cua team audit AIGIS",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Team id, alias or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "TEAM",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "audit",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "50",
+       "env": null,
+       "help": "Newest events to show (when export arrives)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "limit",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "LIMIT"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua team audit [OPTIONS] <TEAM>"
     },
     {
      "abstract": "Delete a team (owner; cancel its subscription first). Its machines stay yours",

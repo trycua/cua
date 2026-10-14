@@ -270,3 +270,24 @@ export interface ApproveSheetView {
   error: string | null;
   request: ApproveRequest | null;
 }
+
+/** One of the account's Teams (an organization of `GET /v1/me`). */
+export interface TeamChoice {
+  /** The organization id (`team:<id>` shares with it). */
+  id: string;
+  /** Its slug. */
+  alias: string;
+  /** Its display name (empty: use the alias). */
+  name: string;
+  /** `owner`, `admin` or `member`. */
+  role: string;
+  /** `free`, `teams`, ...: team machines need `teams`. */
+  plan: string;
+}
+
+/** `teams.list`: the account's Teams and the one it works in. */
+export interface TeamsList {
+  teams: TeamChoice[];
+  /** The saved current team (Settings, Teams), or null. */
+  currentTeamId: string | null;
+}

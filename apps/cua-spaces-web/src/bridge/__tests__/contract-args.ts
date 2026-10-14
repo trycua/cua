@@ -118,6 +118,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "devices.createPairingCode": { team: null },
   "devices.pairingCodes": {},
   "devices.revokePairingCode": { id: "pc_demo0" },
+  "teams.list": {},
   "storage.get": {},
   "storage.run": { request: { kind: "clear-cache" } },
   "notifications.list": {},

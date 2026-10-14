@@ -46,7 +46,8 @@ pub enum TeamCmd {
         /// Team id, alias or name.
         team: String,
     },
-    /// Invite someone by email: cua.ai emails them an invitation.
+    /// Invite someone by email: cua.ai emails them an invitation. Manage
+    /// invites at app.cua.ai/team.
     #[command(after_help = "Examples:
   cua team invite AIGIS dillon@example.com
   cua team invite AIGIS ops@example.com --role admin")]
@@ -152,6 +153,17 @@ pub enum TeamCmd {
         /// The machine (`relay:<id>` or its id, as `cua team show` lists it).
         machine: String,
     },
+    /// The team's audit log. Audit export is coming soon; for now see the
+    /// account app (app.cua.ai).
+    #[command(after_help = "Examples:
+  cua team audit AIGIS")]
+    Audit {
+        /// Team id, alias or name.
+        team: String,
+        /// Newest events to show (when export arrives).
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// Delete a team (owner; cancel its subscription first). Its machines
     /// stay yours.
     #[command(after_help = "Examples:
@@ -181,6 +193,7 @@ impl TeamCmd {
             | TeamCmd::Request { team }
             | TeamCmd::AddMachine { team, .. }
             | TeamCmd::RemoveMachine { team, .. }
+            | TeamCmd::Audit { team, .. }
             | TeamCmd::Delete { team, .. } => Some(team),
             TeamCmd::Create { .. } | TeamCmd::Ls => None,
         }
@@ -269,6 +282,20 @@ async fn member_sub(ctx: &TeamCtx, org: &str, who: &str) -> Result<String, CuaEr
         .ok_or_else(|| CuaError::NotFound(format!("{who} is not a member of this team")))
 }
 
+/// `cua team audit`: export is not there yet; say where to look.
+fn audit_notice(json: bool, out: &mut dyn Write) -> i32 {
+    let msg = format!(
+        "Audit export is coming soon (CUA-1374); see {}",
+        cua_home::env::account_app_url().trim_start_matches("https://")
+    );
+    if json {
+        emit_json(out, &serde_json::json!({ "events": [], "note": msg }));
+    } else {
+        line(out, msg);
+    }
+    0
+}
+
 /// Runs `cmd` (all but `add-machine`, which goes through Spaces).
 /// `confirm` answers the delete prompt.
 pub async fn run_with(
@@ -279,6 +306,9 @@ pub async fn run_with(
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
     let (api, token) = (&ctx.api, ctx.token.as_str());
+    if let TeamCmd::Audit { .. } = cmd {
+        return Ok(audit_notice(json, out));
+    }
     let org = match cmd.team_arg() {
         Some(q) if !matches!(cmd, TeamCmd::AddMachine { .. }) => {
             Some(api.resolve_org(token, q).await.map_err(err)?)
@@ -433,6 +463,13 @@ pub async fn run_with(
                         org.id
                     ),
                 );
+                line(
+                    out,
+                    format!(
+                        "See and revoke invites at {}/team.",
+                        cua_home::env::account_app_url()
+                    ),
+                );
             }
         }
         TeamCmd::Join { .. } => {
@@ -525,6 +562,7 @@ pub async fn run_with(
                 );
             }
         }
+        TeamCmd::Audit { .. } => unreachable!("answered above"),
         TeamCmd::Delete { yes, .. } => {
             if !yes
                 && !confirm(&format!(
@@ -612,6 +650,9 @@ pub async fn run(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    if let TeamCmd::Audit { .. } = cmd {
+        return Ok(audit_notice(json, out));
+    }
     let ctx = TeamCtx::current(home, matches!(cmd, TeamCmd::Request { .. })).await?;
     run_with(
         cmd,
@@ -757,6 +798,24 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(e, CuaError::InvalidArgument(_)), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn audit_points_to_the_account_app() {
+        let api = FakeSpacesApi::start().await;
+        let t = text(
+            TeamCmd::Audit {
+                team: "AIGIS".into(),
+                limit: 50,
+            },
+            &ctx(&api, "t-nobody", None),
+        )
+        .await
+        .unwrap();
+        assert!(
+            t.starts_with("Audit export is coming soon (CUA-1374); see app."),
+            "{t}"
+        );
     }
 
     #[tokio::test]

@@ -29,7 +29,7 @@ export const METHODS = [
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
   "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
-  "devices.revokePairingCode", "storage.get", "storage.run",
+  "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
   "notifications.list", "notifications.markAllRead",
   "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",

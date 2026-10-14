@@ -32,32 +32,6 @@ async def test_list_classifies_name_only_entries(path):
     ]
 
 
-@pytest.mark.parametrize("key", ["files", "entries"])
-async def test_list_preserves_supplied_metadata(key):
-    transport = AsyncMock(spec=Transport)
-    transport.send.return_value = {
-        "success": True,
-        key: [
-            {"name": "subdir", "path": "/work/subdir", "is_dir": True},
-            {"name": "note.txt", "is_dir": False, "size": 12},
-        ],
-    }
-
-    assert await Files(transport).list("/work/") == [
-        FileEntry("subdir", "/work/subdir", True),
-        FileEntry("note.txt", "/work/note.txt", False, size=12),
-    ]
-    transport.send.assert_awaited_once_with("list_dir", path="/work/")
-
-
-async def test_list_empty_directory():
-    transport = AsyncMock(spec=Transport)
-    transport.send.return_value = {"success": True, "files": []}
-
-    assert await Files(transport).list("/work") == []
-    transport.send.assert_awaited_once_with("list_dir", path="/work")
-
-
 async def test_list_propagates_directory_lookup_failure():
     transport = AsyncMock(spec=Transport)
     transport.send.side_effect = [

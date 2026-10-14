@@ -139,10 +139,15 @@ extension WebUIBridge {
         case "notifications.list":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.pollNotifications()
-            return BridgeValue.encode(model.persistent.feed)
+            return model.persistent.feedRows()
         case "notifications.markAllRead":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.markAllRead()
+            return NSNull()
+        case "notifications.markRead":
+            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
+            await model.persistent.markRead(ids: ids)
             return NSNull()
 
         // Usage events

@@ -366,7 +366,7 @@ const VolumeShape = ref(
 
 const NotificationShape = ref(
   "NotificationInput",
-  obj<NotificationInput>()({ id: str, atMs: num, agent: optNull(str), kind: str, title: str, body: str, read: opt(bool) }),
+  obj<NotificationInput>()({ id: str, atMs: num, agent: optNull(str), kind: str, title: str, body: str, read: opt(bool), space: optNull(str) }),
 );
 
 const AgentKeysShape = ref(
@@ -853,6 +853,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
+  "notifications.markRead": nul,
 
   "telemetry.track": nul,
   "spaces.usage": nullable(
@@ -1161,6 +1162,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
+  "notifications.markRead": nul,
   "telemetry.track": nul,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],

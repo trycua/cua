@@ -50,7 +50,9 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 /** The daemon's tools as the fixture daemon answers them. */
 class ToolBackend extends FixtureSpacesBackend {
   readonly tools: [string, Record<string, unknown>][] = [];
-  notifications = [{ id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "The report is ready", read: false }];
+  notifications: { id: string; at_ms: number; agent: string; kind: string; title: string; body: string; read: boolean; space?: string }[] = [
+    { id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "The report is ready", read: false },
+  ];
   agents: unknown[] = [];
   override async tool(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
     this.tools.push([tool, args]);
@@ -73,9 +75,12 @@ class ToolBackend extends FixtureSpacesBackend {
         return { ok: true, reachable: true, authorized: true, versioning: true, detail: null, applied: !args.dry_run };
       case "notifications_list":
         return { notifications: this.notifications };
-      case "notifications_ack":
-        this.notifications = this.notifications.map((n) => ({ ...n, read: true }));
+      case "notifications_ack": {
+        // As the daemon's feed: no ids is every entry.
+        const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+        this.notifications = this.notifications.map((n) => (ids.length === 0 || ids.includes(n.id) ? { ...n, read: true } : n));
         return {};
+      }
       case "persistent_agent_list":
         return { agents: this.agents };
       case "volume_approve":
@@ -192,6 +197,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["storage.get", {}],
       ["storage.run", { request: { kind: "clear-cache" } }],
       ["notifications.list", {}],
+      ["notifications.markRead", { ids: ["n1"] }],
       ["notifications.markAllRead", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
@@ -226,6 +232,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "devices.confirmMachine": { id: "m2" },
       "devices.createPairingCode": { team: null },
       "devices.revokePairingCode": { id: "pc_fixture1" },
+      "notifications.markRead": { ids: ["n1"] },
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
@@ -699,6 +706,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await make({ servicesIn: false });
     expect(await code("volume.overview")).toBe("unsupported");
     expect(await code("notifications.list")).toBe("unsupported");
+    expect(await code("notifications.markRead", { ids: ["n1"] })).toBe("unsupported");
     expect(await code("storage.run", { request: { kind: "mount" } })).toBe("unsupported");
     expect(await call("volume.storage")).toBeNull();
   });
@@ -717,6 +725,32 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.notificationsSeenMs).toBe(2000n);
     await call("notifications.markAllRead");
     expect(parts.notifications.feed[0]?.read).toBe(true);
+  });
+
+  it("marks one opened entry read, never all, and lists the Space each is about", async () => {
+    backend.notifications = [
+      { id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "The report is ready", read: false, space: "local:dev" },
+      { id: "n2", at_ms: 2000, agent: "ada", kind: "message", title: "Ada", body: "Second", read: false },
+    ];
+    type Row = { id: string; read: boolean; space: string | null; body: string };
+    const list = async () => new Map(((await call("notifications.list")) as Row[]).map((r) => [r.id, r]));
+    const before = await list();
+    expect(before.get("n1")).toMatchObject({ space: "local:dev", read: false, body: "The report is ready" });
+    expect(before.get("n2")?.space).toBeNull();
+
+    expect(await call("notifications.markRead", { ids: ["n1"] })).toBeNull();
+    expect(backend.tools.filter(([t]) => t === "notifications_ack").at(-1)).toEqual(["notifications_ack", { ids: ["n1"] }]);
+    const after = await list();
+    expect(after.get("n1")?.read).toBe(true);
+    expect(after.get("n2")?.read).toBe(false);
+
+    // No ids marks nothing (the daemon would read it as every entry).
+    const acks = backend.tools.filter(([t]) => t === "notifications_ack").length;
+    await call("notifications.markRead", { ids: [] });
+    expect(backend.tools.filter(([t]) => t === "notifications_ack").length).toBe(acks);
+    expect((await list()).get("n2")?.read).toBe(false);
+    expect(await code("notifications.markRead", {})).toBe("bad_args");
+    expect(await code("notifications.markRead", { ids: [1] })).toBe("bad_args");
   });
 
   // MARK: The first run

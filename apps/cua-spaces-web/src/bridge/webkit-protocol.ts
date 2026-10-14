@@ -121,6 +121,7 @@ export const WEBKIT_METHODS = [
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
   "spaces.windows",

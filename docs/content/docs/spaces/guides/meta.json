@@ -1,6 +1,8 @@
 {
   "title": "Guides",
   "pages": [
+    "install",
+    "plans",
     "add-a-space",
     "unattended-access",
     "share-a-space",

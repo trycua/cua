@@ -2099,6 +2099,7 @@ dependencies = [
  "humantime",
  "hyper",
  "hyper-util",
+ "libc",
  "pbjson-types",
  "prost",
  "prost-types",

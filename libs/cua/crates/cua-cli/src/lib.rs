@@ -2541,7 +2541,23 @@ fn cli_command(teams: bool) -> clap::Command {
     }
     cmd.mut_subcommand("team", |c| c.hide(true))
         .mut_subcommand("host", |h| {
-            h.mut_subcommand("pair", |p| p.mut_arg("team", |a| a.hide(true)))
+            h.mut_subcommand("pair", |p| {
+                // Drop the Teams example too.
+                let examples = p.get_after_help().map(|h| {
+                    h.to_string()
+                        .lines()
+                        .filter(|l| !l.contains("team"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                let p = p
+                    .mut_arg("team", |a| a.hide(true))
+                    .mut_arg("no_wait", |a| a.hide(true));
+                match examples {
+                    Some(e) => p.after_help(e),
+                    None => p,
+                }
+            })
         })
 }
 

@@ -10,7 +10,7 @@ const DOCKER_DESKTOP_URL = "https://docs.docker.com/desktop/setup/install/window
 export function noLocalRuntimeReason(platform: string, containerDetail?: string): string {
   if (platform === "darwin") return "No local runtime found (Docker or Lume).";
   const detail = (containerDetail ?? "").toLowerCase();
-  const installedButStopped = /not running|did not answer|not listening|start /.test(detail);
+  const installedButStopped = /not running|did not answer|not listening|start |socket not found|pipe\/dockerdesktop/.test(detail);
   if (platform === "win32") {
     if (installedButStopped) {
       return "Docker Desktop isn't running. Start it and wait for “Engine running”, then try again.";

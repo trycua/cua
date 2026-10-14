@@ -16,6 +16,9 @@ describe("noLocalRuntimeReason", () => {
     expect(r).toContain("Install it from https://docs.docker.com/desktop/setup/install/windows-install/");
     expect(r).toContain("WSL 2");
   });
+  it("knows Docker Desktop is installed when its pipe is missing", () => {
+    expect(noLocalRuntimeReason("win32", "container engine: Socket not found: //./pipe/dockerDesktopLinuxEngine")).toMatch(/isn't running/);
+  });
   it("tells Windows users to start a stopped Docker Desktop", () => {
     expect(noLocalRuntimeReason("win32", "container engine at npipe://x is not running")).toMatch(/isn't running/);
   });

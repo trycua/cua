@@ -1,0 +1,87 @@
+---
+title: Team machines
+description: 'Pair a machine to your team, approve devices, and decide who can open what: team machines versus your own machines, on Mac, Windows and Linux.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **team machine** belongs to the team. Every member, and their agents, sees it
+in the Cua Spaces app and can open it, from a device an admin has approved. A
+**personal machine** stays on your own account, as in
+[unattended access](/spaces/guides/unattended-access), and only you and the
+accounts you [share it with](/spaces/guides/share-a-space) can reach it.
+
+| | Personal machine | Team machine |
+|---|---|---|
+| Belongs to | One account | The team |
+| Who sees it | You, and accounts you share it with | Every member |
+| Who can open it | You, and people you share it with | Every member, as an editor, from an approved device |
+| Who adds or removes it | You | Owners and admins |
+
+Team members have full use of a team machine: there are no view-only team
+members. To let someone only watch, share a Space with them as a viewer instead.
+
+## Pair a machine to the team
+
+Pairing needs Cua Spaces 0.8.0 or later. An owner or admin does this.
+
+1. In the Cua Spaces app, choose **Add a machine** for your team. The app
+   shows a link, a QR code and a one-time pairing code that looks like
+   `K7QM-4XPB-2RHD`.
+2. On the computer you are adding, open the link, or run the install command the
+   app shows. With the `cua` CLI installed, the code alone is enough:
+
+```bash test="cli-shape" id="cua-host-setup-pair-team"
+cua host setup --pair K7QM-4XPB-2RHD
+```
+
+The machine joins the team that made the code, with no sign-in on that
+computer. A code works once and expires after 30 minutes. Revoke an unused one
+from the same dialog.
+
+The machine then appears under **Machines** at
+[app.cua.ai/machines](https://app.cua.ai/machines), where an owner or admin can
+remove it from the team. Removing a machine does not delete anything on it.
+
+## Mac, Windows and Linux
+
+| | Open team machines | Be a team machine |
+|---|---|---|
+| Mac | Cua Spaces app (macOS 26 or later) | Yes |
+| Windows | Windows and Linux apps: see the [download page](https://cua.ai/download) | Yes |
+| Linux | Windows and Linux apps: see the [download page](https://cua.ai/download) | Yes |
+
+Mac, Windows and Linux machines all join with `cua host setup`, as in
+[unattended access](/spaces/guides/unattended-access); see the
+[quickstart](/spaces/quickstart) to install the `cua` CLI.
+
+## Device approval
+
+With Teams, a member's device can open team machines only once an owner or admin
+approves it.
+
+1. The member signs in on a new device and asks for approval.
+2. The request shows under **Device approvals** at
+   [app.cua.ai/machines](https://app.cua.ai/machines) while it waits. The member
+   sees that it is waiting for an admin.
+3. An owner or admin chooses **Approve** or **Deny**. A denied device cannot
+   open team machines.
+
+Members see their own devices; owners and admins see everyone's. The owner's own
+devices need no approval. Removing a member deletes their approvals.
+
+## Who can open a team machine
+
+A person can open a team machine when all of these hold. The relay checks them
+with the Cua account service, and caches the answer for up to a minute.
+
+- They are a member of the team (their role is read from the team itself, so a
+  removed member loses access at once).
+- The machine is on the team's list.
+- Their device is approved (the owner's devices always are).
+
+## Share a Space with the team
+
+To make an existing Space a team machine, share it with the team. Every member
+then sees it and opens it as an editor from an approved device. Macs, Linux and
+Windows machines can all be team machines.

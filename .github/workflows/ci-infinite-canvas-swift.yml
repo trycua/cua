@@ -27,6 +27,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "4"
 
@@ -40,10 +43,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2

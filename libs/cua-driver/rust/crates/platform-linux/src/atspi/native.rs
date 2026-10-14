@@ -5876,6 +5876,28 @@ pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     Some((trans.dst_x as i32, trans.dst_y as i32))
 }
 
+fn x11_top_level_geometry(xid: u64) -> Option<(i32, i32, i32, i32)> {
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let mut window = xid as u32;
+    loop {
+        let tree = conn.query_tree(window).ok()?.reply().ok()?;
+        if tree.parent == tree.root || tree.parent == x11rb::NONE {
+            break;
+        }
+        window = tree.parent;
+    }
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+    Some((
+        i32::from(geom.x),
+        i32::from(geom.y),
+        i32::from(geom.width),
+        i32::from(geom.height),
+    ))
+}
+
 /// Read the GTK4 client-side-decoration shadow inset from the X11
 /// `_GTK_FRAME_EXTENTS` property (`CARDINAL[4]` = left, right, top, bottom).
 ///
@@ -6162,6 +6184,7 @@ async fn web_document_origin_for_visited(
 fn screen_extent_rebase(
     x11_origin: (i32, i32),
     accessible_frame_extents: (i32, i32, i32, i32),
+    top_level: Option<(i32, i32, i32, i32)>,
 ) -> Option<(i32, i32)> {
     if !crate::snapshot_queries::plausible_raw_extents(accessible_frame_extents) {
         return None;
@@ -6171,6 +6194,9 @@ fn screen_extent_rebase(
     // origin. A legitimate screen provider may differ from the X11 client
     // origin by title-bar/CSD extents; rebasing that small decoration delta
     // would move otherwise-correct GTK coordinates off their controls.
+    if top_level == Some(accessible_frame_extents) {
+        return None;
+    }
     if frame_x.abs() <= 2 && frame_y.abs() <= 2 {
         Some((x11_origin.0 - frame_x, x11_origin.1 - frame_y))
     } else {
@@ -6297,6 +6323,9 @@ async fn element_bounds_for_visited(
         let x11_origin = bounded_blocking(move || x11_window_origin(xid))
             .await
             .flatten();
+        let top_level = bounded_blocking(move || x11_top_level_geometry(xid))
+            .await
+            .flatten();
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -6318,7 +6347,8 @@ async fn element_bounds_for_visited(
                 },
                 _ => None,
             };
-            accessible_frame.and_then(|frame_extents| screen_extent_rebase(origin, frame_extents))
+            accessible_frame
+                .and_then(|frame_extents| screen_extent_rebase(origin, frame_extents, top_level))
         } else {
             None
         }
@@ -7051,18 +7081,52 @@ mod coord_tests {
 
     #[test]
     fn screen_extents_are_rebased_from_accessible_frame_to_x11_origin() {
+        let frame = Some((600, 50, 800, 600));
         assert_eq!(
-            screen_extent_rebase((604, 80), (0, 0, 800, 600)),
+            screen_extent_rebase((604, 80), (0, 0, 792, 566), frame),
             Some((604, 80))
         );
-        assert_eq!(screen_extent_rebase((604, 100), (604, 80, 800, 600)), None);
-        assert_eq!(screen_extent_rebase((604, 80), (604, 80, 800, 600)), None);
+        assert_eq!(
+            screen_extent_rebase((604, 100), (604, 80, 792, 566), frame),
+            None
+        );
+        assert_eq!(
+            screen_extent_rebase((604, 80), (604, 80, 792, 566), frame),
+            None
+        );
     }
 
     #[test]
     fn sentinel_frame_extents_are_not_a_renderer_origin() {
-        assert_eq!(screen_extent_rebase((155, 149), (-1, -1, -1, -1)), None);
-        assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0)), None);
+        assert_eq!(
+            screen_extent_rebase((155, 149), (-1, -1, -1, -1), None),
+            None
+        );
+        assert_eq!(screen_extent_rebase((155, 149), (0, 0, 0, 0), None), None);
+    }
+
+    #[test]
+    fn a_renderer_local_frame_at_the_corner_keeps_its_rebase() {
+        assert_eq!(
+            screen_extent_rebase((5, 29), (0, 0, 640, 480), Some((0, 0, 650, 514))),
+            Some((5, 29))
+        );
+        assert_eq!(
+            screen_extent_rebase((5, 56), (0, 0, 640, 480), Some((0, 27, 650, 514))),
+            Some((5, 56))
+        );
+        assert_eq!(
+            screen_extent_rebase((5, 29), (0, 0, 640, 480), None),
+            Some((5, 29))
+        );
+    }
+
+    #[test]
+    fn a_gtk_frame_matching_its_window_manager_frame_at_the_corner_is_not_rebased() {
+        assert_eq!(
+            screen_extent_rebase((5, 29), (0, 0, 650, 514), Some((0, 0, 650, 514))),
+            None
+        );
     }
 
     #[test]

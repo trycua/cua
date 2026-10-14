@@ -645,7 +645,11 @@ impl BrowserPrepareTool {
                 background_unavailable unless delivery_mode is \"foreground\" (the app that \
                 was in front is brought back afterwards) or the browser window is on another \
                 Space than the user's, where it attaches in the background while the driver \
-                reverts the browser's own brief activations."
+                reverts the browser's own brief activations. A driver-owned isolated launch \
+                result carries an advisory lifecycle object: the browser process ends with the \
+                calling session after idle_expires_in_seconds without session activity, an \
+                isolated_named profile persists after the session and an isolated_new profile \
+                does not, and explicit end, disconnect, revocation or shutdown end it earlier."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -829,10 +833,11 @@ fn isolated_session_lifecycle(
         session,
         owner_transport,
         crate::session::DEFAULT_SESSION_IDLE_TTL,
-    )?;
+    )
+    .filter(|snapshot| !snapshot.ending)?;
     Some(json!({
         "owner": "session",
-        "idle_expires_in_seconds": (snapshot.idle + snapshot.expires_in).as_secs(),
+        "idle_expires_in_seconds": snapshot.idle_ttl.as_secs(),
         "process_ends_with_session": true,
         "profile_persists_after_session": mode == PrepareProfileMode::IsolatedNamed,
     }))
@@ -2644,6 +2649,7 @@ mod tests {
     #[derive(Default)]
     struct MockPlatform {
         devtools: Option<std::net::TcpListener>,
+        launch_delay: std::time::Duration,
     }
 
     impl MockPlatform {
@@ -2799,6 +2805,7 @@ mod tests {
             profile: &std::path::Path,
         ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
         {
+            std::thread::sleep(self.launch_delay);
             let port = self.devtools.as_ref().unwrap().local_addr().unwrap().port();
             std::fs::write(
                 profile.join("DevToolsActivePort"),
@@ -2818,6 +2825,10 @@ mod tests {
     }
 
     fn launching_engine() -> Arc<BrowserEngine> {
+        slow_launching_engine(std::time::Duration::ZERO)
+    }
+
+    fn slow_launching_engine(launch_delay: std::time::Duration) -> Arc<BrowserEngine> {
         static PROFILE_ROOT: std::sync::Once = std::sync::Once::new();
         PROFILE_ROOT.call_once(|| {
             std::env::set_var(
@@ -2827,6 +2838,7 @@ mod tests {
         });
         BrowserEngine::new(Arc::new(MockPlatform {
             devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
+            launch_delay,
         }))
     }
 
@@ -3248,6 +3260,39 @@ mod tests {
             );
             crate::session::end_session(&session);
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preparation_longer_than_the_idle_ttl_still_publishes_the_ttl() {
+        let engine = slow_launching_engine(std::time::Duration::from_millis(2100));
+        let (session, owner) = start_lifecycle_session(Some(std::time::Duration::from_secs(1)));
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(prepared["lifecycle"]["idle_expires_in_seconds"], 1);
+        crate::session::end_session(&session);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ending_session_gets_no_lifecycle() {
+        use crate::session::{SessionClientKind, SessionTransport};
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let guard = crate::session::begin_session_dispatch(
+            &session,
+            None,
+            &owner,
+            false,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        assert!(crate::session::end_session_for_owner(&session, &owner));
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert!(prepared.get("lifecycle").is_none(), "{prepared}");
+        drop(guard);
     }
 
     #[cfg(unix)]

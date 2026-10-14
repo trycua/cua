@@ -18,6 +18,7 @@
     "volume-app-core",
     "agents-app-core",
     "machines-app-core",
+    "account-app-core",
     "app-checklist-palette",
     "devices",
     "host"

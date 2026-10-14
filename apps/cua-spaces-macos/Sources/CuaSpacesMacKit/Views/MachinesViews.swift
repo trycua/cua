@@ -20,7 +20,7 @@ struct MachinesPageView: View {
             VStack(alignment: .leading, spacing: 0) {
                 List(selection: $selectedId) {
                     ForEach(rows, id: \.id) { row in
-                        MachineRowView(row: row, status: status(row), spaces: spacesCount(row))
+                        MachineRowView(row: row, status: status(row))
                             .tag(row.id)
                     }
                 }
@@ -70,36 +70,26 @@ struct MachinesPageView: View {
         }
     }
 
-    /// The row's second line: the sidebar's status for a machine with a
-    /// desktop row, the device's platform, state and last session for a
-    /// device of its own, else whether it is online.
+    /// The row's second line: the device's platform, state and last
+    /// session for a device of its own, else the core's status word
+    /// (`machines::status_word`: "Online", "Not sharing", "Offline"), the
+    /// same the New UI shows. Never a Space's word ("Suspended").
     private func status(_ row: AppMachinePageRow) -> String {
-        if let id = row.spaceId,
-           let s = model.sidebar.sections.flatMap(\.rows).first(where: { $0.id == id }) ?? model.sidebar.thisMachine.flatMap({ $0.id == id ? $0 : nil }) {
-            return s.statusText
-        }
         if row.deviceOnly, let d = model.devices.view.rows.first(where: { $0.id == row.device }) {
             return model.devices.rowDetail(d)
         }
-        return row.online ? "Online" : "Offline"
-    }
-
-    /// The Spaces a machine provides (none for this machine or a device).
-    private func spacesCount(_ row: AppMachinePageRow) -> Int? {
-        guard !row.current, !row.deviceOnly else { return nil }
-        return model.hostedRows(row.spaceId ?? "relay:\(row.id)").count
+        return row.status
     }
 }
 
 /// The OS mark for a page row's system (`os-macos`, ..., `computer`).
 private func osIcon(_ os: String) -> String { os.isEmpty ? "computer" : "os-\(os)" }
 
-/// One machine: its OS mark, name, status line and how many Spaces it runs.
+/// One machine: its OS mark, name, status line and how many Spaces it runs
+/// (the core's `spacesLabel`, none for a device of its own).
 struct MachineRowView: View {
     let row: AppMachinePageRow
     let status: String
-    /// Spaces it provides (nil for This machine and a device).
-    let spaces: Int?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -120,8 +110,8 @@ struct MachineRowView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if let spaces {
-                Text(spaces == 1 ? "1 Space" : "\(spaces) Spaces")
+            if !row.spacesLabel.isEmpty {
+                Text(row.spacesLabel)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -147,7 +137,7 @@ struct MachineInfoView: View {
         let hosted = row.deviceOnly ? [] : model.hostedRows("relay:\(row.id)")
         Form {
             Section {
-                LabeledContent("Status", value: row.online ? "Online" : "Offline")
+                LabeledContent("Status", value: row.status)
                 if !row.os.isEmpty {
                     LabeledContent("System", value: device?.platform.isEmpty == false ? device!.platform : row.os)
                 }

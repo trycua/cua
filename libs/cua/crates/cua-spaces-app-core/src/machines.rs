@@ -374,6 +374,64 @@ pub struct MachinePageRow {
     pub stopped_sharing: bool,
     /// The device's last session (Unix seconds), when it has a device.
     pub last_seen: Option<u64>,
+    /// The row's status word, the same in every UI ([`status_word`]):
+    /// "Online", "Not sharing" or "Offline".
+    #[serde(default)]
+    pub status: String,
+    /// The Spaces it runs that the Spaces list shows: this machine's local
+    /// Spaces, or the Spaces another machine provides (`host`).
+    #[serde(default)]
+    pub spaces: u32,
+    /// "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+    /// device of its own, which runs no Spaces.
+    #[serde(default)]
+    pub spaces_label: String,
+}
+
+/// A machine that is reachable from here.
+pub const ONLINE: &str = "Online";
+/// A machine that is connected to the relay but whose owner stopped
+/// sharing it (the relay's own word for it, and New Space's "(not
+/// sharing)"): every call to it is refused.
+pub const NOT_SHARING: &str = "Not sharing";
+/// A machine the app did not reach and the relay does not see connected.
+pub const OFFLINE: &str = "Offline";
+
+/// A Machines row's status word. A machine is not a Space: it is never
+/// "Suspended" or "Not reachable", only online, online but not sharing,
+/// or offline.
+pub fn status_word(online: bool, stopped_sharing: bool) -> &'static str {
+    match (online, stopped_sharing) {
+        (false, _) => OFFLINE,
+        (true, true) => NOT_SHARING,
+        (true, false) => ONLINE,
+    }
+}
+
+/// "1 Space", "3 Spaces", "No Spaces".
+pub fn spaces_label(n: u32) -> String {
+    match n {
+        0 => "No Spaces".into(),
+        1 => "1 Space".into(),
+        n => format!("{n} Spaces"),
+    }
+}
+
+/// The Spaces on a machine: this machine's local Spaces, or those another
+/// machine provides (the classic UI's `hosted_rows`). A machine's own
+/// desktop is not one of them.
+fn spaces_on(spaces: &[Space], id: &str, current: bool) -> u32 {
+    let n = spaces
+        .iter()
+        .filter(|s| {
+            if current {
+                s.provider == Some(SpaceProvider::Local) && s.id != THIS_MACHINE_ID
+            } else {
+                s.host.as_deref() == Some(id)
+            }
+        })
+        .count();
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// A Space's error says its machine refused because its owner stopped
@@ -511,6 +569,9 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
                     space_id: None,
                     stopped_sharing: false,
                     last_seen,
+                    status: status_word(r.online, false).into(),
+                    spaces: 0,
+                    spaces_label: String::new(),
                     id: r.id,
                     name: r.name,
                     online: r.online,
@@ -526,12 +587,17 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
             } else {
                 m.os.clone()
             };
+            let stopped_sharing = extra[i].stopped_sharing && r.online;
+            let spaces = spaces_on(&input.spaces, &r.id, r.current);
             MachinePageRow {
                 os,
                 via: extra[i].via.into(),
                 space_id: extra[i].space_id.clone(),
-                stopped_sharing: extra[i].stopped_sharing,
+                stopped_sharing,
                 last_seen,
+                status: status_word(r.online, stopped_sharing).into(),
+                spaces,
+                spaces_label: spaces_label(spaces),
                 id: r.id,
                 name: r.name,
                 online: r.online,
@@ -790,6 +856,59 @@ mod tests {
         assert!(rows[1].stopped_sharing);
         assert_eq!(rows[3].last_seen, Some(NOW - 3_600));
         assert_eq!(run_on_ids(&merge_rows(&rows)), ["b695", "m-mini"]);
+        // One status word and Spaces count per row, for every UI.
+        let words: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.status.as_str(), r.spaces_label.as_str()))
+            .collect();
+        assert_eq!(
+            words,
+            [
+                ("Online", "1 Space"),
+                ("Not sharing", "No Spaces"),
+                ("Online", "1 Space"),
+                ("Offline", ""),
+            ]
+        );
+    }
+
+    /// CUA-1617: your other Mac stopped sharing; the relay lists its
+    /// desktop as unreachable (a Space would read "Suspended") and it
+    /// provides no Spaces. Every UI says "Not sharing" and "No Spaces",
+    /// never a Space's "Suspended" or "Not reachable".
+    #[test]
+    fn a_machine_that_stopped_sharing_reads_not_sharing_with_no_spaces() {
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![space(serde_json::json!({
+                "id": "relay:b695", "name": "Dillons-MacBook-Pro-2.local", "os": "macos",
+                "status": "suspended", "provider": "relay",
+                "sdk": {"features": [], "spacesdVersion": "", "reachable": false,
+                        "error": "unauthenticated: Dillons-MacBook-Pro-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"}
+            }))],
+            presence: [("b695".to_string(), false)].into(),
+            now: NOW,
+            ..Default::default()
+        });
+        let r = &rows[1];
+        assert_eq!(
+            (
+                r.online,
+                r.status.as_str(),
+                r.spaces,
+                r.spaces_label.as_str()
+            ),
+            (true, NOT_SHARING, 0, "No Spaces")
+        );
+        // Unreachable without a refusal: offline, not "Suspended".
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![space(serde_json::json!({
+                "id": "relay:b695", "name": "studio", "os": "macos",
+                "status": "suspended", "provider": "relay"
+            }))],
+            ..Default::default()
+        });
+        assert_eq!(rows[1].status, OFFLINE);
+        assert_eq!(spaces_label(3), "3 Spaces");
     }
 
     fn merge_rows(rows: &[MachinePageRow]) -> Vec<MachineOut> {

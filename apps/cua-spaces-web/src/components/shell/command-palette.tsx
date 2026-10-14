@@ -4,6 +4,7 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   CornerDownLeftIcon,
+  ListChecksIcon,
   LockIcon,
   LogInIcon,
   LogOutIcon,
@@ -18,13 +19,13 @@ import {
 } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 
-import { useKeyvault, useSession, useSpaces } from "@/bridge";
+import { useBridge, useChecklist, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
 import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
-import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
+import { machineName, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -53,11 +54,14 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const navigate = useNavigate();
   const { data: spaces = [], startSpace, stopSpace } = useSpaces();
+  const { data: machines = [] } = useMachines();
   const newSpace = useNewSpace();
   const { data: keyvault, lockItems } = useKeyvault();
   const { data: session, signIn, signOut } = useSession();
   const { preference, resolved, setPreference } = useTheme();
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const checklist = useChecklist();
+  const { core } = useBridge();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
@@ -131,9 +135,20 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       run: () => void navigate({ to: n.to }),
     })),
     { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
+    {
+      id: "nav:checklist",
+      group: "Go to",
+      label: "Getting started",
+      keywords: "checklist steps tour help first",
+      icon: icon(ListChecksIcon),
+      run: () => {
+        checklist.reopen();
+        void navigate({ to: "/spaces" });
+      },
+    },
     ...realSpaces(spaces).flatMap((s): Command[] => {
       const state = spaceState(s);
-      const meta = { group: "Spaces", hint: osLabel(s), keywords: `${s.os} ${state}`, icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
+      const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
       const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: `Open ${s.name}`, run: () => openSpace(s.id) }];
       if (state === "stopped") {
         out.push({ ...meta, id: `space:start:${s.id}`, label: `Start ${s.name}`, run: () => void startSpace(s.id).catch(toastError(`Couldn't start ${s.name}`)) });
@@ -144,7 +159,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     }),
   ];
 
-  const results = filterCommands(commands, query);
+  const results = filterCommands(commands, query, core);
   const current = Math.min(active, Math.max(0, results.length - 1));
 
   const runAt = (i: number) => {

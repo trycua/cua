@@ -52,6 +52,7 @@ struct ParityTests {
     @Test("telemetry-funnel") func telemetryFunnel() throws { try check("telemetry-funnel", runTelemetry) }
     @Test("experiments") func experiments() throws { try check("experiments", runExperiments) }
     @Test("placement-picker") func placementPicker() throws { try check("placement-picker", runPlacementPicker) }
+    @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
 
     /// The app's own first run records exactly the golden's events: the
     /// `OnboardingModel` the window drives, on a recording telemetry.
@@ -209,7 +210,8 @@ struct ParityTests {
         }
         return AppLocalStorage(reserveBytes: (s["reserveBytes"] as! NSNumber).uint64Value,
                                lume: volume(s["lume"]), qemu: volume(s["qemu"]),
-                               container: volume(s["container"]), pulled: s["pulled"] as! [String])
+                               container: volume(s["container"]), pulled: s["pulled"] as! [String],
+                               linuxRuntimeDownloadBytes: (s["linuxRuntimeDownloadBytes"] as? NSNumber)?.uint64Value ?? 0)
     }
 
     /// `id: Label [placeholder] !error (advanced)`, as `parity.rs` writes it.
@@ -1250,6 +1252,40 @@ struct ParityTests {
     }
 
     /// The notch and the menu count the same Spaces (`run_menu_count`).
+    /// The checklist: the Machines page from each case's input
+    /// (`appMachinesPageRows`), the core's reading of it, its Spaces and
+    /// agents (`appChecklistObserveFrom`), the count after it, and after
+    /// merging progress kept elsewhere before.
+    func runChecklist(_ f: [String: Any]) throws -> [Any] {
+        var frames: [Any] = []
+        for c in f["cases"] as! [[String: Any]] {
+            let page = try appMachinesPageInputFromJson(json: text(c["page"]))
+            let rows = appMachinesPageRows(input: page)
+            let action = appChecklistObserveFrom(seen: AppChecklistSeen(
+                machines: rows, spaces: page.spaces,
+                agents: UInt32(c["agents"] as! Int), runs: UInt32(c["runs"] as! Int)))
+            guard case let .observe(otherMachine, hasSpace, agentRan) = action else {
+                Issue.record("not an observation")
+                return frames
+            }
+            let t = appChecklistReduce(state: try appChecklistStateFromJson(json: text(c["state"])), action: action)
+            var frame: [String: Any] = [
+                "case": c["name"] as! String,
+                "observe": ["otherMachine": otherMachine, "hasSpace": hasSpace, "agentRan": agentRan],
+                "progress": appChecklistView(state: t.state).progress,
+                "events": t.signals.compactMap { if case let .step(step, _) = $0 { return step } else { return nil } },
+            ]
+            if let earlier = c["earlier"], !(earlier is NSNull) {
+                let merged = appChecklistReduce(state: t.state,
+                                                action: .merge(state: try appChecklistStateFromJson(json: text(earlier))))
+                let view = appChecklistView(state: merged.state)
+                frame["merged"] = ["progress": view.progress, "visible": view.visible, "events": merged.signals.count]
+            }
+            frames.append(frame)
+        }
+        return frames
+    }
+
     func runMenuCount(_ f: [String: Any]) throws -> [Any] {
         let now = Int64(f["now"] as! Int)
         var frames: [Any] = []

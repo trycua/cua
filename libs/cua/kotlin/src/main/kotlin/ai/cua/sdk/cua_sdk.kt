@@ -1021,15 +1021,21 @@ external fun uniffi_cua_sdk_checksum_method_devices_check_enrolled(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_confirm_machine(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_create_pairing_code(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_device_id(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_enroll(
+): Short
+external fun uniffi_cua_sdk_checksum_method_devices_pairing_codes(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_relay_url(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_rename(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke(
+): Short
+external fun uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_snapshot(
 ): Short
@@ -1869,15 +1875,21 @@ external fun uniffi_cua_sdk_fn_method_devices_check_enrolled(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_confirm_machine(`ptr`: Long,`machineId`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_devices_create_pairing_code(`ptr`: Long,`team`: RustBuffer.ByValue,`ttlSecs`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_devices_device_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_devices_enroll(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_devices_pairing_codes(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_relay_url(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_devices_rename(`ptr`: Long,`id`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke(`ptr`: Long,`id`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_snapshot(`ptr`: Long,`auditLimit`: Int,
 ): Long
@@ -3204,10 +3216,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_devices_confirm_machine() != 44995.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_create_pairing_code() != 19274.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_devices_device_id() != 58064.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_enroll() != 25682.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_pairing_codes() != 10069.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_relay_url() != 39774.toShort()) {
@@ -3217,6 +3235,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132.toShort()) {
@@ -7801,6 +7822,13 @@ public interface DevicesInterface {
     suspend fun `confirmMachine`(`machineId`: kotlin.String): RelayMachine
 
     /**
+     * Makes a one-time code (link, QR, install commands) that adds another
+     * computer to the account, or to `team` (from this enrolled device).
+     * It expires after `ttl_secs` (30 minutes when `None`).
+     */
+    suspend fun `createPairingCode`(`team`: kotlin.String?, `ttlSecs`: kotlin.ULong?): PairingCode
+
+    /**
      * This device's id, when it has a key (no network).
      */
     fun `deviceId`(): kotlin.String?
@@ -7812,6 +7840,11 @@ public interface DevicesInterface {
      * code to approve from an enrolled device.
      */
     suspend fun `enroll`(): DeviceEnrollment
+
+    /**
+     * The account's pairing codes, newest first (without the codes).
+     */
+    suspend fun `pairingCodes`(): List<PairingCode>
 
     /**
      * The relay base URL.
@@ -7828,6 +7861,11 @@ public interface DevicesInterface {
      * also deletes its key.
      */
     suspend fun `revoke`(`id`: kotlin.String): RelayDevice
+
+    /**
+     * Revokes an unused pairing code (`pc_…`).
+     */
+    suspend fun `revokePairingCode`(`id`: kotlin.String)
 
     /**
      * The account's devices, the grace period, the newest `audit_limit`
@@ -8019,6 +8057,32 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
 
 
     /**
+     * Makes a one-time code (link, QR, install commands) that adds another
+     * computer to the account, or to `team` (from this enrolled device).
+     * It expires after `ttl_secs` (30 minutes when `None`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createPairingCode`(`team`: kotlin.String?, `ttlSecs`: kotlin.ULong?) : PairingCode {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_create_pairing_code(
+                uniffiHandle,
+                FfiConverterOptionalString.lower(`team`),FfiConverterOptionalULong.lower(`ttlSecs`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypePairingCode.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * This device's id, when it has a key (no network).
      */
     @Throws(CuaException::class)override fun `deviceId`(): kotlin.String? {
@@ -8056,6 +8120,30 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeDeviceEnrollment.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The account's pairing codes, newest first (without the codes).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `pairingCodes`() : List<PairingCode> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_pairing_codes(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePairingCode.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -8121,6 +8209,31 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeRelayDevice.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Revokes an unused pairing code (`pc_…`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `revokePairingCode`(`id`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(
+                uniffiHandle,
+                FfiConverterString.lower(`id`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -30832,6 +30945,8 @@ data class LocalStorage (
      * Catalog image refs already pulled here at their published digest.
      */
     var `pulled`: List<kotlin.String>
+    ,
+    var `linuxRuntimeDownloadBytes`: kotlin.ULong
 
 ){
 
@@ -30854,6 +30969,7 @@ public object FfiConverterTypeLocalStorage: FfiConverterRustBuffer<LocalStorage>
             FfiConverterOptionalTypeStorageVolume.read(buf),
             FfiConverterOptionalTypeStorageVolume.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterULong.read(buf),
         )
     }
 
@@ -30863,7 +30979,8 @@ public object FfiConverterTypeLocalStorage: FfiConverterRustBuffer<LocalStorage>
             FfiConverterOptionalTypeStorageVolume.allocationSize(value.`lume`) +
             FfiConverterOptionalTypeStorageVolume.allocationSize(value.`qemu`) +
             FfiConverterOptionalTypeStorageVolume.allocationSize(value.`container`) +
-            FfiConverterSequenceString.allocationSize(value.`pulled`)
+            FfiConverterSequenceString.allocationSize(value.`pulled`) +
+            FfiConverterULong.allocationSize(value.`linuxRuntimeDownloadBytes`)
     )
 
     override fun write(value: LocalStorage, buf: ByteBuffer) {
@@ -30873,6 +30990,7 @@ public object FfiConverterTypeLocalStorage: FfiConverterRustBuffer<LocalStorage>
             FfiConverterOptionalTypeStorageVolume.write(value.`qemu`, buf)
             FfiConverterOptionalTypeStorageVolume.write(value.`container`, buf)
             FfiConverterSequenceString.write(value.`pulled`, buf)
+            FfiConverterULong.write(value.`linuxRuntimeDownloadBytes`, buf)
     }
 }
 
@@ -31480,6 +31598,127 @@ public object FfiConverterTypeOverlayResult: FfiConverterRustBuffer<OverlayResul
             FfiConverterString.write(value.`previousSha256`, buf)
             FfiConverterULong.write(value.`size`, buf)
             FfiConverterString.write(value.`restarted`, buf)
+    }
+}
+
+
+
+/**
+ * A one-time code that adds a machine to the account ("Add a machine"
+ * by link or QR code).
+ */
+data class PairingCode (
+    /**
+     * `pc_…` (to revoke it).
+     */
+    var `id`: kotlin.String
+    ,
+    /**
+     * `XXXX-XXXX-XXXX`: only when just made.
+     */
+    var `code`: kotlin.String?
+    ,
+    /**
+     * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+     * when just made.
+     */
+    var `url`: kotlin.String?
+    ,
+    /**
+     * `curl … | sh -s -- --pair <code>` (macOS, Linux): only when just made.
+     */
+    var `installSh`: kotlin.String?
+    ,
+    /**
+     * The PowerShell one-liner (Windows): only when just made.
+     */
+    var `installPowershell`: kotlin.String?
+    ,
+    /**
+     * `active`, `used`, `revoked` or `expired`.
+     */
+    var `state`: kotlin.String
+    ,
+    /**
+     * Team the machine is added for.
+     */
+    var `team`: kotlin.String?
+    ,
+    /**
+     * Unix seconds.
+     */
+    var `createdAt`: kotlin.ULong
+    ,
+    /**
+     * Unix seconds.
+     */
+    var `expiresAt`: kotlin.ULong
+    ,
+    /**
+     * When a machine used it.
+     */
+    var `usedAt`: kotlin.ULong?
+    ,
+    /**
+     * The machine it added (relay machine id).
+     */
+    var `machine`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePairingCode: FfiConverterRustBuffer<PairingCode> {
+    override fun read(buf: ByteBuffer): PairingCode {
+        return PairingCode(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PairingCode) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterOptionalString.allocationSize(value.`code`) +
+            FfiConverterOptionalString.allocationSize(value.`url`) +
+            FfiConverterOptionalString.allocationSize(value.`installSh`) +
+            FfiConverterOptionalString.allocationSize(value.`installPowershell`) +
+            FfiConverterString.allocationSize(value.`state`) +
+            FfiConverterOptionalString.allocationSize(value.`team`) +
+            FfiConverterULong.allocationSize(value.`createdAt`) +
+            FfiConverterULong.allocationSize(value.`expiresAt`) +
+            FfiConverterOptionalULong.allocationSize(value.`usedAt`) +
+            FfiConverterOptionalString.allocationSize(value.`machine`)
+    )
+
+    override fun write(value: PairingCode, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterOptionalString.write(value.`code`, buf)
+            FfiConverterOptionalString.write(value.`url`, buf)
+            FfiConverterOptionalString.write(value.`installSh`, buf)
+            FfiConverterOptionalString.write(value.`installPowershell`, buf)
+            FfiConverterString.write(value.`state`, buf)
+            FfiConverterOptionalString.write(value.`team`, buf)
+            FfiConverterULong.write(value.`createdAt`, buf)
+            FfiConverterULong.write(value.`expiresAt`, buf)
+            FfiConverterOptionalULong.write(value.`usedAt`, buf)
+            FfiConverterOptionalString.write(value.`machine`, buf)
     }
 }
 
@@ -42755,6 +42994,34 @@ public object FfiConverterSequenceTypeOverlayResult: FfiConverterRustBuffer<List
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeOverlayResult.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypePairingCode: FfiConverterRustBuffer<List<PairingCode>> {
+    override fun read(buf: ByteBuffer): List<PairingCode> {
+        val len = buf.getInt()
+        return List<PairingCode>(len) {
+            FfiConverterTypePairingCode.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<PairingCode>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypePairingCode.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<PairingCode>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypePairingCode.write(it, buf)
         }
     }
 }

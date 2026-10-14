@@ -20,8 +20,24 @@ uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.
 
-The native renderer places the sanitized public session name and execution
-context in a compact badge below the built-in pointer. The badge uses a
+The badge below the pointer follows the `cursor.badges` setting, which applies
+to every cursor at once:
+
+- `minimal` (default): no badge at rest. A foreground-delivery moment or a key
+  combo (such as ⌘C) shows a short chip: it waits about 0.1 seconds, holds for
+  half a second and fades out, about one second in all. The session name shows
+  only while the human pointer hovers over the cursor or while two or more
+  agent cursors are on screen. Nothing shows while the cursor moves. The chip
+  plays once its action has ended and the cursor is at rest, because a real
+  foreground click can hide the overlay while it is delivered.
+  Background delivery and target chips are not shown. The GNOME Shell helper
+  draws one cursor and has no hover, so under `minimal` it shows only the
+  foreground chip.
+- `verbose`: the earlier badge, described below.
+- `off`: no badge.
+
+In `verbose` mode the native renderer places the sanitized public session name
+and execution context in a compact badge below the built-in pointer. The badge uses a
 session-accent gradient and a circular session marker. The session name appears
 when the cursor is first revealed, remains fully visible for two seconds, then
 fades over 400 milliseconds while the cursor stays available. Moving the human
@@ -89,7 +105,7 @@ default), `spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, or `classic`
 (the previous Dubins glide). `timing` is `native` (the style's own), `fitts`
 (scales with distance and target size), or `fixed` (`glide_duration_ms`, 1430
 ms when 0). `effects` turns `trail`, `glow`, `magnet`, `ripple`, and `squish`
-on or off; null restores the style's default. From a shell, `cua-driver cursor
+on, off, or `default` (the style's own setting). Omit an effect to keep its current setting. From a shell, `cua-driver cursor
 motion --session <label> --style magnetic` sets the same fields. The removed `set_agent_cursor_style` operation and
 its `cursor_id`, shape, color, label, size, opacity, image-path, gradient, and
 bloom styling fields are not accepted. Input-delivery tools may still use

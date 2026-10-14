@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { leavesLine } from "@/lib/host-labels";
 import { Segmented } from "@/components/ui/segmented";
 
 import { TeleportGrid } from "./grid";
@@ -205,7 +206,7 @@ function Running({ session: s }: { session: TeleportSession }) {
 
 function Footer({ session: s, teleport }: { session: TeleportSession; teleport: TeleportStore }) {
   const step = s.state.step;
-  const leaves = step === "consent" ? s.frame.review?.leavesText : null;
+  const leaves = step === "consent" ? leavesLine(s.frame.review?.leavesText ?? "") : null;
   return (
     <div className="flex shrink-0 items-center gap-2 border-t bg-muted/60 px-5 py-3">
       {leaves ? (

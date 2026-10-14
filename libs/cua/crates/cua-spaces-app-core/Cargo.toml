@@ -23,6 +23,7 @@ installer = ["dep:tokio", "tokio/process", "tokio/time", "tokio/fs"]
 telemetry = ["dep:cua-telemetry"]
 
 [dependencies]
+cua-home.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 cua-keyvault = { workspace = true, optional = true }

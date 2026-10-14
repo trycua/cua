@@ -55,8 +55,16 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]).
+    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// "on" there, the value older builds read.
     pub experiments: Experiments,
+    /// The New UI as the user chose it (Settings, Experiments, "Use classic
+    /// UI"); `None`: never chosen, so
+    /// [`crate::experiments::new_ui_default`] decides. An older build's
+    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
+    /// saved default, so it reads as never chosen ([`load`]).
+    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
@@ -72,6 +80,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -87,25 +99,78 @@ impl Default for AppSettings {
             update_channel: UpdateChannel::Stable,
             launch_at_login: None,
             experiments: Experiments::default(),
+            new_ui: None,
             dismissed_access: vec![],
             keyvault_site_icons: true,
             teleport_choices: vec![],
             auto_connect: true,
+            current_team_id: None,
         }
     }
 }
 
 /// Reads settings; a missing or damaged file gives the defaults.
+///
+/// The New UI: a file with no choice yet ([`AppSettings::new_ui`]) takes an
+/// older build's `experiments.webUi: true` as the choice and its `false`
+/// as no choice (every older install saved `false` without anyone choosing
+/// it). Until [`resolve_new_ui`] runs with the app's version, the New UI
+/// is on only by choice.
 pub fn load(path: &Path) -> AppSettings {
-    std::fs::read_to_string(path)
+    let mut s: AppSettings = std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if s.new_ui.is_none() && s.experiments.web_ui {
+        s.new_ui = Some(true);
+    }
+    s.experiments.web_ui = s.new_ui == Some(true);
+    s
 }
 
-/// Writes settings atomically (temp file, then rename).
+/// `settings` with the New UI as this launch shows it: the user's choice,
+/// else [`crate::experiments::new_ui_default`] for the update channel and
+/// the running app's `version`. Again after the channel changes.
+pub fn resolve_new_ui(settings: &AppSettings, version: &str) -> AppSettings {
+    let mut s = settings.clone();
+    s.experiments.web_ui = s
+        .new_ui
+        .unwrap_or_else(|| crate::experiments::new_ui_default(s.update_channel, version));
+    s
+}
+
+/// The update channel of an install's first launch, from the one in the
+/// settings file (`channel`): Beta for a prerelease (someone who installed
+/// a beta keeps getting betas, and the New UI default that comes with
+/// them), else unchanged.
+pub fn first_launch_channel(channel: UpdateChannel, version: &str) -> UpdateChannel {
+    if version.split('+').next().unwrap_or("").contains('-') {
+        UpdateChannel::Beta
+    } else {
+        channel
+    }
+}
+
+/// The settings after a Settings, Experiments row's choice: the switches
+/// ([`crate::experiments::choose`]) and, for the New UI's row ("Use classic
+/// UI"), the user's choice ([`AppSettings::new_ui`]), which later launches
+/// keep whatever the default becomes.
+pub fn choose_experiment(settings: &AppSettings, row: &str, option: &str) -> AppSettings {
+    let mut s = settings.clone();
+    s.experiments = crate::experiments::choose(&s.experiments, row, option);
+    if let Some(on) = crate::experiments::new_ui_choice(row, option) {
+        s.new_ui = Some(on);
+    }
+    s
+}
+
+/// Writes settings atomically (temp file, then rename). The New UI is
+/// saved as chosen ([`AppSettings::new_ui`]), never as its default: the
+/// default follows the version and channel of each launch.
 pub fn save(path: &Path, settings: &AppSettings) -> Result<(), CoreError> {
-    let json = serde_json::to_string_pretty(settings).map_err(|e| CoreError::Io(e.to_string()))?;
+    let mut stored = settings.clone();
+    stored.experiments.web_ui = stored.new_ui == Some(true);
+    let json = serde_json::to_string_pretty(&stored).map_err(|e| CoreError::Io(e.to_string()))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| CoreError::Io(e.to_string()))?;
     }
@@ -170,18 +235,18 @@ pub fn format_hotkey(c: &KeyCombo) -> Option<String> {
 }
 
 /// What telemetry's docs say is collected.
-/// The Teams waitlist on the website (Settings' Teams row, the Sign in
-/// page's line). The app collects nothing itself.
-pub const TEAMS_WAITLIST_URL: &str = "https://cua.ai/teams";
+/// Where the Sign in page's Teams line links: the account app, which
+/// administers teams (Settings shows the real Teams section, [`crate::teams`]).
+pub const TEAMS_URL: &str = "https://app.cua.ai/welcome";
 
-/// The Teams row's label.
+/// The Sign in page's Teams line's label.
 pub const TEAMS_LABEL: &str = "Teams";
 
 /// Its value.
-pub const TEAMS_VALUE: &str = "Coming soon";
+pub const TEAMS_VALUE: &str = "manage them at app.cua.ai";
 
-/// Its button.
-pub const TEAMS_BUTTON: &str = "Join the waitlist";
+/// Its link.
+pub const TEAMS_BUTTON: &str = "Open the account app";
 
 pub const TELEMETRY_DOCS_URL: &str = "https://cua.ai/docs/cua-sdk/concepts/telemetry";
 
@@ -252,6 +317,11 @@ pub struct SettingsInput {
     pub agents_busy: bool,
     /// Agents with an action running.
     pub agents_pending: Vec<String>,
+    /// Teams from the Spaces API (the host reads them), with the account
+    /// app's URL. None: the Teams section shows the production account
+    /// app's links only.
+    #[serde(default)]
+    pub teams: Option<crate::teams::TeamsInput>,
     /// The account's Cua Cloud billing, once read (signed in).
     pub billing: Option<crate::billing::BillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
@@ -299,6 +369,7 @@ impl Default for SettingsInput {
             agents: None,
             agents_busy: false,
             agents_pending: vec![],
+            teams: None,
             billing: None,
             login_item: None,
             experiments: Experiments::default(),
@@ -568,8 +639,8 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             let mut r = row("billing", Text, "Billing");
             r.value = Some(crate::billing::billing_line(b));
             r.button = Some(crate::billing::MANAGE_BILLING.into());
-            r.link_url = b.billing_url.clone();
-            r.enabled = b.billing_url.is_some();
+            r.link_url = Some(crate::billing::BILLING_URL.into());
+            r.enabled = true;
             account.push(r);
         }
     } else if let SignInPhase::Waiting { user_code } = &input.sign_in {
@@ -606,14 +677,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             account.push(row("sign-in-error", Error, message));
         }
     }
-    // Teams: a waitlist on the website (the app collects nothing). Row id
-    // `teams`; the button opens `link_url`.
-    let mut teams = row("teams", Text, TEAMS_LABEL);
-    teams.value = Some(TEAMS_VALUE.into());
-    teams.button = Some(TEAMS_BUTTON.into());
-    teams.link_url = Some(TEAMS_WAITLIST_URL.into());
-    account.push(teams);
-
     let mut notch = row("notch", Choice, "Spaces tab in the notch");
     notch.options = vec![
         opt("show", "Show", !input.menu_bar),
@@ -662,6 +725,26 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             button_enabled: false,
             button_help: None,
             rows: account,
+        },
+        SettingsSection {
+            id: "teams".into(),
+            title: crate::teams::TEAMS_TITLE.into(),
+            button: None,
+            button_enabled: false,
+            button_help: None,
+            // Each team with its members and pending invites, then the
+            // account app's links (invites, roles, billing).
+            rows: crate::teams::rows(&input.teams.clone().unwrap_or_else(|| {
+                crate::teams::TeamsInput {
+                    account_app_url: crate::teams::ACCOUNT_APP_URL.into(),
+                    state: if input.identity.is_some() {
+                        crate::teams::TeamsState::Unread
+                    } else {
+                        crate::teams::TeamsState::SignedOut
+                    },
+                    current_team_id: None,
+                }
+            })),
         },
         SettingsSection {
             id: "general".into(),
@@ -949,7 +1032,7 @@ mod tests {
     fn the_page_lists_account_general_privacy_agents() {
         let p = page(&SettingsInput::default());
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "general", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "agents"]);
         let p = page(&SettingsInput {
             identity: Some("ada@example.com".into()),
             can_sign_out: true,
@@ -957,7 +1040,7 @@ mod tests {
             ..Default::default()
         });
         let ids: Vec<_> = p.sections.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["account", "general", "privacy", "agents"]);
+        assert_eq!(ids, ["account", "teams", "general", "privacy", "agents"]);
         assert_eq!(p.sections[0].rows[0].button.as_deref(), Some("Sign out"));
         let sign_in: SignInPhase =
             serde_json::from_str(r#"{"kind":"waiting","userCode":"AB-CD"}"#).unwrap();
@@ -982,9 +1065,11 @@ mod tests {
         });
         assert_eq!(
             ids(&p),
-            ["account", "general", "privacy", "keyvault", "agents"]
+            [
+                "account", "teams", "general", "privacy", "keyvault", "agents"
+            ]
         );
-        let kv = &p.sections[3];
+        let kv = &p.sections[4];
         assert_eq!(kv.title, "Keyvault");
         let toggle = &kv.rows[0];
         assert_eq!(
@@ -1140,14 +1225,14 @@ mod tests {
         let ids =
             |p: &SettingsPage| -> Vec<String> { p.sections.iter().map(|s| s.id.clone()).collect() };
         let note = |p: &SettingsPage| {
-            p.sections[1]
+            p.sections[2]
                 .rows
                 .iter()
                 .find(|r| r.id == "launch-at-login-note")
                 .map(|r| r.label.clone())
         };
         let off = with_storage(&page(&input), &storage, &input.experiments);
-        assert_eq!(ids(&off), ["account", "general", "agents"]);
+        assert_eq!(ids(&off), ["account", "teams", "general", "agents"]);
         assert_eq!(note(&off).as_deref(), Some(NOTE_WITHOUT_VOLUME));
         let on = SettingsInput {
             experiments: Experiments {
@@ -1157,10 +1242,156 @@ mod tests {
             ..input
         };
         let p = with_storage(&page(&on), &storage, &on.experiments);
-        assert_eq!(ids(&p), ["account", "general", "storage", "agents"]);
+        assert_eq!(
+            ids(&p),
+            ["account", "teams", "general", "storage", "agents"]
+        );
         assert_eq!(note(&p).as_deref(), Some(NOTE));
         // A settings file from before experiments: all off.
         let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
         assert_eq!(old.experiments, Experiments::default());
+    }
+
+    /// A settings file in a fresh temp dir.
+    fn temp_settings(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("cua-app-core-new-ui-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn an_older_builds_saved_new_ui_migrates_once() {
+        let (dir, path) = temp_settings("migrate");
+        let beta = "0.8.1-beta.1";
+        // Every older install saved `webUi: false` without anyone choosing it:
+        // never chosen, so Beta gets the New UI.
+        std::fs::write(
+            &path,
+            r#"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert_eq!(s.new_ui, None);
+        assert!(s.experiments.cua_volume);
+        assert!(!s.experiments.web_ui, "on only by choice until resolved");
+        assert!(resolve_new_ui(&s, beta).experiments.web_ui);
+        assert!(!resolve_new_ui(&s, "0.8.0").experiments.web_ui);
+        // Saving the resolved settings keeps it unchosen: the default is
+        // never written as a choice.
+        save(&path, &resolve_new_ui(&s, beta)).unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["webUi"], false, "what older builds read");
+        assert!(raw["newUi"].is_null());
+        assert_eq!(load(&path).new_ui, None);
+
+        // A saved `webUi: true` was chosen: kept, on any channel.
+        std::fs::write(&path, r#"{"experiments":{"webUi":true}}"#).unwrap();
+        let s = load(&path);
+        assert_eq!(s.new_ui, Some(true));
+        assert!(s.experiments.web_ui);
+        assert!(resolve_new_ui(&s, "0.7.2").experiments.web_ui);
+        save(&path, &s).unwrap();
+        assert_eq!(load(&path).new_ui, Some(true));
+
+        // No experiments at all (or no file): never chosen.
+        std::fs::write(&path, r#"{"menuBar":true}"#).unwrap();
+        assert_eq!(load(&path).new_ui, None);
+        std::fs::remove_file(&path).unwrap();
+        let fresh = load(&path);
+        assert_eq!(fresh.new_ui, None);
+        assert!(!resolve_new_ui(&fresh, beta).experiments.web_ui, "Stable");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn use_classic_ui_survives_later_launches() {
+        let (dir, path) = temp_settings("classic");
+        let beta = "0.8.1-beta.1";
+        let s = resolve_new_ui(
+            &AppSettings {
+                update_channel: UpdateChannel::Beta,
+                ..Default::default()
+            },
+            beta,
+        );
+        assert!(s.experiments.web_ui);
+        // "Use classic UI" on: saved as the user's choice.
+        let row = crate::experiments::CLASSIC_UI_ROW;
+        let s = choose_experiment(&s, row, "on");
+        assert_eq!(s.new_ui, Some(false));
+        assert!(!s.experiments.web_ui);
+        // Another row leaves the choice alone.
+        assert_eq!(
+            choose_experiment(&s, "experiment:sharing", "on").new_ui,
+            Some(false)
+        );
+        save(&path, &s).unwrap();
+        // Later launches, later versions, either channel: still classic.
+        for version in [beta, "0.8.1-beta.2", "0.8.1", "0.9.0"] {
+            let again = resolve_new_ui(&load(&path), version);
+            assert_eq!(again.new_ui, Some(false));
+            assert!(!again.experiments.web_ui, "{version}");
+            save(&path, &again).unwrap();
+        }
+        // Off again: the New UI, kept as chosen even on Stable before 0.8.1.
+        let mut s = choose_experiment(&load(&path), row, "off");
+        assert_eq!(s.new_ui, Some(true));
+        s.update_channel = UpdateChannel::Stable;
+        save(&path, &s).unwrap();
+        assert!(resolve_new_ui(&load(&path), "0.7.3").experiments.web_ui);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn switching_channel_moves_the_default_not_a_choice() {
+        let beta = AppSettings {
+            update_channel: UpdateChannel::Beta,
+            ..Default::default()
+        };
+        let stable = AppSettings {
+            update_channel: UpdateChannel::Stable,
+            ..beta.clone()
+        };
+        let v = "0.8.1-beta.1";
+        assert!(resolve_new_ui(&beta, v).experiments.web_ui);
+        assert!(!resolve_new_ui(&stable, v).experiments.web_ui);
+        // Back to Beta: on again.
+        let back = AppSettings {
+            update_channel: UpdateChannel::Beta,
+            ..resolve_new_ui(&stable, v)
+        };
+        assert!(resolve_new_ui(&back, v).experiments.web_ui);
+        // A choice holds on either channel.
+        for (choice, channel) in [(false, UpdateChannel::Beta), (true, UpdateChannel::Stable)] {
+            let s = AppSettings {
+                update_channel: channel,
+                new_ui: Some(choice),
+                ..Default::default()
+            };
+            assert_eq!(resolve_new_ui(&s, v).experiments.web_ui, choice);
+        }
+        // From 0.8.1, Stable too.
+        assert!(resolve_new_ui(&stable, "0.8.1").experiments.web_ui);
+    }
+
+    #[test]
+    fn a_prerelease_installs_first_launch_is_on_beta() {
+        use UpdateChannel::{Beta, Stable};
+        assert_eq!(first_launch_channel(Stable, "0.8.1-beta.1"), Beta);
+        assert_eq!(first_launch_channel(Stable, "0.8.1-beta.1+abc"), Beta);
+        assert_eq!(first_launch_channel(Stable, "0.7.2"), Stable);
+        assert_eq!(first_launch_channel(Stable, "0.8.0+build-7"), Stable);
+        // A release keeps a channel already in the file.
+        assert_eq!(first_launch_channel(Beta, "0.7.2"), Beta);
+        // With it, a fresh beta opens the New UI.
+        let fresh = AppSettings {
+            update_channel: first_launch_channel(Stable, "0.8.1-beta.1"),
+            ..Default::default()
+        };
+        assert!(resolve_new_ui(&fresh, "0.8.1-beta.1").experiments.web_ui);
     }
 }

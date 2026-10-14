@@ -28,6 +28,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::auto::QemuPackageManager;
 use crate::error::{Result, VmmError};
 use crate::exec::{GuestExec, SshExec};
 use crate::host;
@@ -271,16 +272,25 @@ impl QemuRuntime {
         }
         Err(VmmError::missing(
             name,
-            "install QEMU (macOS: `brew install qemu`; Debian/Ubuntu: `apt install qemu-system qemu-utils`; \
-             Fedora: `dnf install qemu-kvm qemu-img`) or enable allow_install to let cua provision it",
+            format!(
+                "install QEMU (macOS: `brew install qemu`; {}) or enable allow_install to let cua provision it",
+                QemuPackageManager::linux_hint()
+            ),
         ))
     }
 
-    fn accel_for(&self, arch: Arch) -> String {
-        self.cfg
-            .accel
-            .clone()
-            .unwrap_or_else(|| host::qemu_accel(arch).to_string())
+    fn accel_for(&self, arch: Arch, kvm: &std::io::Result<()>) -> Result<String> {
+        if let Some(accel) = &self.cfg.accel {
+            return Ok(accel.clone());
+        }
+        let accel = host::qemu_accel(host::HostOs::current(), arch, kvm)?;
+        if let Err(e) = kvm
+            && accel == "tcg"
+            && arch == Arch::host()
+        {
+            tracing::warn!("{}", host::kvm_hint(e));
+        }
+        Ok(accel.to_string())
     }
 
     async fn resolve_source(
@@ -339,7 +349,10 @@ impl QemuRuntime {
         let fw = firmware::find_uefi(arch, &bin).ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                "install edk2 (Homebrew qemu ships it; Debian: `apt install qemu-efi-aarch64 ovmf`)",
+                format!(
+                    "install edk2 (Homebrew qemu ships it; {})",
+                    QemuPackageManager::linux_hint()
+                ),
             )
         })?;
         match fw.vars_template {
@@ -369,7 +382,7 @@ impl QemuRuntime {
     ) -> Result<QemuState> {
         crate::disk::ensure_space(
             &self.cfg.root,
-            crate::disk::VM_CREATE_ESTIMATE,
+            backing.map_or(crate::disk::VM_CREATE_ESTIMATE, |_| crate::disk::GIB),
             &format!("create VM {name}"),
         )?;
         let dir = self.dir(name);
@@ -459,7 +472,7 @@ impl QemuRuntime {
         } else {
             None
         };
-        st.accel = self.accel_for(st.arch);
+        st.accel = self.accel_for(st.arch, &host::kvm_usable())?;
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network;
@@ -567,7 +580,9 @@ impl QemuRuntime {
             }
             match QmpClient::connect(&format!("127.0.0.1:{qmp_port}")).await {
                 Ok(q) => break q,
-                Err(e) if tokio::time::Instant::now() >= deadline => return Err(e),
+                Err(e) if tokio::time::Instant::now() >= deadline && host::pid_alive(pid) => {
+                    return Err(e);
+                }
                 Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
             }
         };
@@ -892,45 +907,13 @@ pub async fn install_qemu() -> Result<()> {
             host::run(brew, &["install", "qemu"]).await?;
         }
         host::HostOs::Linux => {
-            if let Some(apt) = host::which("apt-get") {
-                let apt = apt.display().to_string();
-                tracing::info!("installing QEMU with apt (sudo -n)");
-                host::run(
-                    "sudo",
-                    &[
-                        "-n",
-                        &apt,
-                        "install",
-                        "-y",
-                        "qemu-system-x86",
-                        "qemu-system-arm",
-                        "qemu-utils",
-                        "qemu-efi-aarch64",
-                        "ovmf",
-                    ],
-                )
-                .await?;
-            } else if let Some(dnf) = host::which("dnf") {
-                let dnf = dnf.display().to_string();
-                host::run(
-                    "sudo",
-                    &[
-                        "-n",
-                        &dnf,
-                        "install",
-                        "-y",
-                        "qemu-kvm",
-                        "qemu-img",
-                        "edk2-ovmf",
-                        "edk2-aarch64",
-                    ],
-                )
-                .await?;
-            } else {
-                return Err(VmmError::missing(
-                    "QEMU",
-                    "no supported package manager found (apt-get/dnf)",
-                ));
+            let (manager, program) = QemuPackageManager::detect().ok_or_else(|| {
+                VmmError::missing("QEMU", "no supported package manager found (apt-get/dnf)")
+            })?;
+            let program = program.display().to_string();
+            tracing::info!("installing QEMU with {manager:?} (sudo -n)");
+            for args in manager.commands(&program) {
+                host::run("sudo", &args).await?;
             }
         }
         host::HostOs::Windows => {
@@ -1038,6 +1021,11 @@ impl Runtime for QemuRuntime {
                     st
                 }
                 Err(VmmError::NotFound(_)) => {
+                    crate::disk::ensure_space(
+                        &self.cfg.root,
+                        crate::disk::GIB,
+                        &format!("create VM {}", spec.name),
+                    )?;
                     let (backing, iso) = match &spec.image {
                         ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
                         ImageSource::Disk { path }
@@ -1464,6 +1452,31 @@ mod tests {
         assert!(err.to_string().contains("DiskResolver"));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_launch_refuses_unopenable_kvm_and_falls_back_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = rt(tmp.path());
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        let err = r.accel_for(Arch::host(), &denied).unwrap_err().to_string();
+        assert!(err.contains("permission denied"), "{err}");
+        assert!(err.contains("sudo usermod -aG kvm"), "{err}");
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[test]
+    fn explicit_tcg_override_is_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            accel: Some("tcg".into()),
+            ..Default::default()
+        });
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        assert_eq!(r.accel_for(Arch::host(), &denied).unwrap(), "tcg");
+    }
+
     /// Records the credentials each resolve got.
     struct SeenCreds(std::sync::Mutex<Vec<Option<String>>>);
 
@@ -1558,6 +1571,88 @@ mod tests {
                 .resolve_with_credentials("ghcr.io/me/x:1", Arch::host(), None)
                 .await
                 .is_ok()
+        );
+    }
+
+    struct LowUnder(PathBuf, u64);
+
+    impl crate::disk::SpaceProbe for LowUnder {
+        fn space(&self, path: &Path) -> std::io::Result<crate::disk::Space> {
+            let available = if path.starts_with(&self.0) {
+                self.1
+            } else {
+                500 * crate::disk::GIB
+            };
+            Ok(crate::disk::Space {
+                available,
+                total: 500 * crate::disk::GIB,
+            })
+        }
+    }
+
+    struct CountingResolver(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl DiskResolver for CountingResolver {
+        async fn resolve(&self, _: &str, _: Arch) -> Result<PathBuf> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(VmmError::invalid("stop here"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_disk_fails_before_the_pull_and_overlays_need_less_than_blank_disks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let resolver = Arc::new(CountingResolver(Default::default()));
+        let r = QemuRuntime::new(QemuConfig {
+            root: tmp.path().to_path_buf(),
+            resolver: Some(resolver.clone()),
+            ..Default::default()
+        });
+        let min_free = crate::disk::CacheConfig::load().min_free;
+        let set_available = |bytes| {
+            crate::disk::set_probe(Some(Arc::new(LowUnder(tmp.path().to_path_buf(), bytes))))
+        };
+
+        set_available(min_free + crate::disk::GIB / 2);
+        let err = r
+            .start(&StartSpec::new("full", ImageSource::oci("ghcr.io/x/y:1")))
+            .await
+            .unwrap_err();
+        let pulls = resolver.0.load(std::sync::atomic::Ordering::SeqCst);
+
+        set_available(min_free + 2 * crate::disk::GIB);
+        let backing = tmp.path().join("base.qcow2");
+        std::fs::write(&backing, b"not really a disk").unwrap();
+        let spec = StartSpec::new("o1", ImageSource::disk(&backing));
+        let overlay = r
+            .create_instance("o1", Some(&backing), None, &spec, None)
+            .await
+            .err();
+        let blank = r.create_instance("b1", None, None, &spec, None).await.err();
+        crate::disk::set_probe(None);
+
+        assert!(matches!(err, VmmError::InsufficientDisk(_)), "{err}");
+        assert_eq!(pulls, 0, "nothing is pulled when the overlay cannot fit");
+        assert!(
+            !matches!(overlay, Some(VmmError::InsufficientDisk(_))),
+            "{overlay:?}"
+        );
+        assert!(
+            matches!(blank, Some(VmmError::InsufficientDisk(_))),
+            "{blank:?}"
+        );
+    }
+
+    #[test]
+    fn missing_qemu_hints_show_the_install_plan() {
+        assert_eq!(
+            QemuPackageManager::linux_hint(),
+            format!(
+                "Debian/Ubuntu: `{}`; Fedora: `{}`",
+                QemuPackageManager::Apt.render(),
+                QemuPackageManager::Dnf.render()
+            )
         );
     }
 }

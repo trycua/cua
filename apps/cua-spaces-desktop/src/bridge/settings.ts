@@ -44,6 +44,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
+    // Teams from the Spaces API (read by `settings.get`).
+    teams: model.teams.input(),
     // No Cua Cloud billing in the apps (the row stays hidden).
     billing: undefined,
     loginItem:
@@ -63,26 +65,29 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     keyvaultProtection: model.keyvault.page.protection,
     autoConnect: model.settings.autoConnect,
     lumeSource: model.lumeSource ?? undefined,
-    linuxSource: model.linuxSource ?? undefined,
+    // The built-in Linux runtime is a gVisor VM on a Mac; Docker is the runtime elsewhere, so no row.
+    linuxSource: process.platform === "darwin" ? (model.linuxSource ?? undefined) : undefined,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's "New UI (preview)": this app is the web UI, so its switch (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:web_ui", "experiment:web_ui-note"]);
+/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
+export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
 
 export function experimentsPage(model: AppModel) {
   const page = model.native.appExperimentsPage(model.settings.experiments);
   return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
 }
 
-/** `settings.get`'s answer: General, Experiments and the update channel (null: no updater). */
+/** `settings.get`'s answer: General, Experiments, the update channel (null:
+ * no updater) and the global shortcut (null: none here). */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
+    globalShortcut: parts.system?.globalShortcut?.() ?? null,
   };
 }
 
@@ -109,6 +114,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   const load = async () => {
     parts().loginItem.read();
     if (!model.servicesIn) return;
+    // Teams: the account's organizations (a failure shows in its row).
+    await bounded(10, () => model.teams.reload());
     if (model.agents.coding.rows === null) await bounded(10, () => model.agents.coding.reload());
     const [lume, linux] = await Promise.all([bounded(5, () => model.backend.lumeSource()), bounded(5, () => model.backend.linuxSource())]);
     if (lume !== null) model.lumeSource = lume;
@@ -118,6 +125,10 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
   /** A choice row changed (`AppModel.choose`). */
   const choose = async (row: string, option: string): Promise<void> => {
     switch (row) {
+      case "team-current":
+        // Settings, Teams: the team to work in (saved; the option is its id).
+        save({ currentTeamId: option });
+        return;
       case "notch":
         // "Spaces tab in the notch" (shown) or the menu bar only (hide); the notch follows `settings.changed`.
         save({ menuBar: option === "hide" });

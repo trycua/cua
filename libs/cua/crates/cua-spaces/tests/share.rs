@@ -685,3 +685,144 @@ async fn only_the_owner_removes_a_relay_record() {
     );
     assert!(relay.machine(gone).is_none());
 }
+
+/// `team:<id>` makes a Space a team machine (attaching it first, with the
+/// user's confirmation and the Space's OS on its relay record); a Mac
+/// can be one too (Macs, Linux and Windows machines all can); `unshare team:<id>`
+/// takes it off.
+#[tokio::test]
+async fn sharing_with_a_team_adds_a_team_machine_including_a_mac() {
+    // Teams are on by default; pin them on regardless of the environment.
+    cua_home::experimental::set_teams_enabled(Some(true));
+    let relay = FakeRelay::start().await;
+    relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    let home = tempfile::tempdir().unwrap();
+    let consent = yes();
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(
+            &relay.url,
+            Arc::new(StaticToken("ada-token".into())),
+        ))
+        .share_consent(consent.clone())
+        .build();
+    let client = cua_host::RelayClient::new(&relay.url).unwrap();
+    let team = client.create_team("ada-token", "AIGIS").await.unwrap();
+
+    let linux = MockServer::start(MockAuth::default()).await;
+    linux.state.advertise(&["relay_attach"]);
+    *linux.state.os.lock().unwrap() = Some(Some(cua_proto::env::v1::OperatingSystem {
+        family: 1,
+        name: "Ubuntu".into(),
+        ..Default::default()
+    }));
+    let info = spaces
+        .add(&linux.url(), None, Some("build-box".into()))
+        .await
+        .unwrap();
+    let state = linux.state.clone();
+    let online = tokio::spawn({
+        let relay = relay.clone();
+        async move {
+            for _ in 0..400 {
+                if let Some(a) = state.relay_attached.lock().unwrap().clone() {
+                    relay.set_online(&a.machine_id, true, "0.1.0");
+                    return a;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("never attached");
+        }
+    });
+    let shares = spaces
+        .share_space(&info.id, &format!("team:{}", team.id), ShareRole::Viewer)
+        .await
+        .unwrap();
+    let attached = online.await.unwrap();
+    assert!(
+        consent
+            .asked
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.contains(&format!("every member of team {}", team.id))),
+        "the user confirmed"
+    );
+    // A team gets full use, whatever role was asked for.
+    assert_eq!(
+        shares.shares,
+        vec![cua_spaces::share::ShareEntry {
+            who: format!("team:{}", team.id),
+            role: ShareRole::Editor,
+            connected: false,
+        }]
+    );
+    let m = relay.machine(&attached.machine_id).unwrap();
+    assert_eq!(
+        m.meta.get("cua.space.os").map(String::as_str),
+        Some("linux")
+    );
+    let t = client.team("ada-token", &team.id).await.unwrap();
+    assert_eq!(t.machines[0].id, attached.machine_id);
+
+    // Off the team again.
+    let shares = spaces
+        .unshare_space(&info.id, Some(&format!("team:{}", team.id)))
+        .await
+        .unwrap();
+    assert!(shares.shares.is_empty(), "{shares:?}");
+    assert!(
+        client
+            .team("ada-token", &team.id)
+            .await
+            .unwrap()
+            .machines
+            .is_empty()
+    );
+
+    // A Mac can be a team machine like any other.
+    let mac = MockServer::start(MockAuth::default()).await;
+    mac.state.advertise(&["relay_attach"]);
+    *mac.state.os.lock().unwrap() = Some(Some(cua_proto::env::v1::OperatingSystem {
+        family: 2,
+        name: "macOS".into(),
+        ..Default::default()
+    }));
+    let mac_info = spaces
+        .add(&mac.url(), None, Some("mac".into()))
+        .await
+        .unwrap();
+    let mac_state = mac.state.clone();
+    let mac_online = tokio::spawn({
+        let relay = relay.clone();
+        async move {
+            for _ in 0..400 {
+                if let Some(a) = mac_state.relay_attached.lock().unwrap().clone() {
+                    relay.set_online(&a.machine_id, true, "0.1.0");
+                    return a;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("never attached");
+        }
+    });
+    spaces
+        .share_space(
+            &mac_info.id,
+            &format!("team:{}", team.id),
+            ShareRole::Editor,
+        )
+        .await
+        .unwrap();
+    let mac_attached = mac_online.await.unwrap();
+    let t = client.team("ada-token", &team.id).await.unwrap();
+    assert_eq!(t.machines.len(), 1);
+    assert_eq!(t.machines[0].id, mac_attached.machine_id);
+
+    // Not a team id.
+    let e = spaces
+        .share_space(&info.id, "team:design", ShareRole::Editor)
+        .await
+        .unwrap_err();
+    assert_eq!(e.tag(), "invalid_argument", "{e}");
+}

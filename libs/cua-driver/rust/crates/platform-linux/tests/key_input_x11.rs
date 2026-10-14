@@ -4,7 +4,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
-use platform_linux::input::{send_click, send_key, send_key_at, send_key_xtest, send_type_text};
+use platform_linux::input::{
+    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_xtest,
+};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
@@ -111,6 +113,27 @@ fn assert_no_button_events(conn: &RustConnection, label: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn spare_keycodes(conn: &RustConnection) -> Result<Vec<u8>> {
+    let setup = conn.setup();
+    let (min, max) = (setup.min_keycode, setup.max_keycode);
+    let mapping = conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
+    let per = usize::from(mapping.keysyms_per_keycode);
+    Ok(mapping
+        .keysyms
+        .chunks(per)
+        .enumerate()
+        .filter(|(_, keysyms)| keysyms.iter().all(|&keysym| keysym == 0))
+        .map(|(index, _)| min + index as u8)
+        .collect())
+}
+
+fn focused_input_window(conn: &RustConnection, screen: usize) -> Result<Window> {
+    let window = input_window(conn, conn.setup().roots[screen].root, 0, 0)?;
+    conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)?;
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, window);
+    Ok(window)
 }
 
 #[test]
@@ -277,5 +300,131 @@ fn background_keys_deliver_complete_sequences_without_changing_focus() -> Result
         assert_key(&conn, &pair[0].1, keysym)?;
     }
     assert_eq!(conn.get_input_focus()?.reply()?.focus, sentinel);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn text_delivers_distinct_unmapped_keysyms_on_both_paths() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let window = focused_input_window(&conn, screen)?;
+    let before = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let expected = [0x01004f60, 0x0100597d];
+    for keysym in expected {
+        assert!(!before.keysyms.contains(&keysym));
+    }
+    for xtest in [false, true] {
+        std::thread::scope(|scope| -> Result<()> {
+            let sender = scope.spawn(move || {
+                if xtest {
+                    send_type_text_xtest("你好")
+                } else {
+                    send_type_text(u64::from(window), "你好")
+                }
+            });
+            let mut keycodes = Vec::new();
+            for keysym in expected {
+                let events = keyboard_events(&conn, 1)?;
+                assert!(events[0].0);
+                assert_key(&conn, &events[0].1, keysym)?;
+                keycodes.push(events[0].1.detail);
+                let release = keyboard_events(&conn, 1)?;
+                assert!(!release[0].0);
+                assert_eq!(release[0].1.detail, events[0].1.detail);
+            }
+            assert_ne!(keycodes[0], keycodes[1]);
+            sender.join().unwrap()?;
+            Ok(())
+        })?;
+        assert_eq!(
+            conn.get_keyboard_mapping(8, 248)?.reply()?.keysyms,
+            before.keysyms
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_the_spare_keycodes_it_borrows() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    assert!(!before.is_empty(), "the test display has no spare keycode");
+    for text in ["\u{4f60}", "\u{597d}", "\u{4e16}"] {
+        send_type_text_xtest(text)?;
+        keyboard_events(&conn, 2)?;
+        assert_eq!(spare_keycodes(&conn)?, before, "after typing {text}");
+    }
+    Ok(())
+}
+
+/// With no spare keycode left, a character missing from the keymap cannot be
+/// typed, and type_text must say so instead of reporting success.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let window = focused_input_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    let per = conn
+        .get_keyboard_mapping(spare[0], 1)?
+        .reply()?
+        .keysyms_per_keycode;
+    let bind = |keysym: u32| -> Result<()> {
+        for &keycode in &spare {
+            conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
+        }
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    };
+    bind(0x7e1)?;
+    let results = [
+        send_type_text_xtest("ab\u{4f60}"),
+        send_type_text(u64::from(window), "ab\u{4f60}"),
+    ];
+    bind(0)?;
+    for result in results {
+        let error = result.expect_err("typing without a spare keycode reported success");
+        assert!(
+            error.to_string().starts_with("typed 0 of 3 characters"),
+            "{error:#}"
+        );
+    }
+    let deadline = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < deadline {
+        match conn.poll_for_event()? {
+            Some(Event::KeyPress(_)) | Some(Event::KeyRelease(_)) => {
+                bail!("failed text delivery changed the target")
+            }
+            Some(Event::Error(error)) => bail!("X11 observer error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    assert!(
+        spare.len() >= 2,
+        "the test display has fewer than 2 spare keycodes"
+    );
+    send_type_text_xtest("\u{4f60}\u{597d}\u{4f60}")?;
+    let presses: Vec<u8> = keyboard_events(&conn, 6)?
+        .into_iter()
+        .filter(|(pressed, _)| *pressed)
+        .map(|(_, event)| event.detail)
+        .collect();
+    assert!(
+        presses.iter().all(|keycode| spare.contains(keycode)),
+        "{presses:?}"
+    );
+    assert_ne!(presses[0], presses[1], "{presses:?}");
+    assert_eq!(presses[0], presses[2], "{presses:?}");
     Ok(())
 }

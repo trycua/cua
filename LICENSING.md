@@ -13,7 +13,8 @@ Most of the repository is open source under MIT, including the cua SDK and
 its language packages, the `cua` command, `cua daemon`, Cua Driver and Lume.
 Cua Spaces is source-available under the
 [Functional Source License, Version 1.1, MIT Future License](https://fsl.software)
-(FSL-1.1-MIT); the table below marks each FSL directory.
+(FSL-1.1-MIT); the table below marks each FSL directory. Cua Driver Bench
+(`benchmarks/cua-driver-bench`) is FSL-1.1-MIT too.
 
 ## LICENSE files in this repository
 
@@ -54,6 +55,7 @@ notices declare.
 | [`samples/infinite-canvas-swift/LICENSE`](samples/infinite-canvas-swift/LICENSE)                                                                               | FSL-1.1-MIT                                                                                              | Infinite Canvas sample (uses the streaming client)                                                                                                                                                            |
 | [`samples/openkoalabot-example-swift/LICENSE`](samples/openkoalabot-example-swift/LICENSE)                                                                     | FSL-1.1-MIT                                                                                              | OpenKoalaBots Swift sample (uses the streaming client)                                                                                                                                                        |
 | [`samples/openkoalabot-example-tauri/LICENSE`](samples/openkoalabot-example-tauri/LICENSE)                                                                     | FSL-1.1-MIT                                                                                              | OpenKoalaBots Tauri sample (uses the streaming client)                                                                                                                                                        |
+| [`benchmarks/cua-driver-bench/LICENSE`](benchmarks/cua-driver-bench/LICENSE)                                                                                   | FSL-1.1-MIT                                                                                              | Cua Driver Bench: harness, task set, method and results (MIT up to #4978; the digest-pinned task files have no per-file headers)                                                                              |
 | [`libs/cua-bench/LICENSE`](libs/cua-bench/LICENSE)                                                                                                             | MIT                                                                                                      | Package                                                                                                                                                                                                       |
 | [`libs/cua-bench-rl/LICENSE`](libs/cua-bench-rl/LICENSE)                                                                                                       | MIT                                                                                                      | Package                                                                                                                                                                                                       |
 | [`libs/cua-bench-s1/python/LICENSE`](libs/cua-bench-s1/python/LICENSE)                                                                                         | MIT                                                                                                      | Package                                                                                                                                                                                                       |
@@ -97,6 +99,13 @@ is built on it; it includes `StreamService` (tickets for a stream, its
 targets and preferences). The SDK's `MediaSession` (open a stream, receive
 its encoded frames and audio packets) and `@trycua/cua/spaces/pip` (a
 picture-in-picture wrapper around a canvas you paint) stay MIT.
+
+The WireGuard®-based mesh node (`cua-mesh`: userspace tunnels, NAT
+traversal, the encrypted relay client, QUIC streams and the coordinator
+protocol) is MIT and depends only on MIT, Apache-2.0 and BSD code (the
+WireGuard protocol through Cloudflare's BSD-3-Clause `boringtun`). A hosted
+machine's side of it is part of cua-spacesd (FSL). No GPL or AGPL code is
+linked: not the WireGuard kernel module or `wireguard-tools`.
 
 ## Commercial use and trademarks
 

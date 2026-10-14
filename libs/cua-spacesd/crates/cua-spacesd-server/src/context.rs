@@ -189,10 +189,23 @@ impl ServerContext {
         principal: Option<&Principal>,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a call the relay asserted at `issued`
+    /// (`RelayCaller::issued_at`), recorded in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal: Option<&Principal>,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let principal_id = principal.map(|p| p.id.as_str()).unwrap_or("");
         self.inner
             .auth
-            .mint_ticket(scope, resource, principal_id, ttl)
+            .mint_ticket_issued(scope, resource, principal_id, issued, ttl)
     }
 
     /// Validates a ticket string for `scope`.
@@ -472,8 +485,60 @@ impl ServerContext {
             p.stop.cancel();
         }
         tracing::info!(machine = %machine_id, "attached to relay");
+        let mesh = self.mesh_host_config(
+            relay_url,
+            machine_token,
+            None,
+            machine_id,
+            join.account.clone(),
+            local,
+        );
+        tokio::spawn(crate::mesh_host::run(mesh, stop.clone()));
         tokio::spawn(cua_relay::client::run(join, stop));
         Ok(())
+    }
+
+    /// The machine's mesh settings next to a relay join: its node lives in
+    /// `<data dir>/mesh`, peers reach this listener and the QUIC media
+    /// port, and static-mode pairing proofs are checked against the env
+    /// token. The node runs only while [`cua_mesh::policy`] allows it:
+    /// `CUA_MESH`, else the channel the Cua Spaces app recorded in this
+    /// machine's Cua home (the data dir's parent).
+    pub fn mesh_host_config(
+        &self,
+        relay_url: &str,
+        relay_token: &str,
+        relay_token_file: Option<std::path::PathBuf>,
+        machine_id: &str,
+        account: Arc<cua_relay::client::AccountLink>,
+        local: std::net::SocketAddr,
+    ) -> crate::mesh_host::MeshHostConfig {
+        let ip = if local.ip().is_unspecified() {
+            std::net::IpAddr::from([127, 0, 0, 1])
+        } else {
+            local.ip()
+        };
+        let quic_port = self.config().media_quic_port;
+        let auth = self.inner.auth.clone();
+        let home = self
+            .config()
+            .data_dir
+            .parent()
+            .map(std::path::Path::to_path_buf);
+        crate::mesh_host::MeshHostConfig {
+            relay_url: relay_url.to_owned(),
+            relay_token: relay_token.to_owned(),
+            relay_token_file,
+            machine_id: machine_id.to_owned(),
+            dir: self.config().data_dir.join("mesh"),
+            local: std::net::SocketAddr::new(ip, local.port()),
+            quic: (quic_port != 0).then(|| std::net::SocketAddr::new(ip, quic_port)),
+            account,
+            env_token: Arc::new(move || auth.token().map(|t| t.to_string())),
+            name: cua_mesh::node::hostname(),
+            policy: Arc::new(move || cua_mesh::Policy::current(home.as_deref())),
+            recheck: crate::mesh_host::GATE_RECHECK,
+        }
     }
 
     /// Leaves the relay attached with [`Self::attach_relay`]. Returns

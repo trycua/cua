@@ -1,0 +1,22 @@
+{
+  "messages": [
+    {
+      "id": "RQ-88",
+      "channel": "lighthouse-ops",
+      "author": "Ivo March, program lead",
+      "sent_at": "2026-10-14T07:30:00-05:00",
+      "revision": 4,
+      "authoritative": true,
+      "body": "Authoritative revision 4 supersedes Copperfield Mail revision 3. Cancel LHP-ASTER. Move LHP-BOREAL to 11:00–12:00 in Juniper. LHP-CINDER depends on Boreal; schedule its 30-minute session in Juniper at the earliest permitted start, no earlier than 13:00. Lunch from 12:00–13:00 is a hard hold. LHP-DUNE still requires exactly 14:30–15:00 in Sable. Do not move protected holds or invent another room. If a request is unschedulable, use blocker LHP-C17 and escalate it to program-lead. All constraints in this message are hard."
+    },
+    {
+      "id": "RQ-74",
+      "channel": "social",
+      "author": "Tess Rowan",
+      "sent_at": "2026-10-13T12:10:00-05:00",
+      "revision": 1,
+      "authoritative": false,
+      "body": "Friday coffee moved to the south patio."
+    }
+  ]
+}

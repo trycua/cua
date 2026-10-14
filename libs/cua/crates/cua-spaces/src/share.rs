@@ -42,6 +42,10 @@ pub trait ShareConsent: Send + Sync {
 /// (hosts from `cua host setup` are already joined).
 pub const RELAY_ATTACH_FEATURE: &str = "relay_attach";
 
+/// Relay machine meta: the OS of the Space a machine is (`linux`, `macos`,
+/// `windows`).
+pub const META_SPACE_OS: &str = "cua.space.os";
+
 /// What a person may do in a shared Space.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -143,9 +147,11 @@ pub fn normalize_who(who: &str) -> Result<String> {
         )));
     }
     if w.starts_with("team:") || w.starts_with("org:") || w.starts_with("group:") {
-        return Err(Error::invalid(
-            "the relay shares with accounts (email or account id), not teams; share with each member",
-        ));
+        return Err(Error::invalid(if cua_home::experimental::teams_enabled() {
+            "share with an account (email or account id), or with a team as team:<id> (`cua team ls`)"
+        } else {
+            "share with an account (email or account id)"
+        }));
     }
     if w.contains('@') {
         let (local, domain) = w.split_once('@').unwrap_or_default();
@@ -167,6 +173,38 @@ pub fn normalize_who(who: &str) -> Result<String> {
         )));
     }
     Ok(w.to_string())
+}
+
+/// The team a `team:<id>` invitee names (`None` for anything else).
+/// Sharing with a team makes the Space a team machine: every member (and
+/// their agents) sees it and opens it as an editor from a device a team
+/// admin approved.
+/// With Teams turned off ([`cua_home::experimental`]) a
+/// `team:<id>` invitee is refused.
+pub fn team_of(who: &str) -> Option<Result<String>> {
+    team_of_with(who, cua_home::experimental::teams_enabled())
+}
+
+fn team_of_with(who: &str, teams: bool) -> Option<Result<String>> {
+    let id = who.trim().strip_prefix("team:")?;
+    if !teams {
+        return Some(Err(Error::invalid(format!(
+            "{} Share with people (email or account id).",
+            cua_home::experimental::TEAMS_UNAVAILABLE
+        ))));
+    }
+    let ok = id.starts_with("team-")
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    Some(if ok {
+        Ok(id.to_string())
+    } else {
+        Err(Error::invalid(format!(
+            "{who:?} is not a team: use team:<id> as `cua team ls` shows it"
+        )))
+    })
 }
 
 /// Moves `who` onto the list for `role` (or off both with `None`).
@@ -300,13 +338,19 @@ impl Spaces {
         {
             return Ok(machine);
         }
-        let name = self
-            .list()?
-            .into_iter()
-            .find(|i| i.id == canonical)
+        let listed = self.list()?.into_iter().find(|i| i.id == canonical);
+        let os = listed.as_ref().map(|i| i.os.clone()).unwrap_or_default();
+        let name = listed
             .map(|i| i.name)
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| canonical.clone());
+        // What the Space runs, so the relay can keep macOS Spaces out of
+        // teams on its own.
+        let meta = if os.is_empty() {
+            Default::default()
+        } else {
+            std::collections::BTreeMap::from([(META_SPACE_OS.to_string(), os)])
+        };
         // Registering again keeps the lists and rotates the machine token.
         let reg = client
             .register(
@@ -316,7 +360,7 @@ impl Spaces {
                     name,
                     allow: vec![],
                     host: None,
-                    meta: Default::default(),
+                    meta,
                 },
             )
             .await
@@ -362,14 +406,35 @@ impl Spaces {
     async fn shares_of(&self, space: &str, machine: &str) -> Result<SpaceShares> {
         let relay = self.relay()?;
         let token = relay.tokens.access_token().await?;
-        let m = relay.client().await?.machine(&token, machine).await?;
+        let client = relay.client().await?;
+        let m = client.machine(&token, machine).await?;
+        let mut shares = entries(&m);
+        // Teams it is a machine of (best effort: a relay without teams, or
+        // a device not enrolled, lists none; none while Teams are off).
+        let teams = if cua_home::experimental::teams_enabled() {
+            client.teams(&token).await.ok()
+        } else {
+            None
+        };
+        if let Some(list) = teams {
+            shares.extend(
+                list.teams
+                    .iter()
+                    .filter(|t| t.machines.iter().any(|tm| tm.id == machine))
+                    .map(|t| ShareEntry {
+                        who: format!("team:{}", t.id),
+                        role: ShareRole::Editor,
+                        connected: false,
+                    }),
+            );
+        }
         Ok(SpaceShares {
             space: space.to_string(),
             machine: machine.to_string(),
             invitee_space: format!("relay:{machine}"),
             url: m.url.clone(),
             online: m.online,
-            shares: entries(&m),
+            shares,
         })
     }
 
@@ -382,6 +447,9 @@ impl Spaces {
         who: &str,
         role: ShareRole,
     ) -> Result<SpaceShares> {
+        if let Some(team) = team_of(who) {
+            return self.share_with_team(space, &team?).await;
+        }
         let who = normalize_who(who)?;
         let canonical = self.resolve(space)?.to_string();
         let consent = self
@@ -434,6 +502,9 @@ impl Spaces {
     /// cut). With `who = None` the Space stops being shared with anyone,
     /// and a Space that is not a host leaves the relay.
     pub async fn unshare_space(&self, space: &str, who: Option<&str>) -> Result<SpaceShares> {
+        if let Some(team) = who.and_then(team_of) {
+            return self.unshare_from_team(space, &team?).await;
+        }
         let id = self.resolve(space)?;
         let canonical = id.to_string();
         let Some(machine) = self.share_machine(&canonical, &id) else {
@@ -474,6 +545,85 @@ impl Spaces {
                 ..Default::default()
             });
         }
+        self.shares_of(&canonical, &machine).await
+    }
+
+    /// The consent prompt, run off the async runtime.
+    async fn confirm_share(&self, reason: String) -> Result<()> {
+        let consent = self
+            .inner
+            .share_consent
+            .read()
+            .expect("share consent")
+            .clone()
+            .ok_or_else(|| {
+                Error::host(
+                    "share consent",
+                    "nothing here can ask you to confirm; share from the Cua app or run `cua spaces share` in a terminal",
+                )
+            })?;
+        tokio::task::spawn_blocking(move || consent.confirm(&reason))
+            .await
+            .map_err(|e| Error::invalid(format!("consent prompt: {e}")))?
+            .map_err(|why| {
+                Error::Relay(cua_host::Error::PermissionDenied(format!(
+                    "not shared: {why}"
+                )))
+            })
+    }
+
+    /// Makes `space` a machine of `team`: every member (and their agents)
+    /// lists it and opens it as an editor, from a device a team admin
+    /// approved. Only a team owner or admin who owns the Space can. Macs, Linux and
+    /// Windows machines can all be team machines.
+    pub async fn share_with_team(&self, space: &str, team: &str) -> Result<SpaceShares> {
+        let id = self.resolve(space)?;
+        let canonical = id.to_string();
+        // What the Space runs, as this device knows it (a relay machine's
+        // own record speaks for itself on the relay).
+        let os = self
+            .list()?
+            .into_iter()
+            .find(|i| i.id == canonical)
+            .map(|i| i.os)
+            .filter(|o| !o.is_empty());
+        self.confirm_share(format!(
+            "Let every member of team {team} use {canonical} (see and control it)"
+        ))
+        .await?;
+        let machine = self.ensure_shared_machine(&canonical).await?;
+        let relay = self.relay()?;
+        let token = relay.tokens.access_token().await?;
+        relay
+            .client()
+            .await?
+            .add_team_machine(&token, team, &machine, os.as_deref())
+            .await
+            .map_err(|e| match e {
+                cua_host::Error::NotFound(m) if m.contains("no such team") => Error::NotFound(
+                    format!("team {team} (you are not in it, or it does not exist)"),
+                ),
+                other => Error::Relay(other),
+            })?;
+        self.audit_share("share", &canonical, &format!("team:{team} editor"));
+        self.shares_of(&canonical, &machine).await
+    }
+
+    /// Takes `space` off `team`.
+    pub async fn unshare_from_team(&self, space: &str, team: &str) -> Result<SpaceShares> {
+        let id = self.resolve(space)?;
+        let canonical = id.to_string();
+        let Some(machine) = self.share_machine(&canonical, &id) else {
+            return Err(Error::NotFound(format!("{canonical} is not shared")));
+        };
+        let relay = self.relay()?;
+        let token = relay.tokens.access_token().await?;
+        relay
+            .client()
+            .await?
+            .remove_team_machine(&token, team, &machine)
+            .await?;
+        self.audit_share("unshare", &canonical, &format!("team:{team}"));
         self.shares_of(&canonical, &machine).await
     }
 
@@ -667,8 +817,23 @@ mod tests {
                 "{bad}"
             );
         }
-        let e = normalize_who("team:design").unwrap_err().to_string();
-        assert!(e.contains("not teams"), "{e}");
+        assert!(normalize_who("team:design").is_err());
+        assert_eq!(
+            team_of_with("team:team-0a1b", true).unwrap().unwrap(),
+            "team-0a1b"
+        );
+        assert!(team_of_with("team:design", true).unwrap().is_err());
+        assert!(team_of_with("bob@x.io", true).is_none());
+        assert!(team_of_with("bob@x.io", false).is_none());
+        // With Teams off, a team is refused whatever its id.
+        let e = team_of_with("team:team-0a1b", false)
+            .unwrap()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0)."),
+            "{e}"
+        );
     }
 
     #[test]

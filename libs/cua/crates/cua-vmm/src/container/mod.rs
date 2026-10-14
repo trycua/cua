@@ -159,24 +159,65 @@ impl ContainerRuntime {
     /// Connect to the engine (discovering it when no endpoint is configured).
     pub async fn connect(cfg: ContainerConfig) -> Result<Self> {
         let endpoint = match &cfg.endpoint {
-            Some(uri) => EngineEndpoint { kind: engine::classify(uri), uri: uri.clone(), source: "config".into() },
-            None => engine::discover().ok_or_else(|| {
-                VmmError::missing(
-                    "a container engine",
-                    "no Docker-API socket found (DOCKER_HOST, docker context, ~/.colima, ~/.orbstack, \
-                     ~/.docker/run, /var/run/docker.sock). Install one (macOS: `brew install colima docker && colima start`) \
-                     or let cua boot its managed runtime VM",
-                )
-            })?,
+            Some(uri) => EngineEndpoint {
+                kind: engine::classify(uri),
+                uri: uri.clone(),
+                source: "config".into(),
+            },
+            None => match engine::discover() {
+                Some(ep) => ep,
+                // Docker Desktop quit (its context's socket is gone): start
+                // it, rather than install one.
+                None => match engine::stopped_context() {
+                    Some(ep) => {
+                        return Err(VmmError::NotRunning {
+                            what: format!("container engine at {}", ep.uri),
+                            hint: engine::start_hint(&ep.kind).into(),
+                        });
+                    }
+                    None => {
+                        return Err(VmmError::missing(
+                            "a container engine",
+                            format!(
+                                "no Docker-API socket found (DOCKER_HOST, docker context, \
+                                 ~/.colima, ~/.orbstack, ~/.docker/run, /var/run/docker.sock); {}",
+                                engine::install_hint()
+                            ),
+                        ));
+                    }
+                },
+            },
         };
-        let docker = connect_uri(&endpoint.uri)?;
-        docker.ping().await.map_err(|e| {
-            VmmError::missing(
-                format!("container engine at {}", endpoint.uri),
-                format!(
-                    "engine did not answer ping ({e}); is it running? (Colima: `colima start`)"
+        let at = format!("container engine at {}", endpoint.uri);
+        let check = engine::check_socket(&endpoint.uri).await;
+        match &check {
+            Some(engine::SocketCheck::PermissionDenied) => {
+                return Err(VmmError::PermissionDenied(engine::permission_hint(
+                    &endpoint.uri,
+                )));
+            }
+            Some(engine::SocketCheck::Missing | engine::SocketCheck::NotListening) => {
+                return Err(VmmError::NotRunning {
+                    what: at,
+                    hint: engine::start_hint(&endpoint.kind).into(),
+                });
+            }
+            _ => {}
+        }
+        let docker = connect_uri(&endpoint.uri).await?;
+        docker.ping().await.map_err(|e| match check {
+            // Something accepts on the socket but does not speak the
+            // Docker API as expected: an engine error, not a stopped one.
+            Some(engine::SocketCheck::Accepting) => {
+                VmmError::Engine(format!("{at} did not answer ping: {e}"))
+            }
+            _ => VmmError::NotRunning {
+                what: at,
+                hint: format!(
+                    "it did not answer ({e}); {}",
+                    engine::start_hint(&endpoint.kind)
                 ),
-            )
+            },
         })?;
         Ok(Self {
             docker,
@@ -291,12 +332,17 @@ impl ContainerRuntime {
         // dockerd restarts; wait for it to come back with runsc registered.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
         while tokio::time::Instant::now() < deadline {
-            if let Ok(rts) = connect_uri(&self.endpoint.uri)?.info().await.map(|i| {
-                i.runtimes
-                    .unwrap_or_default()
-                    .into_keys()
-                    .collect::<Vec<_>>()
-            }) && rts.iter().any(|r| r == "runsc")
+            if let Ok(rts) = connect_uri(&self.endpoint.uri)
+                .await?
+                .info()
+                .await
+                .map(|i| {
+                    i.runtimes
+                        .unwrap_or_default()
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                })
+                && rts.iter().any(|r| r == "runsc")
             {
                 return Ok(());
             }
@@ -741,18 +787,42 @@ fn registry_credentials(_reference: &str) -> Option<bollard::auth::DockerCredent
     })
 }
 
-fn connect_uri(uri: &str) -> Result<Docker> {
+fn connect_uri_once(uri: &str) -> std::result::Result<Docker, bollard::errors::Error> {
     let v = bollard::API_DEFAULT_VERSION;
-    let r = if uri.starts_with("unix://") || uri.starts_with("npipe://") || uri.starts_with('/') {
+    if uri.starts_with("unix://") || uri.starts_with("npipe://") || uri.starts_with('/') {
         Docker::connect_with_socket(uri, 120, v)
-    } else if uri.starts_with("tcp://") || uri.starts_with("http://") {
-        Docker::connect_with_http(uri, 120, v)
     } else {
+        Docker::connect_with_http(uri, 120, v)
+    }
+}
+
+async fn connect_uri(uri: &str) -> Result<Docker> {
+    if !(uri.starts_with("unix://")
+        || uri.starts_with("npipe://")
+        || uri.starts_with('/')
+        || uri.starts_with("tcp://")
+        || uri.starts_with("http://"))
+    {
         return Err(VmmError::invalid(format!(
             "unsupported engine endpoint '{uri}'"
         )));
-    };
-    r.map_err(engine_err)
+    }
+    // Docker Desktop's pipe has one listening instance at a time: a client
+    // that opens it in the same instant as another gets ERROR_PIPE_BUSY, which
+    // bollard reports as "Socket not found" (CUA-1523). The pipe is there:
+    // ask again a moment later.
+    let mut tries = 0;
+    loop {
+        match connect_uri_once(uri) {
+            Err(bollard::errors::Error::SocketNotFoundError(_))
+                if cfg!(windows) && uri.starts_with("npipe://") && tries < 40 =>
+            {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            r => return r.map_err(engine_err),
+        }
+    }
 }
 
 #[async_trait]

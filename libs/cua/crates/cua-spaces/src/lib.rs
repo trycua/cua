@@ -71,6 +71,7 @@ pub mod fleet_runtime;
 pub mod groups;
 pub mod host_spaces;
 pub mod id;
+pub mod mesh;
 pub mod operator;
 pub mod registry;
 pub mod relay;

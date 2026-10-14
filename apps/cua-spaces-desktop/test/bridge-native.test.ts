@@ -75,6 +75,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   let events: BridgeEvent[];
   let opened: [string, string][];
   let backgrounds: [unknown, string, string | null][];
+  let dropTargets: [unknown, unknown][];
   const pipsOpen = new Map<string, () => void>();
 
   beforeAll(async () => {
@@ -109,6 +110,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     model.createAcceptTimeout = 5;
     opened = [];
     backgrounds = [];
+    dropTargets = [];
     bridge = createBridge({
       model,
       supervisor: null,
@@ -118,6 +120,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ui: {
         openSpace: (id, name) => opened.push([id, name]),
         setBackground: (win, color, appearance) => backgrounds.push([win, color, appearance]),
+        setDropTargets: (win, targets) => dropTargets.push([win, targets]),
         activate: () => {},
         chooseFiles: async () => ["/Users/ada/Desktop/picked.txt"],
         pip: { open: (spec, closed) => pipsOpen.set(`${spec.spaceId}|${spec.key}`, closed), close: (id, key) => pipsOpen.delete(`${id}|${key}`) },
@@ -148,6 +151,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["telemetry.track", { signals: [{ type: "step", step: "app_launched", ok: true }] }],
       ["window.setBackgroundColor", { color: "#16181c" }],
       ["window.setDragRegions", { rects: [{ x: 78, y: 0, width: 400, height: 38 }] }],
+      ["window.setDropTargets", { targets: [{ spaceId: space, x: 20, y: 60, width: 232, height: 180 }] }],
       ["startup.get", {}],
       ["startup.act", { action: "tryAgain" }],
       ["spaces.usage", { spaceId: space }],
@@ -164,14 +168,16 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["clouds.status", {}],
       ["clouds.test", { target: { provider: "aws", region: "us-west-2" } }],
       ["clouds.connect", { target: { provider: "aws", region: "us-west-2" }, makeDefault: false }],
+      ["checklist.get", {}],
+      ["checklist.send", { action: { type: "done", step: "teleport" } }],
       ["session.signOut", {}],
     ];
     const problems: string[] = [];
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; presence: presence-bridge.test.ts.)
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -180,7 +186,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const info = (await call("app.info")) as { platform: string; host: string; version: string; methods: string[] };
     expect(info).toMatchObject({ platform: "macos", host: "electron", version: "1.2.3" });
     expect(info.methods[0]).toBe("app.info");
-    expect(info.methods.at(-1)).toBe("spaces.openStream");
+    expect(info.methods.at(-1)).toBe("presence.leave");
   });
 
   it("answers New Space's options while starting and once ready", () => {
@@ -318,6 +324,14 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(backgrounds).toEqual([["win-1", "#16181c", "dark"]]);
     expect(await code("window.setBackgroundColor", { color: "dark" })).toBe("bad_args");
     expect(await code("window.setDragRegions", { rects: [{ x: 1 }] })).toBe("bad_args");
+  });
+
+  it("hands the calling window's Space tiles to the window drops, checked", async () => {
+    dropTargets.length = 0;
+    await call("window.setDropTargets", { targets: [{ spaceId: "local:aurora", x: 20, y: 60, width: 232, height: 180, extra: 1 }] });
+    expect(dropTargets).toEqual([["win-1", [{ spaceId: "local:aurora", x: 20, y: 60, width: 232, height: 180 }]]]);
+    expect(await code("window.setDropTargets", { targets: [{ spaceId: 4, x: 0, y: 0, width: 1, height: 1 }] })).toBe("bad_args");
+    expect(await code("window.setDropTargets", {})).toBe("bad_args");
   });
 
   it("tells the page when the list changed, once, and not when nothing did", async () => {
@@ -474,9 +488,10 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "spaces.add": { url: "http://studio.local:7400", token: null, name: "studio" },
       "clouds.test": { target: { provider: "aws", region: "us-west-2" } },
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
+      "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

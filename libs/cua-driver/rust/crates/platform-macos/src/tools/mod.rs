@@ -13,6 +13,7 @@ mod kill_app;
 mod launch_app;
 mod list_apps;
 mod list_windows;
+mod menu_equivalent;
 mod press_key;
 mod right_click;
 mod scroll;
@@ -26,6 +27,7 @@ mod type_text;
 // through GetWindowStateTool.
 mod check_permissions;
 mod cursor_tools;
+mod desktop_pointer_guard;
 mod get_accessibility_tree;
 mod get_config;
 mod get_cursor_position;

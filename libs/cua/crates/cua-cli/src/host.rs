@@ -29,11 +29,19 @@ pub enum HostCmd {
   cua host setup --direct 0.0.0.0:3211 --name studio-mac
   # A spare Mac on your tailnet that runs Spaces, without the relay
   # (prints the command that adds it on your laptop)
-  cua host setup --direct 100.101.102.103:3211 --profile spare")]
+  cua host setup --direct 100.101.102.103:3211 --profile spare
+  # Add this machine with a one-time code from the Cua Spaces app
+  # (Add a machine) or `cua host pair`: no sign-in needed here
+  cua host setup --pair K7QM-4XPB-2RHD")]
     Setup {
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long, conflicts_with = "direct")]
         relay: Option<String>,
+        /// Join with a one-time pairing code (or add-machine link) made in
+        /// the Cua Spaces app or with `cua host pair`, instead of signing
+        /// in here. The machine joins the account (or team) that made it.
+        #[arg(long, value_name = "CODE", conflicts_with_all = ["direct", "remote"])]
+        pair: Option<String>,
         /// When sign-in is needed, use a device code to approve it in a
         /// browser on another machine. The account session is not saved.
         #[arg(long, conflicts_with = "direct")]
@@ -83,6 +91,35 @@ pub enum HostCmd {
         /// and its token is a shell on this machine: prefer Tailscale.
         #[arg(long, requires = "direct")]
         allow_any_address: bool,
+    },
+    /// Make a one-time code (with a link and the install command) that adds
+    /// another computer to your account: run the command it prints on that
+    /// computer. Codes work once and expire (30 minutes by default). Run
+    /// from an enrolled device.
+    #[command(after_help = "Examples:
+  cua host pair
+  cua host pair --name build-box --expires 60
+  cua host pair --list
+  cua host pair --revoke pc_0123456789abcdef")]
+    Pair {
+        /// Add the machine for this team (its id).
+        #[arg(long)]
+        team: Option<String>,
+        /// Name the machine gets (default: its own host name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Minutes until the code expires (1 to 1440).
+        #[arg(long, value_name = "MINUTES", default_value_t = 30)]
+        expires: u64,
+        /// List your codes (used, unused, revoked, expired) instead.
+        #[arg(long, conflicts_with_all = ["revoke", "team", "name"])]
+        list: bool,
+        /// Revoke an unused code by id (`pc_…`).
+        #[arg(long, value_name = "ID", conflicts_with_all = ["team", "name"])]
+        revoke: Option<String>,
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
+        #[arg(long)]
+        relay: Option<String>,
     },
     /// Show or change what this machine shares: its own desktop, and
     /// whether it creates Spaces for your other devices.
@@ -165,6 +202,12 @@ pub enum HostCmd {
         /// to ask on (scripts, agents): without it nothing is removed.
         #[arg(long, short)]
         force: bool,
+        /// For an uninstall of Cua Spaces: turns off the Spaces this machine
+        /// provides and takes them off the relay too, instead of refusing
+        /// while it provides any. The Spaces and their data stay on this
+        /// machine.
+        #[arg(long)]
+        uninstalling: bool,
     },
 }
 
@@ -178,7 +221,7 @@ pub enum SpacesCmd {
   cua spaces ls --json"
     )]
     Ls {
-        /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
+        /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
         #[arg(long)]
         relay: Option<String>,
     },
@@ -328,7 +371,9 @@ pub enum SpacesCmd {
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
-  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer")]
+  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+  # From a script or agent: confirm with Touch ID or your password here
+  cua spaces share local:studio bob@example.com --yes")]
     Share {
         /// Space id, address or display name.
         space: String,
@@ -337,10 +382,12 @@ pub enum SpacesCmd {
         /// `viewer`: presence and a view-only stream. `editor`: full use.
         #[arg(long, default_value = "viewer", value_parser = ["viewer", "editor"])]
         role: String,
-        /// Confirm without a prompt (needed without a terminal when no
-        /// daemon runs; a running daemon asks with Touch ID or your
-        /// password instead).
-        #[arg(long)]
+        /// Confirm without a terminal prompt. Without a daemon the share
+        /// happens at once. A running daemon still asks with Touch ID or
+        /// your password on this computer; without a terminal, `--yes`
+        /// says someone will answer there (otherwise the command fails
+        /// at once instead of waiting for a prompt nobody sees).
+        #[arg(long, short = 'y')]
         yes: bool,
     },
     /// Stop sharing a Space with one account at once, or with everyone.
@@ -391,6 +438,24 @@ pub enum SpacesCmd {
         /// Space id, address or display name.
         space: String,
     },
+}
+
+/// Checks a `cua spaces share` before it goes to a running daemon. The
+/// daemon confirms every share with user presence (Touch ID or the login
+/// password on this computer) and `--yes` cannot skip that. Without a
+/// terminal the caller is likely a script or agent with nobody at the
+/// screen, and the OS prompt would wait about two minutes before it
+/// fails, so this fails at once unless `--yes` says someone will answer.
+pub fn daemon_share_gate(yes: bool, terminal: bool) -> std::result::Result<(), CuaError> {
+    if yes || terminal {
+        return Ok(());
+    }
+    Err(CuaError::InvalidArgument(
+        "not shared: stdin is not a terminal, and the running cua daemon confirms every share \
+         with Touch ID or your password on this computer. Pass --yes (-y) when someone there \
+         will confirm it; sharing through the daemon cannot skip that confirmation"
+            .into(),
+    ))
 }
 
 /// Confirms a share on the terminal (the `cua` CLI without a daemon).
@@ -1211,6 +1276,7 @@ pub async fn run_host(
     match cmd {
         HostCmd::Setup {
             relay,
+            pair,
             remote: _, // Selected by the command's SetupTokens.
             direct,
             name,
@@ -1225,12 +1291,18 @@ pub async fn run_host(
             max_spaces,
             allow_any_address,
         } => {
+            // A pasted add-machine link names its relay (`?relay=`) when the
+            // code came from another relay than the default.
+            let relay = relay.or_else(|| pair.as_deref().and_then(cua_host::pairing_link_relay));
             let mut opts = match direct {
                 Some(addr) => SetupOptions::direct(addr.parse().map_err(|_| {
                     CuaError::InvalidArgument(format!("--direct {addr:?} is not ip:port"))
                 })?),
                 None => SetupOptions::relay(relay.unwrap_or_else(cua_host::relay_url_from_env)),
             };
+            // The code is single use: install the driver first, so a failed
+            // download does not spend it.
+            opts.download_first = pair.is_some();
             opts.name = name;
             opts.allow = allow;
             opts.driver_bin = driver_bin;
@@ -1250,6 +1322,16 @@ pub async fn run_host(
             }
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
+            // A pairing code stands in for the account: nothing to sign in.
+            let paired = pair
+                .as_deref()
+                .map(cua_host::PairingCodeToken::parse)
+                .transpose()
+                .map_err(host_err)?;
+            let tokens: &dyn AccountTokens = match &paired {
+                Some(p) => p,
+                None => tokens,
+            };
             let s = host
                 .setup_staged(opts, tokens)
                 .await
@@ -1297,6 +1379,32 @@ pub async fn run_host(
                     }
                 }
             }
+        }
+        HostCmd::Pair {
+            team,
+            name,
+            expires,
+            list,
+            revoke,
+            relay,
+        } => {
+            // Only the stored `cua auth login` session: making a code is
+            // no reason to start a sign-in for "this machine".
+            pair_codes(
+                home,
+                &SessionTokens,
+                device,
+                relay,
+                team,
+                name,
+                expires,
+                list,
+                revoke,
+                json,
+                out,
+            )
+            .await
+            .map_err(host_err)?;
         }
         HostCmd::Status => {
             let s = host.status().await.map_err(host_err)?;
@@ -1369,7 +1477,10 @@ pub async fn run_host(
                 .map_err(host_err)?;
             print_allow(&allow, json, out);
         }
-        HostCmd::Remove { force } => {
+        HostCmd::Remove {
+            force,
+            uninstalling,
+        } => {
             use crate::sandbox::{DeleteConfirmation, confirm_delete};
             use std::io::IsTerminal as _;
             match confirm_delete(force, std::io::stdin().is_terminal(), || {
@@ -1389,7 +1500,11 @@ pub async fn run_host(
                     ));
                 }
             }
-            host.remove().await.map_err(host_err)?;
+            if uninstalling {
+                host.remove_for_uninstall().await.map_err(host_err)?;
+            } else {
+                host.remove().await.map_err(host_err)?;
+            }
             if json {
                 line(out, r#"{"removed":true}"#);
             } else {
@@ -1400,6 +1515,38 @@ pub async fn run_host(
     Ok(0)
 }
 
+/// How long an uninstall waits for one Space to turn off.
+const UNINSTALL_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// `cua host remove --uninstalling`: turns off (keeping its data) each Space
+/// this machine provides, so nothing of this machine stays reachable
+/// through the relay. Best effort, each reported on stderr.
+pub async fn turn_off_provided_spaces<F, Fut>(home: &Path, open: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Arc<cua_sdk::Cua>, CuaError>>,
+{
+    let provided = Host::new(home).provided_spaces().unwrap_or_default();
+    if provided.is_empty() {
+        return;
+    }
+    let cua = match open().await {
+        Ok(cua) => cua,
+        Err(e) => {
+            eprintln!("Could not turn off the Spaces this machine provides: {e}");
+            return;
+        }
+    };
+    for space in provided {
+        let id = space.local_space;
+        match tokio::time::timeout(UNINSTALL_STOP_WAIT, cua.spaces().stop(id.clone())).await {
+            Ok(Ok(_)) => eprintln!("Turned off {id}."),
+            Ok(Err(e)) => eprintln!("Could not turn off {id}: {e}"),
+            Err(_) => eprintln!("Timed out turning off {id}."),
+        }
+    }
+}
+
 fn print_allow(allow: &[String], json: bool, out: &mut dyn Write) {
     if json {
         line(out, serde_json::json!({ "allow": allow }).to_string());
@@ -1408,6 +1555,116 @@ fn print_allow(allow: &[String], json: bool, out: &mut dyn Write) {
     } else {
         line(out, format!("Shared with: {}", allow.join(", ")));
     }
+}
+
+/// `cua host pair`: mints (default), lists or revokes pairing codes as the
+/// account from this enrolled device.
+#[allow(clippy::too_many_arguments)]
+async fn pair_codes(
+    home: &Path,
+    tokens: &dyn AccountTokens,
+    device: Option<&DeviceAuth>,
+    relay: Option<String>,
+    team: Option<String>,
+    name: Option<String>,
+    expires: u64,
+    list: bool,
+    revoke: Option<String>,
+    json: bool,
+    out: &mut dyn Write,
+) -> cua_host::Result<()> {
+    let url = relay_url(relay.clone(), home);
+    // The device session is per relay: with --relay, this device's
+    // enrollment there.
+    let other = match relay {
+        Some(_) => crate::devices_cmd::device_auth(&url).ok(),
+        None => None,
+    };
+    let device = other.as_deref().or(device);
+    let session = match device {
+        Some(d) => d.try_session().await,
+        None => None,
+    };
+    let client = RelayClient::new(&url)?.with_device_session(session);
+    let token = tokens.access_token().await?;
+    if let Some(id) = revoke {
+        client.revoke_pairing_code(&token, &id).await?;
+        if json {
+            line(out, serde_json::json!({ "revoked": id }).to_string());
+        } else {
+            line(
+                out,
+                format!("Revoked {id}: it can no longer add a machine."),
+            );
+        }
+        return Ok(());
+    }
+    if list {
+        let codes = client.pairing_codes(&token).await?;
+        if json {
+            line(out, serde_json::json!({ "codes": codes }).to_string());
+        } else if codes.is_empty() {
+            line(out, "No pairing codes.");
+        } else {
+            for c in codes {
+                let what = match (&c.state[..], &c.machine) {
+                    ("used", Some(m)) => format!("used by {m}"),
+                    (state, _) => state.to_string(),
+                };
+                let team = c.team.map(|t| format!(" team {t}")).unwrap_or_default();
+                line(out, format!("{}  {what}{team}", c.id));
+            }
+        }
+        return Ok(());
+    }
+    if !(1..=1440).contains(&expires) {
+        return Err(cua_host::Error::InvalidArgument(
+            "--expires is 1 to 1440 minutes".into(),
+        ));
+    }
+    let minted = client
+        .create_pairing_code(
+            &token,
+            &cua_host::PairingCodeRequest {
+                name,
+                team,
+                ttl_secs: Some(expires * 60),
+            },
+        )
+        .await?;
+    let code = minted
+        .code
+        .clone()
+        .filter(|c| cua_host::normalize_pairing_code(c).is_some())
+        .ok_or_else(|| cua_host::Error::Relay("the relay returned no pairing code".into()))?;
+    let link = cua_host::add_machine_url(&code, &url);
+    let sh = cua_host::install_command(&code, &url, "linux");
+    let ps = cua_host::install_command(&code, &url, "windows");
+    if json {
+        line(
+            out,
+            serde_json::json!({
+                "id": minted.id, "code": code, "url": link, "expires_at": minted.expires_at,
+                "team": minted.team, "install": {"sh": sh, "powershell": ps},
+            })
+            .to_string(),
+        );
+    } else {
+        for l in [
+            format!(
+                "Code {code} (works once, expires in {expires} min; id {})",
+                minted.id
+            ),
+            format!("Open on the other computer: {link}"),
+            "Or run there:".to_string(),
+            format!("  macOS / Linux:  {sh}"),
+            format!("  Windows:        {ps}"),
+            format!("  cua installed:  cua host setup --pair {code}"),
+        ] {
+            line(out, l);
+        }
+    }
+    Ok(())
 }
 
 /// Adds (`add`) or removes `who` on the allowlist of `machine` (default:
@@ -2113,6 +2370,20 @@ mod tests {
             );
         }
         assert!(TerminalConsent { yes: true }.confirm("x").is_ok());
+        match parse_spaces(&["share", "s", "bob@example.com", "-y"]).unwrap() {
+            SpacesCmd::Share { yes, .. } => assert!(yes),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn daemon_share_fails_fast_without_a_terminal_or_yes() {
+        let err = daemon_share_gate(false, false).unwrap_err().to_string();
+        assert!(err.contains("stdin is not a terminal"), "{err}");
+        assert!(err.contains("--yes (-y)"), "{err}");
+        assert!(daemon_share_gate(true, false).is_ok());
+        assert!(daemon_share_gate(false, true).is_ok());
+        assert!(daemon_share_gate(true, true).is_ok());
     }
 
     #[test]

@@ -40,11 +40,15 @@ const DELIVERY_MODE_DESCRIPTION: &str = "Window-scoped drag on macOS supports on
      gesture, then restore the prior frontmost app. The default \"background\" is refused with \
      background_unavailable because macOS has no background drag route. Desktop scope ignores this field.";
 
-const BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable on macOS: a drag is \
-     delivered as real pointer events to the frontmost window, so it cannot run without fronting \
-     the target. Nothing was sent. Retry with delivery_mode:\"foreground\" and window_id; the \
-     driver briefly fronts that window, moves the pointer along the path, and restores the prior \
-     frontmost app.";
+const BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable on macOS: \
+     WindowServer tracks a drag (including drag-and-drop) with the real pointer over the \
+     frontmost window, so it cannot run without fronting the target. Nothing was sent. First \
+     look for a route that is not a drag: a Move Up/Down button or menu item, a context-menu \
+     command, a keyboard shortcut on the selected item, or set_value on a slider. If the drag is \
+     the only route and the user allows the window to come forward, retry with \
+     delivery_mode:\"foreground\" and window_id: the driver briefly fronts that window, moves \
+     the pointer along the path and restores the prior frontmost app. Otherwise stop and report \
+     that the step needs the window in front.";
 
 fn background_drag_refusal() -> ToolResult {
     cua_driver_core::delivery::background_unavailable_result(
@@ -153,6 +157,15 @@ impl Tool for DragTool {
             let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
             let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
             let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
+            if let Some(refusal) = super::desktop_pointer_guard::check(
+                "drag",
+                &args,
+                vec![(from_x, from_y), (to_x, to_y)],
+            )
+            .await
+            {
+                return refusal;
+            }
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
             let modifiers = input.modifier.unwrap_or_default();

@@ -36,7 +36,7 @@ use crate::{
     },
     protocol::{Content, ToolResult},
     recording_tools::ReplayRegistrySlot,
-    tool::{Tool, ToolDef, ToolRegistry},
+    tool::{Tool, ToolDef, ToolRegistry, DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY},
 };
 
 mod engine;
@@ -46,14 +46,9 @@ use engine::{FailureKind, HostCall, HostError, Limits};
 pub const RUN_SCRIPT_TOOL: &str = "run_script";
 /// Environment switch that turns the tool off when set to `1`.
 pub const DISABLE_ENV: &str = "CUA_DRIVER_DISABLE_RUN_SCRIPT";
-/// `~/.cua-driver/config.json` key that turns the tool off when `true`.
-pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
 /// Legacy opt-in switch from when the tool was off by default. `0` still
 /// turns the tool off; `1` changes nothing.
 pub const LEGACY_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_SCRIPT";
-/// Legacy `~/.cua-driver/config.json` key. `false` turns the tool off;
-/// `true` changes nothing.
-pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 120_000;

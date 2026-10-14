@@ -240,7 +240,9 @@ impl TunnelService for TunnelServiceImpl {
         &self,
         request: Request<ForwardRequest>,
     ) -> Result<GrpcResponse<ForwardResponse>, Status> {
-        let principal = caller(&request).principal;
+        let caller = caller(&request);
+        let issued = caller.account.as_ref().map(|a| a.issued_at);
+        let principal = caller.principal;
         let body = request.into_inner();
         if body.port == 0 || body.port > u16::MAX as u32 {
             return Err(crate::error::invalid("port must be 1-65535"));
@@ -263,10 +265,13 @@ impl TunnelService for TunnelServiceImpl {
             .filter(|d| !d.is_zero())
             .unwrap_or(FORWARD_DEFAULT_TTL);
         let id = format!("fwd-{}", crate::util::random_id(9));
-        let (ticket, expires_at) =
-            self.state
-                .ctx
-                .mint_ticket(TicketScope::Tunnel, &id, principal.as_ref(), ttl);
+        let (ticket, expires_at) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Tunnel,
+            &id,
+            principal.as_ref(),
+            issued,
+            ttl,
+        );
         self.state.gc_forwards();
         self.state.forwards.lock().expect("forwards").insert(
             id.clone(),
@@ -333,7 +338,9 @@ impl TunnelService for TunnelServiceImpl {
         &self,
         request: Request<StartHotspotRequest>,
     ) -> Result<GrpcResponse<StartHotspotResponse>, Status> {
-        let principal = caller(&request).principal;
+        let caller = caller(&request);
+        let issued = caller.account.as_ref().map(|a| a.issued_at);
+        let principal = caller.principal;
         let body = request.into_inner();
         let port = match body.socks_port {
             0 => 1080,
@@ -404,10 +411,13 @@ impl TunnelService for TunnelServiceImpl {
         let ttl = duration(body.ticket_ttl.as_ref())
             .filter(|d| !d.is_zero())
             .unwrap_or(HOTSPOT_DEFAULT_TTL);
-        let (ticket, _) =
-            self.state
-                .ctx
-                .mint_ticket(TicketScope::Hotspot, &id, principal.as_ref(), ttl);
+        let (ticket, _) = self.state.ctx.mint_ticket_issued(
+            TicketScope::Hotspot,
+            &id,
+            principal.as_ref(),
+            issued,
+            ttl,
+        );
         *self.state.hotspot.lock().expect("hotspot") = Some(Arc::new(Hotspot {
             id: id.clone(),
             socks_address,

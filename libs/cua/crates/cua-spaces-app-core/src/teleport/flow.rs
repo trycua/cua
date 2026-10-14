@@ -1210,6 +1210,12 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 if s.entries.is_some() {
                     n.step = Step::Pick;
                     n.plan = None;
+                    // Back on the grid: no app is open any more (the sheet's
+                    // title goes back to "Teleport an app to …"); the grid
+                    // keeps its selection.
+                    n.entry = None;
+                    n.moves = None;
+                    n.sensitive.clear();
                 }
             }
             Step::Consent => {
@@ -1224,6 +1230,11 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.step = s.error_back;
                 n.error = None;
                 n.install_prompt = None;
+                if n.step == Step::Pick {
+                    n.entry = None;
+                    n.moves = None;
+                    n.sensitive.clear();
+                }
             }
             _ => {}
         },
@@ -1634,6 +1645,40 @@ mod tests {
             relay_unsealed: false,
             json: "{}".into(),
         }
+    }
+
+    /// Back from an app's options returns to the grid with no app open, so
+    /// the sheet's title is the grid's again; the grid keeps its selection.
+    #[test]
+    fn back_to_the_grid_closes_the_app() {
+        let chrome = chrome_entry();
+        let s = reduce(
+            &initial("dev"),
+            &PickerEvent::Loaded {
+                entries: vec![chrome.clone()],
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::Choose {
+                id: Some(chrome.id.clone()),
+            },
+        );
+        assert_eq!(s.step, Step::Options);
+        assert!(s.entry.is_some());
+        let back = reduce(&s, &PickerEvent::Back);
+        assert_eq!(back.step, Step::Pick);
+        assert_eq!(back.entry, None);
+        assert_eq!(back.moves, None);
+        assert!(back.sensitive.is_empty());
+        assert!(!can_plan(&back));
+        // Choosing again opens it afresh.
+        let again = reduce(&back, &PickerEvent::Choose { id: None });
+        assert_eq!(again.step, Step::Options);
+        assert_eq!(
+            again.entry.as_ref().map(|e| e.id.as_str()),
+            Some(chrome.id.as_str())
+        );
     }
 
     /// Walks `initial` to `Step::Consent` the way the picker really does

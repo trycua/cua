@@ -78,6 +78,52 @@ struct State_ {
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
     /// requests go to (the longest matching prefix wins).
     tunnels: BTreeMap<String, Vec<(String, String)>>,
+    /// Teams (a simplified model of the relay's: membership, machines,
+    /// invite codes, device approvals and an audit of kinds).
+    teams: BTreeMap<String, crate::team::Team>,
+    /// invite code → (team, role, email)
+    team_codes: BTreeMap<String, (String, crate::team::TeamRole, Option<String>)>,
+    /// What `GET /v1/usage` answers; none: 404, as a relay that does not
+    /// meter.
+    usage: Option<serde_json::Value>,
+    /// Pairing codes by canonical code.
+    pairing: BTreeMap<String, FakePairing>,
+}
+
+#[derive(Clone, Debug)]
+struct FakePairing {
+    id: String,
+    owner: Identity,
+    name: Option<String>,
+    team: Option<String>,
+    created_at: u64,
+    expires_at: u64,
+    used_at: Option<u64>,
+    machine: Option<String>,
+    revoked: bool,
+}
+
+impl FakePairing {
+    fn state(&self) -> &'static str {
+        if self.used_at.is_some() {
+            "used"
+        } else if self.revoked {
+            "revoked"
+        } else if now_secs() >= self.expires_at {
+            "expired"
+        } else {
+            "active"
+        }
+    }
+
+    fn view(&self, code: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id, "code": code.map(crate::pairing::display_pairing_code),
+            "state": self.state(), "name": self.name, "team": self.team,
+            "created_at": self.created_at, "expires_at": self.expires_at,
+            "used_at": self.used_at, "machine": self.machine,
+        })
+    }
 }
 
 impl State_ {
@@ -249,10 +295,36 @@ async fn register(
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         return err(status, "the fake relay failed this registration");
     }
-    let Some(Caller::Account(who)) = caller(&st, &headers) else {
-        return err(StatusCode::UNAUTHORIZED, "account token required");
-    };
     let id = body["id"].as_str().unwrap_or_default().to_string();
+    // A pairing code registers as the account that minted it, once.
+    let paired = bearer(&headers).and_then(|t| {
+        t.strip_prefix(crate::pairing::PAIRING_TOKEN_PREFIX)
+            .map(str::to_string)
+    });
+    let mut team = None;
+    let mut code_name = None;
+    let who = match paired {
+        Some(code) => {
+            let Some(p) = crate::pairing::normalize_pairing_code(&code)
+                .and_then(|c| st.pairing.get_mut(&c))
+                .filter(|p| p.state() == "active")
+            else {
+                return err(StatusCode::UNAUTHORIZED, "this pairing code is not valid");
+            };
+            if id.len() < 8 {
+                return err(StatusCode::BAD_REQUEST, "invalid machine id");
+            }
+            p.used_at = Some(now_secs());
+            p.machine = Some(id.clone());
+            team = p.team.clone();
+            code_name = p.name.clone();
+            p.owner.clone()
+        }
+        None => match caller(&st, &headers) {
+            Some(Caller::Account(who)) => who,
+            _ => return err(StatusCode::UNAUTHORIZED, "account token required"),
+        },
+    };
     if id.len() < 8 {
         return err(StatusCode::BAD_REQUEST, "invalid machine id");
     }
@@ -286,7 +358,7 @@ async fn register(
     let token = format!("cmt_{:032x}", rand::random::<u128>());
     let machine = Machine {
         id: id.clone(),
-        name: body["name"].as_str().unwrap_or_default().to_string(),
+        name: code_name.unwrap_or_else(|| body["name"].as_str().unwrap_or_default().to_string()),
         owner: who.clone(),
         role: "owner".into(),
         online: false,
@@ -302,11 +374,13 @@ async fn register(
         // registration here has nothing to vouch for either way; default to
         // confirmed, matching behavior before S5 added the field.
         confirmed: true,
+        team: None,
         meta: body["meta"]
             .as_object()
             .map(|o| {
                 o.iter()
                     .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                    .chain(team.map(|t| ("cua.team".to_string(), t)))
                     .collect()
             })
             .unwrap_or_default(),
@@ -327,6 +401,83 @@ async fn register(
         })),
     )
         .into_response()
+}
+
+async fn pairing_mint(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    if let Err(r) = st.gate(&headers) {
+        return r;
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::UNAUTHORIZED, "account token required");
+    };
+    let code: String = (0..12)
+        .map(|_| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(rand::random::<u32>() % 32) as usize] as char)
+        .collect();
+    let now = now_secs();
+    let p = FakePairing {
+        id: format!("pc_{:016x}", rand::random::<u64>()),
+        owner: who,
+        name: body["name"].as_str().map(str::to_string),
+        team: body["team"].as_str().map(str::to_string),
+        created_at: now,
+        expires_at: now + body["ttl_secs"].as_u64().unwrap_or(1800).clamp(60, 86_400),
+        used_at: None,
+        machine: None,
+        revoked: false,
+    };
+    let view = p.view(Some(&code));
+    st.pairing.insert(code, p);
+    (StatusCode::CREATED, Json(view)).into_response()
+}
+
+async fn pairing_list(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    if let Err(r) = st.gate(&headers) {
+        return r;
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::UNAUTHORIZED, "account token required");
+    };
+    let mut codes: Vec<&FakePairing> = st
+        .pairing
+        .values()
+        .filter(|p| p.owner.id == who.id)
+        .collect();
+    codes.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+    let codes: Vec<_> = codes.into_iter().map(|p| p.view(None)).collect();
+    Json(serde_json::json!({ "codes": codes })).into_response()
+}
+
+async fn pairing_revoke(
+    State(s): State<S>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    if let Err(r) = st.gate(&headers) {
+        return r;
+    }
+    let Some(Caller::Account(who)) = caller(&st, &headers) else {
+        return err(StatusCode::UNAUTHORIZED, "account token required");
+    };
+    match st
+        .pairing
+        .values_mut()
+        .find(|p| p.id == id && p.owner.id == who.id)
+    {
+        Some(p) => {
+            if p.state() == "active" {
+                p.revoked = true;
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
+        None => err(StatusCode::NOT_FOUND, "no such pairing code"),
+    }
 }
 
 async fn list(State(s): State<S>, headers: HeaderMap) -> Response {
@@ -760,6 +911,18 @@ async fn audit(State(s): State<S>, headers: HeaderMap) -> Response {
     Json(serde_json::json!({ "events": events })).into_response()
 }
 
+async fn usage(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let Some(usage) = st.usage.clone() else {
+        return err(StatusCode::NOT_FOUND, "not found");
+    };
+    match caller(&st, &headers) {
+        Some(Caller::Account(_)) => Json(usage).into_response(),
+        Some(Caller::Machine(_)) => err(StatusCode::FORBIDDEN, "account token required"),
+        None => err(StatusCode::UNAUTHORIZED, "account token required"),
+    }
+}
+
 async fn proxied(
     State(s): State<S>,
     method: axum::http::Method,
@@ -939,6 +1102,26 @@ impl FakeRelay {
                 axum::routing::patch(device_rename).delete(device_revoke),
             )
             .route("/v1/audit", get(audit))
+            .route("/v1/teams", get(team_list).post(team_create))
+            .route("/v1/teams/join", post(team_join))
+            .route("/v1/teams/{id}", get(team_get))
+            .route("/v1/teams/{id}/invites", post(team_invite))
+            .route("/v1/teams/{id}/machines", post(team_add_machine))
+            .route(
+                "/v1/teams/{id}/machines/{machine}",
+                axum::routing::delete(team_remove_machine),
+            )
+            .route(
+                "/v1/teams/{id}/devices/{device}/approve",
+                post(team_approve),
+            )
+            .route("/v1/teams/{id}/audit", get(team_audit))
+            .route("/v1/usage", get(usage))
+            .route("/v1/pairing-codes", get(pairing_list).post(pairing_mint))
+            .route(
+                "/v1/pairing-codes/{id}",
+                axum::routing::delete(pairing_revoke),
+            )
             .fallback(proxied)
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -1096,6 +1279,12 @@ impl FakeRelay {
             .push((prefix.to_string(), target.to_string()));
     }
 
+    /// Answers `GET /v1/usage` with `usage` (the relay's JSON) for every
+    /// account; none: 404, as a relay that does not meter.
+    pub fn set_usage(&self, usage: Option<serde_json::Value>) {
+        self.state.lock().unwrap().usage = usage;
+    }
+
     /// The current machine token of `id`.
     pub fn machine_token(&self, id: &str) -> Option<String> {
         self.state
@@ -1105,4 +1294,330 @@ impl FakeRelay {
             .get(id)
             .map(|r| r.token.clone())
     }
+}
+
+// ---- teams (simplified) ----
+
+type TeamResult = Result<(Identity, Option<String>), Response>;
+
+#[allow(clippy::result_large_err)]
+fn team_caller(st: &State_, headers: &HeaderMap) -> TeamResult {
+    let who = account_of(st, headers)?;
+    st.gate(headers)?;
+    let device = st.device_of(headers, &who);
+    Ok((who, device))
+}
+
+fn team_for(team: &crate::team::Team, who: &Identity) -> crate::team::Team {
+    let mut t = team.clone();
+    if let Some(m) = t.members.iter().find(|m| m.account == who.id) {
+        t.role = m.role;
+    }
+    if !t.role.manages() {
+        t.invites.clear();
+        t.devices.retain(|d| d.account == who.id);
+    }
+    t
+}
+
+async fn team_list(State(s): State<S>, headers: HeaderMap) -> Response {
+    let st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let teams: Vec<_> = st
+        .teams
+        .values()
+        .filter(|t| t.members.iter().any(|m| m.account == who.id))
+        .map(|t| team_for(t, &who))
+        .collect();
+    Json(serde_json::json!({ "teams": teams, "invites": [] })).into_response()
+}
+
+async fn team_create(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, device) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let id = format!("team-{:016x}", rand::random::<u64>());
+    let mut t = crate::team::Team {
+        id: id.clone(),
+        name: body["name"].as_str().unwrap_or_default().to_string(),
+        role: crate::team::TeamRole::Owner,
+        members: vec![crate::team::TeamMember {
+            account: who.id.clone(),
+            email: who.email.clone(),
+            role: crate::team::TeamRole::Owner,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    if let Some(d) = device {
+        t.devices.push(crate::team::TeamDevice {
+            account: who.id.clone(),
+            device: d,
+            state: "approved".into(),
+            decided_by: Some("auto".into()),
+            ..Default::default()
+        });
+    }
+    st.audit.push((
+        id.clone(),
+        serde_json::json!({"kind": "team_created", "actor": who.id}),
+    ));
+    st.teams.insert(id, t.clone());
+    (StatusCode::CREATED, Json(t)).into_response()
+}
+
+async fn team_get(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match st
+        .teams
+        .get(&id)
+        .filter(|t| t.members.iter().any(|m| m.account == who.id))
+    {
+        Some(t) => Json(team_for(t, &who)).into_response(),
+        None => err(StatusCode::NOT_FOUND, "no such team"),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn require_team_manager<'a>(
+    st: &'a mut State_,
+    id: &str,
+    who: &Identity,
+) -> Result<&'a mut crate::team::Team, Response> {
+    let t = st
+        .teams
+        .get_mut(id)
+        .filter(|t| t.members.iter().any(|m| m.account == who.id))
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+    let role = t
+        .members
+        .iter()
+        .find(|m| m.account == who.id)
+        .map(|m| m.role)
+        .unwrap_or_default();
+    if !role.manages() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "only the team's owner or an admin can do this",
+        ));
+    }
+    Ok(t)
+}
+
+async fn team_invite(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let url = st.public_url.clone();
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let role: crate::team::TeamRole =
+        serde_json::from_value(body["role"].clone()).unwrap_or_default();
+    let email = body["email"].as_str().map(str::to_lowercase);
+    let invite = crate::team::TeamInvite {
+        id: format!("inv_{:08x}", rand::random::<u32>()),
+        email: email.clone(),
+        role,
+        expires_at: now_secs() + 86_400,
+        uses_left: if email.is_some() { 1 } else { 25 },
+    };
+    t.invites.push(invite.clone());
+    let code = format!("{id}.{:016x}", rand::random::<u64>());
+    st.team_codes
+        .insert(code.clone(), (id.clone(), role, email));
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "invite_created", "actor": who.id}),
+    ));
+    (
+        StatusCode::CREATED,
+        Json(crate::team::NewTeamInvite {
+            invite,
+            link: format!("{url}/join/team/{code}"),
+            code,
+        }),
+    )
+        .into_response()
+}
+
+async fn team_join(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, device) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let code = body["code"].as_str().unwrap_or_default().to_string();
+    let Some((id, role, email)) = st.team_codes.get(&code).cloned() else {
+        return err(StatusCode::FORBIDDEN, "this invite is not valid");
+    };
+    if email.is_some() && email != who.email.as_ref().map(|e| e.to_lowercase()) {
+        return err(StatusCode::FORBIDDEN, "this invite is for another email");
+    }
+    let Some(t) = st.teams.get_mut(&id) else {
+        return err(StatusCode::NOT_FOUND, "no such team");
+    };
+    if !t.members.iter().any(|m| m.account == who.id) {
+        t.members.push(crate::team::TeamMember {
+            account: who.id.clone(),
+            email: who.email.clone(),
+            role,
+            ..Default::default()
+        });
+        if let Some(d) = &device {
+            t.devices.push(crate::team::TeamDevice {
+                account: who.id.clone(),
+                email: who.email.clone(),
+                device: d.clone(),
+                state: "pending".into(),
+                ..Default::default()
+            });
+        }
+    }
+    let mut view = team_for(t, &who);
+    view.this_device = device.map(|_| "pending".to_string());
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "member_joined", "actor": who.id}),
+    ));
+    Json(view).into_response()
+}
+
+async fn team_add_machine(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let machine = body["machine"].as_str().unwrap_or_default().to_string();
+    let Some(record) = st.machines.get(&machine).map(|r| r.machine.clone()) else {
+        return err(StatusCode::NOT_FOUND, "no such machine");
+    };
+    if record.owner.id != who.id {
+        return err(StatusCode::FORBIDDEN, "add a machine you own");
+    }
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    if !t.machines.iter().any(|m| m.id == machine) {
+        t.machines.push(crate::team::TeamMachine {
+            id: machine.clone(),
+            name: record.name.clone(),
+            owner: who.email.clone().unwrap_or(who.id.clone()),
+            online: false,
+        });
+    }
+    let view = team_for(t, &who);
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "machine_added", "machine": machine}),
+    ));
+    Json(view).into_response()
+}
+
+async fn team_remove_machine(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path((id, machine)): Path<(String, String)>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let before = t.machines.len();
+    t.machines.retain(|m| m.id != machine);
+    if t.machines.len() == before {
+        return err(StatusCode::NOT_FOUND, "that machine is not in the team");
+    }
+    let view = team_for(t, &who);
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "machine_removed", "machine": machine}),
+    ));
+    Json(view).into_response()
+}
+
+async fn team_approve(
+    State(s): State<S>,
+    headers: HeaderMap,
+    Path((id, device)): Path<(String, String)>,
+) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let t = match require_team_manager(&mut st, &id, &who) {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let Some(d) = t.devices.iter_mut().find(|d| d.device == device) else {
+        return err(StatusCode::NOT_FOUND, "no request from that device");
+    };
+    d.state = "approved".into();
+    d.decided_by = who.email.clone();
+    let d = d.clone();
+    st.audit.push((
+        id,
+        serde_json::json!({"kind": "device_approved", "subject": device}),
+    ));
+    Json(d).into_response()
+}
+
+async fn team_audit(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let mut st = s.lock().unwrap();
+    let (who, _) = match team_caller(&st, &headers) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if let Err(r) = require_team_manager(&mut st, &id, &who) {
+        return r;
+    }
+    let events: Vec<_> = st
+        .audit
+        .iter()
+        .filter(|(k, _)| k == &id)
+        .map(|(_, e)| {
+            let mut e = e.clone();
+            e["ts"] = now_secs().into();
+            e
+        })
+        .collect();
+    Json(serde_json::json!({ "events": events })).into_response()
 }

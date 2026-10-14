@@ -4,7 +4,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { WEBKIT_EVENT, WEBKIT_OPEN_SETTINGS_EVENT, type WebkitEventDetail } from "@/bridge/webkit-protocol";
+import { WEBKIT_EVENT, WEBKIT_OPEN_ROUTE_EVENT, WEBKIT_OPEN_SETTINGS_EVENT, type WebkitEventDetail } from "@/bridge/webkit-protocol";
 import { resolveCommand, type KeybindingCommand } from "@/lib/keybindings";
 import { useThemeStore } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
@@ -49,10 +49,20 @@ export function useGlobalKeybindings(): void {
     };
     // The SwiftUI app's Settings command (⌘, in its menu) reaches the page as an event, so it works
     // when the web view has no focus too (the native menu gets the key first then).
+    // Its notch and menu bar item open a page of the app (New UI on) the same way.
     const onHostEvent = (event: Event) => {
-      if ((event as CustomEvent<WebkitEventDetail>).detail?.event !== WEBKIT_OPEN_SETTINGS_EVENT) return;
-      useUiStore.getState().setPaletteOpen(false);
-      void navigate({ to: "/settings" });
+      const detail = (event as CustomEvent<WebkitEventDetail>).detail;
+      if (detail?.event === WEBKIT_OPEN_SETTINGS_EVENT) {
+        useUiStore.getState().setPaletteOpen(false);
+        void navigate({ to: "/settings" });
+        return;
+      }
+      if (detail?.event === WEBKIT_OPEN_ROUTE_EVENT) {
+        const path = appPath(detail.payload);
+        if (!path) return;
+        useUiStore.getState().setPaletteOpen(false);
+        void navigate({ href: path });
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener(WEBKIT_EVENT, onHostEvent);
@@ -61,4 +71,11 @@ export function useGlobalKeybindings(): void {
       window.removeEventListener(WEBKIT_EVENT, onHostEvent);
     };
   }, [navigate]);
+}
+
+/** The host's route: a path of this app (`/spaces/x?dropped=...`), never another origin. */
+export function appPath(payload: unknown): string | null {
+  const path = (payload as { path?: unknown } | null)?.path;
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return null;
+  return path;
 }

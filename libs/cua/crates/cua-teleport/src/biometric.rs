@@ -966,7 +966,7 @@ mod tests {
         // Right password for another account (an administrator's): refused.
         assert_eq!(password_verdict(false, true, false), Refuse);
         assert_eq!(password_verdict(false, true, true), Confirmed);
-        assert!(PASSWORD_ATTEMPTS <= 3);
+        const { assert!(PASSWORD_ATTEMPTS <= 3) };
     }
 
     #[test]

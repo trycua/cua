@@ -608,7 +608,12 @@ mod tests {
             icon: None,
             platform: Platform::Windows,
         };
-        let e = classify(&edge, &providers(), Platform::Windows, &TargetHint::default());
+        let e = classify(
+            &edge,
+            &providers(),
+            Platform::Windows,
+            &TargetHint::default(),
+        );
         assert_eq!(e.id, "edge");
         assert_eq!(e.provider_id.as_deref(), Some("chrome"));
         assert_eq!(e.capability, Capability::Full);

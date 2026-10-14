@@ -111,6 +111,7 @@ impl ChromeProvider {
     /// (what `--profile` sets), then `Default` — the
     /// profile a plain `Chrome` launch uses, which is the right default because
     /// asking to teleport "my Chrome" means the one the user is signed in to.
+    #[cfg(test)]
     fn source_profile_dir(&self, platform: Platform) -> Option<PathBuf> {
         self.source_profile_dir_for(platform, false)
     }
@@ -128,10 +129,6 @@ impl ChromeProvider {
     }
 
     /// The platform's Chrome user-data dir — the parent of every profile.
-    fn user_data_dir(&self, platform: Platform) -> Option<PathBuf> {
-        self.user_data_dir_for_browser(platform, false)
-    }
-
     fn user_data_dir_for_browser(&self, platform: Platform, edge: bool) -> Option<PathBuf> {
         let rel = if edge {
             edge_user_data_dir_for(platform)
@@ -160,6 +157,7 @@ impl ChromeProvider {
     /// `source_profile_dir`, but failing loudly: a selector that names no
     /// profile on disk would otherwise capture an empty bundle and look like a
     /// successful teleport, so name the profiles that do exist instead.
+    #[cfg(test)]
     fn resolved_profile_dir(&self, platform: Platform) -> Result<PathBuf> {
         self.resolved_profile_dir_for(platform, false)
     }
@@ -780,7 +778,11 @@ impl ExportProvider for ChromeProvider {
                 if *name == "Cookies" {
                     let cookies = crate::browser_cookies::ChromeCookies::new(self.host.clone())
                         .with_platform(app.platform)
-                        .with_browser(if is_edge(&app.app_id) { "edge" } else { "chrome" })
+                        .with_browser(if is_edge(&app.app_id) {
+                            "edge"
+                        } else {
+                            "chrome"
+                        })
                         .with_profile_dir(profile_dir.clone())
                         .read(&[])?;
                     if !cookies.is_empty() {

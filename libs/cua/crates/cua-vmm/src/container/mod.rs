@@ -332,12 +332,17 @@ impl ContainerRuntime {
         // dockerd restarts; wait for it to come back with runsc registered.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
         while tokio::time::Instant::now() < deadline {
-            if let Ok(rts) = connect_uri(&self.endpoint.uri).await?.info().await.map(|i| {
-                i.runtimes
-                    .unwrap_or_default()
-                    .into_keys()
-                    .collect::<Vec<_>>()
-            }) && rts.iter().any(|r| r == "runsc")
+            if let Ok(rts) = connect_uri(&self.endpoint.uri)
+                .await?
+                .info()
+                .await
+                .map(|i| {
+                    i.runtimes
+                        .unwrap_or_default()
+                        .into_keys()
+                        .collect::<Vec<_>>()
+                })
+                && rts.iter().any(|r| r == "runsc")
             {
                 return Ok(());
             }

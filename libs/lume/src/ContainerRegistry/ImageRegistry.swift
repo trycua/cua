@@ -30,7 +30,8 @@ protocol ImageRegistry: Sendable {
         name: String?,
         locationName: String?,
         force: Bool,
-        progressHandler: PullProgressHandler?
+        progressHandler: PullProgressHandler?,
+        preparation: OwnedPreparation?
     ) async throws -> VMDirectory
 
     /// Push a VM to the registry
@@ -61,8 +62,8 @@ protocol ImageRegistry: Sendable {
 
 // Default implementations for optional parameters
 extension ImageRegistry {
-    func pull(image: String, name: String? = nil, locationName: String? = nil, force: Bool = false, progressHandler: PullProgressHandler? = nil) async throws -> VMDirectory {
-        try await pull(image: image, name: name, locationName: locationName, force: force, progressHandler: progressHandler)
+    func pull(image: String, name: String? = nil, locationName: String? = nil, force: Bool = false, progressHandler: PullProgressHandler? = nil, preparation: OwnedPreparation? = nil) async throws -> VMDirectory {
+        try await pull(image: image, name: name, locationName: locationName, force: force, progressHandler: progressHandler, preparation: preparation)
     }
 
     func push(

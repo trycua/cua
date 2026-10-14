@@ -51,10 +51,19 @@ final class SharedVM {
 
 // MARK: - Pull Progress Tracker
 
-/// Tracks async pulls keyed by VM name: their byte progress (read by
-/// `GET /lume/vms/:name`), their errors, and the task running each async pull
-/// so `POST /lume/pull/cancel` can stop it.
-///
+struct PullOperationKey: Sendable, Hashable {
+    let name: String
+    let destination: String
+    let image: String
+    let registry: String
+    let organization: String
+    let preparation: PullPreparationIdentity?
+
+    static func legacy(_ name: String) -> PullOperationKey {
+        PullOperationKey(name: name, destination: "", image: "", registry: "", organization: "", preparation: nil)
+    }
+}
+
 /// Every pull gets a token from `begin`; progress and the final outcome are
 /// only applied while that token is the name's current pull, so a late
 /// progress update can never bring back a finished or cancelled entry.
@@ -76,7 +85,14 @@ actor PullProgressTracker {
         case timedOut
     }
 
+    enum BeginResult: Sendable {
+        case started(UUID)
+        case alreadyRunning(UUID)
+        case conflict
+    }
+
     private struct ActivePull {
+        let key: PullOperationKey
         let token: UUID
         let cancellable: Bool
         var progress: PullProgress
@@ -84,51 +100,78 @@ actor PullProgressTracker {
         var cancelRequested = false
     }
 
-    private var active: [String: ActivePull] = [:]
-    private var errors: [String: String] = [:]
+    private var active: [PullOperationKey: ActivePull] = [:]
+    private var errors: [PullOperationKey: String] = [:]
     private var waiters: [UUID: [UUID: CheckedContinuation<Bool, Never>]] = [:]
 
     init() {}
 
     /// Starts tracking a pull for `name` and returns its token. A cancellable
     /// pull is one whose task is handed over with `attach`.
-    func begin(name: String, cancellable: Bool) -> UUID {
+    func begin(key: PullOperationKey, cancellable: Bool) -> BeginResult {
+        if let existing = active[key] {
+            return .alreadyRunning(existing.token)
+        }
+        if active.keys.contains(where: { $0.name == key.name }) {
+            return .conflict
+        }
         let token = UUID()
-        active[name] = ActivePull(token: token, cancellable: cancellable, progress: .zero)
-        errors.removeValue(forKey: name)
-        return token
+        active[key] = ActivePull(key: key, token: token, cancellable: cancellable, progress: .zero)
+        errors.keys.filter { $0.name == key.name }.forEach { errors.removeValue(forKey: $0) }
+        return .started(token)
+    }
+
+    func begin(name: String, cancellable: Bool) -> UUID {
+        if case .started(let token) = begin(key: .legacy(name), cancellable: cancellable) { return token }
+        preconditionFailure("legacy tracker key unexpectedly occupied")
     }
 
     /// The token of the cancellable pull running for `name`, if any.
-    func activeCancellableToken(for name: String) -> UUID? {
-        guard let entry = active[name], entry.cancellable else { return nil }
+    func activeCancellableToken(for key: PullOperationKey) -> UUID? {
+        guard let entry = active[key], entry.cancellable else { return nil }
         return entry.token
+    }
+
+    func activeCancellableToken(for name: String) -> UUID? {
+        active.values.first(where: { $0.key.name == name && $0.cancellable })?.token
+    }
+
+    func activeToken(for name: String) -> UUID? {
+        active.values.first(where: { $0.key.name == name })?.token
     }
 
     /// Hands over the task running the pull `token`. If a cancel already
     /// arrived, the task is cancelled right away.
-    func attach(_ task: Task<Void, Never>, name: String, token: UUID) {
-        guard var entry = active[name], entry.token == token else { return }
+    func attach(_ task: Task<Void, Never>, key: PullOperationKey, token: UUID) {
+        guard var entry = active[key], entry.token == token else { return }
         entry.task = task
-        active[name] = entry
+        active[key] = entry
         if entry.cancelRequested { task.cancel() }
     }
 
-    func setProgress(_ value: PullProgress, for name: String, token: UUID) {
-        guard var entry = active[name], entry.token == token, !entry.cancelRequested else { return }
+    func attach(_ task: Task<Void, Never>, name: String, token: UUID) {
+        attach(task, key: .legacy(name), token: token)
+    }
+
+    func setProgress(_ value: PullProgress, for key: PullOperationKey, token: UUID) {
+        guard var entry = active[key], entry.token == token, !entry.cancelRequested else { return }
         entry.progress = value
-        active[name] = entry
+        active[key] = entry
+    }
+
+    func setProgress(_ value: PullProgress, for name: String, token: UUID) {
+        setProgress(value, for: .legacy(name), token: token)
     }
 
     /// Records how the pull `token` ended and wakes up anyone waiting on it.
     /// A pull that was asked to cancel leaves no entry and no error behind.
-    func finish(name: String, token: UUID, outcome: Outcome) {
-        if let entry = active[name], entry.token == token {
-            active.removeValue(forKey: name)
+    func finish(key: PullOperationKey, token: UUID, outcome: Outcome) {
+        if let entry = active[key], entry.token == token {
+            active.removeValue(forKey: key)
             if case .failed(let message) = outcome, !entry.cancelRequested {
-                errors[name] = message
+                errors[key] = message
             } else {
-                errors.removeValue(forKey: name)
+                errors.removeValue(forKey: key)
             }
         }
         if let pending = waiters.removeValue(forKey: token) {
@@ -136,13 +179,17 @@ actor PullProgressTracker {
         }
     }
 
+    func finish(name: String, token: UUID, outcome: Outcome) {
+        finish(key: .legacy(name), token: token, outcome: outcome)
+    }
+
     /// Cancels the async pull running for `name` and waits up to `timeout`
     /// seconds for its task to end (the task cleans up before it ends).
-    func cancel(name: String, timeout: TimeInterval = 30) async -> CancelOutcome {
-        guard var entry = active[name], entry.cancellable else { return .notFound }
+    func cancel(key: PullOperationKey, token expectedToken: UUID, timeout: TimeInterval = 30) async -> CancelOutcome {
+        guard var entry = active[key], entry.cancellable, entry.token == expectedToken else { return .notFound }
         let token = entry.token
         entry.cancelRequested = true
-        active[name] = entry
+        active[key] = entry
         entry.task?.cancel()
 
         let waiterId = UUID()
@@ -157,6 +204,19 @@ actor PullProgressTracker {
         return ended ? .cancelled : .timedOut
     }
 
+    func cancel(name: String, timeout: TimeInterval = 30) async -> CancelOutcome {
+        guard let key = active.keys.first(where: { $0.name == name && active[$0]?.cancellable == true }),
+              let token = active[key]?.token else { return .notFound }
+        return await cancel(key: key, token: token, timeout: timeout)
+    }
+
+    func cancel(name: String, token: UUID, timeout: TimeInterval = 30) async -> CancelOutcome {
+        guard let key = active.keys.first(where: { $0.name == name && active[$0]?.token == token }) else {
+            return .notFound
+        }
+        return await cancel(key: key, token: token, timeout: timeout)
+    }
+
     private func expireWaiter(token: UUID, waiterId: UUID) {
         if let continuation = waiters[token]?.removeValue(forKey: waiterId) {
             continuation.resume(returning: false)
@@ -164,7 +224,7 @@ actor PullProgressTracker {
     }
 
     func getPullProgress(for name: String) -> PullProgress? {
-        guard let entry = active[name], !entry.cancelRequested else { return nil }
+        guard let entry = active.values.first(where: { $0.key.name == name }), !entry.cancelRequested else { return nil }
         return entry.progress
     }
 
@@ -173,11 +233,11 @@ actor PullProgressTracker {
     }
 
     func getError(for name: String) -> String? {
-        return errors[name]
+        errors.first(where: { $0.key.name == name })?.value
     }
 
     func isPulling(_ name: String) -> Bool {
-        return active[name] != nil
+        return active.keys.contains(where: { $0.name == name })
     }
 }
 
@@ -1451,9 +1511,16 @@ final class LumeController {
         username: String? = nil,
         password: String? = nil,
         force: Bool = false,
-        progressHandler: PullProgressHandler? = nil
+        progressHandler: PullProgressHandler? = nil,
+        preparationWorkRoot: String? = nil,
+        preparationScopeID: String? = nil,
+        preparationOperationID: String? = nil
     ) async throws {
         do {
+            let preparation = try OwnedPreparation.make(
+                workRoot: preparationWorkRoot,
+                scopeID: preparationScopeID,
+                operationID: preparationOperationID)
             // Split the image to get name and tag
             let components = image.split(separator: ":")
             guard components.count == 2 else {
@@ -1476,6 +1543,11 @@ final class LumeController {
                     "location": storage ?? "home",
                 ])
 
+            if let preparation {
+                let destination = try pullDestinationURL(name: vmName, storage: storage)
+                try Self.validateOwnedPullDestination(destination, preparation: preparation)
+            }
+
             try self.validatePullParameters(
                 image: image,
                 name: vmName,
@@ -1489,13 +1561,17 @@ final class LumeController {
             try await Self.removingNewVMDirectoryOnCancel(targetDir) {
                 let imageRegistry = try RegistryFactory.createRegistry(
                     registry: registry, organization: organization,
-                    username: username, password: password)
+                    username: username, password: password,
+                    preparationWorkRoot: preparationWorkRoot,
+                    preparationScopeID: preparationScopeID,
+                    preparationOperationID: preparationOperationID)
                 let _ = try await imageRegistry.pull(
                     image: image,
                     name: vmName,
                     locationName: storage,
                     force: force,
-                    progressHandler: progressHandler)
+                    progressHandler: progressHandler,
+                    preparation: preparation)
 
                 Logger.debug(
                     "Setting new VM mac address",
@@ -1953,6 +2029,26 @@ final class LumeController {
             return try home.getVMDirectoryFromPath(name, storagePath: storage)
         }
         return try home.getVMDirectory(name, storage: storage)
+    }
+
+    private func pullDestinationURL(name: String, storage: String?) throws -> URL {
+        if let storage, storage.contains("/") || storage.contains("\\") {
+            return URL(fileURLWithPath: storage, isDirectory: true)
+                .appendingPathComponent(name, isDirectory: true)
+        }
+        if storage == "ephemeral" {
+            let tmpDir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
+            return URL(fileURLWithPath: tmpDir, isDirectory: true)
+                .appendingPathComponent(name, isDirectory: true)
+        }
+        return try home.getVMDirectory(name, storage: storage).dir.url
+    }
+
+    static func validateOwnedPullDestination(
+        _ destination: URL,
+        preparation: OwnedPreparation
+    ) throws {
+        try ImageContainerRegistry.validateDestination(destination, preparation: preparation)
     }
 
     /// Runs a pull and, if the task is cancelled, removes the VM directory the

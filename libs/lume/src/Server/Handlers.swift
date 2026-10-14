@@ -2,6 +2,28 @@ import ArgumentParser
 import Foundation
 import Virtualization
 
+private func pullDestinationIdentity(_ storage: String?) -> String {
+    guard let storage else { return "home" }
+    if storage.contains("/") || storage.contains("\\") {
+        return URL(fileURLWithPath: storage).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+    return storage
+}
+
+private func pullOperationKey(
+    request: PullRequest,
+    vmName: String,
+    preparation: OwnedPreparation?
+) -> PullOperationKey {
+    PullOperationKey(
+        name: vmName,
+        destination: pullDestinationIdentity(request.storage),
+        image: request.image,
+        registry: request.registry,
+        organization: request.organization,
+        preparation: preparation?.identity)
+}
+
 @MainActor
 extension Server {
     // MARK: - VM Management Handlers
@@ -29,6 +51,7 @@ extension Server {
         // Check if an async pull is in progress for this VM name
         let pullProgress = await PullProgressTracker.shared.getPullProgress(for: name)
         let pullError = await PullProgressTracker.shared.getError(for: name)
+        let operationToken = await PullProgressTracker.shared.activeCancellableToken(for: name)
 
         if let errorMsg = pullError {
             // Pull failed — surface the error
@@ -37,7 +60,7 @@ extension Server {
 
         if let progress = pullProgress {
             // Pull in progress — return a synthetic "pulling" status without hitting disk
-            return try Self.pullingResponse(name: name, progress: progress)
+            return try Self.pullingResponse(name: name, progress: progress, token: operationToken)
         }
 
         do {
@@ -50,10 +73,7 @@ extension Server {
         }
     }
 
-    /// The synthetic `GET /lume/vms/:name` body while an async pull runs:
-    /// `downloadProgress` is the percent (0 to 100) older clients read;
-    /// `downloadedBytes`, `totalBytes` and `bytesPerSecond` give byte detail.
-    nonisolated static func pullingResponse(name: String, progress: PullProgress) throws
+    nonisolated static func pullingResponse(name: String, progress: PullProgress, token: UUID? = nil) throws
         -> HTTPResponse
     {
         let responseBody: [String: AnyEncodable] = [
@@ -63,6 +83,7 @@ extension Server {
             "downloadedBytes": AnyEncodable(progress.downloadedBytes),
             "totalBytes": AnyEncodable(progress.totalBytes),
             "bytesPerSecond": AnyEncodable(progress.bytesPerSecond),
+            "operationToken": AnyEncodable(token?.uuidString),
         ]
         return try HTTPResponse(
             statusCode: .ok,
@@ -71,8 +92,8 @@ extension Server {
         )
     }
 
-    /// `POST /lume/pull/cancel` with `{"name": "<vm>"}`: cancels the async pull
-    /// started by `/lume/pull/start` for that name and waits (up to
+    /// `POST /lume/pull/cancel` with `{"name": "<vm>", "token": "<operation-token>"}`:
+    /// cancels the keyed async pull started by `/lume/pull/start` and waits (up to
     /// `pullCancelTimeout` seconds) until it stopped and cleaned up. 200 once it
     /// ended, 404 when no async pull runs for the name, 500 if it did not stop
     /// in time.
@@ -88,7 +109,11 @@ extension Server {
             )
         }
 
-        let outcome = await PullProgressTracker.shared.cancel(name: request.name, timeout: timeout)
+        guard let token = request.token else {
+            return .badRequest(message: "operation token is required")
+        }
+        let outcome = await PullProgressTracker.shared.cancel(
+            name: request.name, token: token, timeout: timeout)
         switch outcome {
         case .notFound:
             return HTTPResponse(
@@ -131,6 +156,16 @@ extension Server {
             )
         }
 
+        let preparation: OwnedPreparation?
+        do {
+            preparation = try OwnedPreparation.make(
+                workRoot: request.preparationWorkRoot,
+                scopeID: request.preparationScopeID,
+                operationID: request.preparationOperationID)
+        } catch {
+            return .badRequest(message: error.localizedDescription)
+        }
+
         let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
         // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
@@ -140,10 +175,11 @@ extension Server {
 
         let vmName = request.name ?? imageName
         let tracker = PullProgressTracker.shared
+        let key = pullOperationKey(request: request, vmName: vmName, preparation: preparation)
 
-        // A second start for a name that is already pulling joins that pull
-        // instead of racing a duplicate download into the same VM directory.
-        if await tracker.activeCancellableToken(for: vmName) != nil {
+        let token: UUID
+        switch await tracker.begin(key: key, cancellable: true) {
+        case .alreadyRunning(let existing):
             return HTTPResponse(
                 statusCode: .accepted,
                 headers: ["Content-Type": "application/json"],
@@ -151,11 +187,18 @@ extension Server {
                     "message": AnyEncodable("Pull already in progress"),
                     "name": AnyEncodable(vmName),
                     "image": AnyEncodable(request.image),
+                    "operationToken": AnyEncodable(existing.uuidString),
                 ])
             )
+        case .conflict:
+            return HTTPResponse(
+                statusCode: .conflict,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "a pull for \(vmName) is already active with a different operation identity"))
+            )
+        case .started(let started):
+            token = started
         }
-
-        let token = await tracker.begin(name: vmName, cancellable: true)
         let pullStartedAt = Date()
 
         let task = Task.detached { @MainActor @Sendable in
@@ -169,8 +212,11 @@ extension Server {
                     organization: request.organization,
                     storage: request.storage,
                     progressHandler: { progress in
-                        Task { await tracker.setProgress(progress, for: vmName, token: token) }
-                    }
+                        Task { await tracker.setProgress(progress, for: key, token: token) }
+                    },
+                    preparationWorkRoot: request.preparationWorkRoot,
+                    preparationScopeID: request.preparationScopeID,
+                    preparationOperationID: request.preparationOperationID
                 )
                 outcome = .completed
                 Logger.info("Async pull completed", metadata: ["name": vmName])
@@ -195,9 +241,9 @@ extension Server {
                 elapsed: Date().timeIntervalSince(pullStartedAt)
             )
             // Last step: a waiting cancel returns once this ran, after cleanup.
-            await tracker.finish(name: vmName, token: token, outcome: outcome)
+            await tracker.finish(key: key, token: token, outcome: outcome)
         }
-        await tracker.attach(task, name: vmName, token: token)
+        await tracker.attach(task, key: key, token: token)
 
         return HTTPResponse(
             statusCode: .accepted,
@@ -206,6 +252,7 @@ extension Server {
                 "message": AnyEncodable("Pull started"),
                 "name": AnyEncodable(vmName),
                 "image": AnyEncodable(request.image),
+                "operationToken": AnyEncodable(token.uuidString),
             ])
         )
     }
@@ -649,6 +696,16 @@ extension Server {
             )
         }
 
+        let preparation: OwnedPreparation?
+        do {
+            preparation = try OwnedPreparation.make(
+                workRoot: request.preparationWorkRoot,
+                scopeID: request.preparationScopeID,
+                operationID: request.preparationOperationID)
+        } catch {
+            return .badRequest(message: error.localizedDescription)
+        }
+
         // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
             "image": TelemetryClient.imageId(
@@ -656,7 +713,16 @@ extension Server {
         ])
 
         let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
-        let token = await PullProgressTracker.shared.begin(name: vmName, cancellable: false)
+        let key = pullOperationKey(request: request, vmName: vmName, preparation: preparation)
+        let token: UUID
+        switch await PullProgressTracker.shared.begin(key: key, cancellable: false) {
+        case .started(let value): token = value
+        case .alreadyRunning, .conflict:
+            return HTTPResponse(
+                statusCode: .conflict,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "a pull for \(vmName) is already active")))
+        }
         do {
             let vmController = LumeController()
             try await vmController.pullImage(
@@ -668,11 +734,14 @@ extension Server {
                 progressHandler: { progress in
                     Task {
                         await PullProgressTracker.shared.setProgress(
-                            progress, for: vmName, token: token)
+                            progress, for: key, token: token)
                     }
-                }
+                },
+                preparationWorkRoot: request.preparationWorkRoot,
+                preparationScopeID: request.preparationScopeID,
+                preparationOperationID: request.preparationOperationID
             )
-            await PullProgressTracker.shared.finish(name: vmName, token: token, outcome: .completed)
+            await PullProgressTracker.shared.finish(key: key, token: token, outcome: .completed)
 
             return HTTPResponse(
                 statusCode: .ok,
@@ -685,7 +754,7 @@ extension Server {
             )
         } catch {
             await PullProgressTracker.shared.finish(
-                name: vmName, token: token, outcome: .failed(error.localizedDescription))
+                key: key, token: token, outcome: .failed(error.localizedDescription))
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],

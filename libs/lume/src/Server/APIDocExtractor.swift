@@ -163,11 +163,12 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "downloadProgress", type: "number", required: false, description: "While an async pull runs (status \"pulling\"): downloaded percent, 0 to 100", defaultValue: nil),
                     APIFieldDoc(name: "downloadedBytes", type: "integer", required: false, description: "While an async pull runs: bytes downloaded so far", defaultValue: nil),
                     APIFieldDoc(name: "totalBytes", type: "integer", required: false, description: "While an async pull runs: total bytes to download (0 until known)", defaultValue: nil),
-                    APIFieldDoc(name: "bytesPerSecond", type: "number", required: false, description: "While an async pull runs: smoothed transfer rate in bytes per second", defaultValue: nil)
+                    APIFieldDoc(name: "bytesPerSecond", type: "number", required: false, description: "While an async pull runs: smoothed transfer rate in bytes per second", defaultValue: nil),
+                    APIFieldDoc(name: "operationToken", type: "string", required: false, description: "While an async pull runs: token required by POST /lume/pull/cancel", defaultValue: nil)
                 ]
             ),
             statusCodes: [
-                APIStatusCodeDoc(code: 200, description: "Success (while an async pull runs, only name, status \"pulling\", downloadProgress, downloadedBytes, totalBytes and bytesPerSecond)"),
+                APIStatusCodeDoc(code: 200, description: "Success (while an async pull runs, status \"pulling\" includes operationToken and progress fields)"),
                 APIStatusCodeDoc(code: 400, description: "VM not found, invalid request, or the async pull failed")
             ]
         )
@@ -424,7 +425,10 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "name", type: "string", required: false, description: "Name for the resulting VM", defaultValue: nil),
                     APIFieldDoc(name: "registry", type: "string", required: false, description: "Container registry URL", defaultValue: "ghcr.io"),
                     APIFieldDoc(name: "organization", type: "string", required: false, description: "Organization to pull from", defaultValue: "trycua"),
-                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil)
+                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil),
+                    APIFieldDoc(name: "preparationWorkRoot", type: "string", required: false, description: "Absolute GHCR preparation work root; must be supplied with preparationScopeID and preparationOperationID", defaultValue: nil),
+                    APIFieldDoc(name: "preparationScopeID", type: "string", required: false, description: "Preparation scope identifier; must be supplied with preparationWorkRoot and preparationOperationID", defaultValue: nil),
+                    APIFieldDoc(name: "preparationOperationID", type: "string", required: false, description: "Preparation operation identifier; must be supplied with preparationWorkRoot and preparationScopeID", defaultValue: nil)
                 ]
             ),
             responseBody: APIResponseDoc(
@@ -434,7 +438,8 @@ enum APIDocExtractor {
             ),
             statusCodes: [
                 APIStatusCodeDoc(code: 200, description: "Image pulled successfully"),
-                APIStatusCodeDoc(code: 400, description: "Pull operation failed")
+                APIStatusCodeDoc(code: 400, description: "Pull operation failed"),
+                APIStatusCodeDoc(code: 409, description: "A pull for the VM name is already active")
             ]
         )
     }
@@ -455,17 +460,21 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "name", type: "string", required: false, description: "Name for the resulting VM", defaultValue: nil),
                     APIFieldDoc(name: "registry", type: "string", required: false, description: "Container registry URL", defaultValue: "ghcr.io"),
                     APIFieldDoc(name: "organization", type: "string", required: false, description: "Organization to pull from", defaultValue: "trycua"),
-                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil)
+                    APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil),
+                    APIFieldDoc(name: "preparationWorkRoot", type: "string", required: false, description: "Absolute GHCR preparation work root; must be supplied with preparationScopeID and preparationOperationID", defaultValue: nil),
+                    APIFieldDoc(name: "preparationScopeID", type: "string", required: false, description: "Preparation scope identifier; must be supplied with preparationWorkRoot and preparationOperationID", defaultValue: nil),
+                    APIFieldDoc(name: "preparationOperationID", type: "string", required: false, description: "Preparation operation identifier; must be supplied with preparationWorkRoot and preparationScopeID", defaultValue: nil)
                 ]
             ),
             responseBody: APIResponseDoc(
                 contentType: "application/json",
-                description: "Object with message, name and image. A start for a name that is already pulling joins that pull (message \"Pull already in progress\")",
+                description: "Object with message, name, image and operationToken. The token identifies the operation for status/cancel; an exact keyed start joins and returns the existing token.",
                 fields: nil
             ),
             statusCodes: [
                 APIStatusCodeDoc(code: 202, description: "Pull started or already in progress"),
-                APIStatusCodeDoc(code: 400, description: "Invalid request body")
+                APIStatusCodeDoc(code: 400, description: "Invalid request body or partial preparation tuple"),
+                APIStatusCodeDoc(code: 409, description: "A different pull identity is already active for the VM name")
             ]
         )
     }
@@ -480,14 +489,15 @@ enum APIDocExtractor {
             queryParameters: [],
             requestBody: APIRequestBodyDoc(
                 contentType: "application/json",
-                description: "The VM name the pull was started for",
+                description: "The VM name and operation token returned by POST /lume/pull/start",
                 fields: [
-                    APIFieldDoc(name: "name", type: "string", required: true, description: "VM name of the pull to cancel", defaultValue: nil)
+                    APIFieldDoc(name: "name", type: "string", required: true, description: "VM name of the pull to cancel", defaultValue: nil),
+                    APIFieldDoc(name: "token", type: "string", required: true, description: "Operation token; prevents cancellation of another operation with the same VM name", defaultValue: nil)
                 ]
             ),
             responseBody: APIResponseDoc(
                 contentType: "application/json",
-                description: "Object with message (\"Pull cancelled\") and name",
+                description: "Object with message (\"Pull cancelled\") and name. The operation token is single-use and is returned by the start/status lifecycle.",
                 fields: nil
             ),
             statusCodes: [

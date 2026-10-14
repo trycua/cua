@@ -143,8 +143,8 @@ final class StubBlobProtocol: URLProtocol, @unchecked Sendable {
     }
 }
 
-private func makeStubRegistry(cache: URL) -> ImageContainerRegistry {
-    let registry = ImageContainerRegistry(
+private func makeStubRegistry(cache: URL) throws -> ImageContainerRegistry {
+    let registry = try ImageContainerRegistry(
         registry: StubBlobProtocol.host, organization: "org", cacheDirectory: cache,
         cachingEnabled: true)
     registry.urlProtocolClasses = [StubBlobProtocol.self]
@@ -284,7 +284,7 @@ struct LayerDownloadTests {
             "/v2/org/img/blobs/\(digest)",
             [StubBlobPlan(body: blob, chunkSize: 32 * 1024, delay: 0.005)])
 
-        let registry = makeStubRegistry(cache: dir.appendingPathComponent("cache"))
+        let registry = try makeStubRegistry(cache: dir.appendingPathComponent("cache"))
         let clock = TestClock()
         let (tracker, log) = await makeTracker(clock: clock, interval: 0)
         await tracker.setTotal(Int64(blob.count), files: 1)
@@ -322,7 +322,7 @@ struct LayerDownloadTests {
                 StubBlobPlan(body: blob, chunkSize: 64 * 1024, delay: 0.001),
             ])
 
-        let registry = makeStubRegistry(cache: dir.appendingPathComponent("cache"))
+        let registry = try makeStubRegistry(cache: dir.appendingPathComponent("cache"))
         let clock = TestClock()
         let (tracker, log) = await makeTracker(clock: clock, interval: 0)
         // A total well above the blob keeps the cap from hiding an overcount.
@@ -351,7 +351,7 @@ struct LayerDownloadTests {
             "/v2/org/img/blobs/\(digest)",
             [StubBlobPlan(body: blob, chunkSize: 32 * 1024, delay: 0.1)])
 
-        let registry = makeStubRegistry(cache: dir.appendingPathComponent("cache"))
+        let registry = try makeStubRegistry(cache: dir.appendingPathComponent("cache"))
         let clock = TestClock()
         let (tracker, _) = await makeTracker(clock: clock, interval: 0)
         await tracker.setTotal(Int64(blob.count), files: 1)
@@ -388,7 +388,7 @@ struct LayerDownloadTests {
         let path = "/v2/org/img/blobs/\(digest)"
         StubBlobProtocol.plans.set(path, [StubBlobPlan(status: 500, body: Data("boom".utf8))])
 
-        let registry = makeStubRegistry(cache: dir.appendingPathComponent("cache"))
+        let registry = try makeStubRegistry(cache: dir.appendingPathComponent("cache"))
         registry.retryBaseDelay = 30
         let clock = TestClock()
         let (tracker, _) = await makeTracker(clock: clock, interval: 0)
@@ -537,6 +537,7 @@ struct PullRouteTests {
         #expect((body["downloadedBytes"] as? NSNumber)?.int64Value == 250_000)
         #expect((body["totalBytes"] as? NSNumber)?.int64Value == 1_000_000)
         #expect(body["bytesPerSecond"] as? Double == 12_500.5)
+        #expect((body["operationToken"] as? String)?.isEmpty == false)
     }
 
     @Test("cancel with nothing running is a 404")
@@ -544,7 +545,7 @@ struct PullRouteTests {
         let name = "pull-none-\(UUID().uuidString)"
         let server = Server(port: 0)
         let response = try await server.handleRequest(
-            try request("POST", "/lume/pull/cancel", ["name": name]))
+            try request("POST", "/lume/pull/cancel", ["name": name, "token": UUID().uuidString]))
         #expect(response.statusCode == .notFound)
         #expect(try json(response)["message"] as? String == "no pull in progress for \(name)")
 
@@ -559,9 +560,10 @@ struct PullRouteTests {
         defer { try? FileManager.default.removeItem(at: scratch) }
         let task = await startFakePull(name: name, scratch: scratch)
         let server = Server(port: 0)
+        let token = await PullProgressTracker.shared.activeCancellableToken(for: name)!
 
         let response = try await server.handleRequest(
-            try request("POST", "/lume/pull/cancel", ["name": name]))
+            try request("POST", "/lume/pull/cancel", ["name": name, "token": token.uuidString]))
         #expect(response.statusCode == .ok)
         let body = try json(response)
         #expect(body["message"] as? String == "Pull cancelled")
@@ -580,7 +582,7 @@ struct PullRouteTests {
 
         // A second cancel finds nothing.
         let again = try await server.handleRequest(
-            try request("POST", "/lume/pull/cancel", ["name": name]))
+            try request("POST", "/lume/pull/cancel", ["name": name, "token": token.uuidString]))
         #expect(again.statusCode == .notFound)
     }
 
@@ -615,10 +617,73 @@ struct PullRouteTests {
 
         let server = Server(port: 0)
         let response = try await server.handlePullCancel(
-            try JSONSerialization.data(withJSONObject: ["name": name]), timeout: 0.3)
+            try JSONSerialization.data(withJSONObject: ["name": name, "token": token.uuidString]), timeout: 0.3)
         #expect(response.statusCode == .internalServerError)
         _ = await release.value
         #expect(await !tracker.isPulling(name))
+    }
+
+    @Test("same-name pulls with different preparation identities conflict")
+    func keyedOperationsDoNotJoinOrOverwrite() async {
+        let name = "pull-conflict-\(UUID().uuidString)"
+        let tracker = PullProgressTracker()
+        let first = PullOperationKey(
+            name: name, destination: "/vm-a", image: "one:latest", registry: "ghcr.io",
+            organization: "org",
+            preparation: PullPreparationIdentity(scopeID: "scope-a", operationID: "op-a", workRoot: "/work-a"))
+        let second = PullOperationKey(
+            name: name, destination: "/vm-b", image: "two:latest", registry: "ghcr.io",
+            organization: "org",
+            preparation: PullPreparationIdentity(scopeID: "scope-b", operationID: "op-b", workRoot: "/work-b"))
+        guard case .started(let token) = await tracker.begin(key: first, cancellable: true) else {
+            Issue.record("first operation did not start")
+            return
+        }
+        guard case .conflict = await tracker.begin(key: second, cancellable: true) else {
+            Issue.record("conflicting operation was accepted")
+            return
+        }
+        await tracker.finish(key: first, token: token, outcome: .cancelled)
+    }
+
+    @Test("a new same-name operation clears a prior operation error")
+    func staleErrorDoesNotPoisonNewOperation() async {
+        let name = "pull-stale-error-\(UUID().uuidString)"
+        let tracker = PullProgressTracker()
+        let first = PullOperationKey(
+            name: name, destination: "/vm-a", image: "one:latest", registry: "ghcr.io",
+            organization: "org", preparation: nil)
+        let second = PullOperationKey(
+            name: name, destination: "/vm-b", image: "two:latest", registry: "ghcr.io",
+            organization: "org",
+            preparation: PullPreparationIdentity(scopeID: "scope-b", operationID: "op-b", workRoot: "/work-b"))
+        guard case .started(let firstToken) = await tracker.begin(key: first, cancellable: true)
+        else {
+            Issue.record("operations did not reach the expected lifecycle")
+            return
+        }
+        await tracker.finish(key: first, token: firstToken, outcome: .failed("old failure"))
+        guard case .started = await tracker.begin(key: second, cancellable: true) else {
+            Issue.record("replacement operation did not start")
+            return
+        }
+        #expect(await tracker.getError(for: name) == nil)
+    }
+
+    @Test("synchronous pulls do not expose a cancellable operation token")
+    func synchronousPullHasNoCancellationToken() async {
+        let name = "pull-sync-token-\(UUID().uuidString)"
+        let tracker = PullProgressTracker()
+        let key = PullOperationKey(
+            name: name, destination: "home", image: "image:latest", registry: "ghcr.io",
+            organization: "org", preparation: nil)
+        guard case .started(let token) = await tracker.begin(key: key, cancellable: false) else {
+            Issue.record("synchronous operation did not start")
+            return
+        }
+        #expect(await tracker.activeToken(for: name) == token)
+        #expect(await tracker.activeCancellableToken(for: name) == nil)
+        await tracker.finish(key: key, token: token, outcome: .completed)
     }
 }
 

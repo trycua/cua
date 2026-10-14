@@ -29,9 +29,23 @@ enum LayerDownload {
         request: URLRequest,
         configuration: URLSessionConfiguration,
         to destination: URL,
-        onBytes: @escaping @Sendable (Int64) -> Void
+        onBytes: @escaping @Sendable (Int64) -> Void,
+        operationRoot: URL? = nil,
+        expectedDigest: String? = nil,
+        maximumBytes: Int64? = nil
     ) async throws -> Int64 {
         try Task.checkCancellation()
+        if let operationRoot {
+            return try await StreamingLayerWriter.run(
+                StreamingLayerRequest(
+                    request: request,
+                    operationRoot: operationRoot,
+                    destination: destination,
+                    expectedDigest: expectedDigest,
+                    admission: BodyAdmissionPolicy(maximumBytes: maximumBytes ?? Int64.max),
+                    onBytes: onBytes),
+                configuration: configuration)
+        }
         let delegate = Delegate(destination: destination, onBytes: onBytes)
         let session = URLSession(
             configuration: configuration, delegate: delegate, delegateQueue: nil)

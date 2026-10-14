@@ -32,8 +32,12 @@ class GCSImageRegistry: ImageRegistry, @unchecked Sendable {
         name: String?,
         locationName: String?,
         force: Bool = false,
-        progressHandler: PullProgressHandler? = nil
+        progressHandler: PullProgressHandler? = nil,
+        preparation: OwnedPreparation? = nil
     ) async throws -> VMDirectory {
+        if preparation != nil {
+            throw PreparationPlacementError.unsupportedGCSWorkRoot
+        }
         // Parse image name and tag
         let components = image.split(separator: ":")
         guard components.count == 2 else {

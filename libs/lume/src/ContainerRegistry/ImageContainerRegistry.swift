@@ -46,17 +46,17 @@ private let sparseZeroChunk = Data(count: sparseHoleGranularityBytes)
 /// Gunzip-decompress a chunk and write it sparsely into an output file handle,
 /// skipping zero-filled 4 MiB blocks to create holes in the sparse file.
 func gunzipChunkAndWriteSparse(
-    inputPath: URL, outputHandle: FileHandle, startOffset: UInt64
+    inputPath: URL, outputHandle: FileHandle, startOffset: UInt64, rawDirectory: URL? = nil
 ) throws -> UInt64 {
     try gunzipChunkAndWriteSparse(
-        inputPath: inputPath, outputHandle: outputHandle, startOffsets: [startOffset])
+        inputPath: inputPath, outputHandle: outputHandle, startOffsets: [startOffset], rawDirectory: rawDirectory)
 }
 
 /// Decompresses a gzip blob once and writes it sparsely at every offset in
 /// `startOffsets` (a blob that several disk parts share, such as an all-zero
 /// chunk). Returns the decompressed size of the blob.
 func gunzipChunkAndWriteSparse(
-    inputPath: URL, outputHandle: FileHandle, startOffsets: [UInt64]
+    inputPath: URL, outputHandle: FileHandle, startOffsets: [UInt64], rawDirectory: URL? = nil
 ) throws -> UInt64 {
     guard FileManager.default.fileExists(atPath: inputPath.path) else {
         throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
@@ -64,7 +64,9 @@ func gunzipChunkAndWriteSparse(
 
     // Apple's Compression framework (.zlib) only handles raw DEFLATE, not
     // gzip headers, so stream through the system gunzip executable first.
-    let decompressedPath = inputPath.appendingPathExtension("raw")
+    let decompressedPath = (rawDirectory ?? inputPath.deletingLastPathComponent())
+        .appendingPathComponent("\(inputPath.lastPathComponent).raw")
+    try? FileManager.default.createDirectory(at: decompressedPath.deletingLastPathComponent(), withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: decompressedPath) }
 
     FileManager.default.createFile(atPath: decompressedPath.path, contents: nil)
@@ -758,6 +760,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private let downloadProgress = ProgressTracker()  // Renamed for clarity
     private let uploadProgress = UploadProgressTracker()  // Added upload tracker
     private let cacheDirectory: URL
+    private let preparation: OwnedPreparation?
     private let downloadLock = NSLock()
     private var activeDownloads: [String] = []
     private let cachingEnabled: Bool
@@ -767,6 +770,54 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     var retryBaseDelay: Double = 2
     /// Part of the hidden name a layer has while it is being copied into the cache.
     static let cacheStagingMarker = ".partial-"
+
+    private static func canonicalPath(_ url: URL) -> String {
+        let standardized = url.standardizedFileURL
+        let resolved = standardized.resolvingSymlinksInPath()
+        return resolved.standardizedFileURL.path
+    }
+
+    static func pathsOverlap(_ lhs: URL, _ rhs: URL) -> Bool {
+        let left = canonicalPath(lhs)
+        let right = canonicalPath(rhs)
+        return left == right || left.hasPrefix(right + "/") || right.hasPrefix(left + "/")
+    }
+
+    static func validateDestination(_ destination: URL, preparation: OwnedPreparation?) throws {
+        if let preparation, pathsOverlap(preparation.workRoot.root, destination) {
+            throw PreparationPlacementError.invalidWorkRoot
+        }
+    }
+
+    static func ephemeralDestinationURL(vmName: String, tmpDirectory: String? = nil) -> URL {
+        let directory = tmpDirectory ?? ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
+        return URL(fileURLWithPath: directory, isDirectory: true)
+            .appendingPathComponent(vmName, isDirectory: true)
+    }
+
+    static func validateForceAdmission(
+        destinationExists: Bool,
+        completeCacheHit: Bool,
+        force: Bool,
+        name: String
+    ) throws {
+        if destinationExists, !completeCacheHit, !force {
+            throw VMError.alreadyExists(name)
+        }
+    }
+
+    static func cleanupOwnedOperationRoot(_ operationRoot: URL) {
+        try? FileManager.default.removeItem(at: operationRoot)
+    }
+
+    static func requiresSameVolumeForPublication(ownedPreparation: OwnedPreparation?) -> Bool {
+        ownedPreparation != nil
+    }
+
+    static func preparePublicationParent(for destination: URL) throws {
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    }
 
     // Constants for zero-skipping write logic
     private static let holeGranularityBytes = 4 * 1024 * 1024  // 4MB block size for checking zeros
@@ -783,11 +834,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return "[\(completed)\(remaining)]"
     }
 
-    init(registry: String, organization: String, username: String? = nil, password: String? = nil) {
+    init(registry: String, organization: String, username: String? = nil, password: String? = nil, preparation: OwnedPreparation? = nil) throws {
         self.registry = registry
         self.organization = organization
         self.username = username
         self.password = password
+        self.preparation = preparation
 
         // Get cache directory from settings
         let cacheDir = SettingsManager.shared.getCacheDirectory()
@@ -798,29 +850,24 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Get caching enabled setting
         self.cachingEnabled = SettingsManager.shared.isCachingEnabled()
 
-        try? FileManager.default.createDirectory(
-            at: cacheDirectory, withIntermediateDirectories: true)
-
-        // Create organization directory
-        let orgDir = cacheDirectory.appendingPathComponent(organization)
-        try? FileManager.default.createDirectory(at: orgDir, withIntermediateDirectories: true)
     }
 
     /// Creates a registry client with an explicit cache (tests).
     init(
-        registry: String, organization: String, cacheDirectory: URL, cachingEnabled: Bool
-    ) {
+        registry: String, organization: String, cacheDirectory: URL, cachingEnabled: Bool, preparation: OwnedPreparation? = nil
+    ) throws {
         self.registry = registry
         self.organization = organization
         self.username = nil
         self.password = nil
         self.cacheDirectory = cacheDirectory
         self.cachingEnabled = cachingEnabled
+        self.preparation = preparation
     }
 
     private func getManifestIdentifier(_ manifest: Manifest, manifestDigest: String) -> String {
         // Use the manifest's own digest as the identifier
-        return manifestDigest.replacingOccurrences(of: ":", with: "_")
+        return Self.cacheFileIdentifier(for: manifestDigest)
     }
 
     private func getShortImageId(_ digest: String) -> String {
@@ -843,7 +890,50 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
     func getCachedLayerPath(manifestId: String, digest: String) -> URL {
         return getImageCacheDirectory(manifestId: manifestId).appendingPathComponent(
-            digest.replacingOccurrences(of: ":", with: "_"))
+            Self.cacheFileIdentifier(for: digest))
+    }
+
+    static func cacheFileIdentifier(for value: String) -> String {
+        if let address = try? ContentAddress(value) {
+            return address.fileName
+        }
+
+        let encoded = value.utf8.map { String(format: "%02x", $0) }.joined()
+        return "legacy_" + (encoded.isEmpty ? "empty" : encoded)
+    }
+
+    private func sharedCoordinationDirectory() throws -> URL {
+        let directory = Self.sharedCoordinationDirectory(
+            cacheDirectory: cacheDirectory, organization: organization)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        return directory
+    }
+
+    static func coordinationLockName(for digest: String) throws -> String {
+        try ContentAddress(digest).fileName + ".lock"
+    }
+
+    static let cacheLifecycleLockName = "cache-lifecycle.lock"
+
+    static func sharedCoordinationDirectory(cacheDirectory: URL, organization: String) -> URL {
+        cacheDirectory
+            .appendingPathComponent(organization, isDirectory: true)
+            .appendingPathComponent(".locks", isDirectory: true)
+    }
+
+    private func cacheLifecycleLock() throws -> DigestFileLock {
+        let lockURL = try sharedCoordinationDirectory()
+            .appendingPathComponent(Self.cacheLifecycleLockName)
+        return try DigestFileLock(path: lockURL)
+    }
+
+    private func validateManifestDigests(_ manifest: Manifest, manifestDigest: String) throws {
+        _ = try ContentAddress(manifestDigest)
+        for layer in manifest.layers { _ = try ContentAddress(layer.digest) }
+        if let config = manifest.config { _ = try ContentAddress(config.digest) }
     }
 
     private func setupImageCache(manifestId: String, manifest: Manifest) throws {
@@ -873,7 +963,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private func pruneUnusableCacheFiles(in cacheDir: URL, manifest: Manifest) {
         let fm = FileManager.default
         let sizes = Dictionary(
-            manifest.layers.map { ($0.digest.replacingOccurrences(of: ":", with: "_"), $0.size) },
+            manifest.layers.map { (Self.cacheFileIdentifier(for: $0.digest), $0.size) },
             uniquingKeysWith: { first, _ in first })
         guard let names = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return }
         for name in names {
@@ -1098,7 +1188,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         name: String?,
         locationName: String? = nil,
         force: Bool = false,
-        progressHandler: PullProgressHandler? = nil
+        progressHandler: PullProgressHandler? = nil,
+        preparation: OwnedPreparation? = nil
     ) async throws -> VMDirectory {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
@@ -1113,36 +1204,75 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Use provided name or derive from image
         let vmName = name ?? image.split(separator: ":").first.map(String.init) ?? ""
 
+        if let configured = self.preparation, let supplied = preparation, configured != supplied {
+            throw PreparationPlacementError.invalidWorkRoot
+        }
+        let effectivePreparation = preparation ?? self.preparation
+
         // Determine if locationName is a direct path or a named storage location
         let vmDir: VMDirectory
         if let locationName = locationName,
             locationName.contains("/") || locationName.contains("\\")
         {
+            let destination = URL(fileURLWithPath: locationName, isDirectory: true)
+                .appendingPathComponent(vmName, isDirectory: true)
+            try Self.validateDestination(destination, preparation: effectivePreparation)
             // Direct path
             vmDir = try home.getVMDirectoryFromPath(vmName, storagePath: locationName)
         } else {
             // Named storage or default location
+            if locationName == "ephemeral" {
+                try Self.validateDestination(
+                    Self.ephemeralDestinationURL(vmName: vmName),
+                    preparation: effectivePreparation)
+            }
             vmDir = try home.getVMDirectory(vmName, storage: locationName)
+            try Self.validateDestination(URL(fileURLWithPath: vmDir.dir.path), preparation: effectivePreparation)
         }
 
         // Check if image is already cached with all required files
         let manifestDigestPath = vmDir.dir.url.appendingPathComponent(".manifest-digest")
-        if !force
-            && vmDir.exists()
+        let completeCacheHit = vmDir.exists()
             && vmDir.diskPath.exists()
             && vmDir.nvramPath.exists()
             && vmDir.configPath.exists()
             && FileManager.default.fileExists(atPath: manifestDigestPath.path)
-        {
+        if !force && completeCacheHit {
             Logger.info("Image already cached, skipping download")
             return vmDir
         }
+        try Self.validateForceAdmission(
+            destinationExists: vmDir.exists(),
+            completeCacheHit: completeCacheHit,
+            force: force,
+            name: vmName)
 
-        // If force is set and directory exists, remove it before re-downloading
-        if force && vmDir.exists() {
-            Logger.info("Force flag set, removing existing VM directory")
-            try FileManager.default.removeItem(at: vmDir.dir.url)
+        let configuredWorkRoot = effectivePreparation?.workRoot
+        var operationRootForCleanup: URL?
+        defer {
+            if let operationRootForCleanup {
+                Self.cleanupOwnedOperationRoot(operationRootForCleanup)
+            }
         }
+        let workLayout: StagingLayout?
+        if let configuredWorkRoot {
+            let operationID = effectivePreparation?.operationID ?? UUID().uuidString
+            let operationRoot = try configuredWorkRoot.operationRoot(operationID)
+            operationRootForCleanup = operationRoot
+            let layout = try StagingLayout(operationRoot: operationRoot)
+            workLayout = layout
+        } else {
+            if preparation != nil {
+                throw PreparationPlacementError.workRootRequired
+            }
+            workLayout = nil
+        }
+
+        let lifecycleLock: DigestFileLock?
+        let lock = try cacheLifecycleLock()
+        try await lock.acquire()
+        lifecycleLock = lock
+        defer { lifecycleLock?.release() }
 
         // Optimize network early in the process
         optimizeNetworkSettings()
@@ -1178,6 +1308,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             tag: imageTag,
             token: token
         )
+        try validateManifestDigests(manifest, manifestDigest: manifestDigest)
 
         // Get manifest identifier using the manifest's own digest
         let manifestId = getManifestIdentifier(manifest, manifestDigest: manifestDigest)
@@ -1190,8 +1321,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             ])
 
         // Create temporary directory for the entire VM setup
-        let tempVMDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "lume_vm_\(UUID().uuidString)")
+        let tempVMDir = workLayout?.wholeVM.appendingPathComponent("vm", isDirectory: true)
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("lume_vm_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempVMDir, withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: tempVMDir)
@@ -1210,7 +1341,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 imageName: imageName,
                 repository: "\(self.organization)/\(imageName)",
                 token: token,
-                to: tempVMDir
+                to: tempVMDir,
+                temporaryRoot: workLayout?.ociTemporary,
+                stagingRoot: workLayout
             )
         }
 
@@ -1220,7 +1353,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             // OCI pull already populated tempVMDir; skip legacy cache logic
         } else if cachingEnabled && validateCache(manifest: manifest, manifestId: manifestId) {
             Logger.debug("Using cached version of image")
-            try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir)
+            try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir, stagingRoot: workLayout?.cacheReassembly, rawRoot: workLayout?.gunzipRaw)
         } else {
             // If caching is disabled, log it
             if !cachingEnabled {
@@ -1246,8 +1379,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
 
             // Create temporary directory for new downloads
-            let tempDownloadDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString)
+            let tempDownloadDir = workLayout?.legacyDownload.appendingPathComponent("download", isDirectory: true)
+                ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(
                 at: tempDownloadDir, withIntermediateDirectories: true)
             defer {
@@ -1353,7 +1486,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                                 digest: digest, mediaType: layer.mediaType,
                                                 token: token,
                                                 to: tempPartURL, maxRetries: 5,
-                                                progress: downloadProgress, manifestId: manifestId
+                                                progress: downloadProgress, manifestId: manifestId,
+                                                expectedSize: Int64(size), stagingRoot: workLayout?.legacyDownload
                                             )
                                             finalPath = tempPartURL
                                         }
@@ -1364,7 +1498,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                             digest: digest, mediaType: layer.mediaType,
                                             token: token,
                                             to: tempPartURL, maxRetries: 5,
-                                            progress: downloadProgress, manifestId: manifestId
+                                            progress: downloadProgress, manifestId: manifestId,
+                                            expectedSize: Int64(size), stagingRoot: workLayout?.legacyDownload
                                         )
                                         finalPath = tempPartURL
                                     }
@@ -1435,7 +1570,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                     repository: "\(self.organization)/\(imageName)",
                                     digest: digest, mediaType: mediaType, token: token,
                                     to: outputURL, maxRetries: 5,
-                                    progress: downloadProgress, manifestId: manifestId
+                                    progress: downloadProgress, manifestId: manifestId,
+                                    expectedSize: Int64(size), stagingRoot: workLayout?.legacyDownload
                                 )
                                 // Note: downloadLayer handles caching and marking download complete
                             }
@@ -1457,24 +1593,31 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             // Now that we've downloaded everything to the cache, use copyFromCache to create final VM files
             if cachingEnabled {
                 Logger.info("Using copyFromCache method to properly preserve partition tables")
-                try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir)
+                try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir, stagingRoot: workLayout?.cacheReassembly, rawRoot: workLayout?.gunzipRaw)
             } else {
                 // Even if caching is disabled, we need to use copyFromCache to assemble the disk image
                 // correctly with partition tables, then we'll clean up the cache afterward
                 Logger.info("Caching disabled - using temporary cache to assemble VM files")
-                try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir)
+                try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir, stagingRoot: workLayout?.cacheReassembly, rawRoot: workLayout?.gunzipRaw)
             }
         }
 
-        // Only move to final location once everything is complete
-        if FileManager.default.fileExists(atPath: vmDir.dir.path) {
-            try FileManager.default.removeItem(at: URL(fileURLWithPath: vmDir.dir.path))
+        let assembledVMDir: URL
+        if let finalAssembly = workLayout?.finalAssembly {
+            assembledVMDir = finalAssembly.appendingPathComponent("vm", isDirectory: true)
+            try? FileManager.default.removeItem(at: assembledVMDir)
+            try FileManager.default.moveItem(at: tempVMDir, to: assembledVMDir)
+        } else {
+            assembledVMDir = tempVMDir
         }
 
-        // Ensure parent directory exists
-        try FileManager.default.createDirectory(
-            at: URL(fileURLWithPath: vmDir.dir.path).deletingLastPathComponent(),
-            withIntermediateDirectories: true)
+        let assembledManifestPath = assembledVMDir.appendingPathComponent(".manifest-digest")
+        try manifestDigest.write(to: assembledManifestPath, atomically: true, encoding: .utf8)
+
+        try Self.publishDirectory(
+            source: assembledVMDir,
+            destination: URL(fileURLWithPath: vmDir.dir.path),
+            ownedPreparation: effectivePreparation)
 
         // Log the final destination
         Logger.debug(
@@ -1484,18 +1627,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 "location": locationName ?? "home",
             ])
 
-        // Move files to final location
-        try FileManager.default.moveItem(at: tempVMDir, to: URL(fileURLWithPath: vmDir.dir.path))
-
         // If caching is disabled, clean up the cache entry
         if !cachingEnabled {
             Logger.debug("Caching disabled - cleaning up temporary cache entry")
             try? cleanupCacheEntry(manifestId: manifestId)
         }
-
-        // Write manifest digest to mark this as a complete cached image
-        let digestFilePath = URL(fileURLWithPath: vmDir.dir.path).appendingPathComponent(".manifest-digest")
-        try manifestDigest.write(to: digestFilePath, atomically: true, encoding: .utf8)
 
         Logger.debug("Download complete: Files extracted to \(vmDir.dir.path)")
         Logger.debug(
@@ -1505,6 +1641,55 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Run 'lume run \(vmName)' to reduce the disk image file size by using macOS sparse file system"
         )
         return vmDir
+    }
+
+    static func publishDirectoryAtomically(
+        source: URL,
+        destination: URL,
+        volumeNumber: ((URL) -> NSNumber?)? = nil
+    ) throws {
+        let fm = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        guard sameVolume(source.deletingLastPathComponent(), parent, volumeNumber: volumeNumber) else {
+            throw PreparationPlacementError.destinationVolumeMismatch
+        }
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: source)
+        } else {
+            try fm.moveItem(at: source, to: destination)
+        }
+    }
+
+    static func publishDirectory(
+        source: URL,
+        destination: URL,
+        ownedPreparation: OwnedPreparation?
+    ) throws {
+        if Self.requiresSameVolumeForPublication(ownedPreparation: ownedPreparation) {
+            try publishDirectoryAtomically(source: source, destination: destination)
+            return
+        }
+        let fm = FileManager.default
+        try Self.preparePublicationParent(for: destination)
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.moveItem(at: source, to: destination)
+    }
+
+    private static func sameVolume(
+        _ left: URL,
+        _ right: URL,
+        volumeNumber: ((URL) -> NSNumber?)? = nil
+    ) -> Bool {
+        let fm = FileManager.default
+        let number: (URL) -> NSNumber? = volumeNumber ?? {
+            try? fm.attributesOfFileSystem(forPath: $0.path)[.systemNumber] as? NSNumber
+        }
+        guard let leftNumber = number(left), let rightNumber = number(right)
+        else { return false }
+        return leftNumber == rightNumber
     }
 
     // Helper function to clean up a specific cache entry
@@ -1912,7 +2097,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Cache pull simulation completed successfully with partition table preservation")
     }
 
-    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
+    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL, stagingRoot: URL? = nil, rawRoot: URL? = nil)
         async throws
     {
         Logger.debug("Copying from cache...")
@@ -2186,7 +2371,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     )
 
                     // Always use the correct sparse decompression function
-                    let decompressedBytesWritten = try decompressChunkAndWriteSparse(
+                let decompressedBytesWritten = try decompressChunkAndWriteSparse(
                         inputPath: sourceURL.path,
                         outputHandle: outputHandle,
                         startOffset: currentOffset
@@ -2279,9 +2464,16 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             // After successful reassembly, store the reassembled image in the cache
             if cachingEnabled {
                 Logger.info("Saving reassembled disk image to cache for future use")
-
-                // Copy the reassembled disk image to the cache
-                try FileManager.default.copyItem(at: outputURL, to: reassembledCachePath)
+                let cacheSource: URL
+                if let stagingRoot {
+                    cacheSource = stagingRoot.appendingPathComponent(
+                        "legacy-reassembled-\(UUID().uuidString)")
+                    try FileManager.default.copyItem(at: outputURL, to: cacheSource)
+                } else {
+                    cacheSource = outputURL
+                }
+                try Self.atomicCopyFile(from: cacheSource, to: reassembledCachePath)
+                if stagingRoot != nil { try? FileManager.default.removeItem(at: cacheSource) }
 
                 // Clean up disk parts after successful reassembly
                 Logger.info("Cleaning up disk part files from cache")
@@ -2521,10 +2713,23 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         maxRetries: Int = 5,
         progress: ProgressTracker,
         manifestId: String? = nil,
+        expectedSize: Int64? = nil,
+        stagingRoot: URL? = nil,
         onBytes: (@Sendable (Int64) -> Void)? = nil
     ) async throws {
         // Whatever happens, this pull no longer downloads the digest.
         defer { markDownloadComplete(digest) }
+        let digestLock: DigestFileLock?
+        if preparation != nil, stagingRoot != nil {
+            let lockURL = try sharedCoordinationDirectory().appendingPathComponent(
+                Self.coordinationLockName(for: digest))
+            let lock = try DigestFileLock(path: lockURL)
+            try await lock.acquire()
+            digestLock = lock
+        } else {
+            digestLock = nil
+        }
+        defer { digestLock?.release() }
         var lastError: Error?
 
         for attempt in 1...maxRetries {
@@ -2556,7 +2761,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     onBytes: { bytes in
                         onBytes?(bytes)
                         Task { await progress.updateTransfer(id: transferId, bytesWritten: bytes) }
-                    })
+                    },
+                    operationRoot: stagingRoot,
+                    expectedDigest: digest,
+                    maximumBytes: expectedSize)
                 try Task.checkCancellation()
 
                 // Verify the layer against its digest before caching it; a mismatch means
@@ -2575,7 +2783,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 // even if caching is disabled
                 if let manifestId = manifestId {
                     let cachedLayer = getCachedLayerPath(manifestId: manifestId, digest: digest)
-                    try storeVerifiedLayer(from: url, inCacheAt: cachedLayer)
+                    try storeVerifiedLayer(from: url, inCacheAt: cachedLayer, stagingRoot: stagingRoot)
                 }
 
                 await progress.finishTransfer(id: transferId, bytes: written)
@@ -2584,7 +2792,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             } catch {
                 await progress.dropTransfer(id: transferId)
                 if Task.isCancelled || error is CancellationError {
-                    try? FileManager.default.removeItem(at: url)
+                    if stagingRoot == nil { try? FileManager.default.removeItem(at: url) }
                     throw CancellationError()
                 }
                 lastError = error
@@ -2633,19 +2841,47 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     /// Copies a verified layer into the cache without ever exposing a partial
     /// file under the cached name: the copy goes to a hidden sibling first and
     /// is renamed into place once complete.
-    func storeVerifiedLayer(from source: URL, inCacheAt cachedLayer: URL) throws {
+    func storeVerifiedLayer(from source: URL, inCacheAt cachedLayer: URL, stagingRoot: URL? = nil) throws {
         let fm = FileManager.default
         try fm.createDirectory(
             at: cachedLayer.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let staging = cachedLayer.deletingLastPathComponent().appendingPathComponent(
+        let stagingDirectory = stagingRoot ?? cachedLayer.deletingLastPathComponent()
+        try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let staging = stagingDirectory.appendingPathComponent(
             ".\(cachedLayer.lastPathComponent)\(Self.cacheStagingMarker)\(UUID().uuidString)")
         defer { try? fm.removeItem(at: staging) }
         try fm.copyItem(at: source, to: staging)
+        guard sameFileSystemVolume(staging.deletingLastPathComponent(), cachedLayer.deletingLastPathComponent()) else {
+            throw PreparationPlacementError.destinationVolumeMismatch
+        }
         if fm.fileExists(atPath: cachedLayer.path) {
             _ = try fm.replaceItemAt(cachedLayer, withItemAt: staging)
         } else {
             try fm.moveItem(at: staging, to: cachedLayer)
         }
+    }
+
+    private static func atomicCopyFile(from source: URL, to destination: URL) throws {
+        let fm = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let temporary = parent.appendingPathComponent(
+            ".\(destination.lastPathComponent).partial-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: temporary) }
+        try fm.copyItem(at: source, to: temporary)
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: temporary)
+        } else {
+            try fm.moveItem(at: temporary, to: destination)
+        }
+    }
+
+    private func sameFileSystemVolume(_ left: URL, _ right: URL) -> Bool {
+        let fm = FileManager.default
+        guard let leftNumber = try? fm.attributesOfFileSystem(forPath: left.path)[.systemNumber] as? NSNumber,
+            let rightNumber = try? fm.attributesOfFileSystem(forPath: right.path)[.systemNumber] as? NSNumber
+        else { return false }
+        return leftNumber == rightNumber
     }
 
     // Function removed as it's not applicable to the observed manifest format
@@ -4973,7 +5209,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         token: String,
         manifestId: String,
         tempDir: URL,
-        pullProgress: LayerProgressDisplay
+        pullProgress: LayerProgressDisplay,
+        stagingRoot: URL?
     ) async throws -> (String, URL) {
         for reference in chunkGroup.references {
             await pullProgress.updateStatus(
@@ -5007,6 +5244,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 to: blobDest,
                 maxRetries: 5,
                 progress: downloadProgress,
+                expectedSize: Int64(chunk.size),
+                stagingRoot: stagingRoot,
                 onBytes: { bytes in
                     Task {
                         for id in referenceIds {
@@ -5016,7 +5255,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 }
             )
             if let cached = cachedChunkPath {
-                try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
+                try storeVerifiedLayer(from: blobDest, inCacheAt: cached, stagingRoot: stagingRoot)
             }
         }
 
@@ -5053,7 +5292,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         imageName: String,
         repository: String,
         token: String,
-        to destination: URL
+        to destination: URL,
+        temporaryRoot: URL? = nil,
+        stagingRoot: StagingLayout? = nil
     ) async throws {
         try Self.checkDiskCoverage(manifest)
         Logger.info("Downloading OCI-compliant layers")
@@ -5063,7 +5304,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // ── Top-level OCI cache check ─────────────────────────────────────────
         if cachingEnabled && validateOCICache(manifest: manifest, manifestId: manifestId) {
             Logger.info("OCI cache hit — copying from cache instead of downloading")
-            try copyFromOCICache(manifest: manifest, manifestId: manifestId, to: destination)
+            try copyFromOCICache(manifest: manifest, manifestId: manifestId, to: destination, stagingRoot: stagingRoot?.cacheReassembly, rawRoot: stagingRoot?.gunzipRaw)
             Logger.info("OCI cache copy complete")
             try cleanupOldVersions(currentManifestId: manifestId, image: imageName)
             try saveImageMetadata(image: imageName, manifestId: manifestId)
@@ -5076,7 +5317,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         }
 
-        let tempDir = FileManager.default.temporaryDirectory
+        let tempDir = (temporaryRoot ?? FileManager.default.temporaryDirectory)
             .appendingPathComponent("lume_oci_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -5121,10 +5362,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     to: blobDest,
                     maxRetries: 5,
                     progress: downloadProgress
+                    , expectedSize: Int64(configLayer.size), stagingRoot: stagingRoot?.ociTemporary
                 )
                 // Save to cache
                 if let cached = cachedConfigPath {
-                    try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
+                    try storeVerifiedLayer(from: blobDest, inCacheAt: cached, stagingRoot: stagingRoot?.cacheReassembly)
                 }
             }
             configData = try Data(contentsOf: blobDest)
@@ -5153,10 +5395,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     to: blobDest,
                     maxRetries: 5,
                     progress: downloadProgress
+                    , expectedSize: Int64(nvramLayer.size), stagingRoot: stagingRoot?.ociTemporary
                 )
                 // Save to cache
                 if let cached = cachedNvramPath {
-                    try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
+                    try storeVerifiedLayer(from: blobDest, inCacheAt: cached, stagingRoot: stagingRoot?.cacheReassembly)
                 }
             }
             nvramBlobPath = blobDest
@@ -5300,7 +5543,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                             token: token,
                             manifestId: manifestId,
                             tempDir: tempDir,
-                            pullProgress: pullProgress)
+                            pullProgress: pullProgress,
+                            stagingRoot: stagingRoot?.ociTemporary)
                     }
                 }
 
@@ -5323,7 +5567,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                 token: token,
                                 manifestId: manifestId,
                                 tempDir: tempDir,
-                                pullProgress: pullProgress)
+                                pullProgress: pullProgress,
+                                stagingRoot: stagingRoot?.ociTemporary)
                         }
                     }
 
@@ -5337,7 +5582,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         let _ = try gunzipChunkAndWriteSparse(
                             inputPath: completedPath,
                             outputHandle: handle,
-                            startOffsets: completedGroup.references.map(\.offset))
+                            startOffsets: completedGroup.references.map(\.offset),
+                            rawDirectory: stagingRoot?.gunzipRaw)
                         try handle.close()
                     } catch {
                         try? handle.close()
@@ -5382,11 +5628,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     token: token,
                     to: blobDest,
                     maxRetries: 5,
-                    progress: downloadProgress
+                    progress: downloadProgress,
+                    expectedSize: Int64(singleDiskLayer.size), stagingRoot: stagingRoot?.ociTemporary
                 )
                 // Save to cache
                 if let cached = cachedDiskPath {
-                    try? storeVerifiedLayer(from: blobDest, inCacheAt: cached)
+                    try storeVerifiedLayer(from: blobDest, inCacheAt: cached, stagingRoot: stagingRoot?.cacheReassembly)
                 }
             }
 
@@ -5397,7 +5644,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 let diskHandle = try FileHandle(forWritingTo: diskDest)
                 try diskHandle.truncate(atOffset: uncompSize)
                 let _ = try gunzipChunkAndWriteSparse(
-                    inputPath: blobDest, outputHandle: diskHandle, startOffset: 0)
+                    inputPath: blobDest, outputHandle: diskHandle, startOffset: 0,
+                    rawDirectory: stagingRoot?.gunzipRaw)
                 try diskHandle.close()
                 Logger.info("Disk image decompressed (sparse)")
             } else {
@@ -5444,7 +5692,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
     /// Copies all OCI layers from the local cache into `destination`, producing the same
     /// VM directory layout that `pullOCI` would create via network download.
-    private func copyFromOCICache(manifest: Manifest, manifestId: String, to destination: URL)
+    private func copyFromOCICache(manifest: Manifest, manifestId: String, to destination: URL, stagingRoot: URL? = nil, rawRoot: URL? = nil)
         throws
     {
         Logger.info("Copying OCI image from layer cache")
@@ -5537,7 +5785,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try diskHandle.truncate(atOffset: totalSize)
             try diskHandle.close()
 
-            let copyTempDir = FileManager.default.temporaryDirectory
+            let copyTempDir = (stagingRoot ?? FileManager.default.temporaryDirectory)
                 .appendingPathComponent("lume_oci_copy_\(UUID().uuidString)")
             try FileManager.default.createDirectory(
                 at: copyTempDir, withIntermediateDirectories: true)
@@ -5553,7 +5801,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 defer { try? FileManager.default.removeItem(at: tmpCopy) }
                 let handle = try FileHandle(forWritingTo: diskDest)
                 let _ = try gunzipChunkAndWriteSparse(
-                    inputPath: tmpCopy, outputHandle: handle, startOffset: chunkOffset)
+                    inputPath: tmpCopy, outputHandle: handle, startOffset: chunkOffset, rawDirectory: rawRoot)
                 try handle.close()
             }
             Logger.info("Disk image reassembled from \(sortedChunks.count) cached chunks")
@@ -5566,7 +5814,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 let diskHandle = try FileHandle(forWritingTo: diskDest)
                 try diskHandle.truncate(atOffset: uncompSize)
                 // Copy to unique temp path to avoid sibling .raw race with concurrent pulls.
-                let singleCopyTempDir = FileManager.default.temporaryDirectory
+                let singleCopyTempDir = (stagingRoot ?? FileManager.default.temporaryDirectory)
                     .appendingPathComponent("lume_oci_copy_\(UUID().uuidString)")
                 try FileManager.default.createDirectory(
                     at: singleCopyTempDir, withIntermediateDirectories: true)
@@ -5574,7 +5822,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 let tmpCopy = singleCopyTempDir.appendingPathComponent(UUID().uuidString + ".gz")
                 try FileManager.default.copyItem(at: cached, to: tmpCopy)
                 let _ = try gunzipChunkAndWriteSparse(
-                    inputPath: tmpCopy, outputHandle: diskHandle, startOffset: 0)
+                    inputPath: tmpCopy, outputHandle: diskHandle, startOffset: 0, rawDirectory: rawRoot)
                 try diskHandle.close()
                 Logger.info("Disk image decompressed (sparse) from cache")
             } else {

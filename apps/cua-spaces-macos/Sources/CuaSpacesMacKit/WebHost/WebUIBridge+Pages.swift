@@ -102,6 +102,16 @@ extension WebUIBridge {
             await model.press(row: "launch-at-login-approve")
             return NSNull()
 
+        // "Add a machine" and "Share": the account's Teams (Settings, Teams)
+        // and the current one.
+        case "teams.list":
+            await model.reloadTeams()
+            var teams: [[String: Any]] = []
+            if case .ready(let list) = model.teamsState {
+                teams = list.map { ["id": $0.id, "alias": $0.alias, "name": $0.name, "role": $0.role, "plan": $0.plan] }
+            }
+            return ["teams": teams, "currentTeamId": model.settings.currentTeamId.map { $0 as Any } ?? NSNull()] as [String: Any]
+
         // Settings, Devices
         case "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
              "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",

@@ -290,6 +290,14 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       // Listed without the codes, as the relay lists them.
       return pairing.map(({ code: c }) => ({ ...c, code: null, url: null, installSh: null, installPowershell: null }));
     },
+    // The demo account owns a team on the Teams plan, and is a member of another.
+    "teams.list": () => ({
+      teams: [
+        { id: "0f1e2d3c-0000-4000-8000-0000000000a1", alias: "acme", name: "Acme", role: "owner", plan: "teams" },
+        { id: "0f1e2d3c-0000-4000-8000-0000000000b2", alias: "side", name: "", role: "member", plan: "teams" },
+      ],
+      currentTeamId: null,
+    }),
     "devices.revokePairingCode": ({ id }) => {
       const p = pairing.find((x) => x.code.id === id);
       if (!p) throw new HostError(`no pairing code ${id}`, "not_found");

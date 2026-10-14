@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0](https://github.com/trycua/cua/compare/cua-spaces-v0.8.0...cua-spaces-v0.9.0) (2026-10-14)
+
+
+### Features
+
+* **spaces:** drag a window onto a Space tile in the New UI to teleport it (CUA-1511) ([#5099](https://github.com/trycua/cua/issues/5099)) ([f157d9c](https://github.com/trycua/cua/commit/f157d9c2a91657ba5afd9ba07b34501629951bbe))
+* **spaces:** New UI on by default for Beta (0.8.1), saved only as an explicit choice (CUA-1514) ([#5108](https://github.com/trycua/cua/issues/5108)) ([3eb7c09](https://github.com/trycua/cua/commit/3eb7c09ce3cd343cf4e1d5b2dba7ce49c6e47989))
+* **spaces:** real Teams screen, api.cua.ai and app.cua.ai (0.8.1) ([#5113](https://github.com/trycua/cua/issues/5113)) ([8c02482](https://github.com/trycua/cua/commit/8c02482e3d10e67f1b7a084aa83ecb5b4eae03c4))
+
+
+### Bug Fixes
+
+* **spaces:** drop the last run.cua.ai billing link from the Swift fixture ([8c02482](https://github.com/trycua/cua/commit/8c02482e3d10e67f1b7a084aa83ecb5b4eae03c4))
+* **spaces:** same checklist count and every machine in every UI ([#5106](https://github.com/trycua/cua/issues/5106)) ([ff6079b](https://github.com/trycua/cua/commit/ff6079bef5b6089a5ef649c9447e441c72c9519b))
+* **spaces:** Teams clients use Keycloak orgs via the Spaces API ([#5157](https://github.com/trycua/cua/issues/5157)) ([49a89ff](https://github.com/trycua/cua/commit/49a89ff38a06e5b17413d52d2cf6534a13cdba7f))
+* **spaces:** the apps stop calling the retired run.cua.ai (CUA-1515) ([#5098](https://github.com/trycua/cua/issues/5098)) ([499130b](https://github.com/trycua/cua/commit/499130b2cb1394e973eafd286b4377beec847ab5))
+
 ## [0.8.0](https://github.com/trycua/cua/compare/cua-spaces-v0.7.2...cua-spaces-v0.8.0) (2026-10-13)
 
 

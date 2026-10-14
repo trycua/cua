@@ -11,6 +11,12 @@ name: "E2E: Cua Driver release gate"
 #             gated paths (.github/scripts/cua_driver_e2e_gate_paths.py: cursor
 #             overlay, focus, background input, browser routing, the harness),
 #             or when it is the release-please PR for cua-driver-rs.
+#   macOS    hosted macOS seeds TCC state, so e2e-rust-macos.yml refuses
+#             pull_request events. On gated PRs (same-repo only) the `macos-pr`
+#             job instead dispatches that workflow on the PR head branch with
+#             the GITHUB_TOKEN (workflow_dispatch is an allowed event), waits
+#             for it and reports its conclusion into `E2E gate / result`.
+#             Fork PRs skip it; nightly and tag runs call the lane directly.
 #   Otherwise the lanes are skipped and `E2E gate / result` passes at once, so
 #   that one check can be required on every PR (see scripts/ci/README.md).
 #
@@ -120,7 +126,7 @@ jobs:
       ref: ${{ github.sha }}
 
   # Hosted macOS seeds TCC state, so it never runs on pull_request events
-  # (the probe rejects them). PRs get it from the nightly and the tag gate.
+  # (the probe rejects them). PRs use `macos-pr` below instead.
   macos:
     name: "gate / macOS hosted E2E"
     needs: decide
@@ -132,6 +138,68 @@ jobs:
     uses: ./.github/workflows/e2e-rust-macos.yml
     with:
       source_sha: ${{ github.sha }}
+
+  # Gated same-repo PRs: dispatch the hosted macOS workflow on the PR head
+  # branch (an allowed TCC-seeding event), wait, and mirror its conclusion.
+  macos-pr:
+    name: "gate / macOS hosted E2E (dispatched)"
+    needs: decide
+    if: >-
+      needs.decide.outputs.run == 'true' && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      LANE: e2e-rust-macos.yml
+    steps:
+      - id: dispatch
+        name: Dispatch the hosted macOS lane on the PR head
+        run: |
+          set -euo pipefail
+          started=$(date -u +%FT%TZ)
+          gh workflow run "$LANE" -R "$REPO" --ref "$HEAD_REF" -f source_sha="$HEAD_SHA" -f mode=hosted
+          run_id=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            run_id=$(gh run list -R "$REPO" --workflow "$LANE" --event workflow_dispatch --branch "$HEAD_REF" \
+              --created ">=$started" --json databaseId,headSha \
+              --jq "[.[]|select(.headSha==\"$HEAD_SHA\")][0].databaseId // empty")
+            [[ -z "$run_id" ]] || break
+          done
+          if [[ -z "$run_id" ]]; then
+            echo "::error::dispatched macOS run for $HEAD_SHA not found (did the branch advance?)"; exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          url="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${run_id}"
+          echo "Dispatched macOS hosted run: $url" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Wait for the dispatched run
+        env:
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 100 * 60))
+          while (( SECONDS < deadline )); do
+            read -r status conclusion < <(gh run view "$RUN_ID" -R "$REPO" --json status,conclusion --jq '"\(.status) \(.conclusion // "none")"')
+            if [[ "$status" == completed ]]; then
+              echo "macOS hosted run $RUN_ID: $conclusion" | tee -a "$GITHUB_STEP_SUMMARY"
+              [[ "$conclusion" == success ]] || { echo "::error::macOS hosted lane $conclusion"; exit 1; }
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::timed out waiting for macOS hosted run $RUN_ID"; exit 1
+      - name: Cancel the dispatched run if this job stops early
+        if: cancelled() && steps.dispatch.outputs.run_id != ''
+        env:
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: gh run cancel "$RUN_ID" -R "$REPO" || true
 
   browsers:
     name: "gate / standalone browser E2E"
@@ -149,7 +217,7 @@ jobs:
   result:
     name: "E2E gate / result"
     if: always()
-    needs: [decide, linux, windows, macos, browsers]
+    needs: [decide, linux, windows, macos, macos-pr, browsers]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -168,7 +236,7 @@ jobs:
             echo "Release-gate lanes not required for this change." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select(.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") | "\(.key)=\(.value.result)"' <<< "$LANES")
+          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") and (.key != "macos-pr" or .value.result != "skipped")) | "\(.key)=\(.value.result)"' <<< "$LANES")
           if [[ -n "$bad" ]]; then
             echo "::error::release-gate lanes not green: $bad"; exit 1
           fi
@@ -180,7 +248,7 @@ jobs:
   nightly-report:
     name: "E2E gate / nightly report"
     if: always() && needs.decide.outputs.mode == 'nightly'
-    needs: [decide, linux, windows, macos, browsers]
+    needs: [decide, linux, windows, macos, macos-pr, browsers]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

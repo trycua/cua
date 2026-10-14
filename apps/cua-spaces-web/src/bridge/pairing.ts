@@ -7,6 +7,11 @@
  * the other computer uses it, and revokes it on request
  * (`devices.revokePairingCode`). The relay holds the code's state; this
  * only asks.
+ *
+ * With `team` (an organization id) the machine that used the code is then
+ * made a team machine (`sharing.share` with `team:<id>`): pairing alone
+ * never puts a machine in a team. Right after a Teams checkout that can take
+ * up to a minute ("Finishing setup…"); the host retries meanwhile.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -26,7 +31,15 @@ export interface PairingState {
   code: PairingCode | null;
   /** Why no code could be made; `unsupported`: the host or relay can't make them. */
   error: { message: string; unsupported: boolean } | null;
+  /**
+   * With a `team`, after the code was used: `adding` (show "Finishing
+   * setup…"), `added`, or `failed` with the reason. Null otherwise.
+   */
+  team?: { phase: "adding" | "added" | "failed"; error: string | null } | null;
 }
+
+/** What "Add a machine" shows while a paired machine joins its team. */
+export const FINISHING_SETUP = "Finishing setup…";
 
 export interface PairingHook extends PairingState {
   /** Unix ms, ticking each second while a code is active (for the countdown). */
@@ -138,7 +151,10 @@ export function usePairingCode({
           const code: PairingCode = { ...s.code, state: listed.state, usedAt: listed.usedAt, machine: listed.machine };
           return { ...s, phase, code };
         });
-        if (listed.state === "used") usedRef.current?.(listed);
+        if (listed.state === "used") {
+          usedRef.current?.(listed);
+          if (team && listed.machine) void addToTeam(listed.machine);
+        }
       } catch {
         // A missed read: the next one tries again.
       } finally {
@@ -150,7 +166,19 @@ export function usePairingCode({
       stopped = true;
       clearInterval(timer);
     };
-  }, [adapter, watching, pollMs]);
+  }, [adapter, watching, pollMs, team]);
+
+  // The machine that used the code becomes a machine of `team`.
+  const addToTeam = async (machine: string) => {
+    if (!adapter || !team) return;
+    setState((s) => ({ ...s, team: { phase: "adding", error: null } }));
+    try {
+      await adapter.call("sharing.share", { spaceId: `relay:${machine}`, who: `team:${team}`, role: "editor" });
+      setState((s) => ({ ...s, team: { phase: "added", error: null } }));
+    } catch (e: unknown) {
+      setState((s) => ({ ...s, team: { phase: "failed", error: e instanceof Error ? e.message : String(e) } }));
+    }
+  };
 
   const revoke = async () => {
     const code = state.code;

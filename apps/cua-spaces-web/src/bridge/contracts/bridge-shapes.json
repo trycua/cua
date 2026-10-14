@@ -2526,6 +2526,51 @@
         "cache"
       ]
     },
+    "TeamsList": {
+      "type": "object",
+      "properties": {
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "alias": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "plan": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "alias",
+              "name",
+              "role",
+              "plan"
+            ]
+          }
+        },
+        "currentTeamId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "teams",
+        "currentTeamId"
+      ]
+    },
     "VolumeOverview": {
       "type": "object",
       "properties": {
@@ -4843,6 +4888,9 @@
         "type": "string"
       }
     },
+    "teams.list": {
+      "$ref": "#/$defs/TeamsList"
+    },
     "telemetry.track": {
       "type": "null"
     },
@@ -6238,6 +6286,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "teams.list": {
+      "$ref": "#/$defs/TeamsList"
     },
     "telemetry.track": {
       "type": "null"

@@ -476,9 +476,13 @@ impl AppSessions {
                     self.providers().join(", ")
                 ))
             })?;
+        // Keep the variant the caller named (Microsoft Edge is a Chromium
+        // variant of the Chrome provider): its own profile is the source.
         let app_id = provider
             .app_ids()
-            .first()
+            .iter()
+            .find(|id| id.eq_ignore_ascii_case(app))
+            .or_else(|| provider.app_ids().first())
             .map(|s| s.to_string())
             .unwrap_or_else(|| app.to_string());
         let app_ref = AppRef {
@@ -495,6 +499,12 @@ impl AppSessions {
     /// only want a clear, immediate error for an unknown app.
     pub fn resolve_checked(&self, app: &str) -> Result<()> {
         self.resolve(app).map(|_| ())
+    }
+
+    /// The provider id `app` resolves to (`chrome` for Microsoft Edge), or
+    /// `None` when no provider handles it.
+    pub fn provider_id(&self, app: &str) -> Option<String> {
+        self.resolve(app).ok().map(|(p, _)| p.id().to_string())
     }
 
     /// The manifest for `app` on this host.

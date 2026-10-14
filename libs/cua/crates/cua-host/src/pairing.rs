@@ -313,13 +313,18 @@ impl RelayClient {
                 Some(_) => tokio::time::sleep(poll).await,
             }
         };
-        api.finishing_setup(
-            token,
-            crate::spaces_api::SETUP_RETRY_WINDOW,
-            waiting,
-            || api.add_org_machine(token, org, &machine, "", &name),
-        )
-        .await?;
+        if let Err(e) = api
+            .finishing_setup_org(
+                token,
+                org,
+                crate::spaces_api::SETUP_RETRY_WINDOW,
+                waiting,
+                || api.add_org_machine(token, org, &machine, "", &name),
+            )
+            .await
+        {
+            return Err(api.explain_plan_error(token, org, e).await);
+        }
         Ok(machine)
     }
 }

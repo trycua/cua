@@ -10,8 +10,9 @@
  *
  * With `team` (an organization id) the machine that used the code is then
  * made a team machine (`sharing.share` with `team:<id>`): pairing alone
- * never puts a machine in a team. Right after a Teams checkout that can take
- * up to a minute ("Finishing setup…"); the host retries meanwhile.
+ * never puts a machine in a team. Right after a Teams checkout the host
+ * waits a few seconds for the plan ("Finishing setup…"); a team that never
+ * paid fails at once, with words and a way to upgrade (`planFailure`).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -35,7 +36,40 @@ export interface PairingState {
    * With a `team`, after the code was used: `adding` (show "Finishing
    * setup…"), `added`, or `failed` with the reason. Null otherwise.
    */
-  team?: { phase: "adding" | "added" | "failed"; error: string | null } | null;
+  team?: { phase: "adding" | "added" | "failed"; error: string | null; upgradeUrl?: string | null } | null;
+}
+
+/** Where a team owner buys Teams, and where anyone buys Pro. */
+export const BUY_TEAMS_URL = "https://app.cua.ai/buy/teams";
+export const BUY_PRO_URL = "https://app.cua.ai/buy/pro";
+
+const BUY_URL = /\s*https:\/\/app\.cua\.ai\/buy\/(?:teams|pro)\b\S*/;
+
+/**
+ * A failed team step in words. The host already words plan errors: an owner
+ * gets the checkout link last in the message (it becomes an Upgrade button),
+ * anyone else is told to ask the owner. A raw plan error from an older host
+ * (`HTTP 402 (feature_required: team_machines)`) is reworded here, without a
+ * button because the role is not known.
+ */
+export function planFailure(raw: string): { text: string; upgradeUrl: string | null } {
+  const link = BUY_URL.exec(raw);
+  if (link) return { text: raw.replace(BUY_URL, "").trim(), upgradeUrl: link[0].trim() };
+  const feature = /feature_required(?::\s*(\w+))?/.exec(raw)?.[1];
+  if (/feature_required/.test(raw)) {
+    const what =
+      feature === "team_machines"
+        ? "Team machines need the Teams plan."
+        : feature === "team_roles"
+          ? "Admin roles need the Teams plan."
+          : feature === "device_approval"
+            ? "Approving devices needs the Teams plan."
+            : "This needs the Teams plan.";
+    return { text: `${what} Ask the team owner to upgrade.`, upgradeUrl: null };
+  }
+  if (/add_seats/.test(raw)) return { text: "Your team has no free seats. Ask the team owner to add seats.", upgradeUrl: null };
+  if (/machine_limit/.test(raw)) return { text: "Your team has as many machines as it has seats. Ask the team owner to add seats.", upgradeUrl: null };
+  return { text: raw, upgradeUrl: null };
 }
 
 /** What "Add a machine" shows while a paired machine joins its team. */
@@ -176,7 +210,8 @@ export function usePairingCode({
       await adapter.call("sharing.share", { spaceId: `relay:${machine}`, who: `team:${team}`, role: "editor" });
       setState((s) => ({ ...s, team: { phase: "added", error: null } }));
     } catch (e: unknown) {
-      setState((s) => ({ ...s, team: { phase: "failed", error: e instanceof Error ? e.message : String(e) } }));
+      const { text, upgradeUrl } = planFailure(e instanceof Error ? e.message : String(e));
+      setState((s) => ({ ...s, team: { phase: "failed", error: text, upgradeUrl } }));
     }
   };
 

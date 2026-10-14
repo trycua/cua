@@ -103,6 +103,38 @@ describe("Add a machine by link or QR code", () => {
     await waitFor(() => expect(document.querySelector('[data-pairing-team="added"]')?.textContent).toMatch(/Your team can use it now\./));
   });
 
+  it("a team that never paid fails at once in words, with an Upgrade button for the owner", async () => {
+    const org = "0f1e2d3c-0000-4000-8000-000000000001";
+    const opened: unknown[] = [];
+    const { adapter } = host({}, {
+      "sharing.share": () => Promise.reject(new Error("Team machines need the Teams plan. https://app.cua.ai/buy/teams")),
+      "session.openExternal": (args) => {
+        opened.push(args.url);
+        return Promise.resolve(undefined);
+      },
+    });
+    await mount(adapter, org);
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')).toBeTruthy(), { timeout: 3000 });
+    const text = document.querySelector("[data-pairing-added]")?.textContent ?? "";
+    expect(text).toContain("It isn't on your team yet. Team machines need the Teams plan.");
+    expect(text).not.toContain("HTTP 402");
+    expect(text).not.toContain("https://");
+    fireEvent.click(document.querySelector("[data-pairing-upgrade]")!);
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams"]));
+  });
+
+  it("a member is told to ask the owner, and a raw plan error from an older host is reworded", async () => {
+    const { adapter } = host({}, {
+      "sharing.share": () => Promise.reject(new Error("Spaces API: HTTP 402 (feature_required: team_machines)")),
+    });
+    await mount(adapter, "0f1e2d3c-0000-4000-8000-000000000001");
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')).toBeTruthy(), { timeout: 3000 });
+    const text = document.querySelector("[data-pairing-added]")?.textContent ?? "";
+    expect(text).toContain("Ask the team owner to upgrade.");
+    expect(text).not.toContain("feature_required");
+    expect(document.querySelector("[data-pairing-upgrade]")).toBeNull();
+  });
+
   it("lets you choose the team, the current one by default, and adds the machine to it", async () => {
     const acme = "0f1e2d3c-0000-4000-8000-0000000000a1";
     const shared: Record<string, unknown>[] = [];
@@ -147,7 +179,7 @@ describe("Add a machine by link or QR code", () => {
       "sharing.share": () => Promise.reject(new Error("Teams are not available on this server yet. Try again later, or update Cua.")),
     });
     await mount(adapter, "acme");
-    await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')?.textContent).toMatch(/isn't on your team yet: Teams are not available/), { timeout: 3000 });
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')?.textContent).toMatch(/isn't on your team yet. Teams are not available/), { timeout: 3000 });
   });
 
   it("revokes the link, then makes a new one", async () => {

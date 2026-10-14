@@ -295,7 +295,7 @@ jobs:
               python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
               SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
-              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk docs/content/docs/fleets scripts/docs-generators/cli-specs/cua.json
+              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk scripts/docs-generators/cli-specs/cua.json
               if [[ -n "$SDK_LOCKS" ]]; then
                 mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
                 git add -- "${SDK_LOCK_PATHS[@]}"

@@ -47,6 +47,9 @@ Returned by [`app_machines_page_rows`](#app_machines_page_rows).
 | `space_id` / `spaceId` | `Option<String>` |  | The Spaces list's row that is this machine's own desktop (`this-mac`, `relay:<machine>`), when there is one: the classic UI's detail for it. |
 | `stopped_sharing` / `stoppedSharing` | `bool` |  | Online, but its owner stopped sharing it. |
 | `last_seen` / `lastSeen` | `Option<u64>` |  | The device's last session (Unix seconds), when it has a device. |
+| `status` | `String` |  | The row's status word, the same in every UI (`status_word`): "Online", "Not sharing" or "Offline". |
+| `spaces` | `u32` |  | The Spaces it runs that the Spaces list shows: this machine's local Spaces, or the Spaces another machine provides (`host`). |
+| `spaces_label` / `spacesLabel` | `String` |  | "1 Space", "3 Spaces", "No Spaces" (`spaces_label`); empty for a device of its own, which runs no Spaces. |
 
 ## `AppMachinesPageInput` record
 

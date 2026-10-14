@@ -30068,7 +30068,11 @@ export type AppVaultSource = {
      */
     passwords: Array<AppVaultPassword>,
     /**
-     * The Keyvault daemon enforces a choice of passwords by site.
+     * The Keyvault daemon enforces a choice of passwords by site
+     * (`password_domains` in its status). Without it the review offers
+     * the passwords as before (those of the chosen sites, or every saved
+     * one) and lists none to pick: it never shows a choice the daemon
+     * would not keep.
      */
     passwordPicks: boolean
 }
@@ -30078,8 +30082,6 @@ export type AppVaultSource = {
  */
 export const AppVaultSource = (() => {
     const defaults = () => ({
-        passwords: [],
-        passwordPicks: false
     });
     const create = (() => {
         return uniffiCreateRecord<AppVaultSource, ReturnType<typeof defaults>>(defaults);
@@ -30177,7 +30179,8 @@ export type AppReviewChoice = {
      */
     passwordQuery: string,
     /**
-     * The password choice was made.
+     * The password choice was made (the default is picked the first time
+     * the box is ticked).
      */
     passwordsPicked: boolean
 }
@@ -30187,10 +30190,6 @@ export type AppReviewChoice = {
  */
 export const AppReviewChoice = (() => {
     const defaults = () => ({
-        passwordDomains: [],
-        passwordItems: [],
-        passwordQuery: "",
-        passwordsPicked: false
     });
     const create = (() => {
         return uniffiCreateRecord<AppReviewChoice, ReturnType<typeof defaults>>(defaults);
@@ -31779,15 +31778,16 @@ const FfiConverterTypeAppReviewDomain = (() => {
 
 export type AppReviewPassword = {
     /**
-     * What picking it toggles: the site, or the saved item's id.
+     * What picking it toggles: the site (reading the app) or the item id
+     * (from the Keyvault).
      */
     key: string,
     /**
-     * The site, or "Saved password" when not known.
+     * The site (`github.com`), or "Saved password" when not known.
      */
     site: string,
     /**
-     * The username, when known.
+     * The username, when known (a saved item).
      */
     username: string,
     /**
@@ -32040,8 +32040,9 @@ export type AppReviewView = {
      */
     passwordsLabel: string,
     /**
-     * Ticked: the saved passwords to pick from (sites with counts, or each
-     * saved password's site and username; never a value).
+     * Ticked: the saved passwords to pick from (sites with counts when
+     * reading the app, each saved password's site and username from the
+     * Keyvault; never a value), filtered by the search.
      */
     passwords: Array<AppReviewPassword>,
     /**
@@ -35976,8 +35977,8 @@ export type AppTeleportConsent = {
      */
     includePasswords: boolean,
     /**
-     * Reading the app: the sites whose saved passwords to send; `None`
-     * when no password is sent this way.
+     * Reading the app: the sites whose saved passwords to send (the
+     * review's per-site choice); `None` when no password is sent this way.
      */
     passwordDomains?: Array<string>
 }
@@ -35987,7 +35988,6 @@ export type AppTeleportConsent = {
  */
 export const AppTeleportConsent = (() => {
     const defaults = () => ({
-        passwordDomains: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<AppTeleportConsent, ReturnType<typeof defaults>>(defaults);
@@ -36472,8 +36472,9 @@ export type AppWizardEnv = {
      */
     gpus?: Array<AppGpuChoice>,
     /**
-     * Picks the name an unnamed Space gets; `None`: the core's own
-     * randomness.
+     * Picks the name an unnamed Space gets ([`generated_space_name`]);
+     * `None`: this process's own randomness. A core without randomness
+     * (the wasm build) is given one; tests give a fixed one.
      */
     nameSeed?: bigint
 }
@@ -36483,7 +36484,6 @@ export type AppWizardEnv = {
  */
 export const AppWizardEnv = (() => {
     const defaults = () => ({
-        nameSeed: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<AppWizardEnv, ReturnType<typeof defaults>>(defaults);
@@ -36880,8 +36880,8 @@ export type AppWizardState = {
      */
     address: AppAddressForm,
     /**
-     * The name the Space gets when Name is left empty (chosen when the
-     * wizard opens).
+     * The name the Space gets when Name is left empty
+     * ([`generated_space_name`], chosen when the wizard opens).
      */
     generatedName: string,
     /**
@@ -36895,8 +36895,6 @@ export type AppWizardState = {
  */
 export const AppWizardState = (() => {
     const defaults = () => ({
-        generatedName: "",
-        resourceEdit: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<AppWizardState, ReturnType<typeof defaults>>(defaults);
@@ -37157,7 +37155,8 @@ export type AppWizardView = {
      */
     gpu?: AppGpuRow,
     /**
-     * A slider's value being typed: the field shows instead of its number.
+     * A slider's value being typed: the field shows instead of its number
+     * (its error is also the field's [`WizardField::error`]).
      */
     resourceEdit?: AppResourceEditView,
     /**
@@ -37165,7 +37164,8 @@ export type AppWizardView = {
      */
     name: string,
     /**
-     * The name the Space gets: the one typed, else the generated one.
+     * The name the Space gets: the one typed, else the generated one
+     * (the Name field's placeholder).
      */
     spaceName: string,
     /**
@@ -37607,14 +37607,15 @@ export type KvStatus = {
      */
     skipUnlockPrompt?: boolean,
     /**
+     * What the daemon supports beyond the original protocol
+     * (`password_domains`: it reads only the saved passwords of the sites
+     * picked for them); empty from a daemon that predates the list.
+     */
+    features: Array<string>,
+    /**
      * An earlier preview's vault was found and set aside.
      */
-    resetNotice?: string,
-    /**
-     * What the daemon supports beyond the original protocol
-     * (`password_domains`); empty from an older one.
-     */
-    features: Array<string>
+    resetNotice?: string
 }
 
 /**
@@ -37622,7 +37623,6 @@ export type KvStatus = {
  */
 export const KvStatus = (() => {
     const defaults = () => ({
-        features: []
     });
     const create = (() => {
         return uniffiCreateRecord<KvStatus, ReturnType<typeof defaults>>(defaults);
@@ -37654,8 +37654,8 @@ const FfiConverterTypeKvStatus = (() => {
                 unlockProtectors: FfiConverterSequenceString.read(from),
                 browseUntilMs: FfiConverterOptionalUInt64.read(from),
                 skipUnlockPrompt: FfiConverterOptionalBoolean.read(from),
-                resetNotice: FfiConverterOptionalString.read(from),
-                features: FfiConverterSequenceString.read(from)
+                features: FfiConverterSequenceString.read(from),
+                resetNotice: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -37674,8 +37674,8 @@ const FfiConverterTypeKvStatus = (() => {
             FfiConverterSequenceString.write(value.unlockProtectors, into);
             FfiConverterOptionalUInt64.write(value.browseUntilMs, into);
             FfiConverterOptionalBoolean.write(value.skipUnlockPrompt, into);
-            FfiConverterOptionalString.write(value.resetNotice, into);
             FfiConverterSequenceString.write(value.features, into);
+            FfiConverterOptionalString.write(value.resetNotice, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.version) +
@@ -37693,8 +37693,8 @@ const FfiConverterTypeKvStatus = (() => {
              FfiConverterSequenceString.allocationSize(value.unlockProtectors) +
              FfiConverterOptionalUInt64.allocationSize(value.browseUntilMs) +
              FfiConverterOptionalBoolean.allocationSize(value.skipUnlockPrompt) +
-             FfiConverterOptionalString.allocationSize(value.resetNotice) +
-             FfiConverterSequenceString.allocationSize(value.features);
+             FfiConverterSequenceString.allocationSize(value.features) +
+             FfiConverterOptionalString.allocationSize(value.resetNotice);
 
         }
     };
@@ -42544,11 +42544,13 @@ export type KvVaultSource = {
      */
     passwordIds: Array<string>,
     /**
-     * The same passwords with their site and username (never a value).
+     * The same passwords with their site and username (never a value),
+     * for the review to list and pick from.
      */
     passwords: Array<AppVaultPassword>,
     /**
-     * The daemon enforces a choice of passwords by site.
+     * The daemon enforces a choice of passwords by site
+     * (`password_domains` in its status): the review may offer one.
      */
     passwordPicks: boolean
 }
@@ -52282,16 +52284,10 @@ inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>;
 
             this.inner = Object.freeze(inner);
         }
-        static new = (() => {
-            type Inner = {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>; passwordPicks: boolean };
-            const defaults = () => ({
-                passwords: [],
-                passwordPicks: false
-            });
-            const create = uniffiCreateRecord<Inner, ReturnType<typeof defaults>>(defaults);
-            return (partial: Parameters<typeof create>[0]): VaultItems_ =>
-                new VaultItems_(create(partial));
-        })();
+        static new(
+inner: {count: number; newestMs: bigint; nowMs: bigint; selected: Array<string>; passwordIds: Array<string>; passwords: Array<AppVaultPassword>; passwordPicks: boolean }): VaultItems_ {
+            return new VaultItems_(inner);
+        }
 
         static instanceOf(obj: any): obj is VaultItems_ {
             return obj.tag === AppPickerEvent_Tags.VaultItems;
@@ -52340,7 +52336,7 @@ Readonly<{key: string}>
     };
     /**
      * Pick or drop one saved password choice (a site, or a saved item's
-     * id).
+     * id: [`ReviewPassword::key`]).
      */
     class TogglePassword_ extends UniffiEnum implements TogglePassword__interface {
         /**
@@ -55001,7 +54997,7 @@ inner: {text: string }): SetResourceText_ {
     };
     /**
      * Return (or leaving the field): the typed value is used when it is
-     * within the slider's limits.
+     * within the slider's limits; otherwise the field stays with why.
      */
     class CommitResource_ extends UniffiEnum implements CommitResource__interface {
         /**

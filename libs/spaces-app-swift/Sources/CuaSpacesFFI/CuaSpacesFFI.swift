@@ -26383,7 +26383,8 @@ public struct AppReviewChoice: Equatable, Hashable {
      */
     public var passwordQuery: String
     /**
-     * The password choice was made.
+     * The password choice was made (the default is picked the first time
+     * the box is ticked).
      */
     public var passwordsPicked: Bool
 
@@ -26419,16 +26420,17 @@ public struct AppReviewChoice: Equatable, Hashable {
          */includePasswords: Bool,
         /**
          * The sites whose saved passwords to send (reading the app).
-         */passwordDomains: [String] = [],
+         */passwordDomains: [String],
         /**
          * The saved passwords to send (ids, from the Keyvault).
-         */passwordItems: [String] = [],
+         */passwordItems: [String],
         /**
          * The passwords list's search text.
-         */passwordQuery: String = "",
+         */passwordQuery: String,
         /**
-         * The password choice was made.
-         */passwordsPicked: Bool = false) {
+         * The password choice was made (the default is picked the first time
+         * the box is ticked).
+         */passwordsPicked: Bool) {
         self.source = source
         self.domains = domains
         self.selectedDomains = selectedDomains
@@ -26646,15 +26648,16 @@ public func FfiConverterTypeAppReviewDomain_lower(_ value: AppReviewDomain) -> R
 
 public struct AppReviewPassword: Equatable, Hashable {
     /**
-     * What picking it toggles: the site, or the saved item's id.
+     * What picking it toggles: the site (reading the app) or the item id
+     * (from the Keyvault).
      */
     public var key: String
     /**
-     * The site, or "Saved password" when not known.
+     * The site (`github.com`), or "Saved password" when not known.
      */
     public var site: String
     /**
-     * The username, when known.
+     * The username, when known (a saved item).
      */
     public var username: String
     /**
@@ -26670,13 +26673,14 @@ public struct AppReviewPassword: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * What picking it toggles: the site, or the saved item's id.
+         * What picking it toggles: the site (reading the app) or the item id
+         * (from the Keyvault).
          */key: String,
         /**
-         * The site, or "Saved password" when not known.
+         * The site (`github.com`), or "Saved password" when not known.
          */site: String,
         /**
-         * The username, when known.
+         * The username, when known (a saved item).
          */username: String,
         /**
          * "2 passwords" (a site of the browser); empty for one saved item.
@@ -26962,8 +26966,9 @@ public struct AppReviewView: Equatable, Hashable {
      */
     public var passwordsLabel: String
     /**
-     * Ticked: the saved passwords to pick from (sites with counts, or each
-     * saved password's site and username; never a value).
+     * Ticked: the saved passwords to pick from (sites with counts when
+     * reading the app, each saved password's site and username from the
+     * Keyvault; never a value), filtered by the search.
      */
     public var passwords: [AppReviewPassword]
     /**
@@ -27070,8 +27075,9 @@ public struct AppReviewView: Equatable, Hashable {
          * "Also send 14 saved passwords".
          */passwordsLabel: String,
         /**
-         * Ticked: the saved passwords to pick from (sites with counts, or each
-         * saved password's site and username; never a value).
+         * Ticked: the saved passwords to pick from (sites with counts when
+         * reading the app, each saved password's site and username from the
+         * Keyvault; never a value), filtered by the search.
          */passwords: [AppReviewPassword],
         /**
          * "2 of 5 sites", "2 of 5 passwords".
@@ -32971,8 +32977,8 @@ public struct AppTeleportConsent: Equatable, Hashable {
      */
     public var includePasswords: Bool
     /**
-     * Reading the app: the sites whose saved passwords to send; `None`
-     * when no password is sent this way.
+     * Reading the app: the sites whose saved passwords to send (the
+     * review's per-site choice); `None` when no password is sent this way.
      */
     public var passwordDomains: [String]?
 
@@ -33005,9 +33011,9 @@ public struct AppTeleportConsent: Equatable, Hashable {
          * Also send the saved passwords (ticked in the review).
          */includePasswords: Bool,
         /**
-         * Reading the app: the sites whose saved passwords to send; `None`
-         * when no password is sent this way.
-         */passwordDomains: [String]? = nil) {
+         * Reading the app: the sites whose saved passwords to send (the
+         * review's per-site choice); `None` when no password is sent this way.
+         */passwordDomains: [String]?) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -34191,7 +34197,11 @@ public struct AppVaultSource: Equatable, Hashable {
      */
     public var passwords: [AppVaultPassword]
     /**
-     * The Keyvault daemon enforces a choice of passwords by site.
+     * The Keyvault daemon enforces a choice of passwords by site
+     * (`password_domains` in its status). Without it the review offers
+     * the passwords as before (those of the chosen sites, or every saved
+     * one) and lists none to pick: it never shows a choice the daemon
+     * would not keep.
      */
     public var passwordPicks: Bool
 
@@ -34216,10 +34226,14 @@ public struct AppVaultSource: Equatable, Hashable {
         /**
          * The same passwords with their site and username (never a value), for
          * the review to list.
-         */passwords: [AppVaultPassword] = [],
+         */passwords: [AppVaultPassword],
         /**
-         * The Keyvault daemon enforces a choice of passwords by site.
-         */passwordPicks: Bool = false) {
+         * The Keyvault daemon enforces a choice of passwords by site
+         * (`password_domains` in its status). Without it the review offers
+         * the passwords as before (those of the chosen sites, or every saved
+         * one) and lists none to pick: it never shows a choice the daemon
+         * would not keep.
+         */passwordPicks: Bool) {
         self.available = available
         self.items = items
         self.saved = saved
@@ -34356,8 +34370,9 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var gpus: [AppGpuChoice]?
     /**
-     * Picks the name an unnamed Space gets; `None`: the core's own
-     * randomness.
+     * Picks the name an unnamed Space gets ([`generated_space_name`]);
+     * `None`: this process's own randomness. A core without randomness
+     * (the wasm build) is given one; tests give a fixed one.
      */
     public var nameSeed: UInt64?
 
@@ -34421,9 +34436,10 @@ public struct AppWizardEnv: Equatable, Hashable {
          * Resources step shows no GPU row for it.
          */gpus: [AppGpuChoice]?,
         /**
-         * Picks the name an unnamed Space gets; `None`: the core's own
-         * randomness.
-         */nameSeed: UInt64? = nil) {
+         * Picks the name an unnamed Space gets ([`generated_space_name`]);
+         * `None`: this process's own randomness. A core without randomness
+         * (the wasm build) is given one; tests give a fixed one.
+         */nameSeed: UInt64?) {
         self.defaultLocation = defaultLocation
         self.cloudAvailable = cloudAvailable
         self.localAvailable = localAvailable
@@ -34873,8 +34889,8 @@ public struct AppWizardState: Equatable, Hashable {
      */
     public var address: AppAddressForm
     /**
-     * The name the Space gets when Name is left empty (chosen when the
-     * wizard opens).
+     * The name the Space gets when Name is left empty
+     * ([`generated_space_name`], chosen when the wizard opens).
      */
     public var generatedName: String
     /**
@@ -34949,12 +34965,12 @@ public struct AppWizardState: Equatable, Hashable {
          * The address form.
          */address: AppAddressForm,
         /**
-         * The name the Space gets when Name is left empty (chosen when the
-         * wizard opens).
-         */generatedName: String = "",
+         * The name the Space gets when Name is left empty
+         * ([`generated_space_name`], chosen when the wizard opens).
+         */generatedName: String,
         /**
          * A slider's value being typed (its number was clicked).
-         */resourceEdit: AppResourceEdit? = nil) {
+         */resourceEdit: AppResourceEdit?) {
         self.mode = mode
         self.step = step
         self.placement = placement
@@ -35229,7 +35245,8 @@ public struct AppWizardView: Equatable, Hashable {
      */
     public var gpu: AppGpuRow?
     /**
-     * A slider's value being typed: the field shows instead of its number.
+     * A slider's value being typed: the field shows instead of its number
+     * (its error is also the field's [`WizardField::error`]).
      */
     public var resourceEdit: AppResourceEditView?
     /**
@@ -35237,7 +35254,8 @@ public struct AppWizardView: Equatable, Hashable {
      */
     public var name: String
     /**
-     * The name the Space gets: the one typed, else the generated one.
+     * The name the Space gets: the one typed, else the generated one
+     * (the Name field's placeholder).
      */
     public var spaceName: String
     /**
@@ -35419,13 +35437,15 @@ public struct AppWizardView: Equatable, Hashable {
          * The GPU row (Resources), where the runtime offers a GPU.
          */gpu: AppGpuRow?,
         /**
-         * A slider's value being typed: the field shows instead of its number.
+         * A slider's value being typed: the field shows instead of its number
+         * (its error is also the field's [`WizardField::error`]).
          */resourceEdit: AppResourceEditView?,
         /**
          * Name as typed.
          */name: String,
         /**
-         * The name the Space gets: the one typed, else the generated one.
+         * The name the Space gets: the one typed, else the generated one
+         * (the Name field's placeholder).
          */spaceName: String,
         /**
          * The name breaks the DNS-label rule.
@@ -39525,14 +39545,15 @@ public struct KvStatus: Equatable, Hashable {
      */
     public var skipUnlockPrompt: Bool?
     /**
+     * What the daemon supports beyond the original protocol
+     * (`password_domains`: it reads only the saved passwords of the sites
+     * picked for them); empty from a daemon that predates the list.
+     */
+    public var features: [String]
+    /**
      * An earlier preview's vault was found and set aside.
      */
     public var resetNotice: String?
-    /**
-     * What the daemon supports beyond the original protocol
-     * (`password_domains`); empty from an older one.
-     */
-    public var features: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -39587,12 +39608,13 @@ public struct KvStatus: Equatable, Hashable {
          * "Never ask again" on the unlock prompt is on.
          */skipUnlockPrompt: Bool?,
         /**
-         * An earlier preview's vault was found and set aside.
-         */resetNotice: String?,
-        /**
          * What the daemon supports beyond the original protocol
-         * (`password_domains`); empty from an older one.
-         */features: [String] = []) {
+         * (`password_domains`: it reads only the saved passwords of the sites
+         * picked for them); empty from a daemon that predates the list.
+         */features: [String],
+        /**
+         * An earlier preview's vault was found and set aside.
+         */resetNotice: String?) {
         self.version = version
         self.initialized = initialized
         self.unlocked = unlocked
@@ -39608,8 +39630,8 @@ public struct KvStatus: Equatable, Hashable {
         self.unlockProtectors = unlockProtectors
         self.browseUntilMs = browseUntilMs
         self.skipUnlockPrompt = skipUnlockPrompt
-        self.resetNotice = resetNotice
         self.features = features
+        self.resetNotice = resetNotice
     }
 
 
@@ -39643,8 +39665,8 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
                 unlockProtectors: FfiConverterSequenceString.read(from: &buf),
                 browseUntilMs: FfiConverterOptionUInt64.read(from: &buf),
                 skipUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
-                resetNotice: FfiConverterOptionString.read(from: &buf),
-                features: FfiConverterSequenceString.read(from: &buf)
+                features: FfiConverterSequenceString.read(from: &buf),
+                resetNotice: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -39664,8 +39686,8 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.unlockProtectors, into: &buf)
         FfiConverterOptionUInt64.write(value.browseUntilMs, into: &buf)
         FfiConverterOptionBool.write(value.skipUnlockPrompt, into: &buf)
-        FfiConverterOptionString.write(value.resetNotice, into: &buf)
         FfiConverterSequenceString.write(value.features, into: &buf)
+        FfiConverterOptionString.write(value.resetNotice, into: &buf)
     }
 }
 
@@ -40560,11 +40582,13 @@ public struct KvVaultSource: Equatable, Hashable {
      */
     public var passwordIds: [String]
     /**
-     * The same passwords with their site and username (never a value).
+     * The same passwords with their site and username (never a value),
+     * for the review to list and pick from.
      */
     public var passwords: [AppVaultPassword]
     /**
-     * The daemon enforces a choice of passwords by site.
+     * The daemon enforces a choice of passwords by site
+     * (`password_domains` in its status): the review may offer one.
      */
     public var passwordPicks: Bool
 
@@ -40585,10 +40609,12 @@ public struct KvVaultSource: Equatable, Hashable {
          * only when ticked in the review.
          */passwordIds: [String],
         /**
-         * The same passwords with their site and username (never a value).
+         * The same passwords with their site and username (never a value),
+         * for the review to list and pick from.
          */passwords: [AppVaultPassword],
         /**
-         * The daemon enforces a choice of passwords by site.
+         * The daemon enforces a choice of passwords by site
+         * (`password_domains` in its status): the review may offer one.
          */passwordPicks: Bool) {
         self.count = count
         self.newestMs = newestMs
@@ -49364,11 +49390,12 @@ public enum AppPickerEvent: Equatable, Hashable {
          */passwordIds: [String],
         /**
          * The same passwords with their site and username (never a
-         * value).
-         */passwords: [AppVaultPassword] = [],
+         * value), for the review to list.
+         */passwords: [AppVaultPassword],
         /**
-         * The Keyvault daemon enforces a choice of passwords by site.
-         */passwordPicks: Bool = false
+         * The Keyvault daemon enforces a choice of passwords by site
+         * (`password_domains` in its status); off for an older one.
+         */passwordPicks: Bool
     )
     /**
      * Tick or untick "Also send saved passwords".
@@ -49380,7 +49407,7 @@ public enum AppPickerEvent: Equatable, Hashable {
     )
     /**
      * Pick or drop one saved password choice (a site, or a saved item's
-     * id).
+     * id: [`ReviewPassword::key`]).
      */
     case togglePassword(
         /**
@@ -54511,7 +54538,7 @@ public enum AppWizardAction: Equatable, Hashable {
     )
     /**
      * Return (or leaving the field): the typed value is used when it is
-     * within the slider's limits.
+     * within the slider's limits; otherwise the field stays with why.
      */
     case commitResource
     /**

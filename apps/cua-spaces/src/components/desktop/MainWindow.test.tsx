@@ -14,6 +14,9 @@ import { fakeFleetBridge } from "../../test/fakeFleet";
 import { MainWindow } from "./MainWindow";
 import { createFakeCloudBridge, type CloudBridge } from '../../native/cloud';
 
+/** A Space created unnamed: the name the wizard generated and showed. */
+const GENERATED = /space-[0-9a-f]{10}/;
+
 const ROWS: SpaceRow[] = [
   { id: "cloud:aurora", name: "aurora", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
   { id: "local:cua-e2e-vm", name: "cua-e2e-vm", provider: "local", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
@@ -106,7 +109,7 @@ describe("MainWindow", () => {
         on: "local",
         kind: "vm",
         runtime: "auto",
-        name: undefined,
+        name: expect.stringMatching(/^space-[0-9a-f]{10}$/),
         cpus: 2,
         memoryMb: 4096,
         spacesd: true,
@@ -230,17 +233,17 @@ describe("MainWindow", () => {
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     // Before the create resolves: the row, selected, at 2%, and its detail.
-    const row = await screen.findByRole("option", { name: /New Space/ });
+    const row = await screen.findByRole("option", { name: GENERATED });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveTextContent("1%");
-    expect(await screen.findByRole("heading", { level: 1, name: "New Space" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: GENERATED })).toBeInTheDocument();
     expect(pendingId).toMatch(/^pending:/);
     // The SDK's pull moves it.
     act(() => progress.forEach((h) => h({ pendingId, phase: "pulling", fraction: 0.5, detail: "" })));
-    await waitFor(() => expect(screen.getByRole("option", { name: /New Space/ })).toHaveTextContent("42%"));
+    await waitFor(() => expect(screen.getByRole("option", { name: GENERATED })).toHaveTextContent("42%"));
     // Ready: it gives way to the registry's row.
     act(() => finish(ROWS[1]!));
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
   });
 
   /** Starts a local create from the wizard; resolves with its pending id and
@@ -266,7 +269,7 @@ describe("MainWindow", () => {
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "local" } });
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
-    await screen.findByRole("option", { name: /New Space/ });
+    await screen.findByRole("option", { name: GENERATED });
     const emit = (p: Omit<CreateProgress, "pendingId" | "detail">) =>
       act(() => progress.forEach((h) => h({ pendingId, detail: "", ...p })));
     return { ...ctx, pendingId: () => pendingId, emit, settle: () => settle! };
@@ -302,11 +305,11 @@ describe("MainWindow", () => {
     // The button keeps its label, disabled; the preview says Cancelling.
     await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
     expect(screen.getByText("Cancelling\u2026")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /New Space/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: GENERATED })).toBeInTheDocument();
     // The SDK cleans up; the create ends with its Cancelled error.
     act(() => settle().reject(new Error("cancelled: Cancelled local:space-1; removed its VM or container.")));
     await act(async () => done());
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
     expect(screen.queryByText(/Failed/)).toBeNull();
     expect(screen.queryByRole("option", { name: /cancelled/i })).toBeNull();
   });
@@ -314,7 +317,7 @@ describe("MainWindow", () => {
   it("a cancelled create's error never shows as a failure, even from another client", async () => {
     const { settle } = await startPendingCreate({});
     act(() => settle().reject(new Error("cancelled: Cancelled local:space-1.")));
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
   });
 
   it("a cancel that fails says so on the row", async () => {
@@ -366,7 +369,7 @@ describe("MainWindow", () => {
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     const row = await screen.findByRole("option", { name: /docker is not running/ });
-    expect(row).toHaveTextContent("New Space");
+    expect(row).toHaveTextContent(GENERATED);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

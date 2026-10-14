@@ -2248,6 +2248,38 @@ pub struct AppReviewToggle {
     pub selected: bool,
 }
 
+/// One saved password of the Keyvault, as a review lists it: its site and
+/// username, never its value.
+pub type AppVaultPassword = core::teleport::review::VaultPassword;
+#[uniffi::remote(Record)]
+pub struct AppVaultPassword {
+    /// The item's id.
+    pub id: String,
+    /// Its site (`github.com`); empty when not known.
+    pub site: String,
+    /// Its username; empty when not known or hidden.
+    pub username: String,
+}
+
+/// One saved password choice in the review: a site of the browser (reading
+/// it now) or one saved password (from the Keyvault). Sites and usernames
+/// only: a password's value is never shown.
+pub type AppReviewPassword = core::teleport::review::ReviewPassword;
+#[uniffi::remote(Record)]
+pub struct AppReviewPassword {
+    /// What picking it toggles: the site (reading the app) or the item id
+    /// (from the Keyvault).
+    pub key: String,
+    /// The site (`github.com`), or "Saved password" when not known.
+    pub site: String,
+    /// The username, when known (a saved item).
+    pub username: String,
+    /// "2 passwords" (a site of the browser); empty for one saved item.
+    pub counts: String,
+    /// Chosen to send.
+    pub selected: bool,
+}
+
 /// The saved Keyvault items of the app being teleported.
 pub type AppVaultSource = core::teleport::review::VaultSource;
 #[uniffi::remote(Record)]
@@ -2264,41 +2296,13 @@ pub struct AppVaultSource {
     pub password_ids: Vec<String>,
     /// The same passwords with their site and username (never a value), for
     /// the review to list.
-    #[uniffi(default = [])]
     pub passwords: Vec<AppVaultPassword>,
-    /// The Keyvault daemon enforces a choice of passwords by site.
-    #[uniffi(default = false)]
+    /// The Keyvault daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status). Without it the review offers
+    /// the passwords as before (those of the chosen sites, or every saved
+    /// one) and lists none to pick: it never shows a choice the daemon
+    /// would not keep.
     pub password_picks: bool,
-}
-
-/// One saved password of the Keyvault, as a review lists it: its site and
-/// username, never its value.
-pub type AppVaultPassword = core::teleport::review::VaultPassword;
-#[uniffi::remote(Record)]
-pub struct AppVaultPassword {
-    /// The item's id.
-    pub id: String,
-    /// Its site (`github.com`); empty when not known.
-    pub site: String,
-    /// Its username; empty when not known or hidden.
-    pub username: String,
-}
-
-/// One saved password choice in the review: a site of the browser or one
-/// saved password. Sites and usernames only, never a value.
-pub type AppReviewPassword = core::teleport::review::ReviewPassword;
-#[uniffi::remote(Record)]
-pub struct AppReviewPassword {
-    /// What picking it toggles: the site, or the saved item's id.
-    pub key: String,
-    /// The site, or "Saved password" when not known.
-    pub site: String,
-    /// The username, when known.
-    pub username: String,
-    /// "2 passwords" (a site of the browser); empty for one saved item.
-    pub counts: String,
-    /// Chosen to send.
-    pub selected: bool,
 }
 
 /// The review's choices.
@@ -2325,16 +2329,13 @@ pub struct AppReviewChoice {
     /// them; never remembered).
     pub include_passwords: bool,
     /// The sites whose saved passwords to send (reading the app).
-    #[uniffi(default = [])]
     pub password_domains: Vec<String>,
     /// The saved passwords to send (ids, from the Keyvault).
-    #[uniffi(default = [])]
     pub password_items: Vec<String>,
     /// The passwords list's search text.
-    #[uniffi(default = "")]
     pub password_query: String,
-    /// The password choice was made.
-    #[uniffi(default = false)]
+    /// The password choice was made (the default is picked the first time
+    /// the box is ticked).
     pub passwords_picked: bool,
 }
 
@@ -2577,9 +2578,8 @@ pub struct AppTeleportConsent {
     pub from_vault: Option<Vec<String>>,
     /// Also send the saved passwords (ticked in the review).
     pub include_passwords: bool,
-    /// Reading the app: the sites whose saved passwords to send; `None`
-    /// when no password is sent this way.
-    #[uniffi(default = None)]
+    /// Reading the app: the sites whose saved passwords to send (the
+    /// review's per-site choice); `None` when no password is sent this way.
     pub password_domains: Option<Vec<String>>,
 }
 
@@ -2802,11 +2802,10 @@ pub enum AppPickerEvent {
         /// The app's saved passwords (ids): sent only when ticked.
         password_ids: Vec<String>,
         /// The same passwords with their site and username (never a
-        /// value).
-        #[uniffi(default = [])]
+        /// value), for the review to list.
         passwords: Vec<AppVaultPassword>,
-        /// The Keyvault daemon enforces a choice of passwords by site.
-        #[uniffi(default = false)]
+        /// The Keyvault daemon enforces a choice of passwords by site
+        /// (`password_domains` in its status); off for an older one.
         password_picks: bool,
     },
     /// Tick or untick "Also send saved passwords".
@@ -2815,7 +2814,7 @@ pub enum AppPickerEvent {
         value: bool,
     },
     /// Pick or drop one saved password choice (a site, or a saved item's
-    /// id).
+    /// id: [`ReviewPassword::key`]).
     TogglePassword {
         /// The choice.
         key: String,
@@ -2925,8 +2924,9 @@ pub struct AppReviewView {
     pub include_passwords: bool,
     /// "Also send 14 saved passwords".
     pub passwords_label: String,
-    /// Ticked: the saved passwords to pick from (sites with counts, or each
-    /// saved password's site and username; never a value).
+    /// Ticked: the saved passwords to pick from (sites with counts when
+    /// reading the app, each saved password's site and username from the
+    /// Keyvault; never a value), filtered by the search.
     pub passwords: Vec<AppReviewPassword>,
     /// "2 of 5 sites", "2 of 5 passwords".
     pub password_summary: String,
@@ -3287,9 +3287,9 @@ pub struct AppWizardEnv {
     /// `gpu_support`), when known. A runtime not listed has none: the
     /// Resources step shows no GPU row for it.
     pub gpus: Option<Vec<AppGpuChoice>>,
-    /// Picks the name an unnamed Space gets; `None`: the core's own
-    /// randomness.
-    #[uniffi(default = None)]
+    /// Picks the name an unnamed Space gets ([`generated_space_name`]);
+    /// `None`: this process's own randomness. A core without randomness
+    /// (the wasm build) is given one; tests give a fixed one.
     pub name_seed: Option<u64>,
 }
 
@@ -3317,6 +3317,28 @@ pub struct AppAddressForm {
     pub busy: bool,
     /// The last error, in words.
     pub error: Option<String>,
+}
+
+/// A Resources slider whose value can be typed.
+pub type AppResourceField = core::wizard::ResourceField;
+#[uniffi::remote(Enum)]
+pub enum AppResourceField {
+    /// CPU cores.
+    Cpus,
+    /// Memory, GB.
+    Memory,
+    /// Disk, GB.
+    Disk,
+}
+
+/// A slider's value as typed.
+pub type AppResourceEdit = core::wizard::ResourceEdit;
+#[uniffi::remote(Record)]
+pub struct AppResourceEdit {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
 }
 
 /// The wizard's state.
@@ -3366,47 +3388,11 @@ pub struct AppWizardState {
     pub gpu: bool,
     /// The address form.
     pub address: AppAddressForm,
-    /// The name the Space gets when Name is left empty (chosen when the
-    /// wizard opens).
-    #[uniffi(default = "")]
+    /// The name the Space gets when Name is left empty
+    /// ([`generated_space_name`], chosen when the wizard opens).
     pub generated_name: String,
     /// A slider's value being typed (its number was clicked).
-    #[uniffi(default = None)]
     pub resource_edit: Option<AppResourceEdit>,
-}
-
-/// A Resources slider whose value can be typed.
-pub type AppResourceField = core::wizard::ResourceField;
-#[uniffi::remote(Enum)]
-pub enum AppResourceField {
-    /// CPU cores.
-    Cpus,
-    /// Memory, GB.
-    Memory,
-    /// Disk, GB.
-    Disk,
-}
-
-/// A slider's value as typed.
-pub type AppResourceEdit = core::wizard::ResourceEdit;
-#[uniffi::remote(Record)]
-pub struct AppResourceEdit {
-    /// Which slider.
-    pub field: AppResourceField,
-    /// The text as typed.
-    pub text: String,
-}
-
-/// A slider's value being typed, as drawn.
-pub type AppResourceEditView = core::wizard::ResourceEditView;
-#[uniffi::remote(Record)]
-pub struct AppResourceEditView {
-    /// Which slider.
-    pub field: AppResourceField,
-    /// The text as typed.
-    pub text: String,
-    /// Why it cannot be used, in one line (the slider's limits).
-    pub error: Option<String>,
 }
 
 /// An input to the wizard.
@@ -3502,7 +3488,7 @@ pub enum AppWizardAction {
         text: String,
     },
     /// Return (or leaving the field): the typed value is used when it is
-    /// within the slider's limits.
+    /// within the slider's limits; otherwise the field stays with why.
     CommitResource,
     /// Escape: the slider's value stays.
     CancelResource,
@@ -3800,6 +3786,18 @@ pub struct AppGpuRow {
     pub learn_more_url: Option<String>,
 }
 
+/// A slider's value being typed.
+pub type AppResourceEditView = core::wizard::ResourceEditView;
+#[uniffi::remote(Record)]
+pub struct AppResourceEditView {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
+    /// Why it cannot be used, in one line (the slider's limits).
+    pub error: Option<String>,
+}
+
 /// The wizard as drawn.
 pub type AppWizardView = core::wizard::WizardView;
 #[uniffi::remote(Record)]
@@ -3891,11 +3889,13 @@ pub struct AppWizardView {
     pub resources_error: Option<String>,
     /// The GPU row (Resources), where the runtime offers a GPU.
     pub gpu: Option<AppGpuRow>,
-    /// A slider's value being typed: the field shows instead of its number.
+    /// A slider's value being typed: the field shows instead of its number
+    /// (its error is also the field's [`WizardField::error`]).
     pub resource_edit: Option<AppResourceEditView>,
     /// Name as typed.
     pub name: String,
-    /// The name the Space gets: the one typed, else the generated one.
+    /// The name the Space gets: the one typed, else the generated one
+    /// (the Name field's placeholder).
     pub space_name: String,
     /// The name breaks the DNS-label rule.
     pub name_invalid: bool,
@@ -4299,12 +4299,12 @@ pub struct KvStatus {
     pub browse_until_ms: Option<u64>,
     /// "Never ask again" on the unlock prompt is on.
     pub skip_unlock_prompt: Option<bool>,
+    /// What the daemon supports beyond the original protocol
+    /// (`password_domains`: it reads only the saved passwords of the sites
+    /// picked for them); empty from a daemon that predates the list.
+    pub features: Vec<String>,
     /// An earlier preview's vault was found and set aside.
     pub reset_notice: Option<String>,
-    /// What the daemon supports beyond the original protocol
-    /// (`password_domains`); empty from an older one.
-    #[uniffi(default = [])]
-    pub features: Vec<String>,
 }
 
 /// The audit chain check.
@@ -4901,9 +4901,11 @@ pub struct KvVaultSource {
     /// The app's saved passwords (ids), never part of `ids`: they are sent
     /// only when ticked in the review.
     pub password_ids: Vec<String>,
-    /// The same passwords with their site and username (never a value).
+    /// The same passwords with their site and username (never a value),
+    /// for the review to list and pick from.
     pub passwords: Vec<AppVaultPassword>,
-    /// The daemon enforces a choice of passwords by site.
+    /// The daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status): the review may offer one.
     pub password_picks: bool,
 }
 

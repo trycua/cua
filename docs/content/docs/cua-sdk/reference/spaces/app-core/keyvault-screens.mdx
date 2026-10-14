@@ -430,6 +430,8 @@ Returned by [`kv_vault_source`](#kv_vault_source).
 | `newest_ms` / `newestMs` | `i64` |  | When the newest was saved, Unix ms (0: none). |
 | `ids` | `Vec<String>` |  | Their ids, in list order. |
 | `password_ids` / `passwordIds` | `Vec<String>` |  | The app's saved passwords (ids), never part of `ids`: they are sent only when ticked in the review. |
+| `passwords` | [`Vec<AppVaultPassword>`](/cua-sdk/reference/spaces/app-core#appvaultpassword-record) |  | The same passwords with their site and username (never a value), for the review to list and pick from. |
+| `password_picks` / `passwordPicks` | `bool` |  | The daemon enforces a choice of passwords by site (`password_domains` in its status): the review may offer one. |
 
 ## `KvVaultState` record
 

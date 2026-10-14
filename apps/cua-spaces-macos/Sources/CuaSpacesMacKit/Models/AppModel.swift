@@ -197,7 +197,7 @@ public final class AppModel {
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
             hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
-            experiments: settings.experiments, gpus: nil))
+            experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
         // filled from the SDK's shared cache.
@@ -876,7 +876,7 @@ public final class AppModel {
             hostArch: Self.hostArch, lumeSource: lumeSource, linuxSource: linuxSource,
             storage: storage.map(Self.wizardStorage),
             cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
-            experiments: settings.experiments, gpus: gpus))
+            experiments: settings.experiments, gpus: gpus, nameSeed: nil))
     }
 
     /// The New Space panel's Cancel.

@@ -12,15 +12,15 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_windows".into(),
-        description: "List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.\n\
+        description: "List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): layer-0 only without `pid`, every layer with `pid`. Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.\n\
             \n\
-            Per record: window_id, pid, app_name, title, bounds, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.".into(),
+            Per record: window_id, pid, app_name, title, bounds, layer, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "pid": {
                     "type": "integer",
-                    "description": "Only this pid's windows."
+                    "description": "Only this pid's windows, on every layer."
                 },
                 "app": {
                     "type": "string",
@@ -51,17 +51,14 @@ impl Tool for ListWindowsTool {
         let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
         let on_screen_only = args.bool_or("on_screen_only", false);
 
-        let enumeration = if on_screen_only {
-            crate::windows::visible_windows_with_space_snapshot()
-        } else {
-            crate::windows::all_windows_with_space_snapshot()
+        let enumeration = match pid_filter {
+            Some(pid) => crate::windows::pid_windows_with_space_snapshot(pid, on_screen_only),
+            None if on_screen_only => crate::windows::visible_windows_with_space_snapshot(),
+            None => crate::windows::all_windows_with_space_snapshot(),
         };
         let current_space_id = enumeration.current_space_id;
         let mut windows = enumeration.windows;
 
-        if let Some(pid) = pid_filter {
-            windows.retain(|w| w.pid == pid);
-        }
         // The driver's own windows (the agent cursor overlay) are not targets.
         let own_pid = std::process::id() as i32;
         windows.retain(|w| w.pid != own_pid);

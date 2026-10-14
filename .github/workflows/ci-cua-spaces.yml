@@ -60,6 +60,8 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v4
@@ -121,8 +123,11 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
             libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
             libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
-      - name: Cache cargo
-        uses: actions/cache@v4
+      # Restore only on PRs; the save step at the end of the job runs on
+      # other events (PR-scoped entries evicted main's under the 10 GB cap).
+      - name: Restore cargo
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -169,3 +174,12 @@ jobs:
             apps/cua-spaces/src-tauri/target/release/bundle/msi/*.msi
             apps/cua-spaces/src-tauri/target/release/bundle/deb/*.deb
             apps/cua-spaces/src-tauri/target/release/bundle/appimage/*.AppImage
+      - name: Save cargo
+        if: github.event_name != 'pull_request' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/cua-spaces/src-tauri/target
+          key: cua-spaces-bundle-${{ matrix.name }}-${{ hashFiles('apps/cua-spaces/src-tauri/Cargo.lock') }}

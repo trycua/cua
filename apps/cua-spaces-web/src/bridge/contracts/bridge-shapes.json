@@ -6577,6 +6577,9 @@
     },
     "window.setDragRegions": {
       "type": "null"
+    },
+    "window.setDropTargets": {
+      "type": "null"
     }
   },
   "webkitUnshaped": {}

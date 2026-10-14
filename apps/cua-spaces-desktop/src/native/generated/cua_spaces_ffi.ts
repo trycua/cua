@@ -3834,6 +3834,51 @@ export function appSentFilesFromJson(json: string): Array<AppSentFileInfo> /*thr
     }
 
 /**
+ * The settings after a Settings, Experiments row's choice (the switches,
+ * and the New UI's "Use classic UI" saved as the user's choice).
+ */
+export function appSettingsChooseExperiment(settings: AppSettings, row: string, option: string): AppSettings {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppSettings.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_settings_choose_experiment(
+        FfiConverterTypeAppSettings.lower(settings, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(row, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(option, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The update channel of an install's first launch, from the file's
+ * `channel`: Beta for a prerelease, else unchanged.
+ */
+export function appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: string): AppUpdateChannel {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppUpdateChannel.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_settings_first_launch_channel(
+        FfiConverterTypeAppUpdateChannel.lower(channel, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(version, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The Settings page's input from JSON (parity flows).
  */
 export function appSettingsInputFromJson(json: string): AppSettingsInput /*throws*/ {
@@ -3888,6 +3933,29 @@ export function appSettingsPage(input: AppSettingsInput): AppSettingsPage {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_settings_page(
         FfiConverterTypeAppSettingsInput.lower(input, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The settings with the New UI as a launch of `version` shows it: the
+ * user's choice, else the default for the update channel and version
+ * (again after the channel changes).
+ */
+export function appSettingsResolveNewUi(settings: AppSettings, version: string): AppSettings {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppSettings.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(
+        FfiConverterTypeAppSettings.lower(settings, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(version, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -12242,7 +12310,8 @@ export type AppExperiments = {
      */
     sharing: boolean,
     /**
-     * The shared web UI, previewed in its own window.
+     * The New UI (the shared web UI) is the main window: the user's choice
+     * or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
      */
     webUi: boolean
 }
@@ -32185,9 +32254,19 @@ export type AppSettings = {
     launchAtLogin?: boolean,
     /**
      * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]).
+     * ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+     * shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+     * "on" there, the value older builds read.
      */
     experiments: AppExperiments,
+    /**
+     * The New UI as the user chose it (Settings, Experiments, "Use classic
+     * UI"); `None`: never chosen, so
+     * [`crate::experiments::new_ui_default`] decides. An older build's
+     * saved `webUi: true` reads as `Some(true)`; its `false` was only the
+     * saved default, so it reads as never chosen ([`load`]).
+     */
+    newUi?: boolean,
     /**
      * Keyvault copies (import ids) the user dismissed from the notch: it no
      * longer shows them, nothing is revoked or wiped
@@ -32244,6 +32323,7 @@ const FfiConverterTypeAppSettings = (() => {
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from),
                 launchAtLogin: FfiConverterOptionalBoolean.read(from),
                 experiments: FfiConverterTypeAppExperiments.read(from),
+                newUi: FfiConverterOptionalBoolean.read(from),
                 dismissedAccess: FfiConverterSequenceString.read(from),
                 keyvaultSiteIcons: FfiConverterBool.read(from),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from),
@@ -32261,6 +32341,7 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterTypeAppUpdateChannel.write(value.updateChannel, into);
             FfiConverterOptionalBoolean.write(value.launchAtLogin, into);
             FfiConverterTypeAppExperiments.write(value.experiments, into);
+            FfiConverterOptionalBoolean.write(value.newUi, into);
             FfiConverterSequenceString.write(value.dismissedAccess, into);
             FfiConverterBool.write(value.keyvaultSiteIcons, into);
             FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into);
@@ -32277,6 +32358,7 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterTypeAppUpdateChannel.allocationSize(value.updateChannel) +
              FfiConverterOptionalBoolean.allocationSize(value.launchAtLogin) +
              FfiConverterTypeAppExperiments.allocationSize(value.experiments) +
+             FfiConverterOptionalBoolean.allocationSize(value.newUi) +
              FfiConverterSequenceString.allocationSize(value.dismissedAccess) +
              FfiConverterBool.allocationSize(value.keyvaultSiteIcons) +
              FfiConverterSequenceTypeAppRememberedChoice.allocationSize(value.teleportChoices) +
@@ -59459,6 +59541,12 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_sent_files_from_json() !== 3362) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_sent_files_from_json");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_choose_experiment() !== 8693) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_choose_experiment");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() !== 11279) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
@@ -59467,6 +59555,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_page");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() !== 48081) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 30129) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_save");

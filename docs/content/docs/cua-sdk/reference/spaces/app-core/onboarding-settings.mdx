@@ -318,7 +318,7 @@ Returned by [`app_presentation_preview_frame`](#app_presentation_preview_frame),
 
 ## `AppSettings` record
 
-Returned by [`app_settings_load`](#app_settings_load).
+Returned by [`app_settings_choose_experiment`](/cua-sdk/reference/spaces/app-core/experiments#app_settings_choose_experiment), [`app_settings_load`](#app_settings_load), [`app_settings_resolve_new_ui`](/cua-sdk/reference/spaces/app-core/experiments#app_settings_resolve_new_ui).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -331,7 +331,8 @@ Returned by [`app_settings_load`](#app_settings_load).
 | `last_seen_version` / `lastSeenVersion` | `Option<String>` |  | The version and build the app last launched as (`crate.about.identity`; `None`: never recorded). A launch as another one follows an update (`crate.about.after_launch`). |
 | `update_channel` / `updateChannel` | [`AppUpdateChannel`](/cua-sdk/reference/spaces/app-core/about#appupdatechannel-enum) |  | Which releases the updater offers (Settings, About). |
 | `launch_at_login` / `launchAtLogin` | `Option<bool>` |  | Launch at login, as the user chose it (the first run's Done page or Settings); `None`: never chosen (`crate.login_item.launch_plan`). |
-| `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: every switch off unless turned on (`crate.experiments`). |
+| `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: every switch off unless turned on (`crate.experiments`). Its `webUi` is the New UI as this launch shows it (`resolve_new_ui`); the file keeps only `Self.new_ui`'s "on" there, the value older builds read. |
+| `new_ui` / `newUi` | `Option<bool>` |  | The New UI as the user chose it (Settings, Experiments, "Use classic UI"); `None`: never chosen, so `crate.experiments.new_ui_default` decides. An older build's saved `webUi: true` reads as `Some(true)`; its `false` was only the saved default, so it reads as never chosen (`load`). |
 | `dismissed_access` / `dismissedAccess` | `Vec<String>` |  | Keyvault copies (import ids) the user dismissed from the notch: it no longer shows them, nothing is revoked or wiped (`crate.keyvault.view.prune_dismissed` forgets the gone ones). |
 | `keyvault_site_icons` / `keyvaultSiteIcons` | `bool` |  | Keyvault rows may load a site's icon from Google's favicon service when the source browser had none (Settings, Keyvault; on by default). Off, only icons read locally are shown. |
 | `teleport_choices` / `teleportChoices` | [`Vec<AppRememberedChoice>`](/cua-sdk/reference/spaces/app-core/teleport-review#apprememberedchoice-record) |  | The sites the user sent to each Space last time, per app (`crate.teleport.review.remember`): the review starts from them. |

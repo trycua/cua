@@ -1613,3 +1613,38 @@ async fn a_pause_keeps_the_owners_choice_and_skips_direct_mode() {
     assert!(!s.paused_signed_out);
     assert!(g.manager.calls.lock().unwrap().is_empty());
 }
+
+/// The mesh stays off on a hosted machine unless asked for: a setup without
+/// `CUA_MESH` installs the same service as before, and an explicit
+/// `CUA_MESH` at setup reaches the service.
+#[test]
+fn the_service_gets_cua_mesh_only_when_setup_was_given_it() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        ..Default::default()
+    };
+    let spec = host.service_spec(&config);
+    assert_eq!(
+        spec.env,
+        vec![("CUA_ENV_LOG".to_string(), "info".to_string())]
+    );
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(!json.contains("mesh"), "{json}");
+
+    let config = crate::HostConfig {
+        mesh: Some("prefer".into()),
+        ..config
+    };
+    let spec = host.service_spec(&config);
+    assert!(
+        spec.env
+            .contains(&("CUA_MESH".to_string(), "prefer".to_string()))
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(back.mesh.as_deref(), Some("prefer"));
+}

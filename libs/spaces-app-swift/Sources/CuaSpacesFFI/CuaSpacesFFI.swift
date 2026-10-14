@@ -13934,7 +13934,8 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var sharing: Bool
     /**
-     * The shared web UI, previewed in its own window.
+     * The New UI (the shared web UI) is the main window: the user's choice
+     * or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
      */
     public var webUi: Bool
 
@@ -13951,7 +13952,8 @@ public struct AppExperiments: Equatable, Hashable {
          * Sharing a Space with other accounts.
          */sharing: Bool,
         /**
-         * The shared web UI, previewed in its own window.
+         * The New UI (the shared web UI) is the main window: the user's choice
+         * or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
          */webUi: Bool) {
         self.cuaVolume = cuaVolume
         self.yourCloud = yourCloud
@@ -27816,9 +27818,19 @@ public struct AppSettings: Equatable, Hashable {
     public var launchAtLogin: Bool?
     /**
      * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]).
+     * ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+     * shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+     * "on" there, the value older builds read.
      */
     public var experiments: AppExperiments
+    /**
+     * The New UI as the user chose it (Settings, Experiments, "Use classic
+     * UI"); `None`: never chosen, so
+     * [`crate::experiments::new_ui_default`] decides. An older build's
+     * saved `webUi: true` reads as `Some(true)`; its `false` was only the
+     * saved default, so it reads as never chosen ([`load`]).
+     */
+    public var newUi: Bool?
     /**
      * Keyvault copies (import ids) the user dismissed from the notch: it no
      * longer shows them, nothing is revoked or wiped
@@ -27878,8 +27890,17 @@ public struct AppSettings: Equatable, Hashable {
          */launchAtLogin: Bool?,
         /**
          * Settings, Experiments: every switch off unless turned on
-         * ([`crate::experiments`]).
+         * ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+         * shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+         * "on" there, the value older builds read.
          */experiments: AppExperiments,
+        /**
+         * The New UI as the user chose it (Settings, Experiments, "Use classic
+         * UI"); `None`: never chosen, so
+         * [`crate::experiments::new_ui_default`] decides. An older build's
+         * saved `webUi: true` reads as `Some(true)`; its `false` was only the
+         * saved default, so it reads as never chosen ([`load`]).
+         */newUi: Bool?,
         /**
          * Keyvault copies (import ids) the user dismissed from the notch: it no
          * longer shows them, nothing is revoked or wiped
@@ -27909,6 +27930,7 @@ public struct AppSettings: Equatable, Hashable {
         self.updateChannel = updateChannel
         self.launchAtLogin = launchAtLogin
         self.experiments = experiments
+        self.newUi = newUi
         self.dismissedAccess = dismissedAccess
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.teleportChoices = teleportChoices
@@ -27941,6 +27963,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from: &buf),
                 launchAtLogin: FfiConverterOptionBool.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
+                newUi: FfiConverterOptionBool.read(from: &buf),
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
@@ -27959,6 +27982,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterTypeAppUpdateChannel.write(value.updateChannel, into: &buf)
         FfiConverterOptionBool.write(value.launchAtLogin, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
+        FfiConverterOptionBool.write(value.newUi, into: &buf)
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into: &buf)
@@ -64888,6 +64912,31 @@ public func appSentFilesFromJson(json: String)throws  -> [AppSentFileInfo]  {
 })
 }
 /**
+ * The settings after a Settings, Experiments row's choice (the switches,
+ * and the New UI's "Use classic UI" saved as the user's choice).
+ */
+public func appSettingsChooseExperiment(settings: AppSettings, row: String, option: String) -> AppSettings  {
+    return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_settings_choose_experiment(
+        FfiConverterTypeAppSettings_lower(settings),
+        FfiConverterString.lower(row),
+        FfiConverterString.lower(option),$0
+    )
+})
+}
+/**
+ * The update channel of an install's first launch, from the file's
+ * `channel`: Beta for a prerelease, else unchanged.
+ */
+public func appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: String) -> AppUpdateChannel  {
+    return try!  FfiConverterTypeAppUpdateChannel_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_settings_first_launch_channel(
+        FfiConverterTypeAppUpdateChannel_lower(channel),
+        FfiConverterString.lower(version),$0
+    )
+})
+}
+/**
  * The Settings page's input from JSON (parity flows).
  */
 public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
@@ -64914,6 +64963,19 @@ public func appSettingsPage(input: AppSettingsInput) -> AppSettingsPage  {
     return try!  FfiConverterTypeAppSettingsPage_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_settings_page(
         FfiConverterTypeAppSettingsInput_lower(input),$0
+    )
+})
+}
+/**
+ * The settings with the New UI as a launch of `version` shows it: the
+ * user's choice, else the default for the update channel and version
+ * (again after the channel changes).
+ */
+public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> AppSettings  {
+    return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(
+        FfiConverterTypeAppSettings_lower(settings),
+        FfiConverterString.lower(version),$0
     )
 })
 }
@@ -66659,6 +66721,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_sent_files_from_json() != 3362) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_choose_experiment() != 8693) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 11279) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -66666,6 +66734,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 30129) {

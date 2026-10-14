@@ -243,8 +243,9 @@ pub struct RelayInfo {
     /// Public base URL.
     #[serde(default)]
     pub public_url: String,
-    /// Assertion issuer.
-    #[serde(default)]
+    /// Assertion issuer (empty on a static-token relay, which sends
+    /// `null`).
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub issuer: String,
     /// Accepts account tokens.
     #[serde(default)]
@@ -252,6 +253,23 @@ pub struct RelayInfo {
     /// Accepts static relay tokens.
     #[serde(default)]
     pub static_tokens: bool,
+    /// The WireGuard®-based mesh this relay coordinates, if any.
+    #[serde(default)]
+    pub mesh: Option<RelayMeshInfo>,
+}
+
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+/// What a relay says about its mesh (`/v1/info` `mesh`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayMeshInfo {
+    /// Mesh protocol version.
+    pub version: u32,
+    /// STUN servers it advertises.
+    #[serde(default)]
+    pub stun: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -898,6 +916,19 @@ fn sharing_default() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_static_relays_info_parses() {
+        // A static-token relay has no OIDC issuer: `null`. Rejecting it
+        // kept self-hosted relays' clients off their mesh (CUA-1426).
+        let info: RelayInfo = serde_json::from_str(
+            r#"{"account_auth":false,"issuer":null,"mesh":{"stun":[],"version":1},"public_url":"http://relay","state_writable":true,"static_tokens":true}"#,
+        )
+        .unwrap();
+        assert_eq!(info.issuer, "");
+        assert!(info.static_tokens);
+        assert_eq!(info.mesh.map(|m| m.version), Some(1));
+    }
+
     use super::*;
 
     #[test]

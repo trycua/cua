@@ -171,4 +171,5 @@ export const HOST_COVERAGE = {
  */
 export const WEBKIT_HOST_ONLY: Partial<Record<WebkitMethod, string>> = {
   "window.setDragRegions": "the webkit adapter sends the page's drag regions itself whenever the layout changes (drag-regions.ts)",
+  "window.setDropTargets": "the webkit adapter sends the Space tiles' boxes itself whenever the layout changes, for a real window dragged onto one (window-drop.ts)",
 };

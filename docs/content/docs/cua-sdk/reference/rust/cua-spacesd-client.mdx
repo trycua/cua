@@ -96,6 +96,7 @@ pub struct ConnectOptions {
   pub keepalive: Keepalive,
   pub retry: RetryPolicy,
   pub probe: bool,
+  pub headers: Vec<(String, String)>,
 }
 impl ConnectOptions {
   fn new(endpoint: Endpoint) -> Self;
@@ -107,6 +108,7 @@ impl ConnectOptions {
   fn retry(self, retry: RetryPolicy) -> Self;
   fn keepalive(self, keepalive: Keepalive) -> Self;
   fn probe_timeout(self, timeout: Duration) -> Self;
+  fn header(self, name: impl Into<String>, value: impl Into<String>) -> Self;
   fn probe(self, probe: bool) -> Self;
 }
 ```

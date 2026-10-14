@@ -1302,6 +1302,16 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_settings_choose_experiment": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_settings_first_launch_channel": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_settings_input_from_json": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -1314,6 +1324,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_spaces_ffi_fn_func_app_settings_page": {
       args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -2967,6 +2982,16 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_settings_choose_experiment": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json": {
       args: [],
       ret: FfiType.UInt16,
@@ -2978,6 +3003,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_settings_page": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4096,9 +4126,12 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_sensitive_group_sdk(group: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sent_file(report: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sent_files_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_settings_choose_experiment(settings: Uint8Array, row: Uint8Array, option: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_settings_first_launch_channel(channel: Uint8Array, version: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_settings_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_settings_load(path: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_settings_page(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(settings: Uint8Array, version: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_settings_save(path: Uint8Array, settings: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_spaces_ffi_fn_func_app_settings_with_storage(page: Uint8Array, storage: Uint8Array, experiments: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4429,9 +4462,12 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_sensitive_group_sdk(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sent_file(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sent_files_from_json(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_settings_choose_experiment(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_settings_load(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_settings_page(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_settings_save(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_settings_with_storage(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_action_from_json(): number;

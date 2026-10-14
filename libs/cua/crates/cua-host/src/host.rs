@@ -292,6 +292,20 @@ pub struct HostConfig {
     /// [`Host::resume_signed_in`] can bring it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paused_signed_out: bool,
+    /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
+    /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
+    /// service. Unset, the service follows its own default (off unless the
+    /// Cua Spaces app's channel turns it on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+/// `CUA_MESH` where setup runs, when set.
+fn mesh_env() -> Option<String> {
+    std::env::var("CUA_MESH")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// A macOS privacy pane the user must grant the driver in.
@@ -903,10 +917,14 @@ impl Host {
                 "--no-mcp".into(),
             ]);
         }
+        let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        if let Some(mesh) = &config.mesh {
+            env.push(("CUA_MESH".into(), mesh.clone()));
+        }
         ServiceSpec {
             program: config.driver_bin.clone(),
             args,
-            env: vec![("CUA_ENV_LOG".into(), "info".into())],
+            env,
             log_path: p.log(),
             working_dir: user_home(&self.home),
         }
@@ -988,6 +1006,7 @@ impl Host {
             sharing: true,
             share_desktop: opts.share_desktop,
             provide_spaces: opts.provide_spaces,
+            mesh: mesh_env(),
             ..Default::default()
         };
         if opts.download_first {

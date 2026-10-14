@@ -565,6 +565,39 @@ struct WebUIHostTests {
         #expect(second.window?.frame.origin == frame.origin)
     }
 
+    /// The page's Space tiles become the window-drag targets of its window
+    /// (CSS pixels at the page's zoom), and a targeted tile is named back to
+    /// the page; a new page starts with none.
+    @Test func thePagesTilesAreWindowDropTargets() async throws {
+        _ = NSApplication.shared
+        let (_, model) = bridge()
+        let c = WebUIWindowController(model: model)
+        defer { c.window?.close() }
+        var emitted: [(String, Any?)] = []
+        c.onEmit = { emitted.append(($0, $1)) }
+        _ = try await c.bridge.handle("window.setDropTargets",
+                                      ["targets": [["spaceId": "local:aurora", "x": 20, "y": 60, "width": 232, "height": 180]]])
+        let targets = model.pageDropTargets
+        #expect(targets.window === c.window)
+        #expect(targets.frames == ["local:aurora": CGRect(x: 20, y: 60, width: 232, height: 180)])
+        c.webView.pageZoom = 1.25
+        _ = try await c.bridge.handle("window.setDropTargets",
+                                      ["targets": [["spaceId": "local:aurora", "x": 20, "y": 60, "width": 232, "height": 180]]])
+        #expect(targets.frames["local:aurora"] == CGRect(x: 25, y: 75, width: 290, height: 225))
+        await #expect(throws: (any Error).self) {
+            _ = try await c.bridge.handle("window.setDropTargets", ["targets": [["x": 1]]])
+        }
+        targets.handle(phase: "move", target: "local:aurora")
+        targets.handle(phase: "move", target: "local:aurora")
+        targets.handle(phase: "end", target: "local:aurora")
+        let named = emitted.filter { $0.0 == "window.dropTarget" }.map { ($0.1 as? [String: Any])?["spaceId"] }
+        #expect(named.count == 2)
+        #expect(named.first as? String == "local:aurora")
+        #expect(named.last as? NSNull != nil)
+        c.window?.close()
+        #expect(targets.frames.isEmpty)
+    }
+
     @Test func aboutIsTheUpdatesModelsInput() async throws {
         let (bridge, model) = bridge()
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)

@@ -929,8 +929,8 @@ export const PAGES: PageSpec[] = [
     slug: 'spaces/app-core/experiments',
     title: 'Experiments',
     description: 'Settings > Experiments: the switches that hide Cua Volume, your own cloud and sharing until they are turned on.',
-    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_experiments_choose` applies a switch. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
-    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
+    intro: '`app_experiments_page` derives the Experiments tab from the saved `AppExperiments`; `app_settings_choose_experiment` applies a switch and saves the New UI choice ("Use classic UI"). `app_settings_resolve_new_ui` applies the New UI default for the update channel and version. Off only hides a feature: a mounted Volume, a connected cloud and existing shares stay as they are.',
+    items: ['app_experiments_from_json', 'app_settings_with_storage', 'app_settings_resolve_new_ui', 'app_settings_first_launch_channel', 'app_settings_choose_experiment', 'app_telemetry_experiments_changed', 'app_telemetry_experiments_on'],
     prefixes: ['AppExperiment', 'app_experiments_'],
     spaces: true,
   },
@@ -2088,9 +2088,10 @@ function itemTable(items: Array<Item & { href: string }>, page: string): string[
 }
 
 /**
- * A catalog page's compact index: one line of item links per subpage (the
- * summaries live on each item's own section), so large catalogs stay under
- * the page budget.
+ * A catalog page's compact index: one line per subpage, its title linking to
+ * it, then the names of its items (each one's section is on that page, under
+ * its name), so large catalogs stay under the page budget. The catalog page's
+ * own items keep their anchor links.
  */
 function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: RenderContext): string[] {
   const groups = new Map<string, Array<Item & { href: string }>>();
@@ -2102,7 +2103,12 @@ function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: R
   const out: string[] = [];
   for (const [target, group] of groups) {
     const spec = rc.pages.find((p) => pageRoute(p.slug) === target || target.endsWith(`/${p.slug}`));
-    out.push(`**${spec ? spec.title : target}**: ${group.map((i) => `[\`${i.name}\`](${relLink(i.href, page)})`).join(', ')}`, '');
+    const title = spec ? spec.title : target;
+    if (target === pageRoute(page)) {
+      out.push(`**${title}**: ${group.map((i) => `[\`${i.name}\`](${relLink(i.href, page)})`).join(', ')}`, '');
+    } else {
+      out.push(`**[${title}](${target})**: ${group.map((i) => `\`${i.name}\``).join(', ')}`, '');
+    }
   }
   return out;
 }
@@ -2122,7 +2128,7 @@ function renderObjectPage(p: Placed, rc: RenderContext, version: string): string
   for (const item of p.items) body.push(...renderItem(item, rc));
   if (spec.catalog) {
     const items = catalogItems(spec.slug, rc);
-    body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page. Methods are listed on their object.`, '');
+    body.push('## All items', '', `${items.length} items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.`, '');
     body.push(...catalogIndex(items, spec.slug, rc), '');
   }
   const needsCallout = body.some((l) => l.includes('<Callout'));

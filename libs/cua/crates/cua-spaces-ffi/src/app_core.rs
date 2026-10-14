@@ -1924,6 +1924,35 @@ pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
         .map_err(|e| CuaError::Internal(e.to_string()))
 }
 
+/// The settings with the New UI as a launch of `version` shows it: the
+/// user's choice, else the default for the update channel and version
+/// (again after the channel changes).
+#[uniffi::export]
+pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
+    core::settings::resolve_new_ui(&settings, &version)
+}
+
+/// The update channel of an install's first launch, from the file's
+/// `channel`: Beta for a prerelease, else unchanged.
+#[uniffi::export]
+pub fn app_settings_first_launch_channel(
+    channel: AppUpdateChannel,
+    version: String,
+) -> AppUpdateChannel {
+    core::settings::first_launch_channel(channel, &version)
+}
+
+/// The settings after a Settings, Experiments row's choice (the switches,
+/// and the New UI's "Use classic UI" saved as the user's choice).
+#[uniffi::export]
+pub fn app_settings_choose_experiment(
+    settings: AppSettings,
+    row: String,
+    option: String,
+) -> AppSettings {
+    core::settings::choose_experiment(&settings, &row, &option)
+}
+
 /// The Settings page.
 #[uniffi::export]
 pub fn app_settings_page(input: AppSettingsInput) -> AppSettingsPage {

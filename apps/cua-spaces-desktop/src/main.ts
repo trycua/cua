@@ -33,6 +33,7 @@ import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
 import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
+import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
 // Linux desktop entry in electron-builder.config.cjs.
@@ -86,6 +87,26 @@ function migrateSwiftApp() {
   }
 }
 
+/** One of the app's windows as the window-drop targets see it (one per window). */
+const dropWindows = new WeakMap<BrowserWindow, DropWindow>();
+function dropWindow(win: BrowserWindow): DropWindow {
+  let w = dropWindows.get(win);
+  if (!w) {
+    w = {
+      destroyed: () => win.isDestroyed(),
+      visible: () => win.isVisible() && !win.isMinimized(),
+      contentBounds: () => win.getContentBounds(),
+      zoom: () => win.webContents.getZoomFactor(),
+      number: () => windowNumberOf(win.getMediaSourceId()),
+      send: (event, payload) => {
+        if (!win.isDestroyed()) win.webContents.send(ELECTRON_EVENT_CHANNEL, { event, payload });
+      },
+    };
+    dropWindows.set(win, w);
+  }
+  return w;
+}
+
 /** The native host: the library, the model on it and the bridge. */
 async function startNativeHost(showRoute: (route: string) => void, globalShortcut: GlobalShortcut | null) {
   const dir = nativeDir({
@@ -118,6 +139,15 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     viewers.closeAll();
   });
   const prompts = await electronKeyvaultPrompts(native);
+  // macOS: a real window dragged onto a Space tile in the main window (the
+  // notch's drag monitor follows it; window-drop.ts). Which Spaces take a drop is the core's rule.
+  const windowDrops =
+    process.platform === "darwin"
+      ? new WindowDropTargets((spaceId) => {
+          const space = env.model.spaces.find((s) => s.id === spaceId);
+          return !!space && native.appSpaceAcceptsDrop(space as Parameters<typeof native.appSpaceAcceptsDrop>[0]);
+        })
+      : null;
   const bridge = createBridge({
     model: env.model,
     supervisor: env.supervisor,
@@ -133,6 +163,14 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         if (win instanceof BrowserWindow) setWindowBackground(win, color);
       },
       activate: () => app.focus({ steal: true }),
+      setDropTargets: (win, targets) => {
+        if (!windowDrops || !(win instanceof BrowserWindow)) return;
+        windowDrops.set(dropWindow(win), targets);
+        if (process.env.CUA_SPACES_NOTCH_DEBUG) {
+          const at = win.getContentBounds();
+          console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
+        }
+      },
       chooseFiles: async (win) => {
         // Files and folders at once where the picker allows it (macOS); Windows and Linux pick files.
         const properties: ("openFile" | "openDirectory" | "multiSelections")[] =
@@ -188,6 +226,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
       drop: (spaceId, paths) => void dropOnSpace(model, notchUi, spaceId, paths),
     },
     teleport: notchTeleport(() => model.backend.teleportHandle()),
+    windowTargets: windowDrops ?? undefined,
   });
   if (notch) {
     feedNotch(notch, model);

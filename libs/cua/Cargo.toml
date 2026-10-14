@@ -48,6 +48,9 @@ members = [
     "crates/cua-machine-seal",
     # Host setup (unattended access) and the cua-relay directory client.
     "crates/cua-host",
+    # The WireGuard®-based in-app mesh: userspace tunnels, NAT traversal,
+    # the encrypted relay client and QUIC streams between peers.
+    "crates/cua-mesh",
     # Media plane shared with cua-spacesd (wire format, transport, codecs)
     # and the media clients. The driver depends on these, never the reverse.
     "crates/cua-media-protocol",
@@ -158,6 +161,7 @@ cua-disk = { path = "crates/cua-disk", version = "0.1.0" }
 cua-sandbox-core = { path = "crates/cua-sandbox-core", version = "0.1.0" }
 cua-contrib = { path = "crates/cua-contrib", version = "0.1.0", default-features = false }
 cua-host = { path = "crates/cua-host", version = "0.1.0" }
+cua-mesh = { path = "crates/cua-mesh", version = "0.1.0" }
 cua-daemon = { path = "crates/cua-daemon", version = "0.1.0", default-features = false }
 cua-auth = { path = "crates/cua-auth", version = "0.1.0" }
 cua-agent-setup = { path = "crates/cua-agent-setup", version = "0.1.0" }

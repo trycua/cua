@@ -34,6 +34,7 @@ More of this crate: [client](/cua-sdk/reference/rust/cua-spaces-client), [agents
 - `hotspot`: Hotspot: a Space borrows this machine's network.
 - `id`: Space ids: the unified sandbox ref scheme (a Space is a ...
 - `install_cache`: Pinned install archives, fetched once on this machine ...
+- `mesh`: Relay Spaces over the WireGuard®-based mesh ...
 - `operator`: Presenting a Space to the human: picture-in-picture ...
 - `presence`: Presence: who is looking at a Space and where their ...
 - `presence::art`: The shared presence cursor art (ass ...
@@ -1648,6 +1649,8 @@ impl Spaces {
   fn set_share_consent(&self, consent: Option<Arc<dyn ShareConsent>>);
   fn has_share_consent(&self) -> bool;
   fn set_relay(&self, relay: Option<RelayAccount>);
+  async fn explain_mesh_cut(&self, space: &str, e: Error) -> Error;
+  async fn mesh_status(&self) -> Vec<(String, Status)>;
   async fn relay_machines(&self) -> Result<Vec<RelayMachine>>;
   async fn find(&self, space: &str) -> Result<SpaceInfo>;
   fn resolve(&self, space: &str) -> Result<SpaceId>;
@@ -2199,6 +2202,10 @@ pub async fn fetch(dir: &Path, a: &StagedArchive, progress: &mut dyn FnMut(u64, 
 /// Whether to stage through the host for a ...
 pub fn wanted(url: &Url) -> bool
 
+// mod mesh
+/// The policy for this process now ...
+pub fn policy() -> MeshPolicy
+
 // mod presence
 /// The stable presence color of an agent ...
 pub fn color_for(id: &str) -> &'static str
@@ -2465,4 +2472,4 @@ pub type DatagramChannel = (Arc<dyn CursorUplink>, Receiver<PresenceEvent>);
 
 ## Re-exports
 
-`cua_sandbox_core::byoc::CloudCheck`, `cua_sandbox_core::byoc::CloudConnected`, `cua_sandbox_core::byoc::CloudCredentials`, `cua_sandbox_core::byoc::CloudDisconnected`, `cua_sandbox_core::byoc::CloudKind`, `cua_sandbox_core::byoc::CloudProvider`, `cua_sandbox_core::byoc::CloudResource`, `cua_sandbox_core::byoc::CloudStatusReport`, `cua_sandbox_core::byoc::CloudSweepItem`, `cua_sandbox_core::byoc::CloudSweepReport`, `cua_sandbox_core::byoc::CloudTarget`, `cua_sandbox_core::byoc::CloudTestReport`, `cua_spaces_contract`, `spaces::CreatePhase`, `spaces::CreateProgress`, `cua_spacesd_client`, `cua_host::relay::AccountTokens`, `cua_host::ConnectedClient`, `cua_host::DEFAULT_RELAY_URL`, `cua_host::DeviceAuth`, `cua_host::Identity`, `cua_host::relay::NoAccount`, `cua_host::relay_url_from_env`, `cua_host::relay::StaticToken`.
+`cua_sandbox_core::byoc::CloudCheck`, `cua_sandbox_core::byoc::CloudConnected`, `cua_sandbox_core::byoc::CloudCredentials`, `cua_sandbox_core::byoc::CloudDisconnected`, `cua_sandbox_core::byoc::CloudKind`, `cua_sandbox_core::byoc::CloudProvider`, `cua_sandbox_core::byoc::CloudResource`, `cua_sandbox_core::byoc::CloudStatusReport`, `cua_sandbox_core::byoc::CloudSweepItem`, `cua_sandbox_core::byoc::CloudSweepReport`, `cua_sandbox_core::byoc::CloudTarget`, `cua_sandbox_core::byoc::CloudTestReport`, `cua_spaces_contract`, `spaces::CreatePhase`, `spaces::CreateProgress`, `cua_spacesd_client`, `cua_mesh::policy::Policy`, `cua_host::relay::AccountTokens`, `cua_host::ConnectedClient`, `cua_host::DEFAULT_RELAY_URL`, `cua_host::DeviceAuth`, `cua_host::Identity`, `cua_host::relay::NoAccount`, `cua_host::relay_url_from_env`, `cua_host::relay::StaticToken`.

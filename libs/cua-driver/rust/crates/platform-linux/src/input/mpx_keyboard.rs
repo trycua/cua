@@ -121,8 +121,7 @@ fn tap_steps(keycode: u8, needs_shift: bool, shift: Option<u16>, steps: &mut Vec
 /// allocator) INLINE, one character at a time, so a mixed-script string
 /// (an in-map prefix, a character needing remap, more in-map text) keeps its
 /// original order in `steps` — remapping a character never defers it behind
-/// the characters that came after it in `text`. Fails without planning any
-/// step when `remap` cannot host a character.
+/// the characters that came after it in `text`.
 pub(super) fn plan_text_with_fallback<G>(
     mapping: &GetKeyboardMappingReply,
     shift_x_keycode: Option<u8>,

@@ -8,7 +8,7 @@ import type { TelemetryView } from "../contracts/host";
 import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
-import { rowsToSpaces, toMachines } from "../derive";
+import { machineIdOf, rowsToSpaces, toMachines } from "../derive";
 import { agentRunLines, desktopCover, SpaceDetailStore, spaceDetail } from "../space-detail";
 import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
@@ -132,6 +132,36 @@ describe("this device's access to its machines", () => {
     expect(machines.find((m) => m.current)?.accessNotice).toEqual(NOTICE);
     // Enrolled: none.
     expect(toMachineRows({ spaces: [] } as never, { devices: null, signedIn: true, accessNotice: null })[0]!.accessNotice).toBeUndefined();
+  });
+});
+
+describe("this computer on the relay (CUA-1527)", () => {
+  const HOST = "09c8b17b5a55f89bc1e376eaeabf111f";
+  const wkSpace = (id: string, name: string, host?: string) => ({ space: { id, name, provider: "relay", status: "running", os: "linux", host, hostName: host ? "lg-x11" : undefined } });
+  const status = { configured: true, mode: "relay", machineId: HOST, name: "lg-x11", sharing: true, serviceInstalled: true, serviceRunning: true, serviceKind: "systemd", clients: [], permissions: [] };
+
+  it("lists the machine that is set up for access once, as This computer, with its Spaces", () => {
+    const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
+    const rows = toMachineRows(spaces as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+    const machines = toMachines(rows, []);
+    expect(machines).toHaveLength(1);
+  });
+
+  it("puts the Spaces this machine provides on This computer", () => {
+    const rows = toMachineRows({ spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST)] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    const here = rows.find((r) => r.current)!;
+    expect(machineIdOf({ id: "relay:space-16dec1e7810d08b6", provider: "relay", host: HOST }, rows)).toBe(here.id);
+  });
+
+  it("does not list a Space registered on the relay as a machine", () => {
+    const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
+    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
+  });
+
+  it("still lists another machine's Spaces under that machine", () => {
+    const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
   });
 });
 

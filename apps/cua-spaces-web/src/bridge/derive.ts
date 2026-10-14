@@ -273,11 +273,14 @@ export interface Machine {
 /** Which machine a Space runs on: its relay host, the machine itself for
  * its own desktop (`relay:<machine>`), or this machine for a local Space;
  * undefined for cloud Spaces. */
-export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current">[]): string | undefined {
-  if (space.host) return space.host;
-  if (space.provider === "local") return machines.find((m) => m.current)?.id;
+export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current" | "host">[]): string | undefined {
+  const current = machines.find((m) => m.current);
+  // This computer's own relay machine id is this computer's row.
+  const here = (id: string) => (current?.host?.machineId && id === current.host.machineId ? current.id : id);
+  if (space.host) return here(space.host);
+  if (space.provider === "local") return current?.id;
   if (space.provider === "relay" && space.id.startsWith("relay:")) {
-    const own = space.id.slice("relay:".length);
+    const own = here(space.id.slice("relay:".length));
     if (machines.some((m) => m.id === own)) return own;
   }
   return undefined;

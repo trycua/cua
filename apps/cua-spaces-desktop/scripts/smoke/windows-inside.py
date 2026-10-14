@@ -72,7 +72,9 @@ for installer in sorted(glob.glob(f"/dist/Cua-Spaces-Setup-{VERSION}*.exe")):
             check(f"[{arch}] GUI subsystem", pe.OPTIONAL_HEADER.Subsystem == 2)
             vi = version_info(pe)
             check(f"[{arch}] ProductName Cua Spaces", vi.get("ProductName") == "Cua Spaces", vi.get("ProductName"))
-            check(f"[{arch}] FileVersion {VERSION}", vi.get("FileVersion", "").startswith(VERSION), vi.get("FileVersion"))
+            # FileVersion is numeric X.Y.Z.<build>: a prerelease suffix cannot ride in it.
+            base = VERSION.split("-")[0]
+            check(f"[{arch}] FileVersion {base}.<build>", vi.get("FileVersion", "").startswith(base + "."), vi.get("FileVersion"))
             check(f"[{arch}] CompanyName set", bool(vi.get("CompanyName")), vi.get("CompanyName"))
             icons = [e for e in pe.DIRECTORY_ENTRY_RESOURCE.entries if e.id == pefile.RESOURCE_TYPE["RT_GROUP_ICON"]]
             check(f"[{arch}] icon resource", bool(icons))

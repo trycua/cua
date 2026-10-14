@@ -60,6 +60,8 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v4
@@ -133,6 +135,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           key: ${{ matrix.name }}
           workspaces: |
             apps/cua-spaces/src-tauri -> target

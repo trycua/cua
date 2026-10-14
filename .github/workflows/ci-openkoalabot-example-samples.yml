@@ -54,6 +54,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: openkoalabot-example-ts
       - name: Install Linux build dependencies
@@ -98,6 +100,8 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: openkoalabot-example-swift
       - name: Build and stage the cua SDK for Swift

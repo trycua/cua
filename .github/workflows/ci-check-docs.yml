@@ -184,6 +184,8 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: |
             libs/cua
             scripts/docs-generators/rustdoc-json

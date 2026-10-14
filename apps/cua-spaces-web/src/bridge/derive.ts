@@ -685,8 +685,9 @@ export function orderRuns<T extends SpaceAgentRun>(core: CoreClient, runs: T[]):
 /* ---- Relay usage ---------------------------------------------------------- */
 
 /** Settings' Relay usage row and the notice past the allowance (the core's
- * `relayUsage.view`). No stand-in: without the core the page shows
+ * `relayUsage.view`; Upgrade falls back to `accountApp`'s billing page, the
+ * host's account app, as the page's core has no environment). No stand-in: without the core the page shows
  * neither, rather than words of its own. */
-export function relayUsageView(core: CoreClient, usage: RelayUsage): RelayUsageView | null {
-  return core.tryCall<RelayUsageView | null>("relayUsage.view", { usage }) ?? null;
+export function relayUsageView(core: CoreClient, usage: RelayUsage, accountApp: string | null = null): RelayUsageView | null {
+  return core.tryCall<RelayUsageView | null>("relayUsage.view", accountApp ? { usage, accountApp } : { usage }) ?? null;
 }

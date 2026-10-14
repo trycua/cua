@@ -24,7 +24,7 @@ beforeAll(async () => {
 const reached: RelayUsage = { ...demoRelayUsage(), hoursUsed: 20.2, softLimitReached: true, reasons: ["hours"] };
 
 /** The demo host answering `usage`, recording the links it opens. */
-function host(usage: RelayUsage | null) {
+function host(usage: RelayUsage | null, accountUrl?: string) {
   const demo = createDemoAdapter({ latencyMs: 0 });
   demo.state.relayUsage = usage;
   const opened: string[] = [];
@@ -32,6 +32,8 @@ function host(usage: RelayUsage | null) {
     ...demo,
     call: (op, args) => {
       if (op === "session.openExternal") opened.push((args as { url: string }).url);
+      // The host names its account app (the page's core has no environment).
+      if (op === "settings.get" && accountUrl) return demo.call(op, args).then((s) => ({ ...(s as object), accountUrl }) as typeof s);
       return demo.call(op, args);
     },
   };
@@ -60,6 +62,21 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     expect(notice.textContent).toContain("You've used your free relay allowance for this month. Your Spaces keep working.");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
     await waitFor(() => expect(opened).toEqual(["https://cua.ai/pricing"]));
+  });
+
+  it("with no page from the relay, Upgrade opens the host's account app billing page", async () => {
+    const staging = host({ ...reached, upgradeUrl: null }, "https://app.staging.cua.ai");
+    staging.view();
+    await waitFor(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+      expect(staging.opened).toContain("https://app.staging.cua.ai/billing");
+    });
+    cleanup();
+    // A host that names none: the production account app.
+    const prod = host({ ...reached, upgradeUrl: null });
+    prod.view();
+    fireEvent.click(await screen.findByRole("button", { name: "Upgrade" }));
+    await waitFor(() => expect(prod.opened).toEqual(["https://app.cua.ai/billing"]));
   });
 
   it("dismissed, it stays hidden for that month and reason, and shows again for another", async () => {

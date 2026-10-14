@@ -462,6 +462,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "updateChannel": model.updates.updater == nil ? NSNull() : (model.updates.channel == .beta ? "beta" : "stable"),
             // ⌘⇧Space, and whether the system gave it (tried again on each read).
             "globalShortcut": GlobalShortcut.installed?.bridgeValue ?? NSNull(),
+            // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
+            // has no environment, so Upgrade's billing fallback names this one.
+            "accountUrl": appAccountAppUrl(),
         ]
     }
 

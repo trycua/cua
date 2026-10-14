@@ -102,6 +102,9 @@ export interface SettingsSnapshot {
   /** The global shortcut that brings the app to the front, as the host
    * registered it with the system. Absent or null: this host has none. */
   globalShortcut?: GlobalShortcut | null;
+  /** The host's account app (`https://app.cua.ai`, or staging's), which the
+   * page's core cannot resolve itself. Absent or null: the production one. */
+  accountUrl?: string | null;
 }
 
 /** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */

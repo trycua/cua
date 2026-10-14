@@ -312,6 +312,8 @@ export interface WkSettings {
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */
   globalShortcut?: { label: string; registered: boolean } | null;
+  /** The host's account app (`app_account_app_url`); absent or null: none named. */
+  accountUrl?: string | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */

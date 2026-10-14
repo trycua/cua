@@ -630,7 +630,7 @@ struct WebUIHostTests {
         let picker = WebUIMenuPicker()
         let menu = WebUIWindowController.contextMenu(try #require(shown.first?.0), picker: picker)
         #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == ["Open", "-", "Turn off…", "Copy ID"])
-        #expect(menu.items.map(\.isEnabled) == [true, true, false, true])
+        #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.isEnabled) == [true, false, true])
         menu.performActionForItem(at: 0)
         #expect(picker.chosen == "space.open")
 

@@ -10524,7 +10524,22 @@ export type AppMachinePageRow = {
     /**
      * The device's last session (Unix seconds), when it has a device.
      */
-    lastSeen?: bigint
+    lastSeen?: bigint,
+    /**
+     * The row's status word, the same in every UI ([`status_word`]):
+     * "Online", "Not sharing" or "Offline".
+     */
+    status: string,
+    /**
+     * The Spaces it runs that the Spaces list shows: this machine's local
+     * Spaces, or the Spaces another machine provides (`host`).
+     */
+    spaces: number,
+    /**
+     * "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+     * device of its own, which runs no Spaces.
+     */
+    spacesLabel: string
 }
 
 /**
@@ -10558,7 +10573,10 @@ const FfiConverterTypeAppMachinePageRow = (() => {
                 deviceOnly: FfiConverterBool.read(from),
                 spaceId: FfiConverterOptionalString.read(from),
                 stoppedSharing: FfiConverterBool.read(from),
-                lastSeen: FfiConverterOptionalUInt64.read(from)
+                lastSeen: FfiConverterOptionalUInt64.read(from),
+                status: FfiConverterString.read(from),
+                spaces: FfiConverterUInt32.read(from),
+                spacesLabel: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -10573,6 +10591,9 @@ const FfiConverterTypeAppMachinePageRow = (() => {
             FfiConverterOptionalString.write(value.spaceId, into);
             FfiConverterBool.write(value.stoppedSharing, into);
             FfiConverterOptionalUInt64.write(value.lastSeen, into);
+            FfiConverterString.write(value.status, into);
+            FfiConverterUInt32.write(value.spaces, into);
+            FfiConverterString.write(value.spacesLabel, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -10585,7 +10606,10 @@ const FfiConverterTypeAppMachinePageRow = (() => {
              FfiConverterBool.allocationSize(value.deviceOnly) +
              FfiConverterOptionalString.allocationSize(value.spaceId) +
              FfiConverterBool.allocationSize(value.stoppedSharing) +
-             FfiConverterOptionalUInt64.allocationSize(value.lastSeen);
+             FfiConverterOptionalUInt64.allocationSize(value.lastSeen) +
+             FfiConverterString.allocationSize(value.status) +
+             FfiConverterUInt32.allocationSize(value.spaces) +
+             FfiConverterString.allocationSize(value.spacesLabel);
 
         }
     };

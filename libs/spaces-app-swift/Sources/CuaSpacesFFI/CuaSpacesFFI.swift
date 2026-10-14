@@ -18716,6 +18716,21 @@ public struct AppMachinePageRow: Equatable, Hashable {
      * The device's last session (Unix seconds), when it has a device.
      */
     public var lastSeen: UInt64?
+    /**
+     * The row's status word, the same in every UI ([`status_word`]):
+     * "Online", "Not sharing" or "Offline".
+     */
+    public var status: String
+    /**
+     * The Spaces it runs that the Spaces list shows: this machine's local
+     * Spaces, or the Spaces another machine provides (`host`).
+     */
+    public var spaces: UInt32
+    /**
+     * "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+     * device of its own, which runs no Spaces.
+     */
+    public var spacesLabel: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18757,7 +18772,19 @@ public struct AppMachinePageRow: Equatable, Hashable {
          */stoppedSharing: Bool,
         /**
          * The device's last session (Unix seconds), when it has a device.
-         */lastSeen: UInt64?) {
+         */lastSeen: UInt64?,
+        /**
+         * The row's status word, the same in every UI ([`status_word`]):
+         * "Online", "Not sharing" or "Offline".
+         */status: String,
+        /**
+         * The Spaces it runs that the Spaces list shows: this machine's local
+         * Spaces, or the Spaces another machine provides (`host`).
+         */spaces: UInt32,
+        /**
+         * "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+         * device of its own, which runs no Spaces.
+         */spacesLabel: String) {
         self.id = id
         self.name = name
         self.online = online
@@ -18769,6 +18796,9 @@ public struct AppMachinePageRow: Equatable, Hashable {
         self.spaceId = spaceId
         self.stoppedSharing = stoppedSharing
         self.lastSeen = lastSeen
+        self.status = status
+        self.spaces = spaces
+        self.spacesLabel = spacesLabel
     }
 
 
@@ -18797,7 +18827,10 @@ public struct FfiConverterTypeAppMachinePageRow: FfiConverterRustBuffer {
                 deviceOnly: FfiConverterBool.read(from: &buf),
                 spaceId: FfiConverterOptionString.read(from: &buf),
                 stoppedSharing: FfiConverterBool.read(from: &buf),
-                lastSeen: FfiConverterOptionUInt64.read(from: &buf)
+                lastSeen: FfiConverterOptionUInt64.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                spaces: FfiConverterUInt32.read(from: &buf),
+                spacesLabel: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -18813,6 +18846,9 @@ public struct FfiConverterTypeAppMachinePageRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.spaceId, into: &buf)
         FfiConverterBool.write(value.stoppedSharing, into: &buf)
         FfiConverterOptionUInt64.write(value.lastSeen, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterUInt32.write(value.spaces, into: &buf)
+        FfiConverterString.write(value.spacesLabel, into: &buf)
     }
 }
 

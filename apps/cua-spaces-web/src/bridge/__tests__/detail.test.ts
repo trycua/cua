@@ -250,9 +250,9 @@ describe("the Machines page's rows from the host (machines.pageRows)", () => {
         thisMachine: { status: "local", statusText: "Sharing", detail: "Sharing · Relay" },
         deviceStates: { dev_l1: "enrolled" },
         rows: [
-          { id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: "dev_me", deviceOnly: false, spaceId: "this-mac", stoppedSharing: false, lastSeen: 1799999990 },
-          { id: "b695", name: "studio-2.local", online: true, os: "macos", via: "relay", current: false, device: "dev_s", deviceOnly: false, spaceId: "relay:b695", stoppedSharing: true, lastSeen: null },
-          { id: "dev_l1", name: "Laptop", online: false, os: "macos", via: "relay", current: false, device: "dev_l1", deviceOnly: true, spaceId: null, stoppedSharing: false, lastSeen: 1797000000 },
+          { id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: "dev_me", deviceOnly: false, spaceId: "this-mac", stoppedSharing: false, lastSeen: 1799999990, status: "Online", spaces: 1, spacesLabel: "1 Space" },
+          { id: "b695", name: "studio-2.local", online: true, os: "macos", via: "relay", current: false, device: "dev_s", deviceOnly: false, spaceId: "relay:b695", stoppedSharing: true, lastSeen: null, status: "Not sharing", spaces: 0, spacesLabel: "No Spaces" },
+          { id: "dev_l1", name: "Laptop", online: false, os: "macos", via: "relay", current: false, device: "dev_l1", deviceOnly: true, spaceId: null, stoppedSharing: false, lastSeen: 1797000000, status: "Offline", spaces: 0, spacesLabel: "" },
         ],
       },
     );
@@ -267,5 +267,11 @@ describe("the Machines page's rows from the host (machines.pageRows)", () => {
     const machines = toMachines(rows, []);
     expect(machines.map((m) => m.id)).toEqual(["this-mac", "b695", "dev_l1"]);
     expect(machines[2]!.device).toBe(true);
+    // The core's words for each row, as the SwiftUI list shows them.
+    expect(machines.map((m) => [m.status, m.spacesLabel])).toEqual([
+      ["Online", "1 Space"],
+      ["Not sharing", "No Spaces"],
+      ["Offline", ""],
+    ]);
   });
 });

@@ -113,6 +113,31 @@ struct ChecklistPaletteTests {
         }
     }
 
+    /// CUA-1617: a Mac whose owner stopped sharing reads "Not sharing" and
+    /// "No Spaces" in the classic list, from the core's row (never a
+    /// Space's "Suspended"), and the New UI gets the same words.
+    @Test func aMachineThatStoppedSharingReadsTheSameInBothUIs() async throws {
+        let input = try appMachinesPageInputFromJson(json: """
+        {"hostOs": "macos", "now": 1800000000, "spaces": [
+          {"id": "relay:b695", "name": "Dillons-MacBook-Pro-2.local", "os": "macos",
+           "status": "suspended", "detail": "", "lastUsedAt": 0, "scene": "linux-terminal",
+           "provider": "relay",
+           "sdk": {"features": [], "spacesdVersion": "", "reachable": false,
+                   "error": "unauthenticated: Dillons-MacBook-Pro-2.local stopped sharing: ask its owner"}}
+        ], "devices": [], "hostnames": {}, "presence": {"b695": false}}
+        """)
+        let row = appMachinesPageRows(input: input)[1]
+        #expect(row.status == "Not sharing")
+        #expect(row.spacesLabel == "No Spaces")
+
+        let m = await signedInModel()
+        let rows = m.machinePageRows
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let answer = bridge.machines()["rows"] as? [[String: Any]]
+        #expect(answer?.map { $0["status"] as? String } == rows.map(\.status))
+        #expect(answer?.map { $0["spacesLabel"] as? String } == rows.map(\.spacesLabel))
+    }
+
     /// CUA-1509: the app ticks the checklist off itself, whichever UI is
     /// open, and the New UI reads and changes the same copy.
     @Test func bothUIsShareOneChecklist() async throws {

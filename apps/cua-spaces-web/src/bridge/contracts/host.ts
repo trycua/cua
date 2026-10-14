@@ -151,6 +151,10 @@ export interface MachineRow extends SpaceHost {
   /** The host listed the rows with the core (`machines.pageRows`): each
    * computer is already once, so the store does not merge them again. */
   merged?: boolean;
+  /** The core's status word for the row (`MachinePageRow.status`). */
+  status?: string;
+  /** The core's Spaces count for the row (`MachinePageRow.spacesLabel`). */
+  spacesLabel?: string;
 }
 
 /** One Machines row as the core lists it (`machines::MachinePageRow`),
@@ -173,6 +177,12 @@ export interface MachinePageRow {
   stoppedSharing: boolean;
   /** The device's last session (Unix seconds). */
   lastSeen: number | null;
+  /** "Online", "Not sharing" or "Offline" (`machines::status_word`). */
+  status?: string;
+  /** The Spaces it runs (`machines::page_rows`). */
+  spaces?: number;
+  /** "1 Space", "3 Spaces", "No Spaces"; empty for a device of its own. */
+  spacesLabel?: string;
 }
 
 export interface ServiceState {

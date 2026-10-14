@@ -7,6 +7,7 @@ syntax = "proto3";
 
 package cua.daemon.v1;
 
+import "cua/daemon/v1/spaces.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -20,6 +21,12 @@ service SandboxService {
   // Creates a sandbox where `location` says (local by default), or
   // connects to an existing machine (`direct:<addr>`).
   rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+  // `CreateSandbox`, streaming what the create is doing: progress events
+  // (pulling the image with its bytes, creating, booting, waiting for the
+  // probes) in order, then exactly one `result`. A failed create ends the
+  // stream with its status. Closing the stream cancels the create, as for
+  // a `CreateSandbox` whose caller goes away.
+  rpc CreateSandboxStream(CreateSandboxStreamRequest) returns (stream CreateSandboxStreamResponse);
   // Cancels a `CreateSandbox` of a named sandbox still running: the work
   // in flight stops (an image download, a boot, a claim) and what the
   // create made is deleted; a sandbox of that name that existed before is
@@ -368,6 +375,23 @@ message CreateSandboxRequest {
 message CreateSandboxResponse {
   // The sandbox.
   Sandbox sandbox = 1;
+}
+
+// Request for `SandboxService.CreateSandboxStream`.
+message CreateSandboxStreamRequest {
+  // The create, as for `CreateSandbox`.
+  CreateSandboxRequest create = 1;
+}
+
+// One message of `SandboxService.CreateSandboxStream`.
+message CreateSandboxStreamResponse {
+  // Progress, or the result.
+  oneof event {
+    // What the create is doing now (`space` is empty).
+    CreateSpaceProgress progress = 1;
+    // The created sandbox (the last message).
+    CreateSandboxResponse result = 2;
+  }
 }
 
 // Request for `SandboxService.GetSandbox`.

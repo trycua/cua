@@ -222,6 +222,29 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(model.spaces.some((s) => s.id === "pending:1")).toBe(false);
   });
 
+  it("shows a macOS create on another machine downloading, then each step, in the core's words", async () => {
+    const GB = 2 ** 30;
+    const step = (phase: string, bytes?: [number, number, number]) => ({
+      phase,
+      fraction: bytes ? bytes[0] / bytes[1] : undefined,
+      detail: "ghcr.io/trycua/macos:26",
+      bytesDone: bytes ? BigInt(Math.round(bytes[0])) : undefined,
+      bytesTotal: bytes ? BigInt(bytes[1]) : undefined,
+      bytesPerSecond: bytes ? bytes[2] : undefined,
+    });
+    backend.phases = [step("preparing"), step("pulling", [12.4 * GB, 30 * GB, 85 * 2 ** 20]), step("ready")];
+    let release = () => {};
+    backend.hold = new Promise<void>((r) => (release = r));
+    const create = bridge.registry.dispatch({ id: "m", method: "spaces.create", args: { pendingId: "pending:mac", config: { image: "macos", kind: "vm", on: "host:mac-mini" }, os: "macos" } });
+    await until(() => model.spaces.some((s) => s.id === "pending:mac" && s.progress?.transfer != null));
+    const row = model.spaces.find((s) => s.id === "pending:mac")!;
+    expect(row.progress).toMatchObject({ label: "Downloading macOS (first time only)…", transfer: "12.4 of 30.0 GB · 85 MB/s · about 4 min" });
+    expect(row.progress!.permille).toBeGreaterThan(10);
+    expect(row.detail).toBe("Another machine · Downloading macOS (first time only)…");
+    release();
+    await create;
+  });
+
   it("refuses a create it cannot run", async () => {
     expect(await code("spaces.create", { pendingId: "nope", config: { image: "x", kind: "container" } })).toBe("bad_args");
     expect(await code("spaces.create", { pendingId: "pending:2", config: { image: "x", kind: "box" } })).toBe("bad_args");

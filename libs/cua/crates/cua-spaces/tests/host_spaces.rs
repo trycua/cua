@@ -36,6 +36,9 @@ struct FakeRuntime {
     hang: std::sync::atomic::AtomicBool,
     /// Starts fail with this (a container engine that does not answer).
     fail: Mutex<Option<String>>,
+    /// Starts first download an image of this many bytes, slowly,
+    /// reporting it as create progress (as Lume's pull does).
+    pull_bytes: Mutex<Option<u64>>,
 }
 
 #[async_trait]
@@ -46,6 +49,28 @@ impl LocalRuntime for FakeRuntime {
     async fn start(&self, spec: &LocalStartSpec) -> Result<LocalInstance, RuntimeError> {
         if let Some(e) = self.fail.lock().unwrap().clone() {
             return Err(RuntimeError::Other(e));
+        }
+        let pull = *self.pull_bytes.lock().unwrap();
+        if let Some(total) = pull {
+            use cua_sandbox_core::progress::{Phase, Progress, Transfer, report};
+            for i in 0..=30u64 {
+                let done = total * i / 30;
+                report(
+                    Progress::phase(Phase::Pulling)
+                        .detail("ghcr.io/trycua/macos:26")
+                        .fraction(done as f64 / total as f64)
+                        .bytes(Transfer {
+                            done,
+                            total,
+                            per_second: Some(total as f64 / 3.0),
+                        }),
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            report(Progress::phase(Phase::Creating));
+            report(Progress::phase(Phase::Booting));
+            // A boot takes a while (a macOS VM's, a minute or more).
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         }
         self.started.lock().unwrap().push(spec.clone());
         self.running.lock().unwrap().insert(spec.name.clone(), true);
@@ -173,6 +198,7 @@ async fn runtime_fixture(
         paused: Mutex::default(),
         hang: Default::default(),
         fail: Mutex::default(),
+        pull_bytes: Mutex::default(),
     });
     let spaces = Spaces::builder()
         .home(&home)
@@ -993,7 +1019,9 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
 
 /// The host fixture's `HostSpacesServer` as the host's daemon serves it
 /// (every call as ada, the owner: the fake relay does not assert callers).
-struct HostSvc(Arc<HostSpacesServer>);
+/// The host's `HostSpacesService`; `old`: as a host that predates
+/// `GetHostSpacesResponse.creating` answers (it never lists creates).
+struct HostSvc(Arc<HostSpacesServer>, bool);
 
 #[tonic::async_trait]
 impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
@@ -1001,7 +1029,12 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
         &self,
         _req: tonic::Request<pb::GetHostSpacesRequest>,
     ) -> Result<tonic::Response<pb::GetHostSpacesResponse>, tonic::Status> {
-        let r = self.0.get(&ada()).await;
+        let mut r = self.0.get(&ada()).await;
+        if self.1
+            && let Ok(r) = &mut r
+        {
+            r.creating.clear();
+        }
         r.map(tonic::Response::new).map_err(|e| to_status(&e))
     }
     async fn create_host_space(
@@ -1051,6 +1084,11 @@ impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
 /// fixture's server, over gRPC-Web), and `spaces` is another of ada's
 /// devices, signed in to the relay. Returns the host's machine id.
 async fn client_fixture(f: &Fixture) -> (String, Spaces, tempfile::TempDir) {
+    client_fixture_of(f, false).await
+}
+
+/// [`client_fixture`] with a host that predates listing its creates.
+async fn client_fixture_of(f: &Fixture, old_host: bool) -> (String, Spaces, tempfile::TempDir) {
     let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
     let host = relay
         .machines("ada-token")
@@ -1065,8 +1103,10 @@ async fn client_fixture(f: &Fixture) -> (String, Spaces, tempfile::TempDir) {
     f.relay.tunnel(&host, &f.env.url());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let svc =
-        pb::host_spaces_service_server::HostSpacesServiceServer::new(HostSvc(f.server.clone()));
+    let svc = pb::host_spaces_service_server::HostSpacesServiceServer::new(HostSvc(
+        f.server.clone(),
+        old_host,
+    ));
     tokio::spawn(
         tonic::transport::Server::builder()
             .accept_http1(true)
@@ -1277,4 +1317,158 @@ async fn a_host_that_stopped_sharing_says_so_and_lists_its_state() {
         .unwrap();
     assert_eq!(row.status, "");
     assert!(serde_json::to_value(&row).unwrap().get("status").is_none());
+}
+
+/// A create on another machine reports what that machine does while it
+/// runs: the image download with its bytes, then the disk and the boot,
+/// in order, before the Space is ready. (Before, the call to the host was
+/// one silent wait, so the row sat at "Starting… 1%" for the whole
+/// download.)
+/// Creates a Space on the fixture's host (whose runtime downloads
+/// `TOTAL` bytes first) and returns every progress report the client saw.
+async fn create_on_host_seeing(f: &Fixture, spaces: &Spaces) -> Vec<cua_spaces::CreateProgress> {
+    *f.rt.pull_bytes.lock().unwrap() = Some(TOTAL);
+    let seen = Arc::new(Mutex::new(Vec::<cua_spaces::CreateProgress>::new()));
+    let s = seen.clone();
+    let mut create = on_host("Mac mini (spare)");
+    create.progress = Some(cua_spaces::ProgressSink::new(move |p| {
+        s.lock().unwrap().push(p.clone())
+    }));
+    // The new Space's driver comes online on the relay once it is up.
+    let relay = f.relay.clone();
+    let online = tokio::spawn(async move {
+        let client = cua_host::RelayClient::new(&relay.url).unwrap();
+        loop {
+            for m in client.machines("ada-token").await.unwrap_or_default() {
+                if m.host.is_some() && !m.online {
+                    relay.set_online(&m.id, true, "1.0.0");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+    spaces.create(create).await.unwrap();
+    online.abort();
+    seen.lock().unwrap().clone()
+}
+
+const TOTAL: u64 = 30 << 30;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_on_a_host_reports_the_hosts_progress() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    let seen = create_on_host_seeing(&f, &spaces).await;
+    let pulls: Vec<_> = seen
+        .iter()
+        .filter(|p| p.phase == cua_spaces::CreatePhase::Pulling)
+        .collect();
+    assert!(
+        pulls.len() >= 2,
+        "the download is reported while it runs: {seen:#?}"
+    );
+    let bytes = pulls.iter().filter_map(|p| p.bytes).collect::<Vec<_>>();
+    assert!(
+        bytes.iter().all(|b| b.total == TOTAL),
+        "bytes of the host's download: {bytes:?}"
+    );
+    assert!(
+        bytes.windows(2).all(|w| w[0].done <= w[1].done),
+        "bytes only go up: {bytes:?}"
+    );
+    assert!(
+        bytes.iter().any(|b| b.per_second.is_some()),
+        "with a rate, for the time left"
+    );
+    assert_eq!(pulls[0].detail, "ghcr.io/trycua/macos:26");
+    let ranks: Vec<u8> = seen.iter().map(|p| p.phase.rank()).collect();
+    assert!(
+        ranks.windows(2).all(|w| w[0] <= w[1]),
+        "phases in order: {seen:#?}"
+    );
+    for phase in [
+        cua_spaces::CreatePhase::Booting,
+        cua_spaces::CreatePhase::Connecting,
+        cua_spaces::CreatePhase::Ready,
+    ] {
+        assert!(
+            seen.iter().any(|p| p.phase == phase),
+            "{phase:?} reported: {seen:#?}"
+        );
+    }
+}
+
+/// A host that predates listing its creates still creates the Space; the
+/// client reports what it does itself (as before: no download to show).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_on_an_older_host_still_works_without_its_progress() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture_of(&f, true).await;
+    let seen = create_on_host_seeing(&f, &spaces).await;
+    let phases: Vec<_> = seen.iter().map(|p| p.phase).collect();
+    assert_eq!(
+        phases,
+        [
+            cua_spaces::CreatePhase::Preparing,
+            cua_spaces::CreatePhase::Connecting,
+            cua_spaces::CreatePhase::Ready,
+        ]
+    );
+}
+
+/// While a create runs, the host lists it with what it is doing, to the
+/// caller who started it and to the owner only, and stops listing it once
+/// it ended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_host_lists_a_running_create_to_its_caller_and_owner_only() {
+    let f = fixture(HostProfile::Spare).await;
+    let attach = f.register("bob-token", "space-b0b00001").await;
+    *f.rt.pull_bytes.lock().unwrap() = Some(TOTAL);
+    let server = f.server.clone();
+    let create = tokio::spawn(async move {
+        server
+            .create(
+                &bob(),
+                pb::CreateHostSpaceRequest {
+                    image: "linux".into(),
+                    attach: Some(attach),
+                    ..Default::default()
+                },
+            )
+            .await
+    });
+    let carol =
+        HostCaller::from_metadata(Some(r#"{"account":"carol","role":"shared","via":"relay"}"#))
+            .unwrap();
+    let mut listed = None;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let own = f.server.get(&bob()).await.unwrap().creating;
+        if let Some(c) = own
+            .into_iter()
+            .find(|c| c.phase == "pulling" && c.bytes_done > Some(0))
+        {
+            listed = Some(c);
+            break;
+        }
+    }
+    let c = listed.expect("the caller sees its create downloading");
+    assert_eq!(c.key, "space-b0b00001", "keyed by the relay machine");
+    assert_eq!(c.bytes_total, Some(TOTAL));
+    assert!(c.bytes_per_second.is_some());
+    assert_eq!(c.detail, "ghcr.io/trycua/macos:26");
+    assert_eq!(
+        f.server.get(&ada()).await.unwrap().creating.len(),
+        1,
+        "the owner sees it"
+    );
+    assert!(
+        f.server.get(&carol).await.unwrap().creating.is_empty(),
+        "nobody else does"
+    );
+    create.await.unwrap().unwrap();
+    assert!(
+        f.server.get(&ada()).await.unwrap().creating.is_empty(),
+        "gone once it ended"
+    );
 }

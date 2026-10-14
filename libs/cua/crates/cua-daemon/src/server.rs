@@ -663,6 +663,74 @@ impl Svc {
     }
 }
 
+/// A `CreateSandboxRequest` as the runtime's create. The deprecated request
+/// fields still count when `location` / `runtime` are empty (older
+/// clients).
+#[allow(deprecated)]
+fn create_request(r: pb::CreateSandboxRequest) -> std::result::Result<CreateRequest, Status> {
+    let non_empty = |s: String| (!s.is_empty()).then_some(s);
+    let wait_for = r
+        .wait_for
+        .iter()
+        .map(probe_from_pb)
+        .collect::<Result<Vec<_>>>()
+        .map_err(st)?;
+    let ports = r
+        .ports
+        .iter()
+        .map(|p| u16::try_from(*p).map_err(|_| st(Error::InvalidArgument("port".into()))))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let create = CreateRequest {
+        location: non_empty(r.location),
+        kind: non_empty(r.kind),
+        runtime: non_empty(r.runtime),
+        provider: provider_from_pb(r.provider),
+        name: non_empty(r.name),
+        image: r.image,
+        url: non_empty(r.url),
+        token: non_empty(r.token),
+        pool: non_empty(r.pool),
+        os: non_empty(r.os),
+        cpus: Some(r.cpus),
+        memory_mb: Some(r.memory_mb),
+        ports,
+        services: r.services.into_iter().map(|(k, v)| (k, v as u16)).collect(),
+        wait_for,
+        ready_timeout: r.ready_timeout.as_ref().map(from_dur),
+        env: r.env.into_iter().collect(),
+        command: (!r.command.is_empty()).then_some(r.command),
+        fleet_runtime: non_empty(r.fleet_runtime),
+        fleet_replicas: Some(r.fleet_replicas),
+        fleet_ttl_seconds: Some(r.fleet_ttl_seconds),
+        fleet_warm: r.fleet_warm,
+        fleet_max_pool_size: Some(r.fleet_max_pool_size).filter(|m| *m > 0),
+        fleet_apply: r.fleet_apply,
+        labels: r.labels.into_iter().collect(),
+        sidecars: r
+            .sidecars
+            .into_iter()
+            .map(crate::convert::sidecar_from_pb)
+            .collect::<Result<Vec<_>>>()
+            .map_err(st)?,
+        registry_credentials: r
+            .registry_secret
+            .map(crate::convert::registry_secret_from_pb)
+            .transpose()
+            .map_err(st)?,
+        build: r
+            .build
+            .map(crate::convert::build_from_pb)
+            .transpose()
+            .map_err(st)?,
+        container_runtime: non_empty(r.container_runtime),
+        network: non_empty(r.network),
+        owner_pid: (r.owner_pid > 0).then_some(r.owner_pid),
+        keep_on_failure: r.keep_on_failure,
+        gpu: non_empty(r.gpu),
+    };
+    Ok(create)
+}
+
 pub(crate) fn st(e: Error) -> Status {
     e.to_status()
 }
@@ -711,78 +779,62 @@ impl SandboxService for Svc {
         })
     }
 
-    // The deprecated request fields still count when `location` / `runtime`
-    // are empty (older clients).
-    #[allow(deprecated)]
     async fn create_sandbox(
         &self,
         req: tonic::Request<pb::CreateSandboxRequest>,
     ) -> R<pb::CreateSandboxResponse> {
-        let r = req.into_inner();
-        let non_empty = |s: String| (!s.is_empty()).then_some(s);
-        let wait_for = r
-            .wait_for
-            .iter()
-            .map(probe_from_pb)
-            .collect::<Result<Vec<_>>>()
-            .map_err(st)?;
-        let ports = r
-            .ports
-            .iter()
-            .map(|p| u16::try_from(*p).map_err(|_| st(Error::InvalidArgument("port".into()))))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let create = CreateRequest {
-            location: non_empty(r.location),
-            kind: non_empty(r.kind),
-            runtime: non_empty(r.runtime),
-            provider: provider_from_pb(r.provider),
-            name: non_empty(r.name),
-            image: r.image,
-            url: non_empty(r.url),
-            token: non_empty(r.token),
-            pool: non_empty(r.pool),
-            os: non_empty(r.os),
-            cpus: Some(r.cpus),
-            memory_mb: Some(r.memory_mb),
-            ports,
-            services: r.services.into_iter().map(|(k, v)| (k, v as u16)).collect(),
-            wait_for,
-            ready_timeout: r.ready_timeout.as_ref().map(from_dur),
-            env: r.env.into_iter().collect(),
-            command: (!r.command.is_empty()).then_some(r.command),
-            fleet_runtime: non_empty(r.fleet_runtime),
-            fleet_replicas: Some(r.fleet_replicas),
-            fleet_ttl_seconds: Some(r.fleet_ttl_seconds),
-            fleet_warm: r.fleet_warm,
-            fleet_max_pool_size: Some(r.fleet_max_pool_size).filter(|m| *m > 0),
-            fleet_apply: r.fleet_apply,
-            labels: r.labels.into_iter().collect(),
-            sidecars: r
-                .sidecars
-                .into_iter()
-                .map(crate::convert::sidecar_from_pb)
-                .collect::<Result<Vec<_>>>()
-                .map_err(st)?,
-            registry_credentials: r
-                .registry_secret
-                .map(crate::convert::registry_secret_from_pb)
-                .transpose()
-                .map_err(st)?,
-            build: r
-                .build
-                .map(crate::convert::build_from_pb)
-                .transpose()
-                .map_err(st)?,
-            container_runtime: non_empty(r.container_runtime),
-            network: non_empty(r.network),
-            owner_pid: (r.owner_pid > 0).then_some(r.owner_pid),
-            keep_on_failure: r.keep_on_failure,
-            gpu: non_empty(r.gpu),
-        };
+        let create = create_request(req.into_inner())?;
         let rec = self.rt().create(create).await.map_err(st)?;
         ok(pb::CreateSandboxResponse {
             sandbox: Some(info_to_pb(&rec)),
         })
+    }
+
+    type CreateSandboxStreamStream = std::pin::Pin<
+        Box<
+            dyn tokio_stream::Stream<
+                    Item = std::result::Result<pb::CreateSandboxStreamResponse, Status>,
+                > + Send,
+        >,
+    >;
+
+    async fn create_sandbox_stream(
+        &self,
+        req: tonic::Request<pb::CreateSandboxStreamRequest>,
+    ) -> R<Self::CreateSandboxStreamStream> {
+        use pb::create_sandbox_stream_response::Event;
+        let create = create_request(req.into_inner().create.unwrap_or_default())?;
+        // Bounded: a slow reader drops progress, never the result (which
+        // goes out on the same channel after every report).
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let progress = tx.clone();
+        let sink: cua_sandbox_core::progress::Sink = std::sync::Arc::new(move |p| {
+            let _ = progress.try_send(Ok(pb::CreateSandboxStreamResponse {
+                event: Some(Event::Progress(crate::spaces_svc::progress_pb(p))),
+            }));
+        });
+        let rt = self.rt().clone();
+        tokio::spawn(async move {
+            let create = cua_sandbox_core::progress::scope(sink, rt.create(create));
+            // A closed stream drops the create: cleaned up as a
+            // `CreateSandbox` whose caller went away.
+            let result = tokio::select! {
+                r = create => r,
+                () = tx.closed() => return,
+            };
+            let _ = tx
+                .send(
+                    result
+                        .map(|rec| pb::CreateSandboxStreamResponse {
+                            event: Some(Event::Result(pb::CreateSandboxResponse {
+                                sandbox: Some(info_to_pb(&rec)),
+                            })),
+                        })
+                        .map_err(st),
+                )
+                .await;
+        });
+        ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
     async fn get_sandbox(

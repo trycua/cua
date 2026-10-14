@@ -53,6 +53,7 @@ struct ParityTests {
     @Test("experiments") func experiments() throws { try check("experiments", runExperiments) }
     @Test("placement-picker") func placementPicker() throws { try check("placement-picker", runPlacementPicker) }
     @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
+    @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
 
     /// The app's own first run records exactly the golden's events: the
     /// `OnboardingModel` the window drives, on a recording telemetry.
@@ -315,13 +316,23 @@ struct ParityTests {
 
     // MARK: - provisioning
 
+    /// A flow's provider word (a create on another machine is `relay`).
+    func provider(_ word: String) -> AppSpaceProvider {
+        switch word {
+        case "cloud": return .cloud
+        case "relay": return .relay
+        case "direct": return .direct
+        default: return .local
+        }
+    }
+
     func createAction(_ a: [String: Any]) -> AppCreateAction {
         let id = a["id"] as? String ?? ""
         switch a["type"] as! String {
         case "start":
             let kind = (a["kind"] as? String).flatMap { AppSpaceKind(word: $0) }
             return .start(id: id, name: a["name"] as! String, os: os(a["os"] as! String),
-                          provider: (a["provider"] as! String) == "cloud" ? .cloud : .local,
+                          provider: provider(a["provider"] as! String),
                           now: Int64(a["now"] as! Int), image: a["image"] as? String, kind: kind,
                           hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false,
                           host: a["host"] as? String, hostName: a["hostName"] as? String)

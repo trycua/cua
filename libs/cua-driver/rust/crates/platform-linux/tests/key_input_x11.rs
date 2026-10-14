@@ -495,6 +495,7 @@ fn type_with_pings(
     text: &'static str,
     protocols: Atom,
     ping: Atom,
+    mut on_press: impl FnMut(u8) -> Result<()>,
     mut on_ping: impl FnMut([u32; 5], &[u8]) -> Result<()>,
 ) -> Result<Typed> {
     let start = Instant::now();
@@ -503,7 +504,10 @@ fn type_with_pings(
     let (mut pings, mut presses) = (Vec::new(), Vec::new());
     while !typing.is_finished() && Instant::now() < deadline {
         match conn.poll_for_event()? {
-            Some(Event::KeyPress(event)) => presses.push(event.detail),
+            Some(Event::KeyPress(event)) => {
+                presses.push(event.detail);
+                on_press(event.detail)?;
+            }
             Some(Event::ClientMessage(event))
                 if event.type_ == protocols && event.data.as_data32()[0] == ping =>
             {
@@ -543,16 +547,23 @@ fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping()
     let (conn, screen) = connect()?;
     let (root, protocols, ping) = ping_window(&conn, screen)?;
     let before = spare_keycodes(&conn)?;
-    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |data, presses| {
-        std::thread::sleep(Duration::from_millis(200));
-        if let Some(&keycode) = presses.last() {
-            assert!(
-                keysyms_of(&conn, keycode)?.contains(&NI),
-                "keycode {keycode} restored before the pong"
-            );
-        }
-        pong(&conn, root, protocols, data)
-    })?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, presses| {
+            std::thread::sleep(Duration::from_millis(200));
+            if let Some(&keycode) = presses.last() {
+                assert!(
+                    keysyms_of(&conn, keycode)?.contains(&NI),
+                    "keycode {keycode} restored before the pong"
+                );
+            }
+            pong(&conn, root, protocols, data)
+        },
+    )?;
     clear_active_window(&conn, root)?;
     typed.result?;
     assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
@@ -576,22 +587,29 @@ fn xtest_text_ignores_a_late_reply_to_an_earlier_ping() -> Result<()> {
     let (root, protocols, ping) = ping_window(&conn, screen)?;
     let before = spare_keycodes(&conn)?;
     let mut earlier: Option<[u32; 5]> = None;
-    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |data, presses| {
-        let Some(stale) = earlier else {
-            earlier = Some(data);
-            return pong(&conn, root, protocols, data);
-        };
-        pong(&conn, root, protocols, stale)?;
-        std::thread::sleep(Duration::from_millis(200));
-        let keycode = *presses
-            .last()
-            .expect("the key arrives before the last ping");
-        assert!(
-            keysyms_of(&conn, keycode)?.contains(&NI),
-            "keycode {keycode} restored on the reply to an earlier ping"
-        );
-        pong(&conn, root, protocols, data)
-    })?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, presses| {
+            let Some(stale) = earlier else {
+                earlier = Some(data);
+                return pong(&conn, root, protocols, data);
+            };
+            pong(&conn, root, protocols, stale)?;
+            std::thread::sleep(Duration::from_millis(200));
+            let keycode = *presses
+                .last()
+                .expect("the key arrives before the last ping");
+            assert!(
+                keysyms_of(&conn, keycode)?.contains(&NI),
+                "keycode {keycode} restored on the reply to an earlier ping"
+            );
+            pong(&conn, root, protocols, data)
+        },
+    )?;
     clear_active_window(&conn, root)?;
     typed.result?;
     assert_eq!(typed.pings.len(), 2);
@@ -605,7 +623,14 @@ fn xtest_text_restores_the_keycode_of_a_client_that_never_answers() -> Result<()
     let (conn, screen) = connect()?;
     let (root, protocols, ping) = ping_window(&conn, screen)?;
     let before = spare_keycodes(&conn)?;
-    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |_, _| Ok(()))?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |_, _| Ok(()),
+    )?;
     clear_active_window(&conn, root)?;
     typed.result?;
     assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
@@ -648,13 +673,20 @@ fn xtest_text_syncs_with_the_window_that_got_the_keys_after_a_focus_change() -> 
     let second = input_window(&conn, root, 0, 120)?;
     take_ping(&conn, second, protocols, ping)?;
     let before = spare_keycodes(&conn)?;
-    let typed = type_with_pings(&conn, "\u{4f60}\u{597d}", protocols, ping, |data, _| {
-        if data[2] == first {
-            conn.set_input_focus(InputFocus::PARENT, second, x11rb::CURRENT_TIME)?;
-            conn.get_input_focus()?.reply()?;
-        }
-        pong(&conn, root, protocols, data)
-    })?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}\u{597d}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| {
+            if data[2] == first {
+                conn.set_input_focus(InputFocus::PARENT, second, x11rb::CURRENT_TIME)?;
+                conn.get_input_focus()?.reply()?;
+            }
+            pong(&conn, root, protocols, data)
+        },
+    )?;
     clear_active_window(&conn, root)?;
     typed.result?;
     let pinged: Vec<Window> = typed.pings.iter().map(|data| data[2]).collect();
@@ -681,9 +713,14 @@ fn xtest_text_pings_the_ancestor_of_a_focused_child_window() -> Result<()> {
     assert_eq!(conn.get_input_focus()?.reply()?.focus, child);
     clear_active_window(&conn, root)?;
     let before = spare_keycodes(&conn)?;
-    let typed = type_with_pings(&conn, "\u{4f60}", protocols, ping, |data, _| {
-        pong(&conn, root, protocols, data)
-    })?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}",
+        protocols,
+        ping,
+        |_| Ok(()),
+        |data, _| pong(&conn, root, protocols, data),
+    )?;
     typed.result?;
     assert_eq!(typed.presses.len(), 1, "{:?}", typed.presses);
     assert!(!typed.pings.is_empty());
@@ -692,6 +729,35 @@ fn xtest_text_pings_the_ancestor_of_a_focused_child_window() -> Result<()> {
         "{:?}",
         typed.pings
     );
+    assert_eq!(spare_keycodes(&conn)?, before);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_syncs_with_the_window_that_got_the_keys_when_focus_moves_after_them() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let (root, protocols, ping) = ping_window(&conn, screen)?;
+    let first = conn.get_input_focus()?.reply()?.focus;
+    let second = input_window(&conn, root, 0, 120)?;
+    take_ping(&conn, second, protocols, ping)?;
+    let before = spare_keycodes(&conn)?;
+    let typed = type_with_pings(
+        &conn,
+        "\u{4f60}aaaaaaaaaa",
+        protocols,
+        ping,
+        |_| {
+            conn.set_input_focus(InputFocus::PARENT, second, x11rb::CURRENT_TIME)?;
+            conn.flush()?;
+            Ok(())
+        },
+        |data, _| pong(&conn, root, protocols, data),
+    )?;
+    clear_active_window(&conn, root)?;
+    typed.result?;
+    let pinged: Vec<Window> = typed.pings.iter().map(|data| data[2]).collect();
+    assert_eq!(pinged, [first, first]);
     assert_eq!(spare_keycodes(&conn)?, before);
     Ok(())
 }

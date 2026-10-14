@@ -3444,6 +3444,9 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         &mapping,
         |ch, mapping| text_keycode(&conn, mapping, &mut client.borrow_mut(), ch),
         |keycode, needs_shift, borrowed| {
+            if borrowed {
+                client.borrow_mut().record_recipient(&conn);
+            }
             let state = if needs_shift {
                 KeyButMask::SHIFT
             } else {
@@ -3487,9 +3490,6 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             sleep(Duration::from_millis(KEY_DELAY_MS));
             conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
             conn.flush()?;
-            if borrowed {
-                client.borrow_mut().sent(&conn);
-            }
             if inter_char_ms > 0 {
                 sleep(Duration::from_millis(inter_char_ms));
             }
@@ -3527,6 +3527,9 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         &mapping,
         |ch, mapping| text_keycode(&conn, mapping, &mut client.borrow_mut(), ch),
         |keycode, needs_shift, borrowed| {
+            if borrowed {
+                client.borrow_mut().record_recipient(&conn);
+            }
             if needs_shift {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
@@ -3536,9 +3539,6 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
                 conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
             conn.flush()?;
-            if borrowed {
-                client.borrow_mut().sent(&conn);
-            }
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
@@ -4523,8 +4523,8 @@ impl TextClient {
         }
     }
 
-    /// The window that gets the keys sent now. For XTest it is the input focus
-    /// once the server has handled the keys sent so far.
+    /// The window that gets the key sent next. For XTest it is the input focus
+    /// captured right before the key is sent.
     fn recipient(&self, conn: &RustConnection) -> Option<Window> {
         self.target.or_else(|| {
             let cookie = conn.get_input_focus().ok()?;
@@ -4532,8 +4532,8 @@ impl TextClient {
         })
     }
 
-    /// Records that a key of a borrowed keycode went to the recipient.
-    fn sent(&mut self, conn: &RustConnection) {
+    /// Records the window that gets the next key of a borrowed keycode.
+    fn record_recipient(&mut self, conn: &RustConnection) {
         if let Some(window) = self.recipient(conn) {
             if !self.sent.contains(&window) {
                 self.sent.push(window);

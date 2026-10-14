@@ -419,10 +419,6 @@ where
     std::thread::Builder::new()
         .name("cua-sck-window-capture".into())
         .spawn(move || {
-            // ScreenCaptureKit answers through Swift/Objective-C completion
-            // handlers whose autoreleased objects would otherwise leak on
-            // this pool-less worker thread: one native-resolution buffer per
-            // capture, never drained (see #4663).
             let result = autoreleasepool(|_| work());
             drop(permit);
             let _ = sender.send(result);

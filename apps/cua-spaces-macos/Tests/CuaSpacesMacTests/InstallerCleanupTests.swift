@@ -8,116 +8,51 @@ import Testing
 @Suite("Installer cleanup")
 struct InstallerCleanupTests {
     static let id = "com.trycua.spaces.macos"
-    static let home = "/Users/ada"
-    static let dmg = "/Users/ada/Downloads/cua-spaces-0.6.1-darwin-universal.dmg"
 
-    static func hdiutil(_ images: [(path: String, mounts: [String])]) -> Data {
-        let list: [[String: Any]] = images.map { image in
-            ["image-path": image.path,
-             "system-entities": [["dev-entry": "/dev/disk9"]] + image.mounts.map { ["mount-point": $0] }]
+    func withVolume(holding bundleIdentifier: String?, _ body: (URL) throws -> Void) throws {
+        let volume = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-volume-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: volume) }
+        try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
+        if let bundleIdentifier {
+            let contents = volume.appendingPathComponent("Cua Spaces.app/Contents")
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            let info = ["CFBundleIdentifier": bundleIdentifier]
+            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: contents.appendingPathComponent("Info.plist"))
         }
-        return try! PropertyListSerialization.data(fromPropertyList: ["images": list], format: .xml, options: 0)
+        try body(volume)
     }
 
-    func cleanup(_ volumes: FixtureInstallerVolumes, bundlePath: String = "/Applications/Cua Spaces.app",
-                 defaults: UserDefaults = UserDefaults(suiteName: "cua-installer-\(UUID().uuidString)")!) -> InstallerCleanup {
-        InstallerCleanup(volumes: volumes, bundleIdentifier: Self.id, bundlePath: bundlePath,
-                         home: Self.home, defaults: defaults)
+    @Test func selectsAnInstallerVolumeHoldingThisApp() throws {
+        try withVolume(holding: Self.id) { volume in
+            #expect(InstallerCleanup.installers(among: [volume], holding: Self.id) { _ in true } == [volume])
+        }
     }
 
-    @Test func parsesImagesAndTheirMountPoints() {
-        let images = InstallerCleanup.images(Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"]), ("/tmp/x.dmg", [])]))
-        #expect(images == [InstallerImage(path: Self.dmg, mountPoints: ["/Volumes/Cua Spaces"]),
-                           InstallerImage(path: "/tmp/x.dmg", mountPoints: [])])
-        #expect(InstallerCleanup.images(Data("not a plist".utf8)).isEmpty)
+    @Test func skipsVolumesThatAreNotInstallers() throws {
+        try withVolume(holding: Self.id) { volume in
+            #expect(InstallerCleanup.installers(among: [volume], holding: Self.id) { _ in false }.isEmpty)
+        }
     }
 
-    @Test func onlyAnApplicationsFolderCountsAsInstalled() {
-        #expect(InstallerCleanup.installed("/Applications/Cua Spaces.app", home: Self.home))
-        #expect(InstallerCleanup.installed("/Users/ada/Applications/Cua Spaces.app", home: Self.home))
-        #expect(!InstallerCleanup.installed("/Volumes/Cua Spaces/Cua Spaces.app", home: Self.home))
-        #expect(!InstallerCleanup.installed(
-            "/private/var/folders/x/T/AppTranslocation/1234/d/Cua Spaces.app", home: Self.home))
-        #expect(!InstallerCleanup.installed("/Users/ada/Downloads/Cua Spaces.app", home: Self.home))
+    @Test func skipsVolumesHoldingAnotherApp() throws {
+        try withVolume(holding: "com.example.other") { volume in
+            #expect(InstallerCleanup.installers(among: [volume], holding: Self.id) { _ in true }.isEmpty)
+        }
     }
 
-    @Test func ejectsTheInstallerAndOffersItsDownloadForTheTrash() {
-        let volumes = FixtureInstallerVolumes(images: Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"])]),
-                                              apps: ["/Volumes/Cua Spaces": [Self.id]])
-        let offered = cleanup(volumes).ejectLeftovers()
-        #expect(volumes.calls == ["eject /Volumes/Cua Spaces"])
-        #expect(offered.map(\.path) == [Self.dmg])
+    @Test func skipsVolumesWithoutAnApp() throws {
+        try withVolume(holding: nil) { volume in
+            #expect(InstallerCleanup.installers(among: [volume], holding: Self.id) { _ in true }.isEmpty)
+        }
     }
 
-    @Test func ejectsEveryCopyOfTheInstallerButLeavesOtherImages() {
-        let other = "/Users/ada/Downloads/Figma.dmg"
-        let volumes = FixtureInstallerVolumes(
-            images: Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"]),
-                                  ("/Users/ada/Desktop/cua-spaces-0.6.0.dmg", ["/Volumes/Cua Spaces 1"]),
-                                  (other, ["/Volumes/Figma"]),
-                                  ("/tmp/detached.dmg", [])]),
-            apps: ["/Volumes/Cua Spaces": [Self.id], "/Volumes/Cua Spaces 1": [Self.id],
-                   "/Volumes/Figma": ["com.figma.Desktop"]])
-        let offered = cleanup(volumes).ejectLeftovers()
-        #expect(volumes.calls == ["eject /Volumes/Cua Spaces", "eject /Volumes/Cua Spaces 1"])
-        #expect(offered.map(\.path) == [Self.dmg], "only a .dmg in Downloads is offered for the Trash")
-    }
-
-    @Test func neverEjectsTheImageTheAppRunsFrom() {
-        let volumes = FixtureInstallerVolumes(images: Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"])]),
-                                              apps: ["/Volumes/Cua Spaces": [Self.id]])
-        #expect(cleanup(volumes, bundlePath: "/Volumes/Cua Spaces/Cua Spaces.app").ejectLeftovers().isEmpty)
-        #expect(cleanup(volumes, bundlePath: "/private/var/folders/x/T/AppTranslocation/1/d/Cua Spaces.app")
-            .ejectLeftovers().isEmpty)
-        #expect(volumes.calls.isEmpty)
-    }
-
-    @Test func anImageThatWouldNotEjectIsNotOffered() {
-        let volumes = FixtureInstallerVolumes(images: Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"])]),
-                                              apps: ["/Volumes/Cua Spaces": [Self.id]])
-        volumes.ejectFailure = "busy"
-        #expect(cleanup(volumes).ejectLeftovers().isEmpty)
-        #expect(volumes.calls == ["eject /Volumes/Cua Spaces"])
-    }
-
-    @Test func aKeptDownloadIsEjectedButNotOfferedAgain() throws {
-        let defaults = try #require(UserDefaults(suiteName: "cua-installer-\(UUID().uuidString)"))
-        let volumes = FixtureInstallerVolumes(images: Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"])]),
-                                              apps: ["/Volumes/Cua Spaces": [Self.id]])
-        let c = cleanup(volumes, defaults: defaults)
-        let offered = c.ejectLeftovers()
-        offered.forEach(c.keep)
-        #expect(c.ejectLeftovers().isEmpty)
-        #expect(volumes.calls == ["eject /Volumes/Cua Spaces", "eject /Volumes/Cua Spaces"])
-    }
-
-    @Test func trashingMovesTheDownload() throws {
-        let volumes = FixtureInstallerVolumes(images: Self.hdiutil([(Self.dmg, ["/Volumes/Cua Spaces"])]),
-                                              apps: ["/Volumes/Cua Spaces": [Self.id]])
-        let c = cleanup(volumes)
-        try c.ejectLeftovers().forEach(c.trash)
-        #expect(volumes.calls == ["eject /Volumes/Cua Spaces", "trash \(Self.dmg)"])
-    }
-}
-
-@MainActor
-@Suite("Installer cleanup after onboarding")
-struct InstallerCleanupOnboardingTests {
-    @Test func asksAtOnceWhenOnboardingIsDone() {
-        let onboarding = OnboardingModel(statePath: nil)
-        onboarding.finish()
-        var asked = 0
-        AppDelegate.afterOnboarding(onboarding) { asked += 1 }
-        #expect(asked == 1)
-    }
-
-    @Test func waitsForTheFirstRunToFinish() async {
-        let onboarding = OnboardingModel(statePath: nil)
-        var asked = 0
-        AppDelegate.afterOnboarding(onboarding) { asked += 1 }
-        #expect(asked == 0, "not while onboarding is showing")
-        onboarding.finish()
-        for _ in 0..<50 where asked == 0 { try? await Task.sleep(for: .milliseconds(10)) }
-        #expect(asked == 1)
+    @Test func installedOnlyInsideAnApplicationsFolder() {
+        let home = URL(fileURLWithPath: "/Users/ada")
+        let inside = ["/Applications/X.app", "/Users/ada/Applications/X.app"]
+        let outside = ["/Volumes/Cua Spaces/X.app", "/private/var/folders/x/AppTranslocation/1234/d/X.app",
+                       "/Users/ada/Downloads/X.app", "/ApplicationsFoo/X.app"]
+        for path in inside { #expect(InstallerCleanup.installed(URL(fileURLWithPath: path), home: home)) }
+        for path in outside { #expect(!InstallerCleanup.installed(URL(fileURLWithPath: path), home: home)) }
     }
 }

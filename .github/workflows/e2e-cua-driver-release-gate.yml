@@ -119,10 +119,12 @@ jobs:
     with:
       ref: ${{ github.sha }}
 
+  # Hosted macOS seeds TCC state, so it never runs on pull_request events
+  # (the probe rejects them). PRs get it from the nightly and the tag gate.
   macos:
     name: "gate / macOS hosted E2E"
     needs: decide
-    if: needs.decide.outputs.run == 'true'
+    if: needs.decide.outputs.run == 'true' && github.event_name != 'pull_request'
     permissions:
       actions: read
       contents: read
@@ -154,6 +156,7 @@ jobs:
       - name: Evaluate lanes
         env:
           RUN: ${{ needs.decide.outputs.run }}
+          EVENT: ${{ github.event_name }}
           DECIDE: ${{ needs.decide.result }}
           LANES: ${{ toJSON(needs) }}
         run: |
@@ -165,7 +168,7 @@ jobs:
             echo "Release-gate lanes not required for this change." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<< "$LANES")
+          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select(.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") | "\(.key)=\(.value.result)"' <<< "$LANES")
           if [[ -n "$bad" ]]; then
             echo "::error::release-gate lanes not green: $bad"; exit 1
           fi

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon } from "lucide-react";
+import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
 import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
@@ -15,12 +15,13 @@ import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { toast, toastError } from "@/components/ui/toast";
 import { creatingLine, thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
-import { createError, createProgress, machineName, powerButton, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
+import { createError, createProgress, machineName, matchesQuery, powerButton, powerError, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
 
 export const Route = createFileRoute("/spaces/")({ component: SpacesPage });
 
@@ -37,6 +38,7 @@ function SpacesPage() {
   const spaces = realSpaces(all);
   const { data: machines = [] } = useMachines();
   const [filter, setFilter] = useState<SpaceFilter>("all");
+  const [query, setQuery] = useState("");
   const newSpace = useNewSpace();
   // Asks for the host's options while the list is empty: its architecture
   // decides the macOS tile, and New Space opens with them in.
@@ -44,7 +46,7 @@ function SpacesPage() {
   const { core } = useBridge();
   const { env } = useNewSpaceWizard();
   const home = emptyHome(core, env.hostArch);
-  const shown = visibleSpaces(spaces, filter);
+  const shown = visibleSpaces(spaces, filter, (s) => matchesQuery(core, s, machineName(machines, s), query));
   const access = useSpaceAccess(spaces);
   const running = spaces.filter((s) => spaceState(s) === "running").length;
 
@@ -60,8 +62,27 @@ function SpacesPage() {
         }
       />
       <GettingStarted />
-      <div className="mb-4">
+      <div className="mb-4 flex items-center gap-3">
         <Segmented aria-label="Filter by state" value={filter} options={FILTERS} onValueChange={setFilter} />
+        {/* Find a Space by name, detail, id or machine (the SwiftUI sidebar's search). */}
+        <div className="relative ml-auto w-56">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && query) {
+                e.preventDefault();
+                setQuery("");
+              }
+            }}
+            placeholder="Filter"
+            aria-label="Filter Spaces"
+            data-spaces-filter=""
+            className="pl-8"
+          />
+        </div>
       </div>
       {error ? (
         <EmptyState icon={<MonitorIcon />} title="Couldn't load Spaces">
@@ -82,6 +103,10 @@ function SpacesPage() {
           }
         >
           Create one on {thisComputerText()} or on Cua Cloud.
+        </EmptyState>
+      ) : shown.length === 0 && query.trim() ? (
+        <EmptyState icon={<SearchIcon />} title="No matches">
+          No {filter === "all" ? "" : `${filter} `}Space matches “{query.trim()}”.
         </EmptyState>
       ) : shown.length === 0 ? (
         <EmptyState icon={<MonitorIcon />} title={`No ${filter} Spaces`}>
@@ -258,6 +283,11 @@ function SpaceLink({ space, machine, windowOver = false }: { space: Space; machi
           {createError(space) ? (
             <p data-create-error="" title={createError(space)!} className="mt-1 line-clamp-2 text-xs text-destructive">
               {createError(space)}
+            </p>
+          ) : powerError(space) ? (
+            // The last start or stop failed: why, inline, as the SwiftUI sidebar row says it.
+            <p data-power-error="" title={powerError(space)!} className="mt-1 line-clamp-2 text-xs text-destructive">
+              {powerError(space)}
             </p>
           ) : null}
         </div>

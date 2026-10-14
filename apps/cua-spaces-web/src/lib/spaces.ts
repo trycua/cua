@@ -52,10 +52,30 @@ export type SpaceFilter = "all" | "running" | "stopped" | "creating";
 
 const ORDER: Record<SpaceState, number> = { failed: 0, creating: 0, running: 1, stopped: 2, deleting: 3 };
 
+/**
+ * Whether the filter box's `query` keeps `space`: the core's rule
+ * (`sidebar.matches`, the SwiftUI sidebar search's): any of its name,
+ * detail, id or machine holds the trimmed query, ignoring case. Without the
+ * core, the same rule here.
+ */
+export function matchesQuery(
+  core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined } | undefined,
+  space: Pick<Space, "id" | "name" | "detail">,
+  machine: string,
+  query: string,
+): boolean {
+  if (query.trim() === "") return true;
+  const fields = [space.name, space.detail ?? "", space.id, machine];
+  const kept = core?.tryCall<boolean>("sidebar.matches", { query, fields });
+  if (typeof kept === "boolean") return kept;
+  const needle = query.trim().toLowerCase();
+  return fields.some((f) => f.toLowerCase().includes(needle));
+}
+
 /** Filter by state, then: creating first, running next, then stopped; most recent first within each. */
-export function visibleSpaces(spaces: readonly Space[], filter: SpaceFilter): Space[] {
+export function visibleSpaces(spaces: readonly Space[], filter: SpaceFilter, keep: (space: Space) => boolean = () => true): Space[] {
   return spaces
-    .filter((s) => filter === "all" || spaceState(s) === filter)
+    .filter((s) => (filter === "all" || spaceState(s) === filter) && keep(s))
     .toSorted((a, b) => ORDER[spaceState(a)] - ORDER[spaceState(b)] || b.lastUsedAt - a.lastUsedAt);
 }
 
@@ -78,6 +98,16 @@ export function machineName(machines: readonly Machine[], space: Pick<Space, "id
   if (space.hostName) return space.hostName;
   if (space.provider === "direct") return "a machine added by address";
   return space.provider === "cloud" || space.provider === undefined ? "Cua Cloud" : "Unknown machine";
+}
+
+/** What a Space's ⌘K entries also match: its OS, state, detail and the machine it runs on. */
+export function paletteKeywords(space: Pick<Space, "os" | "detail" | "hostName">, state: SpaceState, machine: string): string {
+  return [...new Set([space.os, state, space.detail, space.hostName, machine].filter((w): w is string => Boolean(w)))].join(" ");
+}
+
+/** Why the Space's last power action failed (the core's `sidebar::power_error`), for its tile. */
+export function powerError(space: Pick<Space, "status" | "power">): string | null {
+  return canPower(space) ? (space.power?.error ?? null) || null : null;
 }
 
 /** This Mac's macOS Spaces that run or are being created (Apple's limit). */

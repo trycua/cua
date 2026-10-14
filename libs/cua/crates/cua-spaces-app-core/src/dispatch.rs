@@ -50,6 +50,7 @@ pub const METHODS: &[&str] = &[
     "creates.isDeleting",
     "creates.isPowering",
     "sidebar.build",
+    "sidebar.matches",
     "sidebar.detail",
     "sidebar.detailCopy",
     "sidebar.deleteFailedText",
@@ -373,6 +374,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or_default(),
             &a.get::<String>("id")?,
         )),
+        "sidebar.matches" => {
+            let fields = a.get::<Vec<String>>("fields")?;
+            out(sidebar::matches(
+                &a.get::<Option<String>>("query")?.unwrap_or_default(),
+                &fields.iter().map(String::as_str).collect::<Vec<_>>(),
+            ))
+        }
         "sidebar.build" => out(sidebar::sidebar(
             &a.get::<Vec<Space>>("spaces")?,
             &a.get::<Option<String>>("query")?.unwrap_or_default(),

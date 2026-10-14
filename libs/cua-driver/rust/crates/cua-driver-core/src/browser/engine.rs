@@ -37,7 +37,7 @@ use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
     CdpWindowCandidate,
 };
-use super::cdp_ws::{CdpConnection, CdpPool};
+use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -699,7 +699,6 @@ impl BrowserEngine {
                         let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
                         let mut requests = pending.remove(session_id).unwrap_or_default();
                         for grant in engine.existing_profile_grants.remove_session(session_id) {
-                            engine.pool.release_claim_marker(&grant.endpoint_ws_url);
                             if grant.cleanup_remote_debugging {
                                 requests.push(ExistingProfileSetupRequest {
                                     pid: grant.pid,
@@ -713,9 +712,21 @@ impl BrowserEngine {
                             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                                 let engine = engine.clone();
                                 runtime.spawn(async move {
+                                    // A normal session end parks the already-consented
+                                    // socket for the next approved session, unless the
+                                    // driver is turning remote debugging back off.
+                                    let mode = if grant.cleanup_remote_debugging {
+                                        SharedSocketRelease::Close
+                                    } else {
+                                        SharedSocketRelease::Park
+                                    };
                                     engine
                                         .pool
-                                        .release_existing(&grant.endpoint_ws_url, grant.generation)
+                                        .release_existing(
+                                            &grant.endpoint_ws_url,
+                                            grant.generation,
+                                            mode,
+                                        )
                                         .await;
                                     if let Some(protected) = grant.protected_consent.as_ref() {
                                         engine.approval_broker.revoke(protected).await;
@@ -768,7 +779,6 @@ impl BrowserEngine {
             GrantLookup::Missing => Ok(None),
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
-                self.pool.release_claim_marker(&grant.endpoint_ws_url);
                 if grant.cleanup_remote_debugging {
                     let request = ExistingProfileSetupRequest {
                         pid: grant.pid,
@@ -789,7 +799,11 @@ impl BrowserEngine {
                     }
                 }
                 self.pool
-                    .release_existing(&grant.endpoint_ws_url, grant.generation)
+                    .release_existing(
+                        &grant.endpoint_ws_url,
+                        grant.generation,
+                        SharedSocketRelease::Close,
+                    )
                     .await;
                 if let Some(protected) = grant.protected_consent.as_ref() {
                     self.approval_broker.revoke(protected).await;
@@ -812,7 +826,6 @@ impl BrowserEngine {
             .existing_profile_grants
             .revoke(session, transport_session, pid)
         {
-            self.pool.release_claim_marker(&grant.endpoint_ws_url);
             if grant.cleanup_remote_debugging {
                 let request = ExistingProfileSetupRequest {
                     pid: grant.pid,
@@ -833,7 +846,11 @@ impl BrowserEngine {
                 }
             }
             self.pool
-                .release_existing(&grant.endpoint_ws_url, grant.generation)
+                .release_existing(
+                    &grant.endpoint_ws_url,
+                    grant.generation,
+                    SharedSocketRelease::Close,
+                )
                 .await;
             if let Some(protected) = grant.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;

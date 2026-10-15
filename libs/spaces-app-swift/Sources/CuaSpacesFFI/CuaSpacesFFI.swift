@@ -26494,7 +26494,7 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 
 public struct AppRelayAllowanceNotice: Equatable, Hashable {
     /**
-     * "You've used your free relay allowance for this month. ..."
+     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
      */
     public var text: String
     /**
@@ -26526,7 +26526,7 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "You've used your free relay allowance for this month. ..."
+         * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
          */text: String,
         /**
          * [`UPGRADE`].

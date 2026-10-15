@@ -239,7 +239,23 @@ export class TeleportStore {
   send(event: PickerEvent): void {
     const s = this.session;
     if (!s) return;
-    this.patch({ state: pickerReduce(this.core, s.state, event) });
+    const state = pickerReduce(this.core, s.state, event);
+    this.patch({ state });
+    // Back to the grid before its catalog was read (an app dropped on the
+    // Space opens without it, CUA-1671; or the read failed): read it.
+    if (state.step === "loading" && s.state.step !== "loading") this.loadCatalog();
+  }
+
+  /** Reads the catalog into the picker (while it shows Loading). */
+  private loadCatalog(): void {
+    const s = this.session;
+    if (!s) return;
+    const opened = this.generation;
+    const live = () => this.generation === opened && this.session?.state.step === "loading";
+    void this.adapter.call("teleport.catalog", { spaceId: s.spaceId }).then(
+      (entries) => live() && this.send({ type: "loaded", entries }),
+      (e) => live() && this.send({ type: "failed", message: words(e) }),
+    );
   }
 
   /** Opens the picker for a Space and reads the catalog and both window
@@ -267,12 +283,10 @@ export class TeleportStore {
     this.publish();
     const opened = ++this.generation;
     const live = () => this.generation === opened;
+    // A dropped app opens at once, without the catalog (its read would
+    // replace the host's entry for the app); Back reads it.
     if (entry) this.send({ type: "preselect", entry, ...(files?.length ? { files } : {}) });
-    else
-      void this.adapter.call("teleport.catalog", { spaceId: space.id }).then(
-        (entries) => live() && this.send({ type: "loaded", entries }),
-        (e) => live() && this.send({ type: "failed", message: words(e) }),
-      );
+    else this.loadCatalog();
     void this.adapter.call("teleport.windows", {}).then(
       (openWindows) => live() && this.patch({ openWindows }),
       () => live() && this.patch({ openWindows: [] }),

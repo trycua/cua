@@ -322,12 +322,18 @@ public final class TeleportModel {
     public var status: String? { appPickerStatus(state: state) }
 
     public func send(_ event: AppPickerEvent) {
+        let was = state.step
         state = appPickerReduce(state: state, event: event)
+        // Back to the grid before its catalog was read (an app dropped on
+        // the Space opens without it, CUA-1671; or the read failed): read it.
+        if state.step == .loading, was != .loading { Task { await load() } }
     }
 
     public func load() async {
         guard let teleport, let space else {
-            send(.failed(message: "Teleport needs a reachable Space.", causeTexts: [], causeInstalled: false))
+            if state.step == .loading {
+                send(.failed(message: "Teleport needs a reachable Space.", causeTexts: [], causeInstalled: false))
+            }
             return
         }
         do {
@@ -336,7 +342,7 @@ public final class TeleportModel {
             sdkEntries = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             send(.loaded(entries: entries.map(appCatalogEntry(entry:))))
         } catch {
-            fail(error)
+            if state.step == .loading { fail(error) }
         }
     }
 

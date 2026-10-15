@@ -395,8 +395,9 @@ struct ViewModelTests {
         #expect(model.host.formView?.canSubmit == true)
     }
 
-    /// Settings, Experiments: every switch off; Cua Volume on shows Storage
-    /// after General, is saved, recorded, and reaches the first run.
+    /// Settings, Experiments: every switch off except Sharing (on by
+    /// default); Cua Volume on shows Storage after General, is saved,
+    /// recorded, and reaches the first run.
     @Test func experimentsAreOffAndCuaVolumeShowsStorage() async {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
@@ -404,8 +405,10 @@ struct ViewModelTests {
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
                                     "experiment:classic_ui"])
         // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        // Sharing is on unless turned off.
+        let onByDefault: Set<String> = ["experiment:classic_ui", "experiment:sharing"]
         #expect(toggles.allSatisfy { r in
-            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+            r.options.first { $0.id == (onByDefault.contains(r.id) ? "on" : "off") }?.active == true
         })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
@@ -1062,10 +1065,11 @@ struct ViewModelTests {
         #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help == "Suspend")
-        // No Share without the Sharing experiment; with it, before power.
+        // Share before power (Sharing is on by default); none with Sharing turned off.
+        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
+        model.chooseExperiment(row: "experiment:sharing", option: "off")
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .power, .delete, .open])
         model.chooseExperiment(row: "experiment:sharing", option: "on")
-        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
 
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.

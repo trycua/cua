@@ -1425,6 +1425,31 @@ impl Tool for ClickTool {
 ///
 /// `element` is the cached AX element pointer and its snapshot index; `window`
 /// is the target (pid, window_id).
+/// Whether a background AXPress needs its window to be the app's key window.
+///
+/// A toolbar or format-bar control in a native app sends its action to the
+/// first responder through the key window (TextEdit's Bold checkbox applies
+/// the trait to the text view that way). With the app behind the user's
+/// window nothing is key, so the press flips the control but the document
+/// does not change. Browsers and Electron shells run page content in their own
+/// process and take no part in this.
+fn press_needs_key_window(action: &str, front_pid: Option<i32>, pid: i32, native: bool) -> bool {
+    action == "AXPress" && native && front_pid != Some(pid)
+}
+
+/// Make the target window AppKit-key without raising it, activating the app
+/// or taking key status from the user's window (the focus record only, as the
+/// background pixel click does), then let AppKit settle.
+fn prime_key_window_for_background_press(pid: i32, window_id: u32, action: &str) {
+    let native = !super::type_text::is_browser_pid(pid)
+        && !crate::browser::electron_js::ElectronJs::is_electron(pid);
+    if press_needs_key_window(action, apps::frontmost_pid(), pid, native)
+        && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+    {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+    }
+}
+
 fn perform_ax_click(
     element: (usize, usize),
     window: (i32, u32),
@@ -1575,6 +1600,9 @@ fn perform_ax_click(
     let toggle_before = is_toggle_press(ax_action, &role, &advertised)
         .then(read_value)
         .flatten();
+    if !foreground {
+        prime_key_window_for_background_press(pid, window_id, ax_action);
+    }
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
         // Checked before the row-selection fallback, which writes AXSelected
@@ -1830,6 +1858,20 @@ mod tests {
     /// Surface 5: schema must advertise the new `button` field with the three
     /// canonical values and default to "left". Hermes / Codex / Claude Code
     /// consumers branch on this enum being present.
+    #[test]
+    fn background_press_needs_the_key_window_only_in_a_native_background_app() {
+        assert!(press_needs_key_window("AXPress", Some(1), 2, true));
+        assert!(
+            !press_needs_key_window("AXPress", Some(2), 2, true),
+            "frontmost"
+        );
+        assert!(
+            !press_needs_key_window("AXPress", Some(1), 2, false),
+            "browser or Electron"
+        );
+        assert!(!press_needs_key_window("AXShowMenu", Some(1), 2, true));
+    }
+
     #[test]
     fn schema_advertises_button_enum() {
         let d = def();

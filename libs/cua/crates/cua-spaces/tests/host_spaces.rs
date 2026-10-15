@@ -39,6 +39,9 @@ struct FakeRuntime {
     /// Starts first download an image of this many bytes, slowly,
     /// reporting it as create progress (as Lume's pull does).
     pull_bytes: Mutex<Option<u64>>,
+    /// The download stops at this step of 30 with this error (Lume's pull
+    /// failed, or Lume died under it).
+    pull_stops: Mutex<Option<(u64, String)>>,
 }
 
 #[async_trait]
@@ -53,7 +56,11 @@ impl LocalRuntime for FakeRuntime {
         let pull = *self.pull_bytes.lock().unwrap();
         if let Some(total) = pull {
             use cua_sandbox_core::progress::{Phase, Progress, Transfer, report};
+            let stops = self.pull_stops.lock().unwrap().clone();
             for i in 0..=30u64 {
+                if let Some((_, e)) = stops.as_ref().filter(|(at, _)| *at == i) {
+                    return Err(RuntimeError::Other(e.clone()));
+                }
                 let done = total * i / 30;
                 report(
                     Progress::phase(Phase::Pulling)
@@ -198,6 +205,7 @@ async fn runtime_fixture(
         paused: Mutex::default(),
         hang: Default::default(),
         fail: Mutex::default(),
+        pull_stops: Mutex::default(),
         pull_bytes: Mutex::default(),
     });
     let spaces = Spaces::builder()
@@ -1396,6 +1404,43 @@ async fn a_create_on_a_host_reports_the_hosts_progress() {
             "{phase:?} reported: {seen:#?}"
         );
     }
+}
+
+/// A host whose image download stops partway fails the caller's create
+/// right then, with the host's reason, after showing the download; the
+/// host stops listing the create and no Space is left on the relay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_download_that_stops_on_the_host_fails_the_create_with_its_reason() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    *f.rt.pull_bytes.lock().unwrap() = Some(TOTAL);
+    let why = "The image download stopped before it finished (Lume stopped running). Try \
+               again; it picks up where it stopped.";
+    *f.rt.pull_stops.lock().unwrap() = Some((10, why.into()));
+    let seen = Arc::new(Mutex::new(Vec::<cua_spaces::CreateProgress>::new()));
+    let s = seen.clone();
+    let mut create = on_host("Mac mini (spare)");
+    create.progress = Some(cua_spaces::ProgressSink::new(move |p| {
+        s.lock().unwrap().push(p.clone())
+    }));
+    let t = std::time::Instant::now();
+    let e = spaces.create(create).await.unwrap_err().to_string();
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(10),
+        "failed after {:?}",
+        t.elapsed()
+    );
+    assert!(e.contains(why), "the host's reason: {e}");
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.phase == cua_spaces::CreatePhase::Pulling),
+        "the download showed before it stopped"
+    );
+    assert!(provided_machines(&f).await.is_empty(), "no ghost Space");
+    let creating = f.server.get(&ada()).await.unwrap().creating;
+    assert!(creating.is_empty(), "{creating:?}");
 }
 
 /// A host that predates listing its creates still creates the Space; the

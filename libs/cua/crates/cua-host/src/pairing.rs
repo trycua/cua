@@ -24,7 +24,7 @@ pub const PAIRING_TOKEN_PREFIX: &str = "cpc_";
 /// Characters of a code.
 pub const PAIRING_CODE_LEN: usize = 12;
 /// Where an add-machine link opens in production.
-pub const ADD_MACHINE_BASE_URL: &str = "https://spaces.cua.ai/add";
+pub const ADD_MACHINE_BASE_URL: &str = "https://cua.ai/add";
 
 /// Where an add-machine link opens: `<Spaces site>/add`, the site of
 /// `CUA_SPACES_SITE_URL` or `CUA_ENV` ([`ADD_MACHINE_BASE_URL`] in
@@ -80,7 +80,7 @@ pub fn display_pairing_code(code: &str) -> String {
 }
 
 /// The add-machine link for `code`: `<add_machine_base_url>/<code>`
-/// (`https://spaces.cua.ai/add/<code>` in production), plus `?relay=<url>`
+/// (`https://cua.ai/add/<code>` in production), plus `?relay=<url>`
 /// when the machine must join another relay than the production
 /// [`DEFAULT_RELAY_URL`] (a staging relay is always named, since the
 /// machine being added has no `CUA_ENV`).
@@ -350,6 +350,11 @@ mod tests {
             Some("K7QM4XPB2RHD")
         );
         assert_eq!(
+            normalize_pairing_code("https://cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
+            Some("K7QM4XPB2RHD")
+        );
+        // Links printed by older apps keep working.
+        assert_eq!(
             normalize_pairing_code("https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
             Some("K7QM4XPB2RHD")
         );
@@ -365,7 +370,7 @@ mod tests {
         }
         assert_eq!(
             pairing_link_relay(
-                "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
+                "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
             )
             .as_deref(),
             Some("https://r.example")
@@ -378,11 +383,11 @@ mod tests {
     fn links_and_commands_carry_a_custom_relay_only() {
         assert_eq!(
             add_machine_url("k7qm4xpb2rhd", DEFAULT_RELAY_URL),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD"
+            "https://cua.ai/add/K7QM-4XPB-2RHD"
         );
         assert_eq!(
             add_machine_url("K7QM4XPB2RHD", "https://relay.example.com/"),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
+            "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
         );
         assert_eq!(
             install_command("K7QM4XPB2RHD", DEFAULT_RELAY_URL, "linux"),

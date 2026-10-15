@@ -938,8 +938,11 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
         return Some(FailureCause::LocalNetwork);
     }
     // Virtualization.framework's `virtualMachineLimitExceeded` ("The number
-    // of virtual machines exceeds the limit"): Apple's two macOS VMs per Mac.
+    // of virtual machines exceeds the limit"), or Lume's own refusal ("VM
+    // start rejected: host limit of 2 running macOS guests reached"):
+    // Apple's two macOS VMs per Mac.
     if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
         || ((l.contains("virtual machine") || l.contains("vms"))
             && l.contains("limit")
             && (l.contains("exceed") || l.contains("maximum") || l.contains("reached")))
@@ -3214,6 +3217,7 @@ mod tests {
             "lume API 500: The number of virtual machines exceeds the limit.",
             "Error Domain=VZErrorDomain Code=6 virtualMachineLimitExceeded",
             "booting: the maximum number of VMs has been reached (limit 2)",
+            "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
         ] {
             assert!(
                 failure_text(raw, Some("booting"), Some(SpaceProvider::Local), false)

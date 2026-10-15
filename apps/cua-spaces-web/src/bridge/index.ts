@@ -99,6 +99,7 @@ export type * from "./contracts/volume";
 export * from "./volume";
 export { ThumbnailStore, THUMBNAIL_CAP, THUMBNAIL_REFRESH_MS, thumbnailStore, useSpaceThumbnail } from "./thumbnails";
 export { useWindowDropTarget } from "./window-drop";
+export type { WkContextMenuRequest, WkMenuItem } from "./webkit-protocol";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
 export { agentRunLines, useDesktopCover, useSpaceDetail, type AgentRunLine, type DetailFor, type DetailReadings, type PipOutcome, type SpaceDetailHook } from "./space-detail";
 export type * from "./ops/space-detail";

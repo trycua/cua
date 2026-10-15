@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { app, BrowserWindow, ipcMain, screen, shell, type BrowserWindowConstructorOptions } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain, Menu, screen, shell, type BrowserWindowConstructorOptions } from "electron";
 import { existsSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { captureRoutes } from "./capture";
+import { contextMenuPoint, contextMenuTemplate, editingMenu, type ContextMenuRequest } from "./context-menu";
 import { windowIconPath } from "./icon";
 import { APP_ORIGIN } from "./protocol";
 import { readSettings, writeSettings, type WindowBounds } from "./settings";
@@ -193,6 +194,11 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
     },
   });
   syncTitlebarInset(win);
+  // Right clicks the page left alone: text fields and selected text.
+  win.webContents.on("context-menu", (_event, params) => {
+    const template = editingMenu(params);
+    if (template.length) Menu.buildFromTemplate(template).popup({ window: win });
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -204,6 +210,28 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
     }
   });
   return win;
+}
+
+/** The page's context menu over `win` (`window.showContextMenu`): the
+ * chosen item's id, or null when it closed without one. */
+export function popupContextMenu(win: BrowserWindow, req: ContextMenuRequest): Promise<string | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (id: string | null) => {
+      if (done) return;
+      done = true;
+      resolve(id);
+    };
+    const menu = Menu.buildFromTemplate(
+      contextMenuTemplate(req.items, (it) => {
+        if (it.copy !== undefined) clipboard.writeText(it.copy);
+        finish(it.id);
+      }),
+    );
+    const at = contextMenuPoint(req, win.webContents.getZoomFactor());
+    // The close callback can come before the item's click: wait a moment for it.
+    menu.popup({ window: win, x: at.x, y: at.y, callback: () => setTimeout(() => finish(null), 50) });
+  });
 }
 
 /** `demo`: the parity flows' test switch (the page plays the browser demo

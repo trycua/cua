@@ -3,7 +3,7 @@
 
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useRef, useState, type DragEvent } from "react";
 
 import { emptyHome, useBridge, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
@@ -11,13 +11,14 @@ import { GettingStarted } from "@/components/getting-started";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { SpaceCanvas } from "@/components/space-canvas";
+import { useSendFilesToast, useSpaceContextMenu } from "@/components/space-context-menu";
 import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
-import { toast, toastError } from "@/components/ui/toast";
+import { toastError } from "@/components/ui/toast";
 import { creatingLine, thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
@@ -129,8 +130,10 @@ function SpaceTile({ space, machine, accessKey }: { space: Space; machine: strin
   const drop = useTileDrop(space);
   // A real window dragged over this tile (the host hit-tests the tiles' boxes and says which; macOS only).
   const windowOver = useWindowDropTarget() === space.id;
+  const menu = useSpaceContextMenu(space);
   return (
     <div
+      {...menu}
       className="group/tile relative"
       data-tile-drop={drop.over ?? undefined}
       data-drop-status={drop.status?.kind}
@@ -179,13 +182,7 @@ function useTileDrop(space: Space) {
   const [over, setOver] = useState<"accept" | "refuse" | null>(null);
   const accepts = spaceState(space) === "running";
   const status = files.status;
-  useEffect(() => {
-    if (!status) return;
-    const group = `tile-drop:${space.id}`;
-    if (status.kind === "working") toast(status.text, { group });
-    else if (status.kind === "done") toast(`Sent to ${space.name}`, { description: status.text, type: "success", group });
-    else toast(`Couldn't send to ${space.name}`, { description: status.text, type: "error", group });
-  }, [status, space.id, space.name]);
+  useSendFilesToast(space, status);
   const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
   const onDragOver = (e: DragEvent) => {
     if (!carriesFiles(e)) return;

@@ -6,10 +6,12 @@
 // Chromium reads where the window drags from the page's CSS (`app-region`),
 // so the Electron page never sends them (the webkit adapter skips it here);
 // the rects are checked and the CSS stays in charge. The tiles are targets
-// for a real window dragged onto one (macOS; window-drop.ts).
+// for a real window dragged onto one (macOS; window-drop.ts). Its context
+// menus are native (context-menu.ts).
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { dropTargetsOf } from "../window-drop";
+import { contextMenuOf } from "../context-menu";
 
 const APPEARANCES = ["system", "light", "dark"] as const;
 
@@ -35,6 +37,13 @@ export function windowMethods({ ui }: BridgeContext): Handlers {
       if (!targets) throw Failure.badArgs("targets: [{spaceId,x,y,width,height}]");
       ui.setDropTargets?.(caller.window, targets);
       return null;
+    },
+    "window.showContextMenu": async (args, caller) => {
+      const menu = contextMenuOf(args);
+      if (!menu) throw Failure.badArgs("items: [{id,label,enabled?,destructive?,separator?,copy?}], x, y");
+      // No native menus here (a test host): the page draws its own.
+      if (!ui.showContextMenu) throw Failure.unimplemented("window.showContextMenu");
+      return { id: await ui.showContextMenu(caller.window, menu) };
     },
   };
 }

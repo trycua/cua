@@ -25,7 +25,7 @@ const CHOICE_HELP: Record<string, string> = {
 type Shell = "sh" | "powershell";
 const SHELLS = [
   { value: "sh", label: "macOS / Linux" },
-  { value: "powershell", label: "Windows (preview)" },
+  { value: "powershell", label: "Windows" },
 ] as const satisfies readonly { value: Shell; label: string }[];
 
 /**

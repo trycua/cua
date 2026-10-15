@@ -52,8 +52,11 @@ pub(crate) struct HostListings {
 
 #[derive(Clone)]
 struct Listing {
+    /// When it was last asked.
     read_at: Instant,
-    /// `None`: the machine did not answer.
+    /// When it last answered.
+    answered_at: Option<Instant>,
+    /// Its last answer (`None`: it never answered).
     answer: Option<pb::GetHostSpacesResponse>,
 }
 
@@ -99,7 +102,11 @@ impl Spaces {
                 .into_iter()
                 .filter(|h| match entries.get(&h.id) {
                     None => true,
-                    Some(l) if l.answer.is_some() => l.read_at.elapsed() >= LISTING_MAX_AGE,
+                    // Answered last time: asked again when that is old;
+                    // not answered: left alone a while.
+                    Some(l) if l.answered_at.is_some_and(|a| a >= l.read_at) => {
+                        l.read_at.elapsed() >= LISTING_MAX_AGE
+                    }
                     Some(l) => l.read_at.elapsed() >= FAILED_RETRY,
                 })
                 .collect()
@@ -125,13 +132,29 @@ impl Spaces {
         let read = futures_util::future::join_all(reads).await;
         let mut entries = self.inner.host_listings.entries.lock().expect("listings");
         for (id, answer) in read {
-            entries.insert(
-                id,
-                Listing {
-                    read_at: Instant::now(),
-                    answer,
-                },
-            );
+            match answer {
+                Some(a) => {
+                    entries.insert(
+                        id,
+                        Listing {
+                            read_at: Instant::now(),
+                            answered_at: Some(Instant::now()),
+                            answer: Some(a),
+                        },
+                    );
+                }
+                // No answer this time (a machine busy booting a VM): its
+                // last answer stands until it is stale, and it is asked
+                // again later.
+                None => {
+                    let e = entries.entry(id).or_insert(Listing {
+                        read_at: Instant::now(),
+                        answered_at: None,
+                        answer: None,
+                    });
+                    e.read_at = Instant::now();
+                }
+            }
         }
     }
 
@@ -154,7 +177,7 @@ impl Spaces {
     pub(crate) fn host_listing(&self, host: &str) -> Option<pb::GetHostSpacesResponse> {
         let entries = self.inner.host_listings.entries.lock().expect("listings");
         let l = entries.get(host)?;
-        if l.read_at.elapsed() >= LISTING_STALE {
+        if l.answered_at?.elapsed() >= LISTING_STALE {
             return None;
         }
         l.answer.clone()

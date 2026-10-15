@@ -1673,3 +1673,29 @@ async fn spaces_made_on_a_providing_machine_list_on_other_devices_with_their_sta
     let here: Vec<String> = f.spaces.list().unwrap().into_iter().map(|s| s.id).collect();
     assert!(here.contains(&up) && here.contains(&off), "{here:?}");
 }
+
+/// A Space made here whose driver cannot join the relay (no cua-spacesd,
+/// or one too old) could never be opened from another device: it is not
+/// published (and so never lists as starting forever).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_that_cannot_join_the_relay_is_not_published() {
+    let f = fixture(HostProfile::Spare).await;
+    // Its driver cannot join the relay (no `relay_attach`).
+    f.env.state.unadvertise(&["relay_attach"]);
+    f.spaces
+        .create(cua_spaces::SpaceCreate {
+            image: Some("linux".into()),
+            on: Some(cua_sandbox_core::placement::On::Local),
+            name: Some("plain".into()),
+            wait: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.spaces.set_relay(Some(cua_spaces::RelayAccount::new(
+        &f.relay.url,
+        Arc::new(StaticToken("ada-token".into())),
+    )));
+    assert!(f.server.publish_own().await.unwrap().is_empty());
+    assert!(provided_machines(&f).await.is_empty());
+}

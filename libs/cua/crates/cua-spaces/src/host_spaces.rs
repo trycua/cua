@@ -316,6 +316,10 @@ pub fn is_published(p: &ProvidedSpace, host_id: &str) -> bool {
 /// following a create every second).
 const STATES_MAX_AGE: Duration = Duration::from_secs(2);
 
+/// How long the host waits for its runtimes' listing before it answers
+/// with the last one.
+const STATES_TIMEOUT: Duration = Duration::from_millis(1500);
+
 /// The live state of each local sandbox, by Space id (`local:<name>`).
 type States = HashMap<String, (&'static str, String)>;
 
@@ -521,6 +525,8 @@ pub struct HostSpacesServer {
     reattached: Mutex<HashMap<String, std::time::Instant>>,
     /// Serializes [`Self::publish_own`].
     publishing: tokio::sync::Mutex<()>,
+    /// The Spaces being turned on here now (listed as starting).
+    powering: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Drop for HostSpacesServer {
@@ -546,6 +552,7 @@ impl HostSpacesServer {
             creates: Default::default(),
             reattached: Mutex::default(),
             publishing: tokio::sync::Mutex::default(),
+            powering: Mutex::default(),
         })
     }
 
@@ -854,18 +861,35 @@ impl HostSpacesServer {
         {
             return states.clone();
         }
-        let states: States = match self.spaces.sandboxes().list().await {
-            Ok(list) => list
-                .into_iter()
-                .filter(|i| i.provider == cua_sandbox_core::ProviderKind::Local)
-                .map(|i| (i.id, space_state(&i.status)))
-                .collect(),
-            Err(e) => {
-                tracing::debug!("host spaces: runtimes did not list: {e}");
-                HashMap::new()
-            }
-        };
+        // A runtime busy with a clone or a boot can take a while to list:
+        // the last listing stands meanwhile, so a caller is answered.
+        let mut states: States =
+            match tokio::time::timeout(STATES_TIMEOUT, self.spaces.sandboxes().list()).await {
+                Ok(Ok(list)) => list
+                    .into_iter()
+                    .filter(|i| i.provider == cua_sandbox_core::ProviderKind::Local)
+                    .map(|i| (i.id, space_state(&i.status)))
+                    .collect(),
+                Ok(Err(e)) => {
+                    tracing::debug!("host spaces: runtimes did not list: {e}");
+                    cached.as_ref().map(|c| c.1.clone()).unwrap_or_default()
+                }
+                Err(_) => {
+                    tracing::debug!("host spaces: runtimes are slow to list");
+                    let last = cached.as_ref().map(|c| c.1.clone()).unwrap_or_default();
+                    return self.with_powering(last);
+                }
+            };
         *cached = Some((std::time::Instant::now(), states.clone()));
+        states = self.with_powering(states);
+        states
+    }
+
+    /// `states` with the Spaces being turned on here now as starting.
+    fn with_powering(&self, mut states: States) -> States {
+        for id in self.powering.lock().expect("powering").iter() {
+            states.insert(id.clone(), ("starting", String::new()));
+        }
         states
     }
 
@@ -947,7 +971,11 @@ impl HostSpacesServer {
                 .collect();
         let mut published = vec![];
         for info in self.spaces.list()? {
+            // Only a Space whose cua-spacesd can join the relay can be
+            // reached from another device: one with no cua-spacesd (or one
+            // too old) is not published.
             if info.provider != crate::Provider::Local
+                || !info.features.iter().any(|f| f == RELAY_ATTACH_FEATURE)
                 || all.iter().any(|p| p.local_space == info.id)
                 || shared.contains_key(&info.id)
                 || creating.contains(&info.id)
@@ -1060,15 +1088,21 @@ impl HostSpacesServer {
             }
             published.push(machine);
         }
-        // A published Space that runs but is not on the relay (it was
-        // started here, or this machine restarted): attached again, at
-        // most every REATTACH_EVERY.
-        for p in all.iter().filter(|p| is_published(p, &host_id)) {
+        // A Space this host provides on the relay that runs but is not on
+        // it (it was started here, or this machine or its daemon restarted
+        // and its driver lost the relay): attached again, at most every
+        // REATTACH_EVERY.
+        for p in all
+            .iter()
+            .filter(|p| !p.is_direct() && !p.relay_machine.is_empty())
+        {
             let running = states.get(&p.local_space).is_some_and(|s| s.0 == "running");
-            let online = directory
+            // Only one the owner's directory lists offline: a Space another
+            // account created is that account's machine.
+            let offline = directory
                 .iter()
-                .any(|m| m.id == p.relay_machine && m.online);
-            if !running || online || published.contains(&p.relay_machine) {
+                .any(|m| m.id == p.relay_machine && !m.online);
+            if !running || !offline || published.contains(&p.relay_machine) {
                 continue;
             }
             let due = self
@@ -1606,6 +1640,10 @@ impl HostSpacesServer {
             record.relay_machine.clone()
         };
         let state = if on {
+            self.powering
+                .lock()
+                .expect("powering")
+                .insert(record.local_space.clone());
             let started = async {
                 sandboxes.power_on(name).await?;
                 if record.is_direct() {
@@ -1617,6 +1655,10 @@ impl HostSpacesServer {
                 }
             }
             .await;
+            self.powering
+                .lock()
+                .expect("powering")
+                .remove(&record.local_space);
             if let Err(e) = started {
                 self.audit("failed", caller, &subject, &format!("start: {e}"));
                 return Err(e);

@@ -16,7 +16,9 @@ use crate::ax::bindings::{
     copy_binary_attr, copy_string_attr, element_screen_center, focused_element_of_pid,
     kAXErrorSuccess, perform_action, set_bool_attr_true, set_string_attr, AXUIElementRef,
 };
-use crate::ax::tree::{walk_tree, AXNode, TreeWalkResult};
+use crate::ax::tree::{
+    walk_native_chrome_bounded, walk_tree, AXNode, TreeWalkResult, DEFAULT_MAX_ELEMENTS,
+};
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -147,15 +149,35 @@ fn unique_actionable(
     }
 }
 
-fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
-    let exact_url = nodes.iter().any(|node| {
+fn omnibox_reads_setup_url(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
+    nodes.iter().any(|node| {
         node.role == "AXTextField"
             && field_equals(node, "Address and search bar")
             && node
                 .value
                 .as_deref()
                 .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-    });
+    })
+}
+
+/// The page behind the current tab is only part of the setup proof when the
+/// omnibox already reads the setup URL; otherwise its size (thousands of nodes
+/// on a heavy site) would truncate the walk and refuse before navigating.
+fn initial_setup_tree(
+    pid: i32,
+    window_id: u32,
+    descriptor: &BrowserSetupDescriptor,
+) -> TreeWalkResult {
+    let native = walk_native_chrome_bounded(pid, window_id, DEFAULT_MAX_ELEMENTS);
+    if !omnibox_reads_setup_url(&native.nodes, descriptor) {
+        return native;
+    }
+    release_actionable_nodes(&native.nodes);
+    walk_tree(pid, Some(window_id), None)
+}
+
+fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
+    let exact_url = omnibox_reads_setup_url(nodes, descriptor);
     let exact_page = nodes.iter().any(|node| {
         node.role == "AXWebArea"
             && descriptor
@@ -1382,7 +1404,7 @@ fn set_remote_debugging(
     descriptor: &'static BrowserSetupDescriptor,
     desired_enabled: bool,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
-    let initial = walk_tree(pid, Some(window_id), None);
+    let initial = initial_setup_tree(pid, window_id, descriptor);
     let initial_checkbox = exact_setup_checkbox(&initial, descriptor);
     let mut handle = match initial_checkbox {
         Ok(Some(_)) => SetupUiHandle {
@@ -2392,6 +2414,35 @@ mod tests {
             exact_setup_checkbox(&truncated, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn only_the_setup_url_in_the_omnibox_makes_the_page_part_of_the_proof() {
+        let omnibox = |url: &str| {
+            node(
+                "AXTextField",
+                Some("Address and search bar"),
+                Some(url),
+                &["AXPress"],
+            )
+        };
+        assert!(omnibox_reads_setup_url(
+            &[omnibox(" CHROME://inspect/#remote-debugging ")],
+            chrome()
+        ));
+        assert!(!omnibox_reads_setup_url(
+            &[
+                omnibox("https://example.com/"),
+                node(
+                    "AXWebArea",
+                    Some("Inspect with Chrome Developer Tools"),
+                    None,
+                    &[]
+                )
+            ],
+            chrome()
+        ));
+        assert!(!omnibox_reads_setup_url(&[], chrome()));
     }
 
     #[test]

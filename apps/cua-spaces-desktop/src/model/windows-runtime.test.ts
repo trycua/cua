@@ -223,3 +223,36 @@ describe("WindowsRuntime", () => {
     expect(f.ran.filter((s) => s.includes("Win32_ComputerSystem"))).toHaveLength(1);
   });
 });
+
+describe("nodeWindowsSystem.download", () => {
+  it("writes every byte (no chunk lost before the file opens) and reports progress", async () => {
+    const { mkdtemp, readFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { nodeWindowsSystem } = await import("./windows-runtime");
+    const chunks = Array.from({ length: 64 }, (_, i) => new Uint8Array(4096).fill(i));
+    const total = chunks.length * 4096;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const ch of chunks) c.enqueue(ch);
+        c.close();
+      },
+    });
+    const fetchImpl = (async () => new Response(body, { headers: { "content-length": String(total) } })) as unknown as typeof fetch;
+    const dir = await mkdtemp(join(tmpdir(), "w2-dl-"));
+    const seen: (number | null)[] = [];
+    await nodeWindowsSystem(fetchImpl).download("https://x/i.exe", join(dir, "i.exe"), (p) => seen.push(p));
+    expect((await readFile(join(dir, "i.exe"))).length).toBe(total);
+    expect(seen.at(-1)).toBe(100);
+  });
+
+  it("refuses a short download", async () => {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { nodeWindowsSystem } = await import("./windows-runtime");
+    const fetchImpl = (async () => new Response(new Uint8Array(10), { headers: { "content-length": "20" } })) as unknown as typeof fetch;
+    const dir = await mkdtemp(join(tmpdir(), "w2-dl-"));
+    await expect(nodeWindowsSystem(fetchImpl).download("https://x/i.exe", join(dir, "i.exe"), () => undefined)).rejects.toThrow(/incomplete/);
+  });
+});

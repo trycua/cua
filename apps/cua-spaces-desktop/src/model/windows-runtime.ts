@@ -25,7 +25,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 /** What the page's fix button does (`spaces.fixRuntime {action}`). */
@@ -379,24 +379,29 @@ export function nodeWindowsSystem(fetchImpl: typeof fetch = fetch): WindowsSyste
     },
     powershell: (script, timeoutMs) => exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], timeoutMs),
     async download(url, to, progress) {
+      const part = `${to}.part`;
       await mkdir(join(to, ".."), { recursive: true });
+      await rm(part, { force: true });
       const res = await fetchImpl(url, { redirect: "follow" });
       if (!res.ok || !res.body) throw new Error(`download failed (HTTP ${res.status})`);
       const total = Number(res.headers.get("content-length")) || 0;
       let got = 0;
       let last = -1;
-      const body = Readable.fromWeb(res.body as import("node:stream/web").ReadableStream);
-      body.on("data", (chunk: Buffer) => {
-        got += chunk.length;
-        const pct = total ? Math.floor((got / total) * 100) : null;
-        if (pct !== last) {
-          last = pct ?? -1;
-          progress(pct);
-        }
+      // Progress counts in the pipeline itself: a 'data' listener on the
+      // source would start it flowing before the file is open and drop chunks.
+      const count = new Transform({
+        transform(chunk: Buffer, _enc, done) {
+          got += chunk.length;
+          const pct = total ? Math.floor((got / total) * 100) : null;
+          if (pct !== last) {
+            last = pct ?? -1;
+            progress(pct);
+          }
+          done(null, chunk);
+        },
       });
-      const part = `${to}.part`;
-      await rm(part, { force: true });
-      await pipeline(body, createWriteStream(part));
+      await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), count, createWriteStream(part));
+      if (total && got !== total) throw new Error(`download incomplete (${got} of ${total} bytes)`);
       await rename(part, to);
     },
     async writeFile(path, text) {

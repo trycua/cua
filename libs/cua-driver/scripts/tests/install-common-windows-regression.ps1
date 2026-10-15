@@ -199,15 +199,15 @@ $savedPath = $env:PATH
 try {
     $env:PATH = "$cosignRoot;$savedPath"
 
-    $failure = Invoke-IntegrityCheck @('echo Verified OK 1>&2', 'exit /b 0')
-    Assert-True ($null -eq $failure) "a successful cosign check aborted the install: $failure"
-    Assert-True ($steps -contains "verified the Sigstore signature of $zipName") `
-        'a successful cosign check did not log the Sigstore success step'
-
     $failure = Invoke-IntegrityCheck @('echo Error: none of the expected identities matched 1>&2', 'exit /b 1')
     Assert-True ("$failure" -like '*did not verify*') "a failed cosign check was not refused: $failure"
     Assert-True (@($steps | Where-Object { $_ -like '*Sigstore signature*' }).Count -eq 0) `
         'a failed cosign check logged the Sigstore success step'
+
+    $failure = Invoke-IntegrityCheck @('echo Verified OK 1>&2', 'exit /b 0')
+    Assert-True ($null -eq $failure) "a successful cosign check aborted the install: $failure"
+    Assert-True ($steps -contains "verified the Sigstore signature of $zipName") `
+        'a successful cosign check did not log the Sigstore success step'
 
     Write-Host 'Windows installer cosign check accepted a verified zip and refused an unverified one.'
 }

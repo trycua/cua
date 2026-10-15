@@ -5792,8 +5792,8 @@ pub struct AppOnboardingView {
     /// The presentation page's two cards, side by side.
     pub presentations: Vec<AppPresentationCard>,
     /// Done's example prompts ([`PROMPTS`]), one line each: shown under
-    /// both columns, scrolling slowly, to suggest what to ask a coding
-    /// agent. Not interactive.
+    /// both columns under "Try asking your agent:", to suggest what to ask a
+    /// coding agent. Each copies to the clipboard on click.
     pub prompts: Vec<String>,
     /// The first-run telemetry notice (the Welcome page, so the first run
     /// itself can be measured): nothing is sent before it has been shown

@@ -19,7 +19,10 @@ async fn pair_is_accepted_and_checked_before_anything_else() {
     assert_ne!(o.code, 0, "{o:?}");
     assert!(o.stderr.contains("is not a pairing code"), "{o:?}");
     assert!(!o.stderr.contains("unexpected argument"), "{o:?}");
-    assert!(relay.requests().is_empty(), "nothing contacted for a bad code");
+    assert!(
+        relay.requests().is_empty(),
+        "nothing contacted for a bad code"
+    );
     assert!(!h.cua_home().join("host/machine-token").exists());
 
     let o = h

@@ -17,7 +17,10 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
+    PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
@@ -275,9 +278,11 @@ impl GetBrowserStateTool {
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
                 semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                opaque continuation. Never performs setup: a browser that is not \
+                attached yet refuses with browser_consent_required or \
+                browser_requires_setup, and detail.next_call names the browser_prepare call \
+                that attaches it. Use this route for any web page in Chrome, Edge or Brave; \
+                desktop pointer tools move the user's pointer."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -607,7 +612,13 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser. \
+            description: "Attach the browser tools to a browser. For a page in the user's \
+                running Chrome, Edge or Brave, call it once with pid, window_id, session and \
+                strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with \
+                browser_consent_required or browser_requires_setup; then call \
+                get_browser_state again and act with browser_click, browser_type or \
+                browser_pointer. It attaches, or refuses with nothing changed and says why. \
+                Explicitly prepare an owned DevTools endpoint for a browser. \
                 pid is required for an existing process or existing-profile attachment, \
                 and optional only for allow_launch=true with an isolated profile. Existing \
                 endpoints are detected without side effects. Acting setup \
@@ -627,9 +638,18 @@ impl BrowserPrepareTool {
                 endpoint, and close the temporary tab. Every visible effect is reported; \
                 ambiguity is refused. Where attaching would bring the browser in front of \
                 the user's app (macOS Chrome shows its own remote-debugging prompt in front \
-                for every new connection), existing-profile attachment refuses with \
-                background_unavailable unless delivery_mode is \"foreground\"; the app that \
-                was in front is then brought back afterwards."
+                whenever the driver opens a new browser connection; sessions for the same \
+                browser share one approved connection, kept for up to 30 minutes idle and \
+                8 hours in total, so later sessions do not prompt again), existing-profile \
+                attachment refuses with \
+                background_unavailable unless delivery_mode is \"foreground\" (the app that \
+                was in front is brought back afterwards) or the browser window is on another \
+                Space than the user's, where it attaches in the background while the driver \
+                reverts the browser's own brief activations. A driver-owned isolated launch \
+                result carries an advisory lifecycle object: the browser process ends with the \
+                calling session after idle_expires_in_seconds without session activity, an \
+                isolated_named profile persists after the session and an isolated_new profile \
+                does not, and explicit end, disconnect, revocation or shutdown end it earlier."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -652,7 +672,7 @@ impl BrowserPrepareTool {
                     },
                     "strategy": {
                         "type": "object",
-                        "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+                        "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
                         "properties": {
                             "kind": { "type": "string", "enum": ["existing_profile"] }
                         },
@@ -663,7 +683,7 @@ impl BrowserPrepareTool {
                         "type": "string",
                         "enum": ["background", "foreground"],
                         "default": "background",
-                        "description": "Existing-profile attachment only. background (default) refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
+                        "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards."
                     },
                     "session": schema_session(),
                 },
@@ -708,7 +728,9 @@ impl Tool for BrowserPrepareTool {
                 Ok(strategy) => Some(strategy),
                 Err(error) => {
                     return ToolResult::error(format!(
-                        "invalid browser preparation strategy: {error}"
+                        "invalid browser preparation strategy ({error}). Pass an object: \
+                         \"strategy\": {{\"kind\": \"existing_profile\"}}, with pid and \
+                         window_id from list_windows."
                     ))
                 }
             },
@@ -732,11 +754,17 @@ impl Tool for BrowserPrepareTool {
                 Err(error) => error,
             };
         }
+        let profile_mode = profile.as_ref().map(|profile| profile.mode);
+        let transport_session = args.opt_str("_transport_session_id");
+        let owner_transport = transport_session
+            .clone()
+            .filter(|owner| !owner.is_empty())
+            .unwrap_or_else(|| session.clone());
         let request = PrepareRequest {
             pid,
             window_id: args.opt_u64("window_id"),
-            session,
-            transport_session: args.opt_str("_transport_session_id"),
+            session: session.clone(),
+            transport_session,
             strategy,
             profile,
             allow_launch,
@@ -745,7 +773,10 @@ impl Tool for BrowserPrepareTool {
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
                 let prepared = outcome.endpoint.is_some();
-                ToolResult::text(format!(
+                let lifecycle = profile_mode
+                    .filter(|_| outcome.action == PrepareAction::LaunchedIsolatedBrowser)
+                    .and_then(|mode| isolated_session_lifecycle(&session, &owner_transport, mode));
+                let text = format!(
                     "browser_prepare: {} — {}",
                     if prepared {
                         "endpoint available"
@@ -753,8 +784,8 @@ impl Tool for BrowserPrepareTool {
                         "no endpoint"
                     },
                     outcome.message
-                ))
-                .with_structured(json!({
+                );
+                let mut structured = json!({
                     "status": "ok",
                     "prepared": prepared,
                     "action": outcome.action,
@@ -764,7 +795,11 @@ impl Tool for BrowserPrepareTool {
                     "prepared_pid": outcome.prepared_pid,
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
-                }))
+                });
+                if let Some(lifecycle) = lifecycle {
+                    structured["lifecycle"] = lifecycle;
+                }
+                ToolResult::text(text).with_structured(structured)
             }
             Err(refusal) if refusal.code == BrowserRefusalCode::BackgroundUnavailable => {
                 let reason = refusal
@@ -787,6 +822,25 @@ impl Tool for BrowserPrepareTool {
             Err(refusal) => refusal.to_tool_result(),
         }
     }
+}
+
+fn isolated_session_lifecycle(
+    session: &str,
+    owner_transport: &str,
+    mode: PrepareProfileMode,
+) -> Option<Value> {
+    let snapshot = crate::session::session_snapshot(
+        session,
+        owner_transport,
+        crate::session::DEFAULT_SESSION_IDLE_TTL,
+    )
+    .filter(|snapshot| !snapshot.ending)?;
+    Some(json!({
+        "owner": "session",
+        "idle_expires_in_seconds": snapshot.idle_ttl.as_secs(),
+        "process_ends_with_session": true,
+        "profile_persists_after_session": mode == PrepareProfileMode::IsolatedNamed,
+    }))
 }
 
 // ── browser_navigate ─────────────────────────────────────────────────────────
@@ -940,10 +994,10 @@ impl BrowserClickTool {
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture unless \
                 delivery_mode=\"foreground\" accepts that the browser window may \
-                activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; \
+                activate (including Linux Chromium configurations whose trusted route cannot stay in the background; \
                 for example a browser inside a sandbox). \
-                input_route=\"dom_event\" (synthetic \
-                el.click(), ref required) is used only when explicitly requested; \
+                input_route=\"dom_event\" (synthetic pointer and mouse \
+                down/up/click sequence at the element's center, ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
                 controls may ignore synthetic events. \
                 Refused for heuristic bindings."
@@ -1203,7 +1257,7 @@ impl Tool for BrowserClickTool {
                     "Runtime.callFunctionOn",
                     json!({
                         "objectId": object_id,
-                        "functionDeclaration": "function() { this.click(); }",
+                        "functionDeclaration": DOM_EVENT_CLICK_SEQUENCE,
                     }),
                 )
                 .await
@@ -1381,6 +1435,47 @@ fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let ys = [nums[1], nums[3], nums[5], nums[7]];
     Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
+
+/// Synthetic click for `input_route:"dom_event"`, evaluated ON the ref's node.
+///
+/// `HTMLElement.click()` fires only a bare `click` with no coordinates, so
+/// apps that open rows or menus from `pointerdown`/`mousedown`/`pointerup`
+/// (common in React tables and grids) ignore it. This dispatches the sequence
+/// a real primary-button mouse click produces, at the element's center and on
+/// the hit-tested descendant there: hover, move, down, focus, up, click. Like
+/// a real click, `preventDefault()` on `pointerdown` suppresses the
+/// compatibility mouse events, and on `mousedown` suppresses the focus move.
+/// The events stay untrusted (`isTrusted === false`).
+const DOM_EVENT_CLICK_SEQUENCE: &str = "function() { \
+    const el = this; \
+    const doc = el.ownerDocument; \
+    const view = doc.defaultView; \
+    const r = el.getBoundingClientRect(); \
+    const x = r.left + r.width / 2, y = r.top + r.height / 2; \
+    const root = el.getRootNode(); \
+    const hit = ('elementFromPoint' in root) ? root.elementFromPoint(x, y) : null; \
+    const target = (hit && el.contains(hit)) ? hit : el; \
+    const sx = x + (view.screenX || 0), sy = y + (view.screenY || 0); \
+    const base = { bubbles: true, cancelable: true, composed: true, view, \
+        clientX: x, clientY: y, screenX: sx, screenY: sy, button: 0 }; \
+    const P = (type, buttons, extra) => target.dispatchEvent(new view.PointerEvent(type, \
+        { ...base, buttons, pointerId: 1, pointerType: 'mouse', isPrimary: true, \
+          width: 1, height: 1, pressure: buttons ? 0.5 : 0, ...extra })); \
+    const M = (type, buttons, extra) => target.dispatchEvent(new view.MouseEvent(type, \
+        { ...base, buttons, detail: 0, ...extra })); \
+    P('pointerover', 0); P('pointerenter', 0, { bubbles: false, cancelable: false }); \
+    M('mouseover', 0); M('mouseenter', 0, { bubbles: false, cancelable: false }); \
+    P('pointermove', 0); M('mousemove', 0); \
+    const compat = P('pointerdown', 1); \
+    if (compat && M('mousedown', 1, { detail: 1 })) { \
+        const focusable = target.closest('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable=\"\"],[contenteditable=\"true\"]'); \
+        if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true }); \
+    } \
+    P('pointerup', 0); \
+    if (compat) M('mouseup', 0, { detail: 1 }); \
+    M('click', 0, { detail: 1 }); \
+    return true; \
+}";
 
 // ── browser_type ─────────────────────────────────────────────────────────────
 
@@ -2540,7 +2635,9 @@ impl Tool for BrowserSetInputFilesTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::platform::{BrowserPlatform, PrepareOutcome, PrepareRequest};
+    use crate::browser::platform::{
+        BrowserPlatform, PrepareAction, PrepareOutcome, PrepareRequest,
+    };
     use crate::browser::types::{
         BrowserClassification, BrowserEngineFamily, BrowserProduct, NativeWindowInfo,
         OwnedEndpoint, ProcessFingerprint,
@@ -2549,7 +2646,31 @@ mod tests {
     /// Minimal adapter: pid 1 is a CDP-capable browser with no endpoint
     /// (setup required); pid 2 is not a browser; pid 3 is Safari-like
     /// (browser, no CDP). Prepare requires consent.
-    struct MockPlatform;
+    #[derive(Default)]
+    struct MockPlatform {
+        devtools: Option<std::net::TcpListener>,
+        launch_delay: std::time::Duration,
+    }
+
+    impl MockPlatform {
+        fn devtools_endpoint(&self, pid: i64) -> Option<OwnedEndpoint> {
+            use crate::browser::types::{
+                EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport,
+            };
+            let port = self.devtools.as_ref()?.local_addr().unwrap().port();
+            Some(OwnedEndpoint {
+                ws_url: format!("ws://127.0.0.1:{port}/devtools/browser/mock"),
+                http_port: Some(port),
+                transport: EndpointTransport::DevToolsActivePort,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+                    owner_pid: pid,
+                    listener_pid: None,
+                    detail: None,
+                },
+            })
+        }
+    }
 
     #[async_trait]
     impl BrowserPlatform for MockPlatform {
@@ -2631,9 +2752,9 @@ mod tests {
 
         async fn discover_owned_endpoint(
             &self,
-            _pid: i64,
+            pid: i64,
         ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-            Ok(None)
+            Ok(self.devtools_endpoint(pid))
         }
 
         async fn process_fingerprint(
@@ -2649,17 +2770,125 @@ mod tests {
 
         async fn prepare_endpoint(
             &self,
-            _request: PrepareRequest,
+            request: PrepareRequest,
         ) -> Result<PrepareOutcome, BrowserRefusal> {
-            Err(BrowserRefusal::new(
-                BrowserRefusalCode::BrowserRequiresSetup,
-                "mock endpoint needs acting setup",
-            ))
+            let pid = request.pid.expect("prepare_endpoint receives a pid");
+            let endpoint = self.devtools_endpoint(pid).ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    "mock endpoint needs acting setup",
+                )
+            })?;
+            Ok(PrepareOutcome {
+                action: PrepareAction::AlreadyPrepared,
+                endpoint: Some(endpoint),
+                message: "mock endpoint already exists".into(),
+                prepared_pid: Some(pid),
+                side_effects: Default::default(),
+                attachment: None,
+            })
+        }
+
+        fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+            match self.devtools {
+                Some(_) => Ok("sleep".into()),
+                None => Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "mock has no isolated browser executable",
+                )),
+            }
+        }
+
+        fn spawn_isolated_browser(
+            &self,
+            _command: std::process::Command,
+            profile: &std::path::Path,
+        ) -> Result<Box<dyn crate::browser::platform::IsolatedBrowserProcess>, BrowserRefusal>
+        {
+            std::thread::sleep(self.launch_delay);
+            let port = self.devtools.as_ref().unwrap().local_addr().unwrap().port();
+            std::fs::write(
+                profile.join("DevToolsActivePort"),
+                format!("{port}\n/devtools/browser/mock\n"),
+            )
+            .unwrap();
+            let mut stand_in = std::process::Command::new("sleep");
+            stand_in.arg("30");
+            #[cfg(unix)]
+            std::os::unix::process::CommandExt::process_group(&mut stand_in, 0);
+            Ok(Box::new(stand_in.spawn().unwrap()))
         }
     }
 
     fn engine() -> Arc<BrowserEngine> {
-        BrowserEngine::new(Arc::new(MockPlatform))
+        BrowserEngine::new(Arc::new(MockPlatform::default()))
+    }
+
+    fn launching_engine() -> Arc<BrowserEngine> {
+        slow_launching_engine(std::time::Duration::ZERO)
+    }
+
+    fn slow_launching_engine(launch_delay: std::time::Duration) -> Arc<BrowserEngine> {
+        static PROFILE_ROOT: std::sync::Once = std::sync::Once::new();
+        PROFILE_ROOT.call_once(|| {
+            std::env::set_var(
+                "CUA_DRIVER_BROWSER_PROFILE_ROOT",
+                std::env::temp_dir().join("cua-browser-tools-profiles"),
+            )
+        });
+        BrowserEngine::new(Arc::new(MockPlatform {
+            devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
+            launch_delay,
+        }))
+    }
+
+    fn start_lifecycle_session(idle_ttl: Option<std::time::Duration>) -> (String, String) {
+        use crate::session::{SessionClientKind, SessionTransport};
+        let session = format!("browser-lifecycle-{}", uuid::Uuid::new_v4());
+        let owner = format!("browser-lifecycle-owner-{}", uuid::Uuid::new_v4());
+        match idle_ttl {
+            Some(ttl) => crate::session::activate_session_with_ttl(
+                &session,
+                None,
+                &owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                ttl,
+            ),
+            None => crate::session::activate_session(
+                &session,
+                None,
+                &owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            ),
+        }
+        .unwrap();
+        (session, owner)
+    }
+
+    async fn prepare_isolated(
+        engine: &Arc<BrowserEngine>,
+        session: &str,
+        owner: &str,
+        profile: Value,
+    ) -> Value {
+        let result = BrowserPrepareTool::new(engine.clone())
+            .invoke(json!({
+                "allow_launch": true,
+                "profile": profile,
+                "session": session,
+                "_transport_session_id": owner
+            }))
+            .await;
+        let structured = structured(&result).clone();
+        assert_eq!(
+            structured["action"], "launched_isolated_browser",
+            "{structured}"
+        );
+        structured
     }
 
     fn structured(result: &ToolResult) -> &Value {
@@ -3006,6 +3235,124 @@ mod tests {
             structured(&result)["refusal"]["code"],
             "browser_consent_required"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_new_publishes_the_session_effective_idle_ttl() {
+        let engine = launching_engine();
+        for (idle_ttl, expected) in [
+            (None, crate::session::DEFAULT_SESSION_IDLE_TTL.as_secs()),
+            (Some(std::time::Duration::from_secs(1234)), 1234),
+        ] {
+            let (session, owner) = start_lifecycle_session(idle_ttl);
+            let prepared =
+                prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" }))
+                    .await;
+            assert_eq!(
+                prepared["lifecycle"],
+                json!({
+                    "owner": "session",
+                    "idle_expires_in_seconds": expected,
+                    "process_ends_with_session": true,
+                    "profile_persists_after_session": false
+                })
+            );
+            crate::session::end_session(&session);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preparation_longer_than_the_idle_ttl_still_publishes_the_ttl() {
+        let engine = slow_launching_engine(std::time::Duration::from_millis(2100));
+        let (session, owner) = start_lifecycle_session(Some(std::time::Duration::from_secs(1)));
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(prepared["lifecycle"]["idle_expires_in_seconds"], 1);
+        crate::session::end_session(&session);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ending_session_gets_no_lifecycle() {
+        use crate::session::{SessionClientKind, SessionTransport};
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let live =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(live["lifecycle"]["owner"], "session", "{live}");
+        let guard = crate::session::begin_session_dispatch(
+            &session,
+            None,
+            &owner,
+            false,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        assert!(crate::session::end_session_for_owner(&session, &owner));
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert!(prepared.get("lifecycle").is_none(), "{prepared}");
+        drop(guard);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_named_profile_persists_after_session() {
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let name = format!("lifecycle-{}", uuid::Uuid::new_v4().simple());
+        let prepared = prepare_isolated(
+            &engine,
+            &session,
+            &owner,
+            json!({ "mode": "isolated_named", "name": name }),
+        )
+        .await;
+        assert_eq!(
+            prepared["lifecycle"]["profile_persists_after_session"],
+            true
+        );
+        assert_eq!(prepared["lifecycle"]["process_ends_with_session"], true);
+        crate::session::end_session(&session);
+        let root = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT").unwrap();
+        std::fs::remove_dir_all(std::path::Path::new(&root).join(name)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn lifecycle_requires_a_driver_launch_owned_by_a_visible_session() {
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let discovered = BrowserPrepareTool::new(engine.clone())
+            .invoke(json!({
+                "pid": 1,
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "session": session,
+                "_transport_session_id": owner
+            }))
+            .await;
+        let discovered = structured(&discovered);
+        assert_eq!(discovered["action"], "already_prepared");
+        assert!(discovered.get("lifecycle").is_none(), "{discovered}");
+
+        let foreign_owner = format!("browser-lifecycle-foreign-{}", uuid::Uuid::new_v4());
+        let foreign = prepare_isolated(
+            &engine,
+            &session,
+            &foreign_owner,
+            json!({ "mode": "isolated_new" }),
+        )
+        .await;
+        assert!(foreign.get("lifecycle").is_none(), "{foreign}");
+
+        let owned =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        assert_eq!(owned["lifecycle"]["owner"], "session");
+        crate::session::end_session(&session);
     }
 
     #[tokio::test]

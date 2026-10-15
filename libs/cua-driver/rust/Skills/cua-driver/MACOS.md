@@ -87,6 +87,15 @@ for a known application-menu path. With the app in the background it resolves
 the whole path without opening a menu and never activates the app; if macOS
 keeps the item unavailable to a background app it refuses with
 `background_unavailable` (then, if the user allows it, `bring_to_front` first).
+One exception: a disabled Save (the ⌘S item) of a document window is saved
+through the app's scripting interface instead, still in the background, and the
+result says so; TextEdit disables Save whenever it is behind the user's window.
+A Save is verified on disk. A background `hotkey` whose combo is a menu item's
+key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
+background key events never reach an app's menus; no keys are sent. macOS asks
+the user once to allow Cua Driver to control the app (Automation) the first
+time a scripting route runs; when that is off, the call refuses and nothing is
+saved.
 With the app already in front it resolves every AX level live. Prefer an in-window
 element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
@@ -114,7 +123,7 @@ is safe even for apps that normally foreground on media-load
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
 | Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
-| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover |
+| Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). A web page in Chrome, Edge or Brave: `browser_pointer` hover after `get_browser_state`. If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop", delivery_mode:"foreground"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover; a desktop `move_cursor` over a background browser page |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
@@ -342,13 +351,25 @@ and how:
   the app's main process, so page hover effects update. Native tooltips do
   not show.
 
-For a web page in Chrome use `browser_pointer` hover. Otherwise
-`move_cursor` moves only the agent cursor and says so. Look for the same
-command elsewhere first: a menu item, a context menu, a keyboard
-shortcut, or the control's help text in `get_window_state` (toolbar
-tooltips are usually there as `help=`). Otherwise the step needs the
-user's pointer (`move_cursor` with `scope:"desktop"`) or the app in front
+For a web page in Chrome, Edge or Brave use `browser_pointer` hover: a
+window-target `move_cursor` there says the page saw no hover and names
+`get_browser_state` as the next call. Otherwise `move_cursor` moves only the
+agent cursor and says so. Look for the same command elsewhere first: a menu
+item, a context menu, a keyboard shortcut, or the control's help text in
+`get_window_state` (toolbar tooltips are usually there as `help=`).
+Otherwise the step needs the user's pointer (`move_cursor` with
+`scope:"desktop"` and `delivery_mode:"foreground"`) or the app in front
 (`bring_to_front`); use either only if the user allows it, and say which.
+
+### Desktop-target pointer input over a background app
+
+`move_cursor`, `click`, `drag` and `scroll` with a desktop target move the
+user's real pointer. When the point lands on a window of an app that is not
+in front, they refuse with `background_unavailable` before sending anything,
+unless the call passes `delivery_mode:"foreground"`. Over a web browser the
+refusal names the browser tools (`get_browser_state`, then
+`browser_pointer`, `browser_click` or `browser_type`) instead of foreground.
+Points over the app in front, or over no window, behave as before.
 
 ### `delivery_mode` on the pointer family (macOS)
 
@@ -564,11 +585,11 @@ window, and PID-routes its bounded checkbox-pixel fallback. The same control's
 state must verify after mutation; unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click.
 
-Standalone Chromium activates its window when CDP's trusted pointer route is
-used on macOS. The driver therefore returns
-`browser_input_trust_unavailable` before dispatch rather than falsely claiming
-background delivery. Use `input_route:"dom_event"` only when synthetic click
-semantics are acceptable. Embedded Electron has a separately bounded route;
+CDP's trusted pointer route (the `browser_click` and `browser_pointer`
+default) stays in the background on macOS Chrome: it delivers trusted events
+to the bound tab, even an inactive one, without activating or raising the
+browser window. Use `input_route:"dom_event"` only when synthetic events are
+acceptable; controls that check `event.isTrusted` ignore it. Embedded Electron has a separately bounded route;
 do not infer that route for arbitrary WKWebView or Tauri hosts.
 
 For a declared session, typed browser click, type, and pointer mutations animate
@@ -596,8 +617,8 @@ starting point for new browser workflows.
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
-| `set_value refused (file_name_needs_rename)`                  | A file's name as Finder lists it: an AXValue write changes only the list, never the file                          | `click` the item, then with Finder frontmost send `press_key` return, `hotkey` cmd+a, `type_text` the full new name, `press_key` return, each with `scope:"desktop"`; re-read to confirm                                            |
-| `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | foreground `click` at the field's centre in screenshot pixels (with its `capture_id`), then `hotkey` cmd+a, `type_text` the full new name with its extension, `press_key` return, each with `delivery_mode:"foreground"`; a changed extension asks for confirmation first; check the folder listing |
+| `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | `set_value` the full new name on the file's name cell in a Finder window that lists it (renamed through Finder in the background and read back from disk) |
+| `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input; keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
 
 ## Example end-to-end task (macOS)
 

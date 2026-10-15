@@ -118,6 +118,7 @@ pub struct LocalStorage {
     pub container: Option<StorageVolume>,
     /// Catalog image refs already pulled here at their published digest.
     pub pulled: Vec<String>,
+    pub linux_runtime_download_bytes: u64,
 }
 
 impl From<cua_daemon::storage::StorageReport> for LocalStorage {
@@ -136,6 +137,7 @@ impl From<cua_daemon::storage::StorageReport> for LocalStorage {
             qemu: vol(r.qemu),
             container: vol(r.container),
             pulled: r.pulled,
+            linux_runtime_download_bytes: r.linux_runtime_download_bytes,
         }
     }
 }

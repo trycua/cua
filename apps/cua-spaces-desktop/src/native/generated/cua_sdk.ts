@@ -10299,7 +10299,8 @@ export type LocalStorage = {
     /**
      * Catalog image refs already pulled here at their published digest.
      */
-    pulled: Array<string>
+    pulled: Array<string>,
+    linuxRuntimeDownloadBytes: bigint
 }
 
 /**
@@ -10328,7 +10329,8 @@ const FfiConverterTypeLocalStorage = (() => {
                 lume: FfiConverterOptionalTypeStorageVolume.read(from),
                 qemu: FfiConverterOptionalTypeStorageVolume.read(from),
                 container: FfiConverterOptionalTypeStorageVolume.read(from),
-                pulled: FfiConverterSequenceString.read(from)
+                pulled: FfiConverterSequenceString.read(from),
+                linuxRuntimeDownloadBytes: FfiConverterUInt64.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -10338,6 +10340,7 @@ const FfiConverterTypeLocalStorage = (() => {
             FfiConverterOptionalTypeStorageVolume.write(value.qemu, into);
             FfiConverterOptionalTypeStorageVolume.write(value.container, into);
             FfiConverterSequenceString.write(value.pulled, into);
+            FfiConverterUInt64.write(value.linuxRuntimeDownloadBytes, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hostArch) +
@@ -10345,7 +10348,8 @@ const FfiConverterTypeLocalStorage = (() => {
              FfiConverterOptionalTypeStorageVolume.allocationSize(value.lume) +
              FfiConverterOptionalTypeStorageVolume.allocationSize(value.qemu) +
              FfiConverterOptionalTypeStorageVolume.allocationSize(value.container) +
-             FfiConverterSequenceString.allocationSize(value.pulled);
+             FfiConverterSequenceString.allocationSize(value.pulled) +
+             FfiConverterUInt64.allocationSize(value.linuxRuntimeDownloadBytes);
 
         }
     };
@@ -11003,7 +11007,7 @@ export type PairingCode = {
      */
     code?: string,
     /**
-     * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
      * when just made.
      */
     url?: string,

@@ -7,8 +7,8 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// The first-launch installer of the bundled `cua`: the app core's, through
-/// the cua SDK (`AppCliInstaller`), the same one the Tauri app runs.
+/// The Command line page's installer of the bundled `cua`: the app core's,
+/// through the cua SDK (`AppCliInstaller`), the same one the Tauri app runs.
 public protocol CliInstallRunning: AnyObject, Sendable {
     func plan() async -> AppCliInstallPlan
     func install(request: AppCliInstallRequest) async throws -> AppCliInstallPlan
@@ -17,8 +17,8 @@ public protocol CliInstallRunning: AnyObject, Sendable {
 extension AppCliInstaller: CliInstallRunning {}
 
 /// First run: the core's step order and answers, plus the writes the flow
-/// runs through the shared core: installing the bundled `cua` command on
-/// first launch (no page) and host setup.
+/// runs through the shared core: installing the bundled `cua` command after
+/// its page, and host setup.
 @MainActor
 @Observable
 public final class OnboardingModel {
@@ -47,8 +47,6 @@ public final class OnboardingModel {
     /// The fixed words.
     public let copy = appOnboardingCopy()
 
-    /// The bundled `cua` after the first-launch install (nil until checked).
-    public private(set) var cliPlan: AppCliInstallPlan?
     /// Where Cua Spaces shows up was picked (menu bar only or not): the app
     /// saves it as the "Spaces tab in the notch" setting.
     public var onPresentation: ((Bool) -> Void)?
@@ -114,29 +112,31 @@ public final class OnboardingModel {
     /// Welcome's "Share anonymous usage data" switch.
     public func setShareUsage(_ on: Bool) { send(.usageDataToggled(on: on)) }
 
-    // MARK: - The cua command (no page)
+    // MARK: - The cua command
 
-    /// First launch: installs the bundled `cua` silently onto the core's
-    /// target, adding its bin dir to the shell profile when it is not on
-    /// PATH (the Tauri app does the same). A current install, or a build
-    /// without the CLI, writes nothing. Done shows where it went.
-    public func installCliSilently() async {
-        guard let cli, cliPlan == nil else { return }
-        let plan = await cli.plan()
-        cliPlan = plan
-        var installed: AppCliInstallPlan? = plan.upToDate ? plan : nil
-        if !plan.upToDate, plan.source != nil {
-            installed = try? await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath))
-            if let installed { cliPlan = installed }
+    /// Reads what installing the bundled `cua` would do (writes nothing).
+    public func planCli() async {
+        guard let cli, state.cliPlan == nil else { return }
+        send(.cliPlanned(plan: await cli.plan()))
+    }
+
+    /// Continue (`install`) or Skip from Command line.
+    public func finishCli(install: Bool) async {
+        guard !state.cliInstalling else { return }
+        send(.cliDone(install: install))
+        guard state.cliInstalling, let cli, let plan = state.cliPlan else { return }
+        do {
+            send(.cliPlanned(plan: try await cli.install(request: AppCliInstallRequest(modifyPath: !plan.onPath))))
+        } catch {
+            send(.cliInstallFailed(error: LiveSpacesBackend.words(error)))
         }
-        if let installed { send(.cliInstalled(target: installed.target)) }
     }
 
     /// Another `cua` that comes first on PATH (an old Python cua-cli, say),
     /// so typing `cua` runs it rather than the installed path Done shows:
     /// Done notes it under "cua command".
     public var cliShadowedBy: String? {
-        guard state.cliTarget != nil, let other = cliPlan?.shadowedBy, !other.isEmpty else { return nil }
+        guard state.cliTarget != nil, let other = state.cliPlan?.shadowedBy, !other.isEmpty else { return nil }
         return other
     }
 
@@ -372,9 +372,10 @@ public final class OnboardingModel {
         shownOnce = false
         host.closeForm()
         agentOutcomes = nil
+        let plan = state.cliPlan
         state = appOnboardingInitial(installerMode: state.installerMode, identity: state.identity)
         if let x = currentExperiments?() { send(.experimentsLoaded(experiments: x)) }
-        if let plan = cliPlan, plan.upToDate { send(.cliInstalled(target: plan.target)) }
+        if let plan { send(.cliPlanned(plan: plan)) }
         Task { await checkDrive() }
     }
 

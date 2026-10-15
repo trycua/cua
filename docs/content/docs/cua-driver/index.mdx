@@ -13,7 +13,9 @@ cursor overlay.
 
 Use it from any agent through **MCP** (`cua-driver mcp`), from a shell through
 the **CLI** (`cua-driver call <tool>`), or inside your own app through the
-Python and TypeScript **SDK** (`CuaDriver.create()`).
+Python and TypeScript **SDK** (`CuaDriver.create()`). On macOS the SDK
+uses the `CuaDriver.app` daemon, which draws the agent cursor and holds the
+permission grants.
 
 <VideoDemo
   src="https://github.com/user-attachments/assets/e9344780-e780-46e7-bcce-91f61eda9599"
@@ -52,7 +54,7 @@ sessions, and browser connections.
 | --------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
 | An agent or harness (Claude Code, Codex, Cursor, …) | [MCP](/cua-driver/guides/connect-your-agent): `cua-driver mcp`               | The MCP process; on macOS, the `CuaDriver.app` daemon |
 | An agent that can only run shell commands           | [CLI](/cua-driver/reference/cli): `cua-driver call <tool>`                   | The `cua-driver serve` daemon                        |
-| An app with built-in computer use                   | [SDK](/cua-driver/guides/use-the-sdk): `CuaDriver.create()`                  | Your app process                                     |
+| An app with built-in computer use                   | [SDK](/cua-driver/guides/use-the-sdk): `CuaDriver.create()`                  | On macOS, the `CuaDriver.app` daemon; elsewhere your app process |
 | A signed desktop app that serves an external agent  | [App-hosted service](/cua-driver/guides/use-the-sdk#expose-mcp-from-a-desktop-app) | The permission-owning desktop app               |
 | Several clients sharing one desktop                 | `cua-driver serve --socket <path>` plus `cua-driver mcp --socket <path>`     | The daemon                                           |
 

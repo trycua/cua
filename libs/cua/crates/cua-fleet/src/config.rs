@@ -3,7 +3,9 @@
 
 use std::fmt;
 
-/// Default Fleet API endpoint (`_DEFAULT_FLEET_BASE_URL`).
+/// Legacy Fleet API endpoint (`_DEFAULT_FLEET_BASE_URL`). Fleets is shut
+/// down (static from 16 Oct); the Spaces API at api.cua.ai replaces it
+/// later. Kept only so callers still compile and fail softly.
 pub const DEFAULT_FLEET_BASE_URL: &str = "https://run.cua.ai";
 /// Default OAuth token endpoint (`_DEFAULT_TOKEN_URL`).
 pub const DEFAULT_TOKEN_URL: &str =

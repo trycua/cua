@@ -444,6 +444,9 @@ impl LumeRuntime {
             );
             *self.old_lume.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
         }
+        // No `lume serve` answers, so none of its pulls runs: a pull a
+        // killed serve left half-made in its temp dir is only taking space.
+        sweep_stale_pull_dirs(&lume_temp_dir(), STALE_PULL_DIR_IDLE);
         std::fs::create_dir_all(&self.cfg.root)?;
         let log = std::fs::File::create(self.cfg.root.join("serve.log"))?;
         let mut cmd = std::process::Command::new(&bin);
@@ -478,7 +481,8 @@ impl LumeRuntime {
     /// leases and ARP table ([`lease`]); `lume serve` can lag the lease by
     /// many seconds or miss it. Polls back off from 0.5 s to 3 s. A VM that
     /// never reaches `running`, or stops after it did, fails fast with the
-    /// tail of its run log instead of waiting out the timeout.
+    /// tail of its run log instead of waiting out the timeout; one Lume no
+    /// longer knows (deleted outside the SDK) fails within a few seconds.
     async fn wait_for_ip(&self, name: &str) -> Result<VmDetails> {
         let start = tokio::time::Instant::now();
         let deadline = start + self.cfg.ip_timeout;
@@ -488,9 +492,20 @@ impl LumeRuntime {
         let mut last_state = String::new();
         let leases_path = std::path::PathBuf::from(&self.cfg.leases_path);
         let before = lease::read_leases(&leases_path).await;
+        let mut missing_since: Option<tokio::time::Instant> = None;
         // Bounded by the deadline; at most ip_timeout / 0.5 s iterations.
         while tokio::time::Instant::now() < deadline {
             let vm = self.client.get(name).await?;
+            if vm.is_none() {
+                let since = *missing_since.get_or_insert_with(tokio::time::Instant::now);
+                if since.elapsed() >= VM_GONE_GRACE {
+                    return Err(VmmError::other(format!(
+                        "lume VM '{name}' disappeared while booting (it was deleted outside Cua)"
+                    )));
+                }
+            } else {
+                missing_since = None;
+            }
             if let Some(mut vm) = vm {
                 let state = format!(
                     "status={} api_ip={:?} mac={:?}",
@@ -1007,6 +1022,75 @@ pub async fn cli_pull(
 /// Host-side marker: this VM got a workload environment from cua-vmm (so a
 /// later start without one clears it).
 const MACOS_ENV_MARKER: &str = "env-applied";
+/// How long a pull's temp dir must have gone unwritten before
+/// [`sweep_stale_pull_dirs`] removes it: a pull that still runs (a `lume
+/// pull` in another process) writes to it all the time.
+const STALE_PULL_DIR_IDLE: Duration = Duration::from_secs(30);
+
+/// Where Lume pulls an image before moving the VM into place
+/// (`FileManager.temporaryDirectory`: the per-user temp dir on macOS).
+fn lume_temp_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let mut buf = vec![0u8; 1024];
+        // SAFETY: `buf` is writable for its length; confstr writes at most
+        // that many bytes, NUL-terminated.
+        let n = unsafe {
+            libc::confstr(
+                libc::_CS_DARWIN_USER_TEMP_DIR,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if n > 0 && n <= buf.len() {
+            buf.truncate(n - 1);
+            if let Ok(s) = String::from_utf8(buf) {
+                return PathBuf::from(s);
+            }
+        }
+    }
+    std::env::temp_dir()
+}
+
+/// Removes the `lume_vm_*` dirs in `temp` (a pull's half-made VM, left by a
+/// `lume serve` that was killed mid-pull: it cleans up only when it can)
+/// that nothing wrote for `idle`. Returns how many it removed.
+fn sweep_stale_pull_dirs(temp: &std::path::Path, idle: Duration) -> usize {
+    fn newest(path: &std::path::Path, depth: u8) -> Option<std::time::SystemTime> {
+        let mut t = std::fs::symlink_metadata(path).ok()?.modified().ok()?;
+        if depth > 0
+            && let Ok(entries) = std::fs::read_dir(path)
+        {
+            for e in entries.flatten() {
+                if let Some(m) = newest(&e.path(), depth - 1) {
+                    t = t.max(m);
+                }
+            }
+        }
+        Some(t)
+    }
+    let Ok(entries) = std::fs::read_dir(temp) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for e in entries.flatten() {
+        let path = e.path();
+        let ours = e.file_name().to_string_lossy().starts_with("lume_vm_")
+            && e.file_type().is_ok_and(|t| t.is_dir());
+        let stale = newest(&path, 3)
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= idle);
+        if ours && stale && std::fs::remove_dir_all(&path).is_ok() {
+            tracing::info!(dir = %path.display(), "removed a pull a stopped lume serve left");
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// How long a booting VM may be unknown to Lume before the wait fails.
+const VM_GONE_GRACE: Duration = Duration::from_secs(3);
+
 /// How long to keep retrying the environment write while the guest's sshd
 /// comes up after boot.
 const MACOS_ENV_BUDGET: Duration = Duration::from_secs(180);
@@ -1678,6 +1762,27 @@ impl Runtime for LumeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A killed serve's half-made pull is removed; a pull still being
+    /// written, and anything not Lume's, stays.
+    #[test]
+    fn a_stale_pull_dir_is_swept_and_a_live_one_stays() {
+        let t = tempfile::tempdir().unwrap();
+        for d in ["lume_vm_dead", "lume_vm_live", "other"] {
+            std::fs::create_dir_all(t.path().join(d).join("sub")).unwrap();
+            std::fs::write(t.path().join(d).join("sub/disk.img"), b"x").unwrap();
+        }
+        std::fs::write(t.path().join("lume_vm_file"), b"x").unwrap();
+        assert_eq!(
+            sweep_stale_pull_dirs(t.path(), Duration::from_secs(3600)),
+            0,
+            "written just now: still pulling"
+        );
+        assert_eq!(sweep_stale_pull_dirs(t.path(), Duration::ZERO), 2);
+        assert!(!t.path().join("lume_vm_dead").exists());
+        assert!(t.path().join("other").exists());
+        assert!(t.path().join("lume_vm_file").exists());
+    }
 
     #[test]
     fn cli_get_reads_the_status_lume_reports() {

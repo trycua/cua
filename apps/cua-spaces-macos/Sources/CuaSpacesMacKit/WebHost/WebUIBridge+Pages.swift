@@ -102,11 +102,30 @@ extension WebUIBridge {
             await model.press(row: "launch-at-login-approve")
             return NSNull()
 
+        // "Add a machine" and "Share": the account's Teams (Settings, Teams)
+        // and the current one.
+        case "teams.list":
+            await model.reloadTeams()
+            var teams: [[String: Any]] = []
+            if case .ready(let list) = model.teamsState {
+                teams = list.map { ["id": $0.id, "alias": $0.alias, "name": $0.name, "role": $0.role, "plan": $0.plan] }
+            }
+            return ["teams": teams, "currentTeamId": model.settings.currentTeamId.map { $0 as Any } ?? NSNull()] as [String: Any]
+
         // Settings, Devices
         case "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
              "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
              "devices.revokePairingCode":
             return try await devices(method, args)
+
+        // Settings, Relay usage, and the notice past the allowance: the
+        // same read as the native row (`app_relay_usage`). Signed out, or
+        // a relay that meters nothing: null.
+        case "relay.usage":
+            let devices = model.devices
+            guard devices.signedIn, let relay = devices.devices else { return NSNull() }
+            guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
+            return BridgeValue.encode(usage)
 
         // Settings, Storage
         case "storage.get":
@@ -120,10 +139,15 @@ extension WebUIBridge {
         case "notifications.list":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.pollNotifications()
-            return BridgeValue.encode(model.persistent.feed)
+            return model.persistent.feedRows()
         case "notifications.markAllRead":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.markAllRead()
+            return NSNull()
+        case "notifications.markRead":
+            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
+            await model.persistent.markRead(ids: ids)
             return NSNull()
 
         // Usage events
@@ -648,7 +672,8 @@ extension WebUIBridge {
             cookieDomains: c["cookieDomains"] as? [String],
             exclude: c["exclude"] as? [String] ?? [],
             fromVault: c["fromVault"] as? [String],
-            includePasswords: c["includePasswords"] as? Bool ?? false))
+            includePasswords: c["includePasswords"] as? Bool ?? false,
+            passwordDomains: c["passwordDomains"] as? [String]))
     }
 
     /// A run's report, as the page reads it (`RunReport`).

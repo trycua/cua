@@ -121,14 +121,16 @@ write_failure_record() {
     > "${failures_file}"
 }
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=macos
+
 run_test() {
   local name="$1"; shift
   local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${log_name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${log_name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     note_lane_failure "${name}"
   fi
@@ -371,6 +373,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_exact_activation_with_agent_cursor \
     harness_appkit_exact_activation_ignores_competing_application_window \
     harness_appkit_foreground_single_click_has_one_ordered_native_pair \
+    harness_appkit_middle_click_px_background_reaches_exact_window \
     harness_appkit_right_click_px_foreground \
     harness_appkit_right_click_px_background \
     harness_appkit_double_click_px_foreground \

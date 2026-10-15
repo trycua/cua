@@ -245,7 +245,15 @@ impl ExternalAuthenticator for RelayAssertionAuth {
     fn authenticate(&self, headers: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
         let token = headers.get(ASSERTION_HEADER)?.to_str().ok()?;
         Some((|| {
-            let claims = self.link.keys.verify(token, &self.machine_id)?;
+            // The relay's keys, or the in-process key this machine's own
+            // mesh endpoint signs with for peers the relay's map vouched for.
+            let claims = match self.link.keys.verify(token, &self.machine_id) {
+                Ok(claims) => claims,
+                Err(e) => match crate::mesh_host::verify_local(token, &self.machine_id) {
+                    Some(Ok(claims)) => claims,
+                    _ => return Err(e),
+                },
+            };
             let policy = self.policy()?;
             let access = policy.authorize(&claims, self.link.owner().as_deref())?;
             let client = crate::auth::principal_from_headers(headers);

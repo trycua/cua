@@ -594,7 +594,8 @@ Returned by [`app_settings_input_from_json`](#app_settings_input_from_json).
 | `agents` | [`Option<Vec<AppAgentSettingsRow>>`](/cua-sdk/reference/spaces/app-core/agent-keys#appagentsettingsrow-record) |  | Coding agents (none while detecting). |
 | `agents_busy` / `agentsBusy` | `bool` |  | "Configure all" is running. |
 | `agents_pending` / `agentsPending` | `Vec<String>` |  | Agents with an action running. |
-| `billing` | [`Option<AppBillingStatus>`](/cua-sdk/reference/spaces/app-core/billing#appbillingstatus-record) |  | The account's Cua Cloud billing, once read (signed in). |
+| `teams` | [`Option<AppTeamsInput>`](/cua-sdk/reference/spaces/account-app-core#appteamsinput-record) |  | Teams from the Spaces API (the host reads them), with the account app's URL. None: the Teams section shows the production account app's links only. |
+| `billing` | [`Option<AppBillingStatus>`](/cua-sdk/reference/spaces/account-app-core#appbillingstatus-record) |  | The account's Cua Cloud billing, once read (signed in). |
 | `login_item` / `loginItem` | [`Option<AppLoginItemInput>`](#apploginiteminput-record) |  | Launch at login, once the system was asked (none: no rows). |
 | `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments (what the page mentions follows them). |
 | `keyvault_auto_wipe` / `keyvaultAutoWipe` | `Option<bool>` |  | The Keyvault's auto-wipe, once the broker told it (none: no Keyvault section). |

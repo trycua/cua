@@ -206,6 +206,121 @@ pub fn write_private(p: &std::path::Path, data: &[u8]) -> Result<(), CuaError> {
     std::fs::rename(&tmp, p).map_err(internal)
 }
 
+/// What is being created, for the words of its steps.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CreateWords {
+    /// A macOS VM (Lume downloads its base image once).
+    pub macos: bool,
+    /// A VM (it has a disk to prepare and boots).
+    pub vm: bool,
+    /// A Space (Cua starts inside it), not a bare sandbox.
+    pub space: bool,
+}
+
+impl CreateWords {
+    /// The words for an image reference or alias (`macos`, `ghcr.io/trycua/macos:26`).
+    pub fn for_image(image: &str, kind: &str, space: bool) -> Self {
+        let image = image.to_ascii_lowercase();
+        let macos = image.contains("macos");
+        Self {
+            macos,
+            vm: macos || image.contains("windows") || kind == "vm",
+            space,
+        }
+    }
+
+    /// The step `phase` in words; `None` for `ready` and phases this build
+    /// does not know.
+    pub fn step(&self, phase: cua_sandbox_core::progress::Phase) -> Option<&'static str> {
+        use cua_sandbox_core::progress::Phase;
+        Some(match phase {
+            Phase::Preparing => "Preparing",
+            Phase::Pulling if self.macos => "Downloading macOS (first time only)",
+            Phase::Pulling => "Downloading image",
+            Phase::Creating if self.vm => "Preparing the disk",
+            Phase::Creating => "Creating",
+            Phase::Booting if self.macos => "Booting macOS",
+            Phase::Booting if self.vm => "Booting",
+            Phase::Booting => "Starting",
+            Phase::WaitingForServices if self.space => "Starting Cua inside the Space",
+            Phase::WaitingForServices => "Waiting for its services",
+            Phase::Connecting => "Connecting",
+            Phase::Ready => return None,
+        })
+    }
+
+    /// One report as a line: the step, then the download's bytes, rate and
+    /// time left ("4.2 of 22.1 GB · 85 MB/s · about 4 min"), else its
+    /// percent.
+    pub fn line(&self, p: &cua_sandbox_core::progress::Progress) -> Option<String> {
+        let step = self.step(p.phase)?;
+        let measure = match (p.bytes, p.fraction) {
+            (Some(b), _) => b.describe(),
+            (None, Some(f)) => format!("{:.0}%", f * 100.0),
+            (None, None) => String::new(),
+        };
+        Some(format!("{step} {measure}").trim_end().to_string())
+    }
+}
+
+/// A create's steps on a terminal (stderr): each step keeps a line of its
+/// own, and the step running now updates in place with its bytes. Never
+/// used for `--json` or when stderr is not a terminal.
+#[derive(Default)]
+pub struct StepLines {
+    words: CreateWords,
+    /// The step on the current line, and that line's text.
+    shown: std::sync::Mutex<Option<(cua_sandbox_core::progress::Phase, String)>>,
+}
+
+impl StepLines {
+    /// Lines for a create of this kind.
+    pub fn new(words: CreateWords) -> Self {
+        Self {
+            words,
+            shown: Default::default(),
+        }
+    }
+
+    /// What to write for `p`: `None` when the line would not change.
+    pub fn render(&self, p: &cua_sandbox_core::progress::Progress) -> Option<String> {
+        let text = self.words.line(p)?;
+        let mut shown = self.shown.lock().unwrap_or_else(|e| e.into_inner());
+        let out = match shown.as_ref() {
+            Some((_, last)) if *last == text => return None,
+            // Still the same step: rewrite its line.
+            Some((phase, _)) if *phase == p.phase => format!("\r\x1b[2K{text}"),
+            // A new step: the last one stays on its line.
+            Some(_) => format!("\n{text}"),
+            None => text.clone(),
+        };
+        *shown = Some((p.phase, text));
+        Some(out)
+    }
+
+    /// Writes `p`'s line to stderr.
+    pub fn show(&self, p: &cua_sandbox_core::progress::Progress) {
+        if let Some(out) = self.render(p) {
+            let mut err = std::io::stderr();
+            let _ = write!(err, "{out}");
+            let _ = err.flush();
+        }
+    }
+
+    /// Ends the output: the steps done stay, the running step's line goes.
+    pub fn finish(&self) {
+        if self
+            .shown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .is_some()
+        {
+            eprint!("\r\x1b[2K");
+        }
+    }
+}
+
 #[cfg(test)]
 mod secret_tests {
     use super::*;
@@ -310,4 +425,62 @@ pub fn exit_on_ctrl_c() {
             std::process::exit(130);
         }
     });
+}
+
+#[cfg(test)]
+mod create_step_tests {
+    #[test]
+    fn create_steps_read_in_words_and_keep_a_line_each() {
+        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+        let mac = super::CreateWords::for_image("macos", "", true);
+        let lines = super::StepLines::new(mac);
+        let gb = 1u64 << 30;
+        let pull = |done: u64| {
+            Progress::phase(Phase::Pulling).bytes(Transfer {
+                done,
+                total: 30 * gb,
+                per_second: Some((85u64 << 20) as f64),
+            })
+        };
+        let out: Vec<Option<String>> = vec![
+            lines.render(&Progress::phase(Phase::Preparing)),
+            lines.render(&pull(gb * 124 / 10)),
+            lines.render(&pull(gb * 124 / 10)),
+            lines.render(&pull(30 * gb)),
+            lines.render(&Progress::phase(Phase::Creating)),
+            lines.render(&Progress::phase(Phase::Booting)),
+            lines.render(&Progress::phase(Phase::WaitingForServices)),
+            lines.render(&Progress::phase(Phase::Ready)),
+        ];
+        assert_eq!(
+            out,
+            [
+                Some("Preparing".to_string()),
+                Some(
+                    "\nDownloading macOS (first time only) 12.4 of 30.0 GB \u{b7} 85 MB/s \u{b7} about 4 min"
+                        .into()
+                ),
+                None,
+                Some(
+                    "\r\x1b[2KDownloading macOS (first time only) 30.0 of 30.0 GB \u{b7} 85 MB/s \u{b7} less than a minute"
+                        .into()
+                ),
+                Some("\nPreparing the disk".into()),
+                Some("\nBooting macOS".into()),
+                Some("\nStarting Cua inside the Space".into()),
+                None,
+            ]
+        );
+        // A Linux container sandbox.
+        let c = super::CreateWords::for_image("ghcr.io/trycua/linux:24.04", "container", false);
+        assert_eq!(c.step(Phase::Creating), Some("Creating"));
+        assert_eq!(c.step(Phase::Booting), Some("Starting"));
+        assert_eq!(
+            c.step(Phase::WaitingForServices),
+            Some("Waiting for its services")
+        );
+        let vm = super::CreateWords::for_image("linux", "vm", false);
+        assert_eq!(vm.step(Phase::Creating), Some("Preparing the disk"));
+        assert_eq!(vm.step(Phase::Booting), Some("Booting"));
+    }
 }

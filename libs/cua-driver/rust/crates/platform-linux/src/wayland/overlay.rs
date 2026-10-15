@@ -861,6 +861,7 @@ fn earliest_idle_fade_wait(cores: &CursorMap<RenderStateCore>) -> Option<Duratio
 
 /// Advance every cursor and return the keys whose planned glide just ended.
 fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<CursorKey> {
+    cursor_overlay::render_map::update_peer_presence(cores.values_mut());
     cores
         .iter_mut()
         .filter_map(|(key, core)| core.tick_motion(dt).then(|| key.clone()))

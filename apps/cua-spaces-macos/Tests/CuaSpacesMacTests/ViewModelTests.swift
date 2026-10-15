@@ -111,6 +111,16 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
     }
 }
 
+/// A case of the parity flow `keyvault-unlock.json` (setup or unlock, Touch
+/// ID or a passphrase).
+func keyvaultUnlockCase(_ name: String) throws -> KeyvaultOverview {
+    let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
+    let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
+    let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
+    return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
+}
+
 func fixtureOverview() throws -> KeyvaultOverview {
     let url = ParityTests.dir.appendingPathComponent("keyvault-approve-deny.json")
     let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
@@ -392,11 +402,14 @@ struct ViewModelTests {
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
-                                    "experiment:web_ui"])
-        #expect(toggles.allSatisfy { $0.options.first { $0.id == "off" }?.active == true })
+                                    "experiment:classic_ui"])
+        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        #expect(toggles.allSatisfy { r in
+            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+        })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
-        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(3) == ["account", "general", "storage"])
+        #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(4) == ["account", "teams", "general", "storage"])
         #expect(appSettingsLoad(path: model.settingsPath).experiments.cuaVolume, "saved")
         #expect(model.onboarding.state.experiments.cuaVolume)
         let toggled = telemetry.recorded.compactMap { s -> String? in
@@ -459,7 +472,7 @@ struct ViewModelTests {
         let model = makeModel(account: account, agents: agents)
         await model.loadSettings()
         let page = model.settingsPage
-        #expect(page.sections.map(\.id) == ["account", "general", "runtimes", "privacy", "agents"])
+        #expect(page.sections.map(\.id) == ["account", "teams", "general", "runtimes", "privacy", "agents"])
         // Settings, Runtimes: macOS VMs picks runtime.lume.
         let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
         #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
@@ -701,7 +714,7 @@ struct ViewModelTests {
             lume: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             qemu: StorageVolume(availableBytes: 212 * gb, totalBytes: 500 * gb, name: "Macintosh HD"),
             container: StorageVolume(availableBytes: 40 * gb, totalBytes: 100 * gb, name: "Colima"),
-            pulled: [])
+            pulled: [], linuxRuntimeDownloadBytes: 0)
         let model = makeModel(backend)
         await model.openNewSpace()
         let w = model.wizard
@@ -732,7 +745,8 @@ struct ViewModelTests {
     /// The new Space is in the list, the notch and the selection the moment
     /// Create is pressed, follows the SDK's progress, and hands over to the
     /// registry row when ready; nothing waits on the create to show it.
-    @Test func createShowsTheSpaceAtOnceAndFollowsItsProgress() async throws {
+    @Test(.serialized, arguments: [false, true])
+    func createShowsTheSpaceAtOnceAndFollowsItsProgress(openWhenReady: Bool) async throws {
         let backend = FixtureSpacesBackend()
         backend.holdCreates = true
         // Held after the pull; `ready` comes on release.
@@ -742,14 +756,20 @@ struct ViewModelTests {
             SpaceCreateProgress(phase: "ready", fraction: nil, detail: ""),
         ]
         let model = makeModel(backend)
+        var opened: [String] = []
+        let previous = WebUIWindowController.actions
+        WebUIWindowController.actions = WebUIActions(openSpace: { if $0 == "local:fresh" { opened.append($0) } }, openMain: {})
+        defer { WebUIWindowController.actions = previous }
         await model.refresh()
         await model.openNewSpace()
         let w = model.wizard
         w.send(.next)
         w.send(.next)
         w.send(.setName(name: "fresh"))
+        w.send(.setOpenWhenReady(on: openWhenReady))
         w.send(.next)
         let plan = w.view.plan
+        #expect(plan.openDesktop == openWhenReady)
         model.create(plan)
         // Synchronously, before the create has done anything.
         let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.name == "fresh" })
@@ -775,6 +795,9 @@ struct ViewModelTests {
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
+        try await waitUntil { opened == (openWhenReady ? ["local:fresh"] : []) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(opened == (openWhenReady ? ["local:fresh"] : []))
     }
 
     /// A failed create stays on its row with the reason until it is removed.
@@ -1157,13 +1180,7 @@ struct ViewModelTests {
         #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
     }
 
-    func unlockCase(_ name: String) throws -> KeyvaultOverview {
-        let url = ParityTests.dir.appendingPathComponent("keyvault-unlock.json")
-        let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-        let c = (flow["cases"] as! [[String: Any]]).first { $0["name"] as? String == name }!
-        let data = try JSONSerialization.data(withJSONObject: c["overview"]!)
-        return try kvOverviewFromJson(json: String(decoding: data, as: UTF8.self))
-    }
+    func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }
 
     @Test func passphraseSetupAndUnlockGoOnlyToTheBroker() async throws {
         let fake = FakeKeyvault(try unlockCase("setup-passphrase"))
@@ -1291,29 +1308,41 @@ struct ViewModelTests {
         #expect(notch.view.phase == .closed)
     }
 
-    /// Settings hides Cua Cloud billing and offers the Teams waitlist (the
-    /// website); a cloud create refused for want of credit shows one line
-    /// and no Add credit.
-    @Test func billingIsHiddenAndTeamsOpensTheWaitlist() async throws {
+    /// Settings hides Cua Cloud billing and shows the real Teams section
+    /// (the Spaces API: name with alias fallback, members, pending invites
+    /// marked "(Invited)", the account app for invites and billing); a cloud
+    /// create refused for want of credit shows one line and no Add credit.
+    @Test func billingIsHiddenAndTeamsComeFromTheSpacesAPI() async throws {
         var opened: [URL] = []
         BillingBrowser.open = { opened.append($0) }
         let model = makeModel(account: FixtureAccount(identity: "you@example.com"),
                               billing: FixtureBilling(balanceCents: 742))
+        model.teamsReader = FixtureTeams([
+            AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
+                         members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
+                                   AppTeamPersonInput(email: "grace@example.com", role: "member")],
+                         invites: ["linus@example.com"]),
+        ])
         await model.loadSettings()
         let rows = model.settingsPage.sections.flatMap(\.rows)
         #expect(!rows.contains { $0.id == "billing" })
         #expect(!rows.contains { $0.id == "default-location" })
-        let teams = rows.first { $0.id == "teams" }
-        #expect(teams?.value == "Coming soon" && teams?.button == "Join the waitlist")
-        await model.press(row: "teams")
-        #expect(opened.map(\.absoluteString) == ["https://cua.ai/teams"])
+        #expect(!rows.contains { $0.value == "Coming soon" || $0.button == "Join the waitlist" })
+        let team = model.settingsPage.sections.first { $0.id == "teams" }!.rows
+        #expect(team[0].label == "acme", "the alias stands in for a missing name")
+        #expect(team[0].value == "Owner \u{b7} Teams plan \u{b7} 3 seats")
+        #expect(team.first { $0.label == "linus@example.com" }?.value == "(Invited)")
+        #expect(team.first { $0.label == "grace@example.com" }?.value == "Member")
+        await model.press(row: "teams-manage")
+        await model.press(row: "teams-billing")
+        #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
         var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: []),
                                        action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
                                                       now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
                                                       host: nil, hostName: nil))
         creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing",
+            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
             errorVariant: ""))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")

@@ -80,10 +80,12 @@ export const WEBKIT_PAGE_OPS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
   "spaces.windows",
@@ -252,10 +254,12 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "devices.createPairingCode": ({ team }) => request("devices.createPairingCode", { team: team ?? null }),
     "devices.pairingCodes": list("devices.pairingCodes"),
     "devices.revokePairingCode": none("devices.revokePairingCode"),
+    "teams.list": call("teams.list"),
     "storage.get": call("storage.get"),
     "storage.run": call("storage.run"),
     "notifications.list": list("notifications.list"),
     "notifications.markAllRead": none("notifications.markAllRead"),
+    "notifications.markRead": none("notifications.markRead"),
 
     // Only known signals of fixed words leave the page; the host drops
     // them all while usage data is off.

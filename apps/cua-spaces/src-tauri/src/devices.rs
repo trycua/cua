@@ -257,8 +257,11 @@ impl DevicesService {
     }
 
     /// Makes a one-time code (link, QR code, install commands) that adds
-    /// another computer to the account, or to `team`, from this enrolled
-    /// device. It expires after 30 minutes.
+    /// another computer to the account, from this enrolled device. It
+    /// expires after 30 minutes. With `team` (an organization id) the code
+    /// is the same: the relay's own teams are retired, and the machine
+    /// becomes a team machine once it joined (the web UI shares it with
+    /// `team:<id>`, through the Spaces API).
     pub async fn create_pairing_code(
         &self,
         team: Option<String>,
@@ -266,11 +269,44 @@ impl DevicesService {
         let (relay, token) = self.account_relay().await?;
         let req = PairingCodeRequest {
             name: None,
-            team,
+            team: None,
             ttl_secs: None,
         };
-        let code = relay.create_pairing_code(&token, &req).await.map_err(err)?;
+        let mut code = relay.create_pairing_code(&token, &req).await.map_err(err)?;
+        code.team = team.filter(|t| !t.trim().is_empty());
         Ok(PairingCodeView::new(code, self.auth.relay_url()))
+    }
+
+    /// The account's Teams (the organizations of `GET /v1/me` on the Spaces
+    /// API), for "Add a machine" and "Share". This app keeps no current
+    /// team, so none is chosen.
+    pub async fn teams(&self) -> Result<TeamsListView, String> {
+        let token = self.tokens.access_token().await.map_err(err)?;
+        let me = cua_host::spaces_api::SpacesApiClient::current()
+            .map_err(err)?
+            .me(&token)
+            .await
+            .map_err(err)?;
+        Ok(TeamsListView {
+            teams: me
+                .orgs
+                .into_iter()
+                .map(|o| TeamChoiceView {
+                    // Team machines decide what can be offered: the API's
+                    // features when it lists them, else the plan.
+                    plan: if o.has("team_machines") {
+                        "teams".into()
+                    } else {
+                        o.plan
+                    },
+                    id: o.id,
+                    alias: o.alias,
+                    name: o.name,
+                    role: o.role,
+                })
+                .collect(),
+            current_team_id: None,
+        })
     }
 
     /// The account's pairing codes, newest first (without the codes).
@@ -323,4 +359,23 @@ impl PresenceGate for OsPresence<'_> {
 /// Whether presence on this system is a passphrase the page must ask for.
 pub fn presence_needs_passphrase() -> bool {
     !cfg!(target_os = "macos")
+}
+
+/// One of the account's Teams (`teams.list`).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamChoiceView {
+    pub id: String,
+    pub alias: String,
+    pub name: String,
+    pub role: String,
+    pub plan: String,
+}
+
+/// `teams.list`: the account's Teams and the current one.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamsListView {
+    pub teams: Vec<TeamChoiceView>,
+    pub current_team_id: Option<String>,
 }

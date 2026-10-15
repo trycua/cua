@@ -163,8 +163,15 @@ impl QemuPackageManager {
                 "qemu-utils",
                 "qemu-efi-aarch64",
                 "ovmf",
+                "openssh-client",
             ],
-            Self::Dnf => &["qemu-kvm", "qemu-img", "edk2-ovmf", "edk2-aarch64"],
+            Self::Dnf => &[
+                "qemu-kvm",
+                "qemu-img",
+                "edk2-ovmf",
+                "edk2-aarch64",
+                "openssh",
+            ],
         }
     }
 
@@ -770,6 +777,7 @@ mod tests {
                     "qemu-utils",
                     "qemu-efi-aarch64",
                     "ovmf",
+                    "openssh-client",
                 ],
             ]
         );
@@ -780,7 +788,7 @@ mod tests {
         assert_eq!(
             QemuPackageManager::Apt.render(),
             "sudo -n apt-get update && sudo -n apt-get install -y qemu-system-x86 \
-             qemu-system-arm qemu-utils qemu-efi-aarch64 ovmf"
+             qemu-system-arm qemu-utils qemu-efi-aarch64 ovmf openssh-client"
         );
     }
 
@@ -797,11 +805,12 @@ mod tests {
                 "qemu-img",
                 "edk2-ovmf",
                 "edk2-aarch64",
+                "openssh",
             ]]
         );
         assert_eq!(
             QemuPackageManager::Dnf.render(),
-            "sudo -n dnf install -y qemu-kvm qemu-img edk2-ovmf edk2-aarch64"
+            "sudo -n dnf install -y qemu-kvm qemu-img edk2-ovmf edk2-aarch64 openssh"
         );
     }
 

@@ -132,7 +132,9 @@ only a retry for an existing published stable Release Please-managed Sandbox
 release. Legacy tags without a Sandbox release-manifest entry cannot be retried
 through this workflow. The legacy
 `pypi/sandbox` bump workflow and `release:pypi/sandbox` auto-release label no
-longer manage this package. Sandbox Apps remains on its separate legacy path.
+longer manage this package. Sandbox Apps and the other Python and npm packages
+also release through Release Please now; see
+[`.github/releases/README.md`](.github/releases/README.md).
 
 ## Preserve Contributor Authorship
 

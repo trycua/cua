@@ -7,10 +7,11 @@
 //!
 //! | Setting       | Override              | prod                                     | staging                                     |
 //! |---------------|-----------------------|------------------------------------------|---------------------------------------------|
-//! | OIDC issuer   | `CUA_OIDC_ISSUER`     | `https://auth.cua.ai/realms/cyclops-cs`  | `https://auth.cua.ai/realms/cua-staging`    |
+//! | OIDC issuer   | `CUA_OIDC_ISSUER`     | `https://auth.cua.ai/realms/cyclops-cs`  | `https://auth.staging.cua.ai/realms/cua-staging` |
 //! | Relay         | `CUA_RELAY_URL`       | `https://relay.cua.ai`                   | `https://relay.staging.cua.ai`              |
-//! | Spaces API    | `CUA_SPACES_API_URL`  | `https://api.spaces.cua.ai`              | `https://api.staging.cua.ai`                |
-//! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://spaces.cua.ai`                  | `https://spaces.staging.cua.ai`             |
+//! | Spaces API    | `CUA_SPACES_API_URL`  | `https://api.cua.ai`                     | `https://api.staging.cua.ai`                |
+//! | Account app   | `CUA_ACCOUNT_APP_URL` | `https://app.cua.ai`                     | `https://app.staging.cua.ai`                |
+//! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://cua.ai`                         | `https://spaces.staging.cua.ai`             |
 //! | cua home      | `CUA_HOME`            | `~/.cua`                                 | `~/.cua/envs/staging`                       |
 //!
 //! A per-setting override always wins over `CUA_ENV`. With `CUA_ENV` unset,
@@ -90,7 +91,9 @@ impl CuaEnv {
     pub fn oidc_issuer(self) -> &'static str {
         match self {
             Self::Prod => "https://auth.cua.ai/realms/cyclops-cs",
-            Self::Staging => "https://auth.cua.ai/realms/cua-staging",
+            // Staging has its own Keycloak; the `cua-staging` realm on
+            // auth.cua.ai is a different realm with other users and keys.
+            Self::Staging => "https://auth.staging.cua.ai/realms/cua-staging",
         }
     }
 
@@ -105,15 +108,24 @@ impl CuaEnv {
     /// The default Spaces control plane (entitlements) API.
     pub fn spaces_api_url(self) -> &'static str {
         match self {
-            Self::Prod => "https://api.spaces.cua.ai",
+            Self::Prod => "https://api.cua.ai",
             Self::Staging => "https://api.staging.cua.ai",
+        }
+    }
+
+    /// The account app: billing, plans, team administration and invites
+    /// (the apps open it in the browser).
+    pub fn account_app_url(self) -> &'static str {
+        match self {
+            Self::Prod => "https://app.cua.ai",
+            Self::Staging => "https://app.staging.cua.ai",
         }
     }
 
     /// The default Spaces site (pairing links are `<site>/add/<code>`).
     pub fn spaces_site_url(self) -> &'static str {
         match self {
-            Self::Prod => "https://spaces.cua.ai",
+            Self::Prod => "https://cua.ai",
             Self::Staging => "https://spaces.staging.cua.ai",
         }
     }
@@ -150,6 +162,8 @@ pub struct Endpoints {
     pub spaces_api_url: String,
     /// `CUA_SPACES_SITE_URL`, else the environment's Spaces site.
     pub spaces_site_url: String,
+    /// `CUA_ACCOUNT_APP_URL`, else the environment's account app.
+    pub account_app_url: String,
 }
 
 impl Endpoints {
@@ -173,6 +187,7 @@ impl Endpoints {
             relay_url: setting("CUA_RELAY_URL", env.relay_url()),
             spaces_api_url: setting("CUA_SPACES_API_URL", env.spaces_api_url()),
             spaces_site_url: setting("CUA_SPACES_SITE_URL", env.spaces_site_url()),
+            account_app_url: setting("CUA_ACCOUNT_APP_URL", env.account_app_url()),
         }
     }
 }
@@ -195,6 +210,12 @@ pub fn spaces_api_url() -> String {
 /// `CUA_SPACES_SITE_URL`, else the environment's Spaces site.
 pub fn spaces_site_url() -> String {
     Endpoints::current().spaces_site_url
+}
+
+/// `CUA_ACCOUNT_APP_URL`, else the environment's account app
+/// (`https://app.cua.ai`, `https://app.staging.cua.ai`).
+pub fn account_app_url() -> String {
+    Endpoints::current().account_app_url
 }
 
 /// The cua home a non-production environment uses when `CUA_HOME` is not
@@ -254,8 +275,9 @@ mod tests {
         assert_eq!(e.env, CuaEnv::Prod);
         assert_eq!(e.oidc_issuer, "https://auth.cua.ai/realms/cyclops-cs");
         assert_eq!(e.relay_url, "https://relay.cua.ai");
-        assert_eq!(e.spaces_api_url, "https://api.spaces.cua.ai");
-        assert_eq!(e.spaces_site_url, "https://spaces.cua.ai");
+        assert_eq!(e.spaces_api_url, "https://api.cua.ai");
+        assert_eq!(e.account_app_url, "https://app.cua.ai");
+        assert_eq!(e.spaces_site_url, "https://cua.ai");
         assert_eq!(CuaEnv::Prod.keyring_service(), "run.cua.ai");
         assert_eq!(CuaEnv::Prod.home_subdir(), None);
         // An unknown value never selects staging.
@@ -266,9 +288,13 @@ mod tests {
     fn staging_flips_every_endpoint() {
         let e = endpoints(&[("CUA_ENV", "staging")]);
         assert_eq!(e.env, CuaEnv::Staging);
-        assert_eq!(e.oidc_issuer, "https://auth.cua.ai/realms/cua-staging");
+        assert_eq!(
+            e.oidc_issuer,
+            "https://auth.staging.cua.ai/realms/cua-staging"
+        );
         assert_eq!(e.relay_url, "https://relay.staging.cua.ai");
         assert_eq!(e.spaces_api_url, "https://api.staging.cua.ai");
+        assert_eq!(e.account_app_url, "https://app.staging.cua.ai");
         assert_eq!(e.spaces_site_url, "https://spaces.staging.cua.ai");
         assert_eq!(CuaEnv::Staging.keyring_service(), "staging.run.cua.ai");
         assert_eq!(CuaEnv::Staging.home_subdir(), Some("envs/staging"));

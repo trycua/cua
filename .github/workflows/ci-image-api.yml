@@ -2,6 +2,7 @@ name: "CI: Image API"
 
 on:
   push:
+    branches: [main]
     paths:
       - "clusters/base/cua-images/**"
       - "libs/python/cua-sandbox/cua_sandbox/image.py"
@@ -35,9 +36,16 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -63,10 +71,7 @@ jobs:
       # cua-sandbox imports the cua SDK, whose Python package loads the
       # native cua-sdk library: build and stage it before installing.
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1

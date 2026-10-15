@@ -96,6 +96,14 @@ impl WindowClickDelivery {
     }
 }
 
+/// Write exactly `flags` on a posted mouse event. An event made from the
+/// HID-state source otherwise keeps whatever modifiers the HID state holds,
+/// so a held or stuck Control would turn a background click into a
+/// Control-click (a context menu instead of a click).
+fn set_explicit_flags(event: &CGEvent, flags: CGEventFlags) {
+    event.set_flags(flags);
+}
+
 /// Left-click at `(x, y)` screen coordinates, posted to `pid`.
 ///
 /// Window-local coordinates for backgrounded targets: if `window_local` is
@@ -448,9 +456,7 @@ fn click_at_xy_inner(
                 CGMouseButton::Left,
             )
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
-            if flags != CGEventFlags::CGEventFlagNull {
-                down.set_flags(flags);
-            }
+            set_explicit_flags(&down, flags);
 
             post_mouse_event_with_mode(
                 pid,
@@ -475,9 +481,7 @@ fn click_at_xy_inner(
                 CGMouseButton::Left,
             )
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
-            if flags != CGEventFlags::CGEventFlagNull {
-                up.set_flags(flags);
-            }
+            set_explicit_flags(&up, flags);
 
             post_mouse_event_with_mode(
                 pid,
@@ -695,9 +699,7 @@ pub fn click_at_xy_chromium(
             step.skylight_window_location.0,
             step.skylight_window_location.1,
         );
-        if flags != CGEventFlags::CGEventFlagNull {
-            event.set_flags(flags);
-        }
+        set_explicit_flags(event, flags);
     };
 
     let post = |event: &CGEvent, _step: &ChromiumClickRouteStep| {
@@ -892,9 +894,7 @@ where
     // MouseDown at start.
     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
         .map_err(|_| anyhow::anyhow!("drag mouseDown failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        down.set_flags(flags);
-    }
+    set_explicit_flags(&down, flags);
     post_mouse_event(
         pid,
         &down,
@@ -919,9 +919,7 @@ where
         let drag_pt = CGPoint::new(ix, iy);
         let drag = CGEvent::new_mouse_event(source.clone(), dragged_type, drag_pt, cg_button)
             .map_err(|_| anyhow::anyhow!("drag mouseDragged failed"))?;
-        if flags != CGEventFlags::CGEventFlagNull {
-            drag.set_flags(flags);
-        }
+        set_explicit_flags(&drag, flags);
         post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
         observe(ix, iy);
         if step_delay_ms > 0 {
@@ -936,9 +934,7 @@ where
     let to_pt = CGPoint::new(to_x, to_y);
     let up = CGEvent::new_mouse_event(source.clone(), up_type, to_pt, cg_button)
         .map_err(|_| anyhow::anyhow!("drag mouseUp failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
+    set_explicit_flags(&up, flags);
     post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
     // Chromium may process the final pointerup on the next run-loop turn. In
     // the foreground rung the caller restores the previous app immediately
@@ -968,9 +964,7 @@ fn post_drag_mouse_event(
     debug_assert_eq!(mode, MousePostMode::HidOnly);
     let event = new_global_mouse_event(event_type, point, button)
         .map_err(|_| anyhow::anyhow!(error_context.to_owned()))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        event.set_flags(flags);
-    }
+    set_explicit_flags(&event, flags);
     post_mouse_event_with_mode(
         pid,
         &event,
@@ -1328,68 +1322,36 @@ pub enum DragButton {
 /// Middle-click at `(x, y)` with optional modifier keys.
 ///
 /// Posts an `OtherMouseDown` / `OtherMouseUp` pair with `CGMouseButton::Center`
-/// to the target pid through the same SkyLight + public-API postBoth path the
-/// left- and right-click primitives use. Window-local stamping mirrors
+/// to the target pid once through SkyLight, falling back to the public API
+/// only when the SPI is absent. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, None, modifiers)
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, CGMouseButton::Center)
 }
 
-/// Like `middle_click_at_xy` but stamps the window-local `(wx, wy)` point.
 pub fn middle_click_at_xy_with_window_local(
     pid: i32,
     x: f64,
     y: f64,
     wx: f64,
     wy: f64,
+    wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
-}
-
-fn middle_click_at_xy_inner(
-    pid: i32,
-    x: f64,
-    y: f64,
-    window_local: Option<(f64, f64)>,
-    modifiers: &[&str],
-) -> anyhow::Result<()> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let point = CGPoint::new(x, y);
-    let flags = parse_modifier_flags(modifiers);
-
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::OtherMouseDown,
-        point,
+    right_click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        modifiers,
         CGMouseButton::Center,
     )
-    .map_err(|_| anyhow::anyhow!("middle mouse down failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        down.set_flags(flags);
-    }
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
-    let up = CGEvent::new_mouse_event(
-        source,
-        CGEventType::OtherMouseUp,
-        point,
-        CGMouseButton::Center,
-    )
-    .map_err(|_| anyhow::anyhow!("middle mouse up failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
-
-    Ok(())
 }
 
 /// Right-click at `(x, y)` with optional modifier keys (no window routing).
 pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, None, None, modifiers)
+    right_click_at_xy_inner(pid, x, y, None, None, modifiers, CGMouseButton::Right)
 }
 
 /// Like `right_click_at_xy` but stamps `CGEventSetWindowLocation` with the
@@ -1415,7 +1377,15 @@ pub fn right_click_at_xy_with_window_local(
     wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    right_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
+    right_click_at_xy_inner(
+        pid,
+        x,
+        y,
+        Some((wx, wy)),
+        Some(wid),
+        modifiers,
+        CGMouseButton::Right,
+    )
 }
 
 fn right_click_at_xy_inner(
@@ -1425,8 +1395,14 @@ fn right_click_at_xy_inner(
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     modifiers: &[&str],
+    button: CGMouseButton,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    let (down_type, up_type, button_number) = match button {
+        CGMouseButton::Center => (CGEventType::OtherMouseDown, CGEventType::OtherMouseUp, 2),
+        _ => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, 1),
+    };
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -1440,8 +1416,6 @@ fn right_click_at_xy_inner(
             .subsec_nanos() as i64
     });
 
-    // Prime cursor-tracking state at the target so AppKit hit-tests the
-    // right-down at the right NSView (same rationale as the left path).
     post_mouse_moved_primer(
         pid,
         &source,
@@ -1453,18 +1427,9 @@ fn right_click_at_xy_inner(
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::RightMouseDown,
-        point,
-        CGMouseButton::Right,
-    )
-    .map_err(|_| anyhow::anyhow!("right mouse down failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        down.set_flags(flags);
-    }
-    // button_number = 1 (right). Stamping 0 here routes the event as a left
-    // button-number on the receiving side even though the type is rightMouseDown.
+    let down = CGEvent::new_mouse_event(source.clone(), down_type, point, button)
+        .map_err(|_| anyhow::anyhow!("mouse down failed"))?;
+    set_explicit_flags(&down, flags);
     post_mouse_event_with_mode(
         pid,
         &down,
@@ -1472,22 +1437,15 @@ fn right_click_at_xy_inner(
         wid,
         click_group_id,
         1,
-        1,
+        button_number,
         3,
         MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(std::time::Duration::from_millis(28));
 
-    let up = CGEvent::new_mouse_event(
-        source,
-        CGEventType::RightMouseUp,
-        point,
-        CGMouseButton::Right,
-    )
-    .map_err(|_| anyhow::anyhow!("right mouse up failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
+    let up = CGEvent::new_mouse_event(source, up_type, point, button)
+        .map_err(|_| anyhow::anyhow!("mouse up failed"))?;
+    set_explicit_flags(&up, flags);
     post_mouse_event_with_mode(
         pid,
         &up,
@@ -1495,7 +1453,7 @@ fn right_click_at_xy_inner(
         wid,
         click_group_id,
         1,
-        1,
+        button_number,
         3,
         MousePostMode::SkyLightPreferred,
     );
@@ -1808,6 +1766,7 @@ mod post_sink {
         posted: Vec<Posted>,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
+        window_routing: Vec<[i64; 4]>,
     }
 
     thread_local! {
@@ -1825,6 +1784,7 @@ mod post_sink {
                     skylight_available,
                     posted: Vec::new(),
                     modifiers: Vec::new(),
+                    window_routing: Vec::new(),
                 });
             });
             Self
@@ -1851,6 +1811,10 @@ mod post_sink {
                     .map(|state| state.posted.clone())
                     .unwrap_or_default()
             })
+        }
+
+        pub(super) fn window_routing(&self) -> Vec<[i64; 4]> {
+            STATE.with(|state| state.borrow().as_ref().unwrap().window_routing.clone())
         }
     }
 
@@ -1884,6 +1848,9 @@ mod post_sink {
             state
                 .modifiers
                 .push(event.get_flags().bits() & MODIFIER_MASK);
+            state
+                .window_routing
+                .push([51, 91, 92, 58].map(|field| event.get_integer_value_field(field)));
             true
         })
     }
@@ -1893,6 +1860,57 @@ mod post_sink {
 mod tests {
     use super::post_sink::{Capture, Posted};
     use super::*;
+
+    #[test]
+    fn background_middle_click_preserves_exact_window_routing() {
+        let capture = Capture::start(true);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        let routing = capture.window_routing();
+        assert_eq!(routing.len(), 3);
+        for fields in &routing {
+            assert_eq!(&fields[..3], &[7, 7, 7]);
+            assert_ne!(fields[3], 0, "window stamps require a click-group ID");
+        }
+        assert_eq!(routing[0][3], routing[1][3]);
+        assert_eq!(routing[1][3], routing[2][3]);
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn background_middle_click_uses_public_fallback_once() {
+        let capture = Capture::start(false);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::PublicPid, 0),
+                Posted::new("OtherMouseDown", PostRoute::PublicPid, 2),
+                Posted::new("OtherMouseUp", PostRoute::PublicPid, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn window_less_middle_click_keeps_window_routing_unset() {
+        let capture = Capture::start(true);
+        middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
+        assert_eq!(capture.window_routing(), [[0; 4]; 3]);
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("OtherMouseDown", PostRoute::SkyLight, 2),
+                Posted::new("OtherMouseUp", PostRoute::SkyLight, 2),
+            ]
+        );
+    }
 
     #[test]
     fn capture_bound_background_route_preserves_nonzero_origin_hit() {
@@ -2202,5 +2220,28 @@ mod tests {
         let expected =
             CGEventFlags::CGEventFlagCommand.bits() | CGEventFlags::CGEventFlagShift.bits();
         assert_eq!(&modifiers[1..], [expected, expected]);
+    }
+}
+
+#[cfg(test)]
+mod explicit_flags_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_flags_clear_an_inherited_modifier() {
+        let source = CGEventSource::new(CGEventSourceStateID::Private).expect("event source");
+        let event = CGEvent::new_mouse_event(
+            source,
+            CGEventType::LeftMouseDown,
+            core_graphics::geometry::CGPoint::new(10.0, 10.0),
+            CGMouseButton::Left,
+        )
+        .expect("mouse event");
+        // As if the HID state had Control down when the event was made.
+        event.set_flags(CGEventFlags::CGEventFlagControl);
+        set_explicit_flags(&event, CGEventFlags::CGEventFlagNull);
+        assert_eq!(event.get_flags(), CGEventFlags::CGEventFlagNull);
+        set_explicit_flags(&event, CGEventFlags::CGEventFlagCommand);
+        assert_eq!(event.get_flags(), CGEventFlags::CGEventFlagCommand);
     }
 }

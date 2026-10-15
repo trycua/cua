@@ -33,8 +33,10 @@ import type {
   VaultView,
 } from "./contracts/keyvault";
 import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
+import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
+import { hostOs, type HostOs } from "./host-os";
 
 /* ---- Spaces --------------------------------------------------------------- */
 
@@ -102,13 +104,68 @@ export function validateImageRef(core: CoreClient, ref: string): string | null {
 
 const PHASES = ["preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting"];
 const PHASE_LABEL: Record<string, string> = {
-  preparing: "Preparing…",
-  pulling: "Downloading…",
+  preparing: "Starting…",
+  pulling: "Downloading image…",
   creating: "Creating…",
-  booting: "Starting…",
-  waiting_for_services: "Starting…",
+  booting: "Booting…",
+  waiting_for_services: "Starting Cua inside the Space…",
   connecting: "Connecting…",
 };
+
+/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text`). */
+export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">): string | null {
+  if (p.bytesDone == null) return null;
+  const unit = (n: number): [number, string] =>
+    n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"];
+  const scaled = (n: number, [size]: [number, string], below: number) => {
+    const v = n / size;
+    return size > 1 && v < below ? v.toFixed(1) : Math.round(v).toString();
+  };
+  const total = p.bytesTotal ?? 0;
+  let out: string;
+  if (total > 0) {
+    const u = unit(total);
+    out = `${scaled(Math.min(p.bytesDone, total), u, 100)} of ${scaled(total, u, 100)} ${u[1]}`;
+  } else {
+    const u = unit(p.bytesDone);
+    out = `${scaled(p.bytesDone, u, 100)} ${u[1]}`;
+  }
+  const rate = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
+  if (rate) {
+    const u = unit(Math.floor(rate));
+    out += ` · ${scaled(Math.floor(rate), u, 10)} ${u[1]}/s`;
+    if (total > 0) {
+      const secs = Math.max(0, total - p.bytesDone) / rate;
+      const mins = Math.round(secs / 60);
+      out +=
+        secs < 60
+          ? " · less than a minute"
+          : mins < 60
+            ? ` · about ${mins} min`
+            : mins % 60 === 0
+              ? ` · about ${mins / 60} h`
+              : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
+    }
+  }
+  return out;
+}
+
+/** The step a create is on, in its kind of Space's words (`creating::stage_label`). */
+function stageLabel(p: Pick<PendingCreate, "os" | "provider" | "kind" | "phase">): string {
+  const here = p.provider !== "cloud";
+  const vm = p.os === "macos" || p.os === "windows" || p.kind === "vm";
+  const container = !vm && p.kind === "container";
+  const os = p.os === "macos" ? "macOS" : p.os === "windows" ? "Windows" : p.os === "linux" ? "Linux" : "";
+  if (p.phase === "pulling" && p.os === "macos") return "Downloading macOS (first time only)…";
+  if (p.phase === "creating" && here && vm) return "Preparing the disk…";
+  if (p.phase === "creating" && here && container) return "Creating the container…";
+  if (p.phase === "booting" && here && vm && os) return `Booting ${os}…`;
+  if (p.phase === "booting" && here && container) return "Starting the container…";
+  return PHASE_LABEL[p.phase] ?? "Starting…";
+}
+
+/** [`stageLabel`] (the fallback's words), for tests. */
+export const stageLabelForTest = stageLabel;
 
 function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
   const pending = [...state.pending];
@@ -130,13 +187,17 @@ function fallbackReduce(state: CreatesState, a: CreateAction): CreatesState {
         pulled: false,
         permille: 0,
         image: a.image ?? null,
+        kind: a.kind ?? null,
       });
       break;
     case "progress":
       patch(a.id, (p) => {
         const i = Math.max(0, PHASES.indexOf(a.phase));
         const permille = Math.round(((i + (a.fraction ?? 0)) / PHASES.length) * 1000);
-        return { ...p, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
+        const bytes = a.bytesDone != null
+          ? { bytesDone: a.bytesDone, bytesTotal: a.bytesTotal ?? null, bytesPerSecond: a.bytesPerSecond ?? null }
+          : a.phase === p.phase ? {} : { bytesDone: null, bytesTotal: null, bytesPerSecond: null };
+        return { ...p, ...bytes, phase: a.phase, fraction: a.fraction, permille: Math.max(p.permille, Math.min(990, permille)) };
       });
       break;
     case "finish":
@@ -198,7 +259,7 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       name: p.name,
       os: p.os,
       status: "provisioning",
-      detail: p.error ? "Failed" : (PHASE_LABEL[p.phase] ?? "Creating…"),
+      detail: p.error ? "Failed" : stageLabel(p),
       lastUsedAt: p.startedAt,
       startedAt: p.startedAt,
       scene: SCENES[p.os],
@@ -206,8 +267,9 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       progress: {
         phase: p.phase,
         permille: p.permille,
-        label: p.error ? "Failed" : (PHASE_LABEL[p.phase] ?? "Creating…"),
+        label: p.error ? "Failed" : stageLabel(p),
         error: p.error ?? undefined,
+        transfer: !p.error && p.phase === "pulling" ? (transferText(p) ?? undefined) : undefined,
         cancellable: !p.error && !p.cancelling,
         cancelling: p.cancelling,
       },
@@ -242,6 +304,12 @@ export interface Machine {
   /** Online, but its owner stopped sharing it: why, in one line. Calls to it
    * are refused, so New Space lists it as not sharing. */
   notSharing?: string;
+  /** The core's status word for the row (`machines::status_word`), when
+   * the host listed the rows with the core. */
+  status?: string;
+  /** The core's Spaces count for the row (`machines::spaces_label`; empty
+   * for a device of its own), when the host listed the rows with the core. */
+  spacesLabel?: string;
   /** The machine this UI runs on. */
   current: boolean;
   model?: string;
@@ -271,11 +339,14 @@ export interface Machine {
 /** Which machine a Space runs on: its relay host, the machine itself for
  * its own desktop (`relay:<machine>`), or this machine for a local Space;
  * undefined for cloud Spaces. */
-export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current">[]): string | undefined {
-  if (space.host) return space.host;
-  if (space.provider === "local") return machines.find((m) => m.current)?.id;
+export function machineIdOf(space: Pick<Space, "id" | "host" | "provider">, machines: Pick<MachineRow, "id" | "current" | "host">[]): string | undefined {
+  const current = machines.find((m) => m.current);
+  // This computer's own relay machine id is this computer's row.
+  const here = (id: string) => (current?.host?.machineId && id === current.host.machineId ? current.id : id);
+  if (space.host) return here(space.host);
+  if (space.provider === "local") return current?.id;
   if (space.provider === "relay" && space.id.startsWith("relay:")) {
-    const own = space.id.slice("relay:".length);
+    const own = here(space.id.slice("relay:".length));
     if (machines.some((m) => m.id === own)) return own;
   }
   return undefined;
@@ -357,6 +428,7 @@ export function machinesInput(rows: MachineRow[], now: number): MachinesInput {
  * (`mergeMachines`). The device adds its detail and last session; a
  * device that is none of the machines stays a row of its own. */
 export function mergeMachineRows(rows: MachineRow[], core?: CoreClient, nowSecs = Math.floor(Date.now() / 1000)): MachineRow[] {
+  if (rows.some((r) => r.merged)) return rows;
   if (!rows.some((r) => r.device || r.presence != null)) return rows;
   const byId = new Map(rows.filter((r) => !r.device).map((r) => [r.id, r] as const));
   const devices = new Map(rows.filter((r) => r.device).map((r) => [r.id, r] as const));
@@ -391,6 +463,8 @@ export function toMachines(rows: MachineRow[], spaces: Space[], core?: CoreClien
       panel: m.current && m.host && core ? hostPanel(core, m.host) : undefined,
       ...(m.current && m.host?.progress ? { hostProgress: m.host.progress } : {}),
       ...(notSharing ? { notSharing } : {}),
+      ...(m.status ? { status: m.status } : {}),
+      ...(m.spacesLabel != null ? { spacesLabel: m.spacesLabel } : {}),
       ...(m.device ? { device: true } : {}),
       ...(m.current && m.accessNotice ? { accessNotice: m.accessNotice } : {}),
     };
@@ -531,6 +605,9 @@ export function settingsPage(
     // The host's own settings (the SwiftUI app's): the core lays out the
     // Runtimes section, auto-connect and the Keyvault's auto-wipe as there.
     keyvaultAutoWipe: settings.hostSettings?.keyvaultAutoWipe ?? null,
+    keyvaultUnlockPrompt: settings.hostSettings?.keyvaultUnlockPrompt ?? null,
+    keyvaultSiteIcons: settings.hostSettings?.keyvaultSiteIcons ?? true,
+    keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
     lumeSource: settings.hostSettings?.lumeSource ?? null,
     linuxSource: settings.hostSettings?.linuxSource ?? null,
@@ -587,12 +664,13 @@ export function keyvaultViews(
   overview: KeyvaultOverview,
   now: number,
   state: VaultState = INITIAL_VAULT_STATE,
+  os: HostOs = hostOs(),
 ): KeyvaultViews | null {
   if (core.status !== "ready") return null;
   return {
-    page: core.call<KvPage>("keyvault.page", { overview, now }),
+    page: core.call<KvPage>("keyvault.page", { overview, now, hostOs: os }),
     sidebar: core.call<KvSidebar>("keyvault.sidebar", { overview, now }),
-    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now }),
+    vault: core.call<VaultView>("keyvault.vaultView", { overview, state, now, hostOs: os }),
   };
 }
 
@@ -670,4 +748,14 @@ export function orderRuns<T extends SpaceAgentRun>(core: CoreClient, runs: T[]):
     if (out.length === runs.length) return out;
   }
   return [...runs].sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status] || (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+/* ---- Relay usage ---------------------------------------------------------- */
+
+/** Settings' Relay usage row and the notice past the allowance (the core's
+ * `relayUsage.view`; Upgrade falls back to `accountApp`'s billing page, the
+ * host's account app, as the page's core has no environment). No stand-in: without the core the page shows
+ * neither, rather than words of its own. */
+export function relayUsageView(core: CoreClient, usage: RelayUsage, accountApp: string | null = null): RelayUsageView | null {
+  return core.tryCall<RelayUsageView | null>("relayUsage.view", accountApp ? { usage, accountApp } : { usage }) ?? null;
 }

@@ -189,6 +189,27 @@ TMP_DIR=$(mktemp -d)
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
 
+print_path_hint() {
+    log "WARNING: $BIN_DIR is not on PATH."
+    echo "Add it for your shell with:"
+    local run_prefix=""
+    case "${SHELL:-}" in
+        */fish)
+            printf '  fish_add_path "%s"\n' "$BIN_DIR"
+            ;;
+        */nu|*/nushell)
+            printf '  $env.PATH = ($env.PATH | prepend "%s")\n' "$BIN_DIR"
+            run_prefix="^"
+            ;;
+        *)
+            echo "POSIX-compatible shells:"
+            printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+            ;;
+    esac
+    echo "Or run the installed binary directly:"
+    printf '  %s"%s" --version\n' "$run_prefix" "$BIN_LINK"
+}
+
 # The integer "version" of a GNOME helper metadata.json, or nothing.
 helper_metadata_version() {
     sed -n 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1 || true
@@ -631,7 +652,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.34.0" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.35.4" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -1543,21 +1564,20 @@ CUA_DRIVER_RELEASE_VERSION="$VERSION" \
 disown 2>/dev/null || true
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
-if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""
     case "${SHELL:-}" in
         */zsh)  SHELL_RC="$HOME/.zshrc"  ;;
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
-    if [[ -n "$SHELL_RC" ]]; then
+    if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
         {
             printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
             printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
         } >> "$SHELL_RC"
         log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
-    else
-        log "WARNING: $BIN_DIR is not on PATH; add it manually."
     fi
+    print_path_hint
 fi
 
 echo ""

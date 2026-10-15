@@ -25,6 +25,8 @@
 //! | [`teleport`] | picker filters and primary action, the review gate, drag-to-notch, transfer overlay |
 //! | [`keyvault`] | grouping, consent chips, decisions, categories, the approval sheet, the broker client |
 //! | [`onboarding`] | the first-run steps |
+//! | [`checklist`] | the getting-started checklist: its steps, what ticks them off, its usage events |
+//! | [`palette`] | the command palette's ranking and the shared keyboard shortcuts |
 //! | [`driver_preview`] | the AI agents page's background computer-use card (its animated miniature) |
 //! | [`settings`] | hotkey format, defaults, the settings file, the Settings page |
 //! | [`experiments`] | Settings, Experiments: one switch per feature still being built, and what each hides while off |
@@ -55,6 +57,7 @@ pub mod about;
 pub mod agent_keys;
 pub mod agents;
 pub mod billing;
+pub mod checklist;
 pub mod cloud_connect;
 pub mod devices;
 pub mod dispatch;
@@ -65,7 +68,6 @@ pub mod driver_preview;
 pub mod errors;
 pub mod experiments;
 pub mod host;
-#[cfg(feature = "installer")]
 pub mod installer;
 pub mod keyvault;
 pub mod login_item;
@@ -75,13 +77,16 @@ pub mod notch;
 pub mod notifications;
 pub mod onboarding;
 pub mod onboarding_preview;
+pub mod palette;
 pub mod parity;
 pub mod paths;
 pub mod persistent;
 pub mod presence;
+pub mod relay_usage;
 pub mod settings;
 pub mod share;
 pub mod spaces;
+pub mod teams;
 pub mod telemetry;
 pub mod teleport;
 mod util;

@@ -29,6 +29,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
   CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"

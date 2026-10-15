@@ -40,7 +40,10 @@ use std::{
 pub const DEFAULT_OIDC_ISSUER: &str = "https://auth.cua.ai/realms/cyclops-cs";
 /// Public OAuth client of the cua CLI and apps (`CUA_OIDC_CLIENT_ID`).
 pub const DEFAULT_CLIENT_ID: &str = "cua-cli";
-const DEFAULT_SCOPE: &str = "openid profile offline_access";
+/// `organization:*` lists every organization (team) the user belongs to in
+/// the token. Keycloak's plain `organization` scope leaves the claim empty
+/// once a user is in two or more, so the clients saw no team at all.
+const DEFAULT_SCOPE: &str = "openid profile offline_access organization:*";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh this long before expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
@@ -85,6 +88,8 @@ pub enum Error {
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[allow(dead_code)]
+mod chunked;
 #[cfg(target_os = "macos")]
 mod macos_keychain;
 
@@ -1076,14 +1081,14 @@ fn quiet() -> Option<macos_keychain::Quiet> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn vault_get(entry: &keyring::Entry) -> keyring::Result<String> {
+fn vault_get(entry: &VaultEntry) -> keyring::Result<String> {
     #[cfg(target_os = "macos")]
     let _quiet = quiet();
     entry.get_password()
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn vault_delete(entry: &keyring::Entry) -> keyring::Result<()> {
+fn vault_delete(entry: &VaultEntry) -> keyring::Result<()> {
     #[cfg(target_os = "macos")]
     let _quiet = quiet();
     entry.delete_credential()
@@ -1131,10 +1136,70 @@ fn vault_set(account: &str, text: &str) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn vault_set(account: &str, text: &str) -> Result<()> {
-    keyring::Entry::new(keyring_service(), account)
+    VaultEntry::new(keyring_service(), account)
         .map_err(store_err)?
         .set_password(text)
         .map_err(store_err)
+}
+
+/// macOS stores each item whole.
+#[cfg(target_os = "macos")]
+type VaultEntry = keyring::Entry;
+
+/// Windows Credential Manager refuses an entry over 2,560 bytes, which a
+/// session exceeds, so a long value is chunked over several entries (see
+/// [`chunked`]); the surface matches `keyring::Entry`.
+#[cfg(target_os = "windows")]
+struct VaultEntry {
+    service: String,
+    account: String,
+}
+
+#[cfg(target_os = "windows")]
+struct WinSlots<'a>(&'a str);
+
+#[cfg(target_os = "windows")]
+impl chunked::Slots for WinSlots<'_> {
+    type Err = keyring::Error;
+    fn read(&self, name: &str) -> keyring::Result<Option<String>> {
+        match keyring::Entry::new(self.0, name)?.get_password() {
+            Ok(s) => Ok(Some(s)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    fn write(&self, name: &str, value: &str) -> keyring::Result<()> {
+        keyring::Entry::new(self.0, name)?.set_password(value)
+    }
+    fn remove(&self, name: &str) -> keyring::Result<()> {
+        match keyring::Entry::new(self.0, name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl VaultEntry {
+    fn new(service: &str, account: &str) -> keyring::Result<Self> {
+        Ok(Self {
+            service: service.into(),
+            account: account.into(),
+        })
+    }
+    fn get_password(&self) -> keyring::Result<String> {
+        chunked::get(&WinSlots(&self.service), &self.account)?.ok_or(keyring::Error::NoEntry)
+    }
+    fn set_password(&self, text: &str) -> keyring::Result<()> {
+        chunked::set(&WinSlots(&self.service), &self.account, text)
+    }
+    fn delete_credential(&self) -> keyring::Result<()> {
+        if chunked::delete(&WinSlots(&self.service), &self.account)? {
+            Ok(())
+        } else {
+            Err(keyring::Error::NoEntry)
+        }
+    }
 }
 
 /// Whether a keychain error is macOS refusing to show a prompt
@@ -1150,8 +1215,8 @@ fn interaction_not_allowed(e: &keyring::Error) -> bool {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn keyring_entry() -> Result<keyring::Entry> {
-    keyring::Entry::new(keyring_service(), KEYRING_ACCOUNT).map_err(store_err)
+fn keyring_entry() -> Result<VaultEntry> {
+    VaultEntry::new(keyring_service(), KEYRING_ACCOUNT).map_err(store_err)
 }
 
 /// Whether a file store at `path` reads missing secrets from the OS
@@ -1186,8 +1251,8 @@ fn decode_secret(name: &str, text: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn secret_entry(name: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(keyring_service(), &format!("{KEYRING_ACCOUNT}.{name}")).map_err(store_err)
+fn secret_entry(name: &str) -> Result<VaultEntry> {
+    VaultEntry::new(keyring_service(), &format!("{KEYRING_ACCOUNT}.{name}")).map_err(store_err)
 }
 
 /// Writes a file readable only by the owner (0600 on Unix), atomically.
@@ -2072,6 +2137,17 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_scope_asks_for_every_organization() {
+        let scopes: Vec<&str> = super::DEFAULT_SCOPE.split_whitespace().collect();
+        assert!(scopes.contains(&"organization:*"));
+        assert!(scopes.contains(&"offline_access"));
+        assert_eq!(
+            super::Oidc::new("https://i.example", "c").scope,
+            super::DEFAULT_SCOPE
+        );
+    }
+
     use super::*;
 
     /// A cargo test binary is ad-hoc signed, like every development build:

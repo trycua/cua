@@ -245,7 +245,7 @@ export class FixtureDevices {
     const made: PairingCode = {
       id: `pc_fixture${n}`,
       code,
-      url: `https://spaces.cua.ai/add/${code}`,
+      url: `https://cua.ai/add/${code}`,
       installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
       installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
       state: "active",
@@ -279,7 +279,11 @@ export class FixtureSystem implements SystemServices {
   allow = true;
   loginItem = new FixtureLoginItem();
   updater = new FixtureUpdater(Date.UTC(2026, 9, 7, 12, 0));
+  shortcut: { label: string; registered: boolean } | null = { label: "\u2318\u21e7Space", registered: false };
   constructor(readonly home: string) {}
+  globalShortcut() {
+    return this.shortcut;
+  }
   async openExternal(url: string) {
     this.opened.push(url);
   }
@@ -301,8 +305,8 @@ export const HOST_METHODS = [
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
-  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
-  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
+  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
   "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.choose",
   "onboarding.get", "onboarding.complete",
 ];
@@ -313,7 +317,7 @@ export const HOST_OPS = [
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
-  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode",
-  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead",
+  "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
+  "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
   "host.setUp", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
 ];

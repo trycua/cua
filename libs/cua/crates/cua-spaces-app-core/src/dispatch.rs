@@ -14,10 +14,10 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, cloud_connect, devices, drive_mount_preview, drive_page,
-    drive_settings, driver_preview, experiments, host, login_item, machines, notch, notifications,
-    onboarding, onboarding_preview, paths, persistent, presence, settings, share, telemetry,
-    window, wizard,
+    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, drive_mount_preview,
+    drive_page, drive_settings, driver_preview, experiments, host, login_item, machines, notch,
+    notifications, onboarding, onboarding_preview, palette, paths, persistent, presence,
+    relay_usage, settings, share, telemetry, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -50,6 +50,7 @@ pub const METHODS: &[&str] = &[
     "creates.isDeleting",
     "creates.isPowering",
     "sidebar.build",
+    "sidebar.matches",
     "sidebar.detail",
     "sidebar.detailCopy",
     "sidebar.deleteFailedText",
@@ -226,6 +227,7 @@ pub const METHODS: &[&str] = &[
     "paths.displayPaths",
     "devices.view",
     "machines.merge",
+    "machines.pageRows",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -272,12 +274,18 @@ pub const METHODS: &[&str] = &[
     "telemetry.share",
     "telemetry.enroll",
     "telemetry.checklist",
+    "checklist.reduce",
+    "checklist.view",
+    "checklist.observeFrom",
+    "palette.keybindings",
+    "palette.rank",
     "telemetry.experimentsChanged",
     "telemetry.experimentsOn",
     "settings.withStorage",
     "experiments.page",
     "experiments.choose",
     "wizard.placementOptions",
+    "relayUsage.view",
 ];
 
 struct Args(Value);
@@ -368,6 +376,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or_default(),
             &a.get::<String>("id")?,
         )),
+        "sidebar.matches" => {
+            let fields = a.get::<Vec<String>>("fields")?;
+            out(sidebar::matches(
+                &a.get::<Option<String>>("query")?.unwrap_or_default(),
+                &fields.iter().map(String::as_str).collect::<Vec<_>>(),
+            ))
+        }
         "sidebar.build" => out(sidebar::sidebar(
             &a.get::<Vec<Space>>("spaces")?,
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
@@ -450,6 +465,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
         )),
+        // The page's core has no environment: the host names its account app
+        // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
+        "relayUsage.view" => {
+            let usage = a.get("usage")?;
+            out(match a.get::<Option<String>>("accountApp")? {
+                Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
+                _ => relay_usage::view(&usage),
+            })
+        }
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
         "wizard.findImage" => out(wizard::find_image(&a.get::<String>("ref")?)),
@@ -576,7 +600,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.pendingSummary" => out(kv::pending_summary(&a.get("pending")?)),
         "keyvault.pendingRows" => out(kv::pending_rows(&a.get("overview")?)),
         "keyvault.accessRows" => out(kv::access_rows(&a.get("overview")?, a.get("now")?)),
-        "keyvault.page" => out(kv::page(&a.get("overview")?, a.get("now")?)),
+        // `hostOs`: the shell's system, for its words (macOS when absent).
+        "keyvault.page" => out(kv::page_on(
+            &a.get("overview")?,
+            a.get("now")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "keyvault.sidebar" => out(browse::sidebar(&a.get("overview")?, a.get("now")?)),
         "keyvault.list" => out(browse::list(
             &a.get("overview")?,
@@ -588,10 +618,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("state")?,
             &a.get("action")?,
         )),
-        "keyvault.vaultView" => out(vault::view(
+        "keyvault.vaultView" => out(vault::view_on(
             &a.get("overview")?,
             &a.get("state")?,
             a.get("now")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "keyvault.vaultSource" => out(vault::vault_source(
             &a.get("overview")?,
@@ -621,10 +653,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.deleteConfirm" => {
             out(vault::delete_confirm(a.get("count")?, a.get("liveCopies")?))
         }
-        "keyvault.labels" => out(kv::labels()),
+        "keyvault.labels" => out(kv::labels_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "keyvault.recoveryKeyText" => out(kv::recovery_key_text(&a.get::<String>("key")?)),
-        "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form(
+        "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form_on(
             &a.get("overview")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         "keyvault.passphraseCheck" => out(crate::keyvault::credential::passphrase_check(
             a.get("mode")?,
@@ -808,6 +845,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "host.parseAllowList" => out(host::parse_allow_list(&a.get::<String>("value")?)),
         "machines.merge" => out(machines::merge(
             &a.get::<Option<machines::MachinesInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "machines.pageRows" => out(machines::page_rows(
+            &a.get::<Option<machines::MachinesPageInput>>("input")?
                 .unwrap_or_default(),
         )),
         "devices.view" => out(devices::devices_view(
@@ -1020,6 +1061,22 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "telemetry.enroll" => out(telemetry::enroll(&a.get("state")?, &a.get("action")?)),
         "telemetry.checklist" => out(telemetry::checklist(&a.get::<String>("event")?)),
+        "checklist.reduce" => out(checklist::reduce(
+            &a.get::<checklist::ChecklistState>("state")?,
+            &a.get::<checklist::ChecklistAction>("action")?,
+        )),
+        "checklist.view" => out(checklist::view(
+            &a.get::<checklist::ChecklistState>("state")?,
+        )),
+        "checklist.observeFrom" => out(checklist::observe_from(
+            &a.get::<Option<checklist::ChecklistSeen>>("seen")?
+                .unwrap_or_default(),
+        )),
+        "palette.keybindings" => out(palette::keybindings()),
+        "palette.rank" => out(palette::rank(
+            &a.get::<Vec<palette::PaletteEntry>>("entries")?,
+            &a.get::<String>("query")?,
+        )),
         "telemetry.experimentsChanged" => out(telemetry::experiments_changed(
             &a.get::<Option<experiments::Experiments>>("before")?
                 .unwrap_or_default(),
@@ -1054,6 +1111,31 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The page's core has no environment: Upgrade's billing fallback is the
+    /// account app the host names, else production's; only https is taken.
+    #[test]
+    fn relay_upgrade_falls_back_to_the_hosts_account_app() {
+        let usage = json!({
+            "metered": true, "plan": "free", "hoursUsed": 20.2, "hoursLimit": 20.0,
+            "softLimitReached": true, "reasons": ["hours"], "upgradeUrl": null,
+        });
+        let upgrade = |args: Value| {
+            call_value("relayUsage.view", args).unwrap()["notice"]["upgradeUrl"].clone()
+        };
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "https://app.staging.cua.ai"})),
+            json!("https://app.staging.cua.ai/billing")
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage, "accountApp": "javascript:alert(1)"})),
+            json!(format!("{}/billing", cua_home::env::account_app_url()))
+        );
+        assert_eq!(
+            upgrade(json!({"usage": usage})),
+            json!(format!("{}/billing", cua_home::env::account_app_url()))
+        );
     }
 
     /// The web asks the core whether a machine shares its desktop before it
@@ -1105,6 +1187,23 @@ mod tests {
         assert_eq!(lede(Value::Null), "Cua Spaces is in your menu bar.");
         assert_eq!(lede(json!("linux")), "Cua Spaces is in your system tray.");
         assert_eq!(lede(json!("windows")), "Cua Spaces is in your system tray.");
+    }
+
+    /// `keyvault.labels` says what confirms in the shell's system's words
+    /// (`hostOs`), and in a Mac's when it names none.
+    #[test]
+    fn keyvault_words_follow_the_hosts_system() {
+        let note = |args: Value| {
+            call_value("keyvault.labels", args).unwrap()["confirmNote"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(note(json!({})), "Touch ID confirms in the Cua daemon.");
+        assert_eq!(
+            note(json!({ "hostOs": "windows" })),
+            "Windows Hello or your password confirms in the Cua daemon."
+        );
     }
 
     /// `agentKeys.view` and `agentKeys.form` say where keys stay in the shell's

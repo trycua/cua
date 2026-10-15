@@ -369,6 +369,7 @@ pub struct LifecycleSessionSnapshot {
     pub ending: bool,
     pub started_for: Duration,
     pub idle: Duration,
+    pub idle_ttl: Duration,
     pub expires_in: Duration,
 }
 
@@ -727,6 +728,7 @@ pub fn session_snapshot(
         ending: record.pending_end.is_some(),
         started_for: record.started_at.elapsed(),
         idle,
+        idle_ttl: ttl,
         expires_in: ttl.saturating_sub(idle),
     })
 }
@@ -817,6 +819,7 @@ pub fn list_session_snapshots_with_prefix(
         .into_iter()
         .map(|(_, runtime_id, record)| {
             let idle = session_idle_duration(&runtime_id).unwrap_or_default();
+            let idle_ttl = record.idle_ttl.unwrap_or(ttl);
             LifecycleSessionSnapshot {
                 runtime_id,
                 public_label: record.public_label,
@@ -827,7 +830,8 @@ pub fn list_session_snapshots_with_prefix(
                 ending: record.pending_end.is_some(),
                 started_for: record.started_at.elapsed(),
                 idle,
-                expires_in: record.idle_ttl.unwrap_or(ttl).saturating_sub(idle),
+                idle_ttl,
+                expires_in: idle_ttl.saturating_sub(idle),
             }
         })
         .collect()

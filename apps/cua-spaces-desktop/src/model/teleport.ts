@@ -135,6 +135,7 @@ export function teleportConsent(c: Record<string, unknown>): TeleportConsent {
     exclude: strings(c.exclude) ?? [],
     fromVault: strings(c.fromVault),
     includePasswords: c.includePasswords === true,
+    passwordDomains: strings(c.passwordDomains),
   };
 }
 

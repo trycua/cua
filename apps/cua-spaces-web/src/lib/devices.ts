@@ -4,7 +4,7 @@
 // Words the Devices page formats itself (the core leaves dates to the shell,
 // as the SwiftUI app's `DevicesModel` does).
 
-import type { DeviceRow, DevicesLabels, ThisDevice } from "@/bridge";
+import type { DeviceBanner, DeviceRow, DevicesInput, DevicesLabels, DevicesView, ThisDevice } from "@/bridge";
 
 /** "Oct 27, 2026" (a medium date, no time). */
 export function dateText(secs: number, locale?: string): string {
@@ -65,4 +65,20 @@ export function devicesPageState(
   if (r.error && !r.data) return "error";
   if (!r.data) return "loading";
   return r.data.view ? "ready" : "no-view";
+}
+
+/**
+ * The bar above every page when this device needs enrolling or re-verifying
+ * (`DevicesModel.banner` in the SwiftUI app): signed in, and only once the
+ * relay was read. A first read the relay refused leaves no list behind (the
+ * hosts send an empty one with `readError`), and the SwiftUI app shows no
+ * bar then either; Settings, Devices says why.
+ */
+export function shellDevicesBanner(
+  data: { input: Pick<DevicesInput, "devices" | "readError">; view: Pick<DevicesView, "banner"> | null } | undefined,
+  signedIn: boolean | undefined,
+): DeviceBanner | null {
+  if (!signedIn || !data?.view) return null;
+  const read = !data.input.readError || (data.input.devices?.length ?? 0) > 0;
+  return read ? data.view.banner : null;
 }

@@ -232,9 +232,9 @@ enum Command {
   cua devices audit"
     )]
     Devices(devices_cmd::DevicesCmd),
-    /// Teams: share machines with every member and their agents. Owners
-    /// and admins invite (email or link), approve member devices, add
-    /// machines and read the audit log.
+    /// Teams (organizations of your cua.ai account) share machines with
+    /// every member and their agents. Owners and admins invite by email,
+    /// approve member devices and add machines.
     #[command(
         subcommand,
         after_help = "Examples:
@@ -242,7 +242,7 @@ enum Command {
   cua team invite AIGIS dillon@example.com
   cua team add-machine AIGIS local:build-box
   cua team approve AIGIS dev_0123456789abcdef01234567
-  cua team audit AIGIS"
+  cua team show AIGIS"
     )]
     Team(team_cmd::TeamCmd),
     /// Your relay allowance this month: live sessions, relay hours, and
@@ -1296,6 +1296,13 @@ async fn env_at(
 
 async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     let json = cli.json;
+    // Teams turned off (CUA_EXPERIMENTAL_TEAMS=0): refused before any
+    // sign-in, daemon or relay call.
+    if uses_teams(&cli.command) && !cua_home::experimental::teams_enabled() {
+        return Err(CuaError::InvalidArgument(
+            cua_home::experimental::TEAMS_UNAVAILABLE.into(),
+        ));
+    }
     // Commands that need no SDK handle.
     match &cli.command {
         Command::Images(cmd) => {
@@ -1671,6 +1678,21 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     match cli.command {
         Command::Host(cmd) => {
             let home = util::cua_home();
+            // An uninstall turns off the Spaces this machine provides first
+            // (each is on the relay as its own machine), best effort.
+            if matches!(
+                cmd,
+                host::HostCmd::Remove {
+                    uninstalling: true,
+                    ..
+                }
+            ) {
+                let rest = Cli {
+                    command: Command::Spaces(host::SpacesCmd::Ls { relay: None }),
+                    ..cli
+                };
+                host::turn_off_provided_spaces(&home, || open(&rest, false)).await;
+            }
             let flow = if matches!(&cmd, host::HostCmd::Setup { remote: true, .. }) {
                 cua_auth::Flow::Device
             } else {
@@ -1693,8 +1715,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         // Adding a machine is sharing the Space with the team: the same
         // path as `cua spaces share <space> team:<id>` (attach, confirm).
         Command::Team(team_cmd::TeamCmd::AddMachine { team, space, yes }) => {
-            let auth = devices_cmd::device_auth(&host::relay_url(None, &util::cua_home()))?;
-            let id = team_cmd::resolve_team(&auth, &team).await?;
+            let id = team_cmd::resolve_team(&util::cua_home(), &team).await?;
             let share = Cli {
                 command: Command::Spaces(host::SpacesCmd::Share {
                     space,
@@ -1758,12 +1779,17 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 // already has it; an embedded runtime gets it here), and
                 // an embedded runtime confirms on the terminal.
                 host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
-                if let Some(rt) = cua.embedded_runtime()
-                    && !rt.spaces().has_share_consent()
-                {
-                    let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
-                    rt.spaces()
-                        .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                let yes = matches!(cmd, host::SpacesCmd::Share { yes: true, .. });
+                if let Some(rt) = cua.embedded_runtime() {
+                    if !rt.spaces().has_share_consent() {
+                        rt.spaces()
+                            .set_share_consent(Some(Arc::new(host::TerminalConsent { yes })));
+                    }
+                } else if matches!(cmd, host::SpacesCmd::Share { .. }) {
+                    // The daemon asks for user presence on this computer.
+                    use std::io::IsTerminal as _;
+                    host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
+                    eprintln!("Confirm the share on this computer (Touch ID or your password).");
                 }
             }
             return host::run_spaces_sdk(&cua, cmd, json, out).await;
@@ -2492,6 +2518,49 @@ fn notice_mode(started_by: Option<&str>) -> cua_telemetry::NoticeMode {
     }
 }
 
+/// Whether `cmd` is a Teams command: `cua team`, `cua host pair --team`,
+/// or sharing a Space with (or unsharing it from) `team:<id>`.
+fn uses_teams(cmd: &Command) -> bool {
+    let team = |who: &str| who.trim().starts_with("team:");
+    match cmd {
+        Command::Team(_) => true,
+        Command::Host(host::HostCmd::Pair { team: Some(_), .. }) => true,
+        Command::Spaces(host::SpacesCmd::Share { who, .. }) => team(who),
+        Command::Spaces(host::SpacesCmd::Unshare { who: Some(who), .. }) => team(who),
+        _ => false,
+    }
+}
+
+/// The clap command `cua` parses with. Teams are experimental: without
+/// them, `cua team` and `cua host pair --team` stay out of help (they still
+/// parse, and are refused with a short reason).
+fn cli_command(teams: bool) -> clap::Command {
+    let cmd = Cli::command();
+    if teams {
+        return cmd;
+    }
+    cmd.mut_subcommand("team", |c| c.hide(true))
+        .mut_subcommand("host", |h| {
+            h.mut_subcommand("pair", |p| {
+                // Drop the Teams example too.
+                let examples = p.get_after_help().map(|h| {
+                    h.to_string()
+                        .lines()
+                        .filter(|l| !l.contains("team"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                let p = p
+                    .mut_arg("team", |a| a.hide(true))
+                    .mut_arg("no_wait", |a| a.hide(true));
+                match examples {
+                    Some(e) => p.after_help(e),
+                    None => p,
+                }
+            })
+        })
+}
+
 /// The `cua` command: parses this process's arguments, runs them and exits.
 /// The Cua Spaces build registers its [`extension`] first.
 pub fn main() {
@@ -2508,7 +2577,7 @@ pub fn main() {
     // `CUA_HOME` for a non-production `CUA_ENV` so every component and
     // child process (the daemon) uses that environment's home.
     unsafe { cua_home::env::pin_home() };
-    let matches = Cli::command().get_matches();
+    let matches = cli_command(cua_home::experimental::teams_enabled()).get_matches();
     let command = command_path(&matches);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let daemon_process = matches!(cli.command, Command::Daemon(DaemonCmd::Start { .. }));

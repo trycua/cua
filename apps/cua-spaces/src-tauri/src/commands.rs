@@ -998,6 +998,12 @@ pub async fn devices_create_pairing_code(
     state.0.devices()?.create_pairing_code(team).await
 }
 
+/// The account's Teams, for "Add a machine" and "Share".
+#[tauri::command]
+pub async fn teams_list(state: State<'_, AppState>) -> CmdResult<crate::devices::TeamsListView> {
+    state.0.devices()?.teams().await
+}
+
 /// The account's pairing codes, newest first (without the codes).
 #[tauri::command]
 pub async fn devices_pairing_codes(

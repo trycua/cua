@@ -244,6 +244,22 @@ pub fn end_tail() {
     drop(tail);
 }
 
+/// Advanced whenever the driver itself makes an app frontmost (bring_to_front,
+/// launch_app, any foreground delivery). The key-focus guard reverts a
+/// background target's self-activation only while this has not moved since
+/// the guard was armed, so it never undoes an activation the driver asked for.
+static INTENTIONAL_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record an activation the driver asked for.
+pub fn note_intentional_activation() {
+    INTENTIONAL_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The current intentional-activation epoch.
+pub fn intentional_epoch() -> u64 {
+    INTENTIONAL_EPOCH.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Take a late change recorded by a detached tail, if it is recent.
 fn take_late() -> Option<Late> {
     lock(&LATE)
@@ -898,12 +914,13 @@ mod tests {
         let _serial = lock(&TAIL_TEST_LOCK);
         end_tail();
         lock(&LATE).take();
-        let opened_at = Instant::now() + REPORT_WINDOW + Duration::from_millis(60);
+        let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_opened = opened.clone();
         let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
         let first = snap.detect_bounded_with(
             observation_bounds_from(Some("2000"), Some("10")),
             move || {
-                if Instant::now() >= opened_at {
+                if observed_opened.load(Ordering::SeqCst) {
                     (
                         vec![win(1, 7, "App", "Main"), win(2, 7, "App", "Save")],
                         Some(7),
@@ -914,6 +931,7 @@ mod tests {
             },
         );
         assert!(!first.needs_restore());
+        opened.store(true, Ordering::SeqCst);
         let wait_until = Instant::now() + Duration::from_secs(2);
         while lock(&LATE).is_none() && Instant::now() < wait_until {
             std::thread::sleep(Duration::from_millis(10));

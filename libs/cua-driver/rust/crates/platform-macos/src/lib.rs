@@ -12,6 +12,8 @@
 #![allow(clippy::result_large_err)]
 
 #[cfg(target_os = "macos")]
+pub mod apple_events;
+#[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
 pub mod ax;
@@ -24,6 +26,8 @@ pub mod capture;
 #[cfg(target_os = "macos")]
 pub mod cursor;
 #[cfg(target_os = "macos")]
+pub mod document_edit;
+#[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
 pub mod focus_steal;
@@ -31,6 +35,8 @@ pub mod focus_steal;
 pub mod history;
 #[cfg(target_os = "macos")]
 pub mod input;
+#[cfg(target_os = "macos")]
+pub mod key_focus_guard;
 #[cfg(target_os = "macos")]
 mod permission_observation;
 #[cfg(target_os = "macos")]

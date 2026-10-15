@@ -275,6 +275,123 @@ impl Default for MacOsBrowserPlatform {
     }
 }
 
+/// Number of live [`SelfActivationGuard`]s. Setup reads it to choose the
+/// background routes.
+static GUARDED_ATTACHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Whether a background existing-profile attach may run under the guard: only
+/// when WindowServer places the approved window on another Space than the
+/// user's active one. Chrome's consent window then opens on that Space, out of
+/// the user's sight; on the user's Space it would sit over their window.
+/// Whether an attach or cleanup is running under [`SelfActivationGuard`]: the
+/// setup then uses its background routes.
+pub(crate) fn guarded_attach_active() -> bool {
+    GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
+fn guarded_attach_allowed(window_on_current_space: Option<bool>) -> bool {
+    window_on_current_space == Some(false)
+}
+
+/// While alive, reverts every self-activation of `pid` within milliseconds:
+/// gives the user's exact key window front and key status back, re-keys it
+/// if key status stayed with Chrome, and puts it back above Chrome's window
+/// if Chrome lifted it. It holds off while the driver's own foreground or
+/// background-key turns run, so it never undoes the driver's input.
+struct SelfActivationGuard {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SelfActivationGuard {
+    fn start(pid: i32) -> Self {
+        GUARDED_ATTACHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        std::thread::spawn(move || {
+            if let Some(front) = user_front {
+                watch_self_activation(pid, front, &flag);
+            }
+        });
+        Self { stop }
+    }
+}
+
+impl Drop for SelfActivationGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        GUARDED_ATTACHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+    // Read before anything happens: after a key loss the user's app may
+    // report no focused window.
+    let user_key_window = crate::input::skylight::key_window_of_pid(front);
+    // A Chrome window the user had placed above their own stays there.
+    let above_before = crate::key_focus_guard::target_window_above_front(pid, front);
+    let rekey = || {
+        user_key_window.is_some_and(|wid| crate::input::skylight::make_exact_window_key(front, wid))
+    };
+    let mut last_rekey = Instant::now();
+    let mut last_order_check = Instant::now();
+    let mut epoch = crate::window_change_detector::intentional_epoch();
+    let mut quiet_until = Instant::now();
+    while !stop.load(Ordering::SeqCst) {
+        let now_epoch = crate::window_change_detector::intentional_epoch();
+        if now_epoch != epoch {
+            epoch = now_epoch;
+            quiet_until = Instant::now() + Duration::from_millis(400);
+        }
+        let calm = !crate::input::skylight::foreground_turn_active()
+            && !super::setup_ui::BACKGROUND_KEY_TURN.load(Ordering::SeqCst)
+            && Instant::now() >= quiet_until;
+        if calm {
+            let front_now = crate::input::skylight::front_process_pid();
+            if front_now == Some(pid) {
+                if !rekey() {
+                    crate::key_focus_guard::revert_now(pid, front);
+                }
+                last_rekey = Instant::now();
+            } else if front_now == Some(front) {
+                if !above_before && last_order_check.elapsed() >= Duration::from_millis(20) && {
+                    last_order_check = Instant::now();
+                    crate::key_focus_guard::target_window_above_front(pid, front)
+                } {
+                    // Chrome orders its window front a few ms after it
+                    // activates itself.
+                    rekey();
+                    if crate::key_focus_guard::target_window_above_front(pid, front) {
+                        crate::key_focus_guard::restore_order_now(pid, front);
+                    }
+                } else if crate::input::skylight::key_focus_pid() != Some(front)
+                    && last_rekey.elapsed() >= Duration::from_millis(30)
+                {
+                    // In front again, but key status stayed with Chrome.
+                    rekey();
+                    last_rekey = Instant::now();
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Bring `previous_pid` back to the front when `browser_pid` is in front.
+/// Leaves things alone when some other app took the front in the meantime.
+fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bool {
+    let (Ok(previous), Ok(browser)) = (i32::try_from(previous_pid), i32::try_from(browser_pid))
+    else {
+        return false;
+    };
+    if previous == browser || crate::apps::frontmost_pid() != Some(browser) {
+        return false;
+    }
+    crate::apps::activate_pid(previous)
+}
+
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
@@ -769,7 +886,47 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
-        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
+        // Measured on Chrome 155 with another app frontmost: CDP
+        // Input.dispatchMouseEvent (with and without focus emulation) into a
+        // hidden background tab, and into the active tab of a window behind
+        // another app, delivered trusted events (isTrusted=true) without
+        // changing the frontmost app or raising the browser window, including
+        // clicks that focus inputs, buttons, links and selects. The
+        // background click route never calls Page.bringToFront or
+        // Target.activateTarget.
+        None
+    }
+
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        // Measured on Chrome 154 (no driver input involved): Chrome activates
+        // itself ~50 ms after any new DevTools client connects, to show its
+        // "Allow remote debugging?" sheet. Turning the per-instance setting on
+        // also activates it: its New Tab action does, and its address bar
+        // only navigates on real keystrokes.
+        Some(
+            "Chrome brings itself to the front to show its \"Allow remote debugging?\" prompt \
+             whenever a new DevTools connection opens (sessions then share that one connection), \
+             and turning remote debugging on needs Chrome in front",
+        )
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        let pid = i32::try_from(browser_pid).ok()?;
+        let window_id = u32::try_from(window_id).ok()?;
+        guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn std::any::Any + Send>)
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        crate::apps::frontmost_pid().map(i64::from)
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        restore_front_app_if_browser_front(previous_pid, browser_pid)
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -1066,13 +1223,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             )
         })?;
         let listeners_before = loopback_ports_for_pid(request.pid).await?;
-        let handle = crate::focus_guard::with_focus_suppressed_now(
-            Some(pid),
-            "browser_prepare.remote_debugging",
-            || async move {
-                tokio::task::spawn_blocking(move || {
-                    super::setup_ui::enable(pid, window_id, descriptor)
-                })
+        let run_setup = move || async move {
+            tokio::task::spawn_blocking(move || super::setup_ui::enable(pid, window_id, descriptor))
                 .await
                 .map_err(|error| {
                     refusal(
@@ -1083,9 +1235,21 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         ),
                     )
                 })?
-            },
-        )
-        .await?;
+        };
+        // Under the self-activation guard, the setup's background key turns make
+        // Chrome's window key on purpose; the generic focus-steal lease would
+        // re-activate the user's app in the middle of them and drop Chrome's
+        // input. The guard reverts Chrome's own activations instead.
+        let handle = if GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            run_setup().await?
+        } else {
+            crate::focus_guard::with_focus_suppressed_now(
+                Some(pid),
+                "browser_prepare.remote_debugging",
+                run_setup,
+            )
+            .await?
+        };
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
         let used_bounded_pixel_fallback = handle.used_bounded_pixel_fallback;
@@ -1249,13 +1413,27 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 "the approved browser window is outside the macOS window-id range",
             )
         })?;
-        run_committed_consent_cleanup(
+        // Turning remote debugging back off reopens Chrome's setup page,
+        // which brings Chrome to the front; hand the front back afterwards.
+        let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        // Chrome on another Space: the same guarded background routes as the
+        // attach, so the cleanup does not bring Chrome forward either.
+        let _guard = previous_front
+            .filter(|_| {
+                guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+            })
+            .map(|_| SelfActivationGuard::start(pid));
+        let result = run_committed_consent_cleanup(
             CONSENT_CLEANUP_PASSES,
             || super::consent_ui::dismiss(pid, window_id),
             || super::setup_ui::disable(pid, window_id, descriptor),
             || visible_consent_surfaces(pid),
             || std::thread::sleep(Duration::from_millis(100)),
-        )
+        );
+        if let Some(previous) = previous_front {
+            restore_front_app_if_browser_front(i64::from(previous), request.pid);
+        }
+        result
     }
 
     async fn abort_existing_profile_setup(
@@ -1673,6 +1851,39 @@ mod tests {
             state.position.is_none(),
             "an inactive tab must not animate or move its visible cursor"
         );
+    }
+
+    #[test]
+    fn existing_profile_attach_declares_its_foreground_limitation() {
+        let platform = MacOsBrowserPlatform::default();
+        let limitation = platform
+            .existing_profile_attach_background_limitation()
+            .expect("macOS Chrome attachment brings Chrome forward");
+        assert!(limitation.contains("Allow remote debugging?"));
+    }
+
+    #[test]
+    fn guarded_background_attach_only_for_a_window_on_another_space() {
+        assert!(guarded_attach_allowed(Some(false)));
+        assert!(!guarded_attach_allowed(Some(true)));
+        // Unknown Space placement keeps the honest refusal.
+        assert!(!guarded_attach_allowed(None));
+    }
+
+    #[test]
+    fn guarded_attach_flag_follows_live_guards() {
+        assert!(!guarded_attach_active());
+        let guard = SelfActivationGuard::start(i32::MAX);
+        assert!(guarded_attach_active());
+        drop(guard);
+        assert!(!guarded_attach_active());
+    }
+
+    #[test]
+    fn front_restore_never_targets_the_browser_or_an_invalid_pid() {
+        assert!(!restore_front_app_if_browser_front(42, 42));
+        assert!(!restore_front_app_if_browser_front(i64::MAX, 42));
+        assert!(!restore_front_app_if_browser_front(42, i64::MIN));
     }
 
     #[test]

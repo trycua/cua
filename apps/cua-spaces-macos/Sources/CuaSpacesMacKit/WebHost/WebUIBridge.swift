@@ -45,6 +45,9 @@ public struct WebUIActions {
 /// its New Space wizard (the app's New Space menu items, the notch).
 /// `settings.openRequested` asks the page to open its Settings (the app
 /// menu's Settings command, ⌘,, while the New UI window is in front).
+/// `window.dropTarget` (`{spaceId}`, null for none) names the Space tile a
+/// real window is being dragged over (`window.setDropTargets` said where the
+/// tiles are; the notch's drag monitor follows the drag).
 ///
 /// Every method routes to the view models the SwiftUI windows use, so a
 /// decision is the app core's either way. `spaces.cancelCreate`,
@@ -68,6 +71,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
         "agents.setup", "agents.configure",
+        // A persistent agent's Memory, Routines and Access (`PersistentModel`).
+        "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
+        "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.set", "agentKeys.remove",
         // New Space's address form and Connect a cloud, Teleport and Share,
         // Cua Volume, Settings and Notifications, a Space's detail and This
@@ -81,8 +87,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.setupDriver",
         "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
         "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
-        "devices.revoke", "devices.confirmMachine", "storage.get", "storage.run",
-        "notifications.list", "notifications.markAllRead",
+        "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
+        "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
+        "notifications.list", "notifications.markAllRead", "notifications.markRead",
         "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
@@ -95,8 +102,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
         "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
         "window.setBackgroundColor", "window.setDragRegions",
+        // Where the page's Space tiles are, for a real window dragged onto one.
+        "window.setDropTargets",
         // The launch (WebUIBridge+Startup.swift).
         "startup.get", "startup.act",
+        // The relay allowance this month (WebUIBridge+Pages.swift).
+        "relay.usage",
+        // The getting-started checklist: the app's one copy (`ChecklistModel`).
+        "checklist.get", "checklist.send",
     ]
 
     let model: AppModel
@@ -113,6 +126,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var teleportPlans: [String: (json: String, plan: TeleportPlan, providerId: String?)] = [:]
     /// Asks whether to delete (the native alert); tests answer it.
     var askDelete: (@MainActor (KvDeleteConfirm) async -> Bool)?
+    /// Asks for the passphrase (the native sheet); tests fill the model's
+    /// fields and answer it.
+    var askPassphrase: (@MainActor (KvCredentialForm) async -> Bool)?
     /// Each Space's stream rows and picture-in-picture panels, as its
     /// detail view keeps them. A deleted Space's are closed and dropped
     /// (`pruneStreams`).
@@ -123,6 +139,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var pendingNewSpace: String??
     /// Settings asked for before the page listened.
     var pendingSettings = false
+    /// A route asked for before the page listened (the latest wins).
+    var pendingRoute: String?
     /// Local paths the user picked or dropped here: the only ones
     /// `spaces.sendFiles` sends (WebUIBridge+Files.swift).
     var offeredPaths: Set<String> = []
@@ -195,6 +213,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             pendingSettings = false
             DispatchQueue.main.async { [weak self] in self?.emitSettings() }
         }
+        if let path = pendingRoute {
+            pendingRoute = nil
+            DispatchQueue.main.async { [weak self] in self?.emitRoute(path) }
+        }
     }
 
     static func reply(id: String, error: Failure) -> [String: Any] {
@@ -258,6 +280,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
              "agents.setup", "agents.configure":
             return try await agents(method, args)
+
+        case "checklist.get": return ["state": model.checklist.stored]
+        case "checklist.send":
+            model.checklist.send(try checklistAction(args["action"]))
+            return ["state": model.checklist.stored]
+        case "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
+             "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
+            return try await agentDetail(method, args)
 
         case "settings.get": return settings()
         case "settings.choose":
@@ -340,6 +370,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let rects = args["rects"] as? [[String: Any]] else { throw Failure.badArgs("rects: [{x,y,width,height}]") }
             host?.setDragRegions(rects.compactMap(Self.rect))
             return NSNull()
+        case "window.setDropTargets":
+            host?.setDropTargets(try Self.dropTargets(args))
+            return NSNull()
 
         default:
             if let result = try routeStartup(method, args) { return result }
@@ -412,17 +445,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // connect probe can time out on a host the relay reaches.
             "presence": model.devices.relayOnline,
             "deviceStates": model.devices.deviceStates,
+            // The page's rows as the core lists them (`machines::page_rows`,
+            // what the native Machines page shows).
+            "rows": BridgeValue.encode(model.machinePageRows),
         ]
     }
 
     /// `relay:<machine>` rows' reported hostnames, by machine id.
-    func relayHostnames() -> [String: String] {
-        var out: [String: String] = [:]
-        for space in model.spaces where space.id.hasPrefix("relay:") && space.host == nil {
-            if let name = model.backend.reportedHostname(id: space.id) { out[String(space.id.dropFirst(6))] = name }
-        }
-        return out
-    }
+    func relayHostnames() -> [String: String] { model.relayHostnames }
 
     func settings() -> [String: Any] {
         [
@@ -430,6 +460,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "experiments": BridgeValue.encode(model.experimentsPage),
             // Settings → About's channel; null while this build has no updater.
             "updateChannel": model.updates.updater == nil ? NSNull() : (model.updates.channel == .beta ? "beta" : "stable"),
+            // ⌘⇧Space, and whether the system gave it (tried again on each read).
+            "globalShortcut": GlobalShortcut.installed?.bridgeValue ?? NSNull(),
+            // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
+            // has no environment, so Upgrade's billing fallback names this one.
+            "accountUrl": appAccountAppUrl(),
         ]
     }
 
@@ -454,6 +489,18 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     func emitSettings() {
         host?.emit("settings.openRequested")
+    }
+
+    // MARK: - Routes (the notch and the menu bar item open the page at one)
+
+    /// Asks the page to go to `path` (`/spaces/<id>`, `/settings`, ...);
+    /// queued until the page listens.
+    func requestRoute(_ path: String) {
+        if pageListening { emitRoute(path) } else { pendingRoute = path }
+    }
+
+    func emitRoute(_ path: String) {
+        host?.emit("route.openRequested", payload: ["path": path])
     }
 
     /// `spaces.createOptions`: the env the native New Space sheet opens
@@ -572,6 +619,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return try await persistent.listAgents()
         case "agents.runs":
             let runs = AgentRunsModel(backend: model.backend, spaceId: try string(args, "spaceId"))
+            runs.onRead = { [weak model] in model?.sawAgentRuns($0) }
             await runs.refresh()
             switch runs.load {
             case .ready(let rows): return BridgeValue.encode(rows)
@@ -602,6 +650,52 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
             return BridgeValue.encode(model.agentRows ?? [])
+        default:
+            throw Failure.unimplemented(method)
+        }
+    }
+
+    /// One persistent agent's Memory, Routines and Access: what the native
+    /// Agents page reads (`PersistentModel.detail`, `readFile`) and the
+    /// changes it runs (`perform`), one method each. The page reduces and
+    /// draws with the app core itself.
+    func agentDetail(_ method: String, _ args: [String: Any]) async throws -> Any {
+        let persistent = model.persistent
+        guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+        switch method {
+        case "agents.detail":
+            var detail = try await persistent.detail(try string(args, "name"))
+            // As the native Agents page sets it when it opens.
+            let id = model.sidebar.thisMachine?.id
+            detail["thisMachine"] = id?.hasPrefix("relay:") == true ? id : NSNull()
+            return detail
+        case "agents.readFile":
+            return try await persistent.readFile(try string(args, "path"))
+        default:
+            try await persistent.perform(try agentsRequest(method, args))
+            return NSNull()
+        }
+    }
+
+    /// The core's request for one of the change methods.
+    func agentsRequest(_ method: String, _ args: [String: Any]) throws -> AppAgentsRequest {
+        let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+        switch method {
+        case "agents.restoreFile":
+            return .restore(path: try string(args, "path"), version: try string(args, "version"))
+        case "agents.addRoutine":
+            return .addRoutine(agent: try string(args, "agent"), title: try string(args, "title"), prompt: try string(args, "prompt"),
+                               everyMinutes: (args["everyMinutes"] as? NSNumber)?.uint32Value,
+                               dailyAt: text("dailyAt"), weeklyOn: text("weeklyOn"))
+        case "agents.setRoutine":
+            guard let enabled = args["enabled"] as? Bool else { throw Failure.badArgs("enabled: boolean") }
+            return .setRoutine(id: try string(args, "id"), enabled: enabled)
+        case "agents.removeRoutine":
+            return .removeRoutine(id: try string(args, "id"))
+        case "agents.allowComputer":
+            return .allow(agent: try string(args, "agent"), machine: try string(args, "machine"))
+        case "agents.revokeComputer":
+            return .revoke(agent: try string(args, "agent"), machine: try string(args, "machine"))
         default:
             throw Failure.unimplemented(method)
         }
@@ -732,38 +826,49 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
-    /// Unlocks (or sets up) the vault with Touch ID, the daemon's prompt. A
-    /// passphrase vault unlocks in the native window: a passphrase never
-    /// crosses the bridge.
+    /// Unlocks the vault the way the core's form offers: Touch ID (the
+    /// daemon's prompt), or a passphrase typed in a native sheet on this
+    /// window (it never crosses the bridge).
     func unlockVault() async throws {
         let kv = model.keyvault
         guard let form = kv.page.form else { return }
-        guard form.method == .touchId else {
-            actions?.openMain()
-            model.selection = .keyvault(.category(category: .all))
-            throw Failure(code: "native_only", message: "Enter the passphrase in the Cua Spaces window")
-        }
+        try await askCredential(form, cancelled: "Unlock cancelled")
         await kv.submitCredential()
     }
 
-    /// "Set up Keyvault" on the web page: the core's setup form with Touch
-    /// ID, as the SwiftUI form sends it. A passphrase is typed only in the
-    /// native form (it never crosses the bridge). Answers the recovery key
-    /// to show once.
+    /// "Set up Keyvault" on the web page: the core's setup form, Touch ID
+    /// or a passphrase (asked as for unlock), sent as the SwiftUI form
+    /// sends it. Answers the recovery key to show once.
     func setUpVault() async throws -> String? {
         let kv = model.keyvault
         guard let form = kv.page.form, form.mode == .setup else {
             throw Failure(code: "failed", message: "Keyvault is already set up")
         }
-        guard form.method == .touchId else {
-            actions?.openMain()
-            model.selection = .keyvault(.category(category: .all))
-            throw Failure(code: "native_only", message: "Choose a passphrase in the Cua Spaces window")
-        }
+        try await askCredential(form, cancelled: "Set up cancelled")
         kv.recoveryKey = nil
         await kv.submitCredential()
         if let error = kv.error { throw Failure(code: "failed", message: error) }
         return kv.recoveryKey
+    }
+
+    /// A passphrase form: the sheet fills the model's fields. Closed
+    /// without sending: `cancelled`, and the fields are cleared.
+    func askCredential(_ form: KvCredentialForm, cancelled: String) async throws {
+        guard form.method == .passphrase else { return }
+        let kv = model.keyvault
+        let sent: Bool
+        if let askPassphrase {
+            sent = await askPassphrase(form)
+        } else if let host {
+            sent = await host.askPassphrase(form, keyvault: kv)
+        } else {
+            sent = false
+        }
+        guard sent, kv.canSubmitCredential else {
+            kv.passphrase = ""
+            kv.passphraseConfirm = ""
+            throw Failure(code: "cancelled", message: cancelled)
+        }
     }
 
     // MARK: - Arguments
@@ -784,10 +889,51 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         return s
     }
 
+    /// `{targets: [{spaceId, x, y, width, height}]}` as each tile's box by
+    /// Space id (CSS pixels from the page's top left).
+    static func dropTargets(_ args: [String: Any]) throws -> [String: CGRect] {
+        let bad = Failure.badArgs("targets: [{spaceId,x,y,width,height}]")
+        guard let targets = args["targets"] as? [[String: Any]] else { throw bad }
+        var frames: [String: CGRect] = [:]
+        for t in targets {
+            guard let id = t["spaceId"] as? String, let r = rect(t) else { throw bad }
+            frames[id] = r
+        }
+        return frames
+    }
+
     static func rect(_ r: [String: Any]) -> CGRect? {
         func n(_ k: String) -> CGFloat? { (r[k] as? NSNumber).map { CGFloat(truncating: $0) } }
         guard let x = n("x"), let y = n("y"), let w = n("width"), let h = n("height") else { return nil }
         return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    // MARK: - The checklist
+
+    /// A page's checklist action: a step done, shown, closed, opened again,
+    /// or progress the page kept itself before (merged once). What the app
+    /// shows ticks steps off here, not in the page (`AppModel.followChecklist`).
+    func checklistAction(_ raw: Any?) throws -> AppChecklistAction {
+        guard let a = raw as? [String: Any], let type = a["type"] as? String else {
+            throw Failure.badArgs("action: {type}")
+        }
+        switch type {
+        case "done":
+            guard let word = a["step"] as? String,
+                  let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
+            else { throw Failure.badArgs("step: one of the checklist's steps") }
+            return .done(step: step)
+        case "shown": return .shown
+        case "dismiss": return .dismiss
+        case "reopen": return .reopen
+        case "merge":
+            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown}") }
+            return .merge(state: ChecklistModel.state(done: s["done"] as? [String] ?? [],
+                                                      dismissed: s["dismissed"] as? Bool ?? false,
+                                                      shown: s["shown"] as? Bool ?? false))
+        default:
+            throw Failure.badArgs("action: done, shown, dismiss, reopen or merge")
+        }
     }
 
     // MARK: - Events
@@ -808,6 +954,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let self else { return "" }
             return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
         }
+        followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }
         followChanges("agents.changed") { [model] in
             Self.signature([model.persistent.agentsInput["agents"] ?? NSNull(),
                             BridgeValue.encode(model.agentRows), model.agentsPending])

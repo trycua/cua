@@ -37,12 +37,14 @@ pub mod direct;
 pub mod driver;
 mod host;
 pub mod machine;
+pub mod pairing;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
 pub mod service;
 #[cfg(test)]
 mod setup_tests;
+pub mod spaces_api;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
@@ -56,13 +58,17 @@ pub use host::{
     SpacesDaemon, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
+pub use pairing::{
+    PairingCode, PairingCodeRequest, PairingCodeToken, add_machine_url, display_pairing_code,
+    install_command, normalize_pairing_code, pairing_link_relay,
+};
 pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,
 };
 pub use relay::{
     AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DeviceListing, DeviceState,
-    DeviceView, Enrollment, Identity, Machine, MachinePatch, NoAccount, RelayClient, StaticToken,
-    relay_url_from_env,
+    DeviceView, Enrollment, Identity, Machine, MachinePatch, NoAccount, RelayClient, RelayUsage,
+    RelayUsageTeam, StaticToken, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 

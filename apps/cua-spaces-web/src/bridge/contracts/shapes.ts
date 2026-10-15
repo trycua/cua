@@ -22,8 +22,8 @@
  * contract test fails when it is out of date.
  */
 
-import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
-import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice } from "./devices";
+import type { AgentDetailInput, AgentEventsPage, AgentOpenFile, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
+import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode, TeamChoice, TeamsList } from "./devices";
 import type {
   CancelOutcome,
   DaemonStatus,
@@ -58,9 +58,12 @@ import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow,
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
+import type { RelayUsage } from "../ops/relay-usage";
+import type { HostChecklistState } from "../ops/checklist";
+import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -168,6 +171,9 @@ const MachineRowShape = ref(
     hostname: opt(str),
     presence: optNull(bool),
     accessNotice: optNull(MachineAccessNoticeShape),
+    merged: opt(bool),
+    status: opt(str),
+    spacesLabel: opt(str),
   }),
 );
 
@@ -216,8 +222,18 @@ const SettingsShape = ref(
       obj<TelemetryView>()({ enabled: bool, source: str, sourceKind: str, noticeShown: bool, noticeText: str, docsUrl: str }),
     ),
     hostSettings: opt(
-      obj<HostSettings>()({ lumeSource: optNull(str), linuxSource: optNull(str), autoConnect: optNull(bool), keyvaultAutoWipe: optNull(bool) }),
+      obj<HostSettings>()({
+        lumeSource: optNull(str),
+        linuxSource: optNull(str),
+        autoConnect: optNull(bool),
+        keyvaultAutoWipe: optNull(bool),
+        keyvaultUnlockPrompt: optNull(bool),
+        keyvaultSiteIcons: optNull(bool),
+        keyvaultProtection: optNull(list(obj<{ label: string; value: string }>()({ label: str, value: str }))),
+      }),
     ),
+    globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
+    accountUrl: optNull(str),
   }),
 );
 
@@ -274,6 +290,33 @@ const DevicesShape = ref(
   }),
 );
 
+const PairingCodeShape = ref(
+  "PairingCode",
+  obj<PairingCode>()({
+    id: str,
+    code: nullable(str),
+    url: nullable(str),
+    installSh: nullable(str),
+    installPowershell: nullable(str),
+    state: oneOf("active", "used", "revoked", "expired"),
+    team: nullable(str),
+    createdAt: num,
+    expiresAt: num,
+    usedAt: nullable(num),
+    machine: nullable(str),
+  }),
+);
+
+const TeamsListShape = ref(
+  "TeamsList",
+  obj<TeamsList>()({
+    teams: list(
+      obj<TeamChoice>()({ id: str, alias: str, name: str, role: str, plan: str }),
+    ),
+    currentTeamId: nullable(str),
+  }),
+);
+
 const DriveMountShape = ref(
   "DriveMountInput",
   obj<DriveMountInput>()({
@@ -323,7 +366,7 @@ const VolumeShape = ref(
 
 const NotificationShape = ref(
   "NotificationInput",
-  obj<NotificationInput>()({ id: str, atMs: num, agent: optNull(str), kind: str, title: str, body: str, read: opt(bool) }),
+  obj<NotificationInput>()({ id: str, atMs: num, agent: optNull(str), kind: str, title: str, body: str, read: opt(bool), space: optNull(str) }),
 );
 
 const AgentKeysShape = ref(
@@ -354,6 +397,7 @@ const LocalStorageShape = ref(
   "LocalStorage",
   obj<LocalStorage>()({
     reserveBytes: num,
+    linuxRuntimeDownloadBytes: opt(num),
     lume: nullable(StorageVolumeShape),
     qemu: nullable(StorageVolumeShape),
     container: nullable(StorageVolumeShape),
@@ -404,6 +448,7 @@ const WizardEnvShape = ref(
     hosts: opt(list(object({ id: str, name: str, via: str, online: bool, os: str, limits }))),
     experiments: opt(ExperimentsShape),
     gpus: optNull(list(GpuShape)),
+    nameSeed: optNull(num),
   }),
 );
 const createOptions = (strict: boolean) =>
@@ -541,7 +586,71 @@ const KvGrantShape = ref(
 
 const hostStatusOrNull = HostStatusShape;
 const agentSetupRows = list(AgentSetupRowShape);
+const AgentDetailShape = ref(
+  "AgentDetailInput",
+  obj<AgentDetailInput>()({
+    home: list(object({ path: str, name: str, size: num })),
+    routines: list(object({ id: str, title: str, label: str, enabled: bool })),
+    grants: list(object({ agent: str, machine: str, revoked: bool })),
+    audit: list(object({ tsMs: num, action: str, principal: str, path: str, detail: str })),
+    thisMachine: nullable(str),
+  }),
+);
+const AgentOpenFileShape = ref(
+  "AgentOpenFile",
+  obj<AgentOpenFile>()({
+    path: str,
+    text: str,
+    binary: bool,
+    versions: list(object({ version: str, modifiedMs: num, deleted: bool, latest: bool })),
+  }),
+);
 const shares = list(ShareShape);
+const PresenceParticipantShape = ref(
+  "PresenceParticipant",
+  obj<PresenceParticipantWire>()({ participantId: str, principalId: str, displayName: str, color: str, kind: str }),
+);
+const PresenceCursorShape = ref(
+  "PresenceCursor",
+  obj<PresenceCursorWire>()({
+    displayId: str,
+    windowId: opt(str),
+    x: num,
+    y: num,
+    visible: bool,
+    pressed: bool,
+    shape: str,
+    shapeSource: str,
+    atMs: num,
+    receivedMs: num,
+  }),
+);
+
+/** The host's copy of the checklist (`ops/checklist.ts`). */
+const ChecklistAnswerShape = object({
+  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
+});
+
+/** One Machines row as the core lists it (`machines::MachinePageRow`). */
+const MachinePageRowShape = ref(
+  "MachinePageRow",
+  object({
+    id: str,
+    name: str,
+    online: bool,
+    os: str,
+    via: str,
+    current: bool,
+    device: nullable(str),
+    deviceOnly: bool,
+    spaceId: nullable(str),
+    stoppedSharing: bool,
+    lastSeen: nullable(num),
+    status: str,
+    spaces: num,
+    spacesLabel: str,
+  }),
+);
 
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
@@ -608,6 +717,14 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.detail": AgentDetailShape,
+  "agents.readFile": AgentOpenFileShape,
+  "agents.restoreFile": nul,
+  "agents.addRoutine": nul,
+  "agents.setRoutine": nul,
+  "agents.removeRoutine": nul,
+  "agents.allowComputer": nul,
+  "agents.revokeComputer": nul,
 
   "spaces.createOptions": NewSpaceOptionsShape,
   "spaces.add": SpaceRowShape,
@@ -686,6 +803,33 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.setupDriver": list(obj<AgentSetupOutcome>()({ agents: strings, target: str, item: str, change: str, detail: str })),
 
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
+  "relay.usage": nullable(
+    obj<RelayUsage>()({
+      metered: bool,
+      period: str,
+      plan: str,
+      team: nullable(object({ id: str, seats: num })),
+      liveSessions: num,
+      liveSessionsLimit: nullable(num),
+      hoursUsed: num,
+      hoursLimit: nullable(num),
+      myHoursUsed: num,
+      softLimitReached: bool,
+      reasons: strings,
+      upgradeUrl: nullable(str),
+    }),
+  ),
+  "checklist.get": ChecklistAnswerShape,
+  "checklist.send": ChecklistAnswerShape,
+  "presence.join": obj<PresenceJoinInfo>()({
+    handle: str,
+    me: PresenceParticipantShape,
+    members: list(object({ participant: PresenceParticipantShape, cursor: opt(PresenceCursorShape) })),
+    delayMs: num,
+    datagrams: bool,
+  }),
+  "presence.publish": nul,
+  "presence.leave": nul,
 
   "about.get": AboutShape,
   "about.set": AboutShape,
@@ -702,10 +846,15 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "devices.rename": nul,
   "devices.revoke": nul,
   "devices.confirmMachine": nul,
+  "devices.createPairingCode": PairingCodeShape,
+  "devices.pairingCodes": list(PairingCodeShape),
+  "devices.revokePairingCode": nul,
+  "teams.list": TeamsListShape,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
+  "notifications.markRead": nul,
 
   "telemetry.track": nul,
   "spaces.usage": nullable(
@@ -819,6 +968,7 @@ const WkSettingsShape = ref(
               label: str,
               enabled: bool,
               help: optNull(str),
+              value: optNull(str),
               options: list(object({ id: str, label: str, active: bool })),
             }),
           ),
@@ -826,6 +976,8 @@ const WkSettingsShape = ref(
       ),
     }),
     updateChannel: optNull(oneOf("stable", "beta")),
+    globalShortcut: optNull(object({ label: str, registered: bool })),
+    accountUrl: optNull(str),
   }),
 );
 
@@ -855,6 +1007,7 @@ const WkMachinesShape = ref(
     presence: optNull(dict(bool)),
     deviceStates: optNull(dict(str)),
     accessNotice: optNull(MachineAccessNoticeShape),
+    rows: opt(list(MachinePageRowShape)),
   }),
 );
 
@@ -951,6 +1104,14 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
+  "agents.detail": AgentDetailShape,
+  "agents.readFile": AgentOpenFileShape,
+  "agents.restoreFile": nul,
+  "agents.addRoutine": nul,
+  "agents.setRoutine": nul,
+  "agents.removeRoutine": nul,
+  "agents.allowComputer": nul,
+  "agents.revokeComputer": nul,
   "agentKeys.list": AgentKeysWire,
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
@@ -994,10 +1155,15 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "devices.rename": nul,
   "devices.revoke": nul,
   "devices.confirmMachine": nul,
+  "devices.createPairingCode": PairingCodeShape,
+  "devices.pairingCodes": list(PairingCodeShape),
+  "devices.revokePairingCode": nul,
+  "teams.list": TeamsListShape,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
+  "notifications.markRead": nul,
   "telemetry.track": nul,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
@@ -1024,8 +1190,12 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "keyvault.revokeGrant": num,
   "window.setBackgroundColor": nul,
   "window.setDragRegions": nul,
+  "window.setDropTargets": nul,
   "startup.get": StartupShape,
   "startup.act": StartupShape,
+  "relay.usage": OP_SHAPES["relay.usage"],
+  "checklist.get": OP_SHAPES["checklist.get"],
+  "checklist.send": OP_SHAPES["checklist.send"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

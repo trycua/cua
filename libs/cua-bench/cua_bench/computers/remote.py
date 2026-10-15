@@ -1291,12 +1291,18 @@ class RemoteDesktopSession:
         await self.interface.write_bytes(path, data)
 
     async def file_exists(self, path: str) -> bool:
-        """Whether ``path`` is an existing file (not a directory), as in 0.2.x."""
+        """Whether ``path`` is an existing file (not a directory), as in 0.2.x.
+
+        On a cua-sandbox session, raises if the sandbox does not answer.
+        """
         await self._ensure_computer()
         return await self.interface.file_exists(path)
 
     async def directory_exists(self, path: str) -> bool:
-        """Check if a directory exists in the environment."""
+        """Check if a directory exists in the environment.
+
+        On a cua-sandbox session, raises if the sandbox does not answer.
+        """
         await self._ensure_computer()
         return await self.interface.directory_exists(path)
 

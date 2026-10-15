@@ -192,9 +192,9 @@ Returned by [`app_onboarding_copy`](#app_onboarding_copy).
 | `agents_driver_image` / `agentsDriverImage` | `String` |  | The card's miniature, for accessibility. |
 | `permissions_title` / `permissionsTitle` | `String` |  | Over the permission rows (Done, after host setup). |
 | `open_settings` / `openSettings` | `String` |  | The permission rows' button. |
-| `teams` | `String` |  | The Sign in page's Teams line ("Teams · coming soon"). |
-| `teams_link` / `teamsLink` | `String` |  | Its link ("Join the waitlist"). |
-| `teams_url` / `teamsUrl` | `String` |  | The link's URL: the website's Teams waitlist (the app collects nothing). |
+| `teams` | `String` |  | The Sign in page's Teams line ("Teams · manage them at app.cua.ai"). |
+| `teams_link` / `teamsLink` | `String` |  | Its link ("Open the account app"). |
+| `teams_url` / `teamsUrl` | `String` |  | The link's URL: the account app, which administers teams. |
 
 ## `AppOnboardingState` record
 
@@ -203,7 +203,10 @@ Returned by [`app_onboarding_initial`](#app_onboarding_initial), [`app_onboardin
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `step` | [`AppOnboardingStep`](#apponboardingstep-enum) |  | Page. |
-| `cli_target` / `cliTarget` | `Option<String>` |  | Where `cua` was installed on first launch, when it was. |
+| `cli_target` / `cliTarget` | `Option<String>` |  | Where `cua` was installed, when it was. |
+| `cli_plan` / `cliPlan` | [`Option<AppCliInstallPlan>`](/cua-sdk/reference/spaces/app-core/about#appcliinstallplan-record) |  | The bundled `cua`'s install plan, as the shell read it. |
+| `cli_installing` / `cliInstalling` | `bool` |  | Continue on Command line: the shell is installing. |
+| `cli_error` / `cliError` | `Option<String>` |  | Why the install failed. |
 | `menu_bar` / `menuBar` | `bool` |  | Menu bar only (no notch). The same setting as Settings' "Spaces tab in the notch". |
 | `identity` | `Option<String>` |  | Signed-in identity. |
 | `agents` | `Vec<String>` |  | Agents configured. |
@@ -315,7 +318,7 @@ Returned by [`app_presentation_preview_frame`](#app_presentation_preview_frame),
 
 ## `AppSettings` record
 
-Returned by [`app_settings_load`](#app_settings_load).
+Returned by [`app_settings_choose_experiment`](/cua-sdk/reference/spaces/app-core/experiments#app_settings_choose_experiment), [`app_settings_load`](#app_settings_load), [`app_settings_resolve_new_ui`](/cua-sdk/reference/spaces/app-core/experiments#app_settings_resolve_new_ui).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -328,11 +331,13 @@ Returned by [`app_settings_load`](#app_settings_load).
 | `last_seen_version` / `lastSeenVersion` | `Option<String>` |  | The version and build the app last launched as (`crate.about.identity`; `None`: never recorded). A launch as another one follows an update (`crate.about.after_launch`). |
 | `update_channel` / `updateChannel` | [`AppUpdateChannel`](/cua-sdk/reference/spaces/app-core/about#appupdatechannel-enum) |  | Which releases the updater offers (Settings, About). |
 | `launch_at_login` / `launchAtLogin` | `Option<bool>` |  | Launch at login, as the user chose it (the first run's Done page or Settings); `None`: never chosen (`crate.login_item.launch_plan`). |
-| `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: every switch off unless turned on (`crate.experiments`). |
+| `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: every switch off unless turned on (`crate.experiments`). Its `webUi` is the New UI as this launch shows it (`resolve_new_ui`); the file keeps only `Self.new_ui`'s "on" there, the value older builds read. |
+| `new_ui` / `newUi` | `Option<bool>` |  | The New UI as the user chose it (Settings, Experiments, "Use classic UI"); `None`: never chosen, so `crate.experiments.new_ui_default` decides. An older build's saved `webUi: true` reads as `Some(true)`; its `false` was only the saved default, so it reads as never chosen (`load`). |
 | `dismissed_access` / `dismissedAccess` | `Vec<String>` |  | Keyvault copies (import ids) the user dismissed from the notch: it no longer shows them, nothing is revoked or wiped (`crate.keyvault.view.prune_dismissed` forgets the gone ones). |
 | `keyvault_site_icons` / `keyvaultSiteIcons` | `bool` |  | Keyvault rows may load a site's icon from Google's favicon service when the source browser had none (Settings, Keyvault; on by default). Off, only icons read locally are shown. |
 | `teleport_choices` / `teleportChoices` | [`Vec<AppRememberedChoice>`](/cua-sdk/reference/spaces/app-core/teleport-review#apprememberedchoice-record) |  | The sites the user sent to each Space last time, per app (`crate.teleport.review.remember`): the review starts from them. |
 | `auto_connect` / `autoConnect` | `bool` |  | Settings, General: a running Space's desktop streams as soon as it is opened (on by default); off, it waits for Connect (`crate.spaces.cover`). |
+| `current_team_id` / `currentTeamId` | `Option<String>` |  | Settings, Teams: the team (organization id) the account works in when it is in several (`crate.teams.current`); `None` or an id the account left: its first owned team. |
 
 ## `AppOnboardingAction` enum
 
@@ -342,6 +347,9 @@ Returned by [`app_settings_load`](#app_settings_load).
 ```swift
 .start
 .cliInstalled(target: String?)
+.cliPlanned(plan: AppCliInstallPlan)
+.cliDone(install: Bool)
+.cliInstallFailed(error: String)
 .presentationPicked(menuBar: Bool)
 .presentationDone
 .signedIn(identity: String)
@@ -371,6 +379,9 @@ Returned by [`app_settings_load`](#app_settings_load).
 ```rust
 AppOnboardingAction::Start
 AppOnboardingAction::CliInstalled { target: Option<String> }
+AppOnboardingAction::CliPlanned { plan: AppCliInstallPlan }
+AppOnboardingAction::CliDone { install: bool }
+AppOnboardingAction::CliInstallFailed { error: String }
 AppOnboardingAction::PresentationPicked { menu_bar: bool }
 AppOnboardingAction::PresentationDone
 AppOnboardingAction::SignedIn { identity: String }
@@ -401,6 +412,9 @@ AppOnboardingAction::ExperimentsLoaded { experiments: AppExperiments }
 | --- | --- |
 | `Start` | "Get started". |
 | `CliInstalled` | The app installed its bundled `cua` on first launch (any page). Fields: `target: Option<String>` |
+| `CliPlanned` | The bundled `cua`'s install plan, read or installed (any page). Fields: `plan: AppCliInstallPlan` |
+| `CliDone` | Continue (`install`) or Skip from Command line. Fields: `install: bool` |
+| `CliInstallFailed` | The Command line page's install failed. Fields: `error: String` |
 | `PresentationPicked` | A presentation card was picked (it stays on the page). Fields: `menu_bar: bool` |
 | `PresentationDone` | Continue from the presentation page. |
 | `SignedIn` | Signed in. Fields: `identity: String` |
@@ -456,6 +470,7 @@ AppOnboardingMode::Host
 
 ```swift
 .welcome
+.cli
 .signin
 .agents
 .presentation
@@ -469,6 +484,7 @@ AppOnboardingMode::Host
 
 ```rust
 AppOnboardingStep::Welcome
+AppOnboardingStep::Cli
 AppOnboardingStep::Signin
 AppOnboardingStep::Agents
 AppOnboardingStep::Presentation
@@ -483,6 +499,7 @@ AppOnboardingStep::Done
 | Variant | Description |
 | --- | --- |
 | `Welcome` | Welcome. |
+| `Cli` | Install the bundled `cua`, while its plan needs it. |
 | `Signin` | Sign in to Cua. |
 | `Agents` | Coding agents: cua skills and the cua MCP server. |
 | `Presentation` | Where Cua Spaces shows up: the notch and the menu bar, or the menu bar only (the "Spaces tab in the notch" setting). |

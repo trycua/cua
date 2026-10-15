@@ -524,15 +524,22 @@ impl LumeClient {
 
     /// Waits for the async pull of `name` to end, reporting its progress.
     /// It fails after `idle` without movement (a new percent or new bytes),
-    /// never because a slow download that still moves takes long. Dropping
-    /// the wait (a cancelled create) cancels the pull on a Lume that can
-    /// ([`LumeClient::cancel_pull`]), once no other wait in this process
-    /// still needs it.
+    /// never because a slow download that still moves takes long. It fails
+    /// within [`PULL_GONE_GRACE`] when the pull is gone: Lume reports it
+    /// failed, Lume no longer knows the VM (the pull was cancelled outside
+    /// this wait), or `lume serve` stopped answering (the pull ran inside
+    /// it). Dropping the wait (a cancelled create) cancels the pull on a
+    /// Lume that can ([`LumeClient::cancel_pull`]), once no other wait in
+    /// this process still needs it.
     async fn wait_pulled(&self, name: &str, idle: Duration) -> Result<()> {
         let mut guard = PullGuard::new(self.clone(), name);
         let mut moved_at = tokio::time::Instant::now();
         let mut last: Option<(Option<f64>, Option<u64>)> = None;
         let mut meter = crate::progress::Meter::new();
+        // Since when the pull has looked gone, and whether `lume serve`
+        // stopped answering meanwhile.
+        let mut gone_since: Option<tokio::time::Instant> = None;
+        let mut serve_lost = false;
         loop {
             // A Lume that counts bytes shows a stall much sooner.
             let budget = if guard.cancellable {
@@ -547,8 +554,10 @@ impl LumeClient {
                     detail: "lume pull made no progress".into(),
                 });
             }
+            let mut gone = false;
             match self.get(name).await {
                 Ok(Some(vm)) => {
+                    gone_since = None;
                     let now = (vm.download_progress, vm.downloaded_bytes);
                     if last != Some(now) {
                         moved_at = tokio::time::Instant::now();
@@ -565,9 +574,9 @@ impl LumeClient {
                         }
                         s if s.to_ascii_lowercase().contains("error") => {
                             guard.done();
-                            return Err(VmmError::Lume {
-                                status: 500,
-                                message: format!("pull of '{name}' failed: {s}"),
+                            return Err(VmmError::PullStopped {
+                                name: name.into(),
+                                reason: format!("Lume reported {s}"),
                             });
                         }
                         _ => {
@@ -582,12 +591,36 @@ impl LumeClient {
                     message,
                 }) if message.contains("Pull failed") => {
                     guard.done();
-                    return Err(VmmError::Lume {
-                        status: 500,
-                        message,
+                    return Err(VmmError::PullStopped {
+                        name: name.into(),
+                        reason: pull_failed_reason(&message),
                     });
                 }
-                _ => {}
+                // The pull ended without making the VM: cancelled outside
+                // this wait, or lost with a `lume serve` that restarted.
+                Ok(None) => gone = true,
+                // `lume serve` is gone, and the pull that ran inside it.
+                Err(VmmError::Missing { .. }) => {
+                    gone = true;
+                    serve_lost = true;
+                }
+                Err(_) => {}
+            }
+            if gone {
+                let since = *gone_since.get_or_insert_with(tokio::time::Instant::now);
+                if since.elapsed() >= PULL_GONE_GRACE {
+                    guard.done();
+                    let reason = if serve_lost {
+                        "Lume stopped running"
+                    } else {
+                        "it was cancelled outside Cua"
+                    };
+                    tracing::warn!(vm = name, reason, "lume pull ended without the image");
+                    return Err(VmmError::PullStopped {
+                        name: name.into(),
+                        reason: reason.into(),
+                    });
+                }
             }
             tokio::time::sleep(PULL_POLL).await;
         }
@@ -615,6 +648,26 @@ impl LumeClient {
 
 /// How often an async pull is polled (Lume answers from memory).
 const PULL_POLL: Duration = Duration::from_millis(250);
+/// How long an async pull may look gone (its VM unknown to Lume, or
+/// `lume serve` not answering) before the wait fails: a few polls, so one
+/// missed answer never fails a pull that still runs.
+const PULL_GONE_GRACE: Duration = Duration::from_secs(3);
+
+/// The cause in Lume's "Pull failed for 'vm': <cause>" answer.
+fn pull_failed_reason(message: &str) -> String {
+    let cause = message
+        .split_once("': ")
+        .map(|(_, c)| c)
+        .unwrap_or(message)
+        .trim()
+        .trim_end_matches('.');
+    if cause.is_empty() {
+        "Lume's download failed".into()
+    } else {
+        cause.into()
+    }
+}
+
 /// How long a pull whose bytes Lume counts may go without a new byte.
 const PULL_IDLE_WITH_BYTES: Duration = Duration::from_secs(10 * 60);
 

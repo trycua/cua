@@ -18,6 +18,16 @@ COMPONENT_PATHS = {
     "cua-spacesd": "libs/cua-spacesd",
     "cua-sdk": "libs/cua",
     "cua-spaces": "apps/cua-spaces-macos",
+    "agent": "libs/python/agent",
+    "core": "libs/python/core",
+    "bench": "libs/cua-bench",
+    "bench-ui": "libs/python/bench-ui",
+    "som": "libs/python/som",
+    "sandbox-apps": "libs/python/cua-sandbox-apps",
+    "train": "libs/python/cua-train",
+    "npm-core": "libs/typescript/core",
+    "npm-playground": "libs/typescript/playground",
+    "cuabot": "libs/cuabot",
 }
 SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 BUMP_TYPES = {"automatic", "patch", "minor", "major"}

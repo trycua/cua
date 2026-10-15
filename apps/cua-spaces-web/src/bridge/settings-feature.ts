@@ -706,12 +706,33 @@ export class SettingsFeature {
     await this.refresh("notifications");
   }
 
+  /** Marks one entry read (it was opened): this app's own entries here,
+   * the daemon's through `notifications.markRead`. Shown read at once. */
+  async markRead(id: string): Promise<void> {
+    if (this.local.some((n) => n.id === id && !n.read)) {
+      this.local = this.local.map((n) => (n.id === id ? { ...n, read: true } : n));
+      this.saveLocal();
+      this.publish("notifications");
+      return;
+    }
+    if (!this.feed.some((n) => n.id === id && !n.read)) return;
+    this.feed = this.feed.map((n) => (n.id === id ? { ...n, read: true } : n));
+    this.publish("notifications");
+    if (this.pinned.has("notifications")) return;
+    await this.adapter.call("notifications.markRead", { ids: [id] });
+    // A poll that started before the ack may answer it unread: read again after it.
+    await this.inflight.get("notifications");
+    await this.refresh("notifications");
+  }
+
   /** Adds one of this app's own entries (a Space became ready, a create
    * failed and why) to the list, so a missed toast can still be read. */
-  record(note: { kind: "message" | "error"; title: string; body?: string }): void {
+  record(note: { kind: "message" | "error"; title: string; body?: string; space?: string }): void {
     const atMs = this.options.now();
     const id = `app:${atMs}:${Math.random().toString(36).slice(2, 8)}`;
-    this.local = [...this.local, { id, atMs, agent: null, kind: note.kind, title: note.title, body: note.body ?? "", read: false }].slice(-LOCAL_LIMIT);
+    const entry: NotificationInput = { id, atMs, agent: null, kind: note.kind, title: note.title, body: note.body ?? "", read: false };
+    if (note.space) entry.space = note.space;
+    this.local = [...this.local, entry].slice(-LOCAL_LIMIT);
     this.saveLocal();
     if (this.resources.notifications.data !== undefined) this.publish("notifications");
   }

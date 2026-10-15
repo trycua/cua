@@ -44,8 +44,11 @@ struct KeyvaultReviewTests {
 
     /// A review of Chrome's state on its way to Aurora, as the picker reaches
     /// it: planned, with the sites and the saved items asked for.
-    func reviewModel(vault: Bool = false) async throws -> (TeleportModel, FakeKeyvault) {
+    /// `features`: what the fake Keyvault daemon says it supports (none:
+    /// one that predates the list).
+    func reviewModel(vault: Bool = false, features: [String] = []) async throws -> (TeleportModel, FakeKeyvault) {
         let (m, fake) = await model(icons: useRealIcons)
+        fake.current.status?.features = features
         let t = TeleportModel(spaceName: "aurora", teleport: nil, space: nil)
         t.keyvault = m.keyvault
         let entry = try #require(try appCatalogEntriesFromJson(json: """
@@ -105,9 +108,36 @@ struct KeyvaultReviewTests {
         t.send(.togglePasswords(value: true))
         #expect(appPickerConsent(state: t.state).includePasswords)
         #expect(sdkConsent(appPickerConsent(state: t.state)).includePasswords, "carried over to the SDK consent")
+        // This daemon predates the per-site choice: nothing to pick, and no
+        // narrower choice is sent for it to ignore.
+        #expect(t.review?.passwords.isEmpty == true && t.review?.passwordSummary == "")
+        #expect(appPickerConsent(state: t.state).passwordDomains == nil)
         // Dropping the only site that has passwords takes the offer away.
         t.send(.toggleDomain(domain: "github.com"))
         #expect(t.review?.offersPasswords == false)
+        #expect(!appPickerConsent(state: t.state).includePasswords)
+        // From the Keyvault: its saved passwords, only when ticked.
+        let (v, _) = try await reviewModel(vault: true)
+        #expect(v.review?.passwordsLabel == "Also send 2 saved passwords")
+        #expect(appPickerConsent(state: v.state).fromVault?.count == 16)
+        v.send(.togglePasswords(value: true))
+        #expect(appPickerConsent(state: v.state).fromVault?.count == 18)
+    }
+
+    /// A daemon that advertises `password_domains`: ticked, the passwords
+    /// are listed by site to pick (CUA-1641), starting from the sites kept
+    /// signed in; never a value.
+    @Test func savedPasswordsCanBePickedWhereTheKeyvaultKeepsTheChoice() async throws {
+        let (t, _) = try await reviewModel(features: ["password_domains"])
+        t.send(.togglePasswords(value: true))
+        #expect(t.review?.passwords.map(\.site) == ["github.com"])
+        #expect(appPickerConsent(state: t.state).passwordDomains == ["github.com"])
+        #expect(sdkConsent(appPickerConsent(state: t.state)).passwordDomains == ["github.com"])
+        // The password choice is its own: dropping the site's cookies keeps it.
+        t.send(.toggleDomain(domain: "github.com"))
+        #expect(appPickerConsent(state: t.state).passwordDomains == ["github.com"])
+        // Dropping it from the passwords sends none.
+        t.send(.togglePassword(key: "github.com"))
         #expect(!appPickerConsent(state: t.state).includePasswords)
         // From the Keyvault: its saved passwords, only when ticked.
         let (v, _) = try await reviewModel(vault: true)

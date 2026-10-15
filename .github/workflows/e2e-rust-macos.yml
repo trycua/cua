@@ -51,6 +51,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Failed cases are rerun once inside the gate; a pass on the rerun is
+  # reported as flaky, two failures fail. See scripts/ci/lib/e2e-retry-once.sh.
+  CUA_E2E_RETRY_ONCE: "1"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -205,6 +208,11 @@ jobs:
       - name: Run hosted macOS lane
         shell: bash
         run: scripts/ci/macos/run-hosted-rust-e2e.sh
+
+      - name: Report flaky cases
+        if: always()
+        shell: bash
+        run: scripts/ci/summarize-flaky-cases.sh artifacts/cua-driver >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload hosted macOS lane evidence
         if: always()

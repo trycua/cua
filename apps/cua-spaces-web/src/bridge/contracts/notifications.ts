@@ -18,6 +18,8 @@ export interface NotificationInput {
   title: string;
   body: string;
   read?: boolean;
+  /** The Space it is about (a Space id), when the daemon says. */
+  space?: string | null;
 }
 
 export interface SystemNote {

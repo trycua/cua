@@ -713,6 +713,21 @@ struct FixturePlatform {
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
     stall_consent: bool,
+    focus: Arc<FixtureFocus>,
+}
+
+/// Foreground model for existing-profile attachment: whether attaching
+/// brings the browser forward on this "platform", which pid is in front,
+/// and which restores core asked for.
+#[derive(Default)]
+struct FixtureFocus {
+    attach_activates_browser: bool,
+    frontmost: StdMutex<Option<i64>>,
+    restores: StdMutex<Vec<(i64, i64)>>,
+    /// The browser window is on another Space than the user's: the platform
+    /// can guard a background attach.
+    browser_off_space: bool,
+    guards: StdMutex<Vec<(i64, u64)>>,
 }
 
 #[async_trait]
@@ -720,6 +735,41 @@ impl BrowserPlatform for FixturePlatform {
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         self.trusted_input_limited
             .then_some("fixture trusted input raises the standalone window")
+    }
+
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        self.focus
+            .attach_activates_browser
+            .then_some("fixture browser comes to the front to show its consent prompt")
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        *self.focus.frontmost.lock().unwrap()
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        if !self.focus.browser_off_space {
+            return None;
+        }
+        self.focus
+            .guards
+            .lock()
+            .unwrap()
+            .push((browser_pid, window_id));
+        Some(Box::new(()))
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        self.focus
+            .restores
+            .lock()
+            .unwrap()
+            .push((previous_pid, browser_pid));
+        true
     }
 
     async fn classify_browser(&self, _pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -939,6 +989,7 @@ async fn fixture_with_platform(
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus: Default::default(),
     }));
     Fixture {
         state,
@@ -993,6 +1044,7 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(provider.clone()),
     );
@@ -1023,6 +1075,7 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -1036,6 +1089,59 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
             setup_invoked: setup_invoked.clone(),
         },
         setup_invoked,
+    )
+}
+
+/// Existing-profile setup fixture whose platform brings the browser forward
+/// on attach, with `frontmost` in front when the call starts.
+async fn foreground_attach_fixture(
+    frontmost: i64,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    attach_fixture_with_space(frontmost, false).await
+}
+
+async fn attach_fixture_with_space(
+    frontmost: i64,
+    browser_off_space: bool,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let focus = Arc::new(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(frontmost)),
+        restores: StdMutex::new(Vec::new()),
+        browser_off_space,
+        guards: StdMutex::new(Vec::new()),
+    });
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: focus.clone(),
+        }),
+        Some(provider.clone()),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked,
+        },
+        focus,
+        provider,
     )
 }
 
@@ -1078,6 +1184,7 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
         stall_consent: false,
+        focus: Default::default(),
     }));
 
     let result = GetBrowserStateTool::new(engine)
@@ -1094,6 +1201,24 @@ async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discover
         refusal["refusal"]["detail"]["next_action"],
         "browser_prepare"
     );
+    // The refusal names the exact call that attaches, so an agent does not
+    // read it as a request for the user's approval (Bench v2 PR-02).
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_call"],
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": 1,
+                "window_id": 7,
+                "session": SESSION,
+                "strategy": { "kind": "existing_profile" },
+            },
+        })
+    );
+    let message = refusal["refusal"]["message"].as_str().unwrap();
+    assert!(message.contains("not attached to this browser window yet"));
+    assert!(message.contains("Call browser_prepare"));
+    assert!(!message.contains("approval before"));
     assert!(
         !managed_discovery_invoked.load(Ordering::SeqCst),
         "read-only bind must not inspect a consent-gated endpoint"
@@ -1237,6 +1362,79 @@ async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() 
 }
 
 #[tokio::test]
+async fn existing_profile_sessions_share_one_browser_connection_across_session_ends() {
+    // Chrome asks the person to approve every new browser-level WebSocket.
+    // Sessions for the same browser instance must therefore multiplex over
+    // the one approved socket, survive each other's session end, and let a
+    // later session reuse the parked socket without a new browser prompt.
+    let (f, _provider) = protected_existing_profile_fixture().await;
+    let prepare = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let prepared = BrowserPrepareTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport,
+                    "strategy": { "kind": "existing_profile" }
+                }))
+                .await;
+            structured(&prepared).clone()
+        }
+    };
+    let state = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let state = GetBrowserStateTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport
+                }))
+                .await;
+            structured(&state).clone()
+        }
+    };
+
+    let a = prepare("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a["status"], "ok", "{a}");
+    let after_first_attach = f._server.accepted_connections();
+    assert!(after_first_attach >= 1);
+
+    let b = prepare("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b["status"], "ok", "{b}");
+    assert_eq!(b["side_effects"]["displayed_consent_prompt"], false);
+    let a_state = state("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a_state["status"], "ok", "{a_state}");
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+    assert_eq!(
+        f._server.accepted_connections(),
+        after_first_attach,
+        "a second session must not open another browser-level socket"
+    );
+
+    // Ending A must neither close nor invalidate B's use of the socket.
+    crate::session::fire_session_end("shared-transport-a");
+    tokio::task::yield_now().await;
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+
+    // After every session ended, the next approved session reuses the
+    // parked socket instead of dialing (which would prompt again).
+    crate::session::fire_session_end("shared-transport-b");
+    tokio::task::yield_now().await;
+    let c = prepare("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c["status"], "ok", "{c}");
+    let c_state = state("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c_state["status"], "ok", "{c_state}");
+    assert_eq!(f._server.accepted_connections(), after_first_attach);
+    crate::session::fire_session_end("shared-transport-c");
+}
+
+#[tokio::test]
 async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_grant() {
     const PROTECTED_SESSION: &str = "protected-provider-v2";
     const PROTECTED_TRANSPORT: &str = "protected-transport-v2";
@@ -1306,6 +1504,150 @@ async fn approved_existing_profile_setup_reports_exact_side_effects() {
 }
 
 #[tokio::test]
+async fn background_existing_profile_attach_refuses_before_any_visible_effect() {
+    // pid 99 (the user's app) is in front; attaching would bring pid 1 forward.
+    let (f, focus, provider) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(refused["escalation"]["recommended"], "foreground");
+    assert_eq!(refused["status"], "refused");
+    assert_eq!(refused["refusal"]["code"], "background_unavailable");
+    assert_eq!(refused["refusal"]["detail"]["frontmost_pid"], 99);
+    assert_eq!(refused["refusal"]["detail"]["visible_effects"], false);
+    assert!(
+        !f.setup_invoked.load(Ordering::SeqCst),
+        "a background refusal must not open the setup page"
+    );
+    assert!(
+        !provider.consent_seen.load(Ordering::SeqCst),
+        "a background refusal must not ask for consent"
+    );
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off_space() {
+    // pid 99 (the user's app) is in front on its Space; the browser window is
+    // on another Space, so the platform guards a background attach.
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["action"], "attached_existing_profile");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(*focus.guards.lock().unwrap(), vec![(1, 7)]);
+    // The user's app is brought back if the browser is left in front.
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_on_the_users_space_still_refuses() {
+    let (f, focus, _) = attach_fixture_with_space(99, false).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(
+        refused["refusal"]["detail"]["background_attach_requires"],
+        "browser_window_on_another_space"
+    );
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_does_not_use_the_background_guard() {
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front() {
+    let (f, focus, _) = foreground_attach_fixture(1).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], false);
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_brings_the_previous_app_back() {
+    let (f, focus, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+}
+
+#[tokio::test]
+async fn existing_profile_attach_rejects_an_unknown_delivery_mode() {
+    let (f, _, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "auto",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
 async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1325,6 +1667,7 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
+            focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -1370,6 +1713,7 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
             setup_invoked: Arc::new(AtomicBool::new(false)),
             setup_aborted: setup_aborted.clone(),
             stall_consent: true,
+            focus: Default::default(),
         }),
         Some(Arc::new(FixtureProtectedProvider {
             consent_seen: AtomicBool::new(false),
@@ -2334,11 +2678,12 @@ async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() 
         "foreground"
     );
 
+    let foreground_args = json!({
+        "target_id": target, "tab_id": tab, "ref": main_ref,
+        "delivery_mode": "foreground", "session": SESSION
+    });
     let foreground = BrowserClickTool::new(f.engine.clone())
-        .invoke(json!({
-            "target_id": target, "tab_id": tab, "ref": main_ref,
-            "delivery_mode": "foreground", "session": SESSION
-        }))
+        .invoke(foreground_args.clone())
         .await;
     let s = structured(&foreground);
     assert_eq!(s["status"], "ok", "{s}");
@@ -2346,6 +2691,29 @@ async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() 
     assert_eq!(s["delivery_mode"], "foreground");
     let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
     assert_eq!(mouse.len(), 2, "press and release: {mouse:?}");
+    let public = ActionExecutionRecord::from_legacy("browser_click", &foreground_args, s)
+        .expect("browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
+
+    let pointer_args = json!({
+        "target_id": target, "tab_id": tab, "action": "hover", "x": 10, "y": 10,
+        "delivery_mode": "foreground", "session": SESSION
+    });
+    let pointer = BrowserPointerTool::new(f.engine.clone())
+        .invoke(pointer_args.clone())
+        .await;
+    let p = structured(&pointer);
+    assert_eq!(p["status"], "ok", "{p}");
+    assert_eq!(p["delivery_mode"], "foreground", "{p}");
+    let public = ActionExecutionRecord::from_legacy("browser_pointer", &pointer_args, p)
+        .expect("browser pointer action record")
+        .public_result()
+        .expect("public browser pointer result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
 }
 
 #[tokio::test]
@@ -2409,7 +2777,38 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         "{public}"
     );
     assert!(public.get("status").is_none(), "{public}");
-    assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+    let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
+    let click_sequence = dispatches
+        .iter()
+        .filter_map(|(_, params)| params["functionDeclaration"].as_str())
+        .find(|declaration| declaration.contains("'pointerdown'"))
+        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+    // Apps that open rows from pointer/mouse down+up ignore a bare click(),
+    // so the synthetic route must replay the whole primary-button sequence
+    // at the element's center, in order.
+    let order = [
+        "'pointermove'",
+        "'pointerdown'",
+        "'mousedown'",
+        "'pointerup'",
+        "'mouseup'",
+        "'click'",
+    ];
+    let positions: Vec<usize> = order
+        .iter()
+        .map(|event| {
+            click_sequence
+                .find(event)
+                .unwrap_or_else(|| panic!("missing {event}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "{click_sequence}"
+    );
+    assert!(click_sequence.contains("clientX: x"), "{click_sequence}");
+    assert!(!click_sequence.contains("this.click()"), "{click_sequence}");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }

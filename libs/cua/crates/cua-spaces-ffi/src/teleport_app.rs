@@ -16,17 +16,16 @@ use crate::Teleport;
 use cua_sdk::{CuaError, Result};
 
 pub(crate) fn ux_err(e: UxError) -> CuaError {
-    {
-        let m = e.to_string();
-        match e {
-            UxError::Unsupported(_) => CuaError::Unsupported(m),
-            UxError::Invalid(_) => CuaError::InvalidArgument(m),
-            UxError::NotApproved(_) => CuaError::TeleportRefused(m),
-            UxError::PermissionDenied(_) | UxError::HostEffectsRefused(_) => {
-                CuaError::PermissionDenied(m)
-            }
-            UxError::Io(_) => CuaError::Internal(m),
-        }
+    // The SDK error adds the same prefix as the UX one ("invalid argument:",
+    // "unsupported:", "permission denied:"), so those carry the bare message
+    // (it read "invalid argument: invalid argument: ..." before).
+    match e {
+        UxError::Unsupported(m) => CuaError::Unsupported(m),
+        UxError::Invalid(m) => CuaError::InvalidArgument(m),
+        UxError::NotApproved(m) => CuaError::TeleportRefused(m),
+        UxError::PermissionDenied(m) => CuaError::PermissionDenied(m),
+        e @ UxError::HostEffectsRefused(_) => CuaError::PermissionDenied(e.to_string()),
+        e @ UxError::Io(_) => CuaError::Internal(e.to_string()),
     }
 }
 
@@ -644,6 +643,10 @@ mod space_side {
         /// Also send the saved passwords: only when ticked in the review.
         #[uniffi(default = false)]
         pub include_passwords: bool,
+        /// The sites whose saved passwords to send (the review's own
+        /// choice; `None`: those of `cookie_domains`).
+        #[uniffi(default = None)]
+        pub password_domains: Option<Vec<String>>,
     }
 
     /// One progress event of [`Teleport::run`].
@@ -874,6 +877,7 @@ mod space_side {
                     exclude: consent.exclude.clone(),
                     from_vault: consent.from_vault.clone(),
                     include_passwords: consent.include_passwords,
+                    password_domains: consent.password_domains.clone(),
                 })
                 .map_err(crate::teleport_app::ux_err)?;
             let sessions = sessions(self);

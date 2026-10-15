@@ -539,6 +539,10 @@ pub fn parse_command() -> Command {
         std::process::exit(0);
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
+        if let Some(help) = command_help(&args) {
+            print!("{help}");
+            std::process::exit(0);
+        }
         println!(
             "cua-driver {} — cross-platform computer-use automation driver",
             env!("CARGO_PKG_VERSION")
@@ -1150,7 +1154,7 @@ pub fn parse_command() -> Command {
     }
 }
 
-const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
+const CURSOR_MOTION_USAGE: &str = "Usage: cua-driver cursor motion --session <label> [--style <name>] [--timing native|fitts|fixed|relaxed|steady|calm|deliberate] [--effects trail=on,glow=off,...] [--glide-ms <ms>]";
 
 /// Build `set_agent_cursor_motion` arguments from `cua-driver cursor motion`
 /// flags. Effects take `on`, `off` or `default` (the style's own choice).
@@ -1175,7 +1179,12 @@ fn cursor_motion_args(args: &[String]) -> Result<serde_json::Value, String> {
     if let Some(timing) = flag_value(args, "--timing") {
         let parsed: cua_driver_contract::CursorMotionTiming =
             serde_json::from_value(timing.clone().into()).map_err(|_| {
-                format!("unknown timing `{timing}`; expected native, fitts or fixed")
+                format!(
+                    "unknown timing `{timing}`; expected one of {}",
+                    cua_driver_contract::CursorMotionTiming::ALL
+                        .map(cua_driver_contract::CursorMotionTiming::as_str)
+                        .join(", ")
+                )
             })?;
         out.insert("timing".into(), parsed.as_str().into());
     }
@@ -3435,7 +3444,7 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
         "grant" => run_permissions_grant(),
         other => {
             eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
-            process::exit(2);
+            process::exit(64);
         }
     }
 }
@@ -4154,6 +4163,133 @@ fn cli_docs_json() -> serde_json::Value {
     docs
 }
 
+/// Help for `cua-driver <command> [<subcommand>...] --help`: the deepest
+/// command the positional words name, rendered from `cli_docs_json()`. A word
+/// that is not a subcommand (an argument value) ends the walk. `None` when the
+/// first word is not a command, so the caller prints the top-level help.
+fn command_help(args: &[String]) -> Option<String> {
+    let docs = cli_docs_json();
+    let mut commands = docs["commands"].as_array()?;
+    let mut path = vec!["cua-driver"];
+    let mut found = None;
+    for word in positional_args(args) {
+        let Some(command) = commands.iter().find(|c| c["name"] == word) else {
+            break;
+        };
+        path.push(word);
+        found = Some(command);
+        let Some(subcommands) = command["subcommands"].as_array() else {
+            break;
+        };
+        commands = subcommands;
+    }
+    found.map(|command| render_command_help(command, &path.join(" ")))
+}
+
+/// One `cli_docs_json()` command as terminal help, in the order of its
+/// generated reference page (`scripts/docs-generators/lib/cli-mdx.ts`).
+fn render_command_help(command: &serde_json::Value, path: &str) -> String {
+    use std::fmt::Write as _;
+
+    let list = |key: &str| command[key].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let text = |value: &serde_json::Value, key: &str| {
+        value[key].as_str().unwrap_or_default().trim().to_owned()
+    };
+    let flag = |value: &serde_json::Value| match value["short_name"].as_str() {
+        Some(short) => format!("-{short}, --{}", text(value, "name")),
+        None => format!("--{}", text(value, "name")),
+    };
+    let (arguments, options, flags, subcommands) = (
+        list("arguments"),
+        list("options"),
+        list("flags"),
+        list("subcommands"),
+    );
+
+    let mut usage = vec![path.to_owned()];
+    if !options.is_empty() || !flags.is_empty() {
+        usage.push("[OPTIONS]".to_owned());
+    }
+    for argument in arguments {
+        let name = format!("<{}>", text(argument, "name"));
+        usage.push(if argument["is_optional"].as_bool().unwrap_or(false) {
+            format!("[{name}]")
+        } else {
+            name
+        });
+    }
+    if !subcommands.is_empty() {
+        let required = command["default_subcommand"].is_null();
+        usage.push(if required { "<COMMAND>" } else { "[COMMAND]" }.to_owned());
+    }
+
+    let mut out = String::new();
+    for key in ["abstract", "discussion"] {
+        let prose = text(command, key);
+        if !prose.is_empty() {
+            let _ = writeln!(out, "{prose}\n");
+        }
+    }
+    let _ = writeln!(out, "Usage: {}", usage.join(" "));
+    if let Some(default) = command["default_subcommand"].as_str() {
+        let _ = writeln!(out, "\nWithout a subcommand, runs {path} {default}.");
+    }
+
+    let mut section = |title: &str, rows: Vec<(String, String)>| {
+        if rows.is_empty() {
+            return;
+        }
+        let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
+        let _ = writeln!(out, "\n{title}:");
+        for (label, help) in rows {
+            let _ = writeln!(out, "  {label:width$}  {help}");
+        }
+    };
+    section(
+        "Arguments",
+        arguments
+            .iter()
+            .map(|a| (format!("<{}>", text(a, "name")), text(a, "help")))
+            .collect(),
+    );
+    section(
+        "Options",
+        options
+            .iter()
+            .map(|o| {
+                let repeat = if o["is_repeatable"].as_bool().unwrap_or(false) {
+                    "..."
+                } else {
+                    ""
+                };
+                let value = text(o, "type").to_lowercase();
+                (format!("{} <{value}>{repeat}", flag(o)), text(o, "help"))
+            })
+            .chain(flags.iter().map(|f| (flag(f), text(f, "help"))))
+            .collect(),
+    );
+    section(
+        "Commands",
+        subcommands
+            .iter()
+            .map(|s| (text(s, "name"), text(s, "abstract")))
+            .collect(),
+    );
+
+    let examples = list("examples");
+    if !examples.is_empty() {
+        let _ = writeln!(out, "\nExamples:");
+        for example in examples {
+            let description = text(example, "description");
+            if !description.is_empty() {
+                let _ = writeln!(out, "  # {description}");
+            }
+            let _ = writeln!(out, "  {}", text(example, "command"));
+        }
+    }
+    out
+}
+
 /// Command groups that run a default subcommand when given none (the
 /// dispatcher's `subcommand.unwrap_or(..)`), for the generated reference.
 const CLI_DEFAULT_SUBCOMMANDS: &[(&str, &str)] = &[
@@ -4418,7 +4554,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (true, false). Use null for a key to clear it, or cursor.motion null to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -4657,6 +4793,7 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px"),
         ("cua-driver config set cursor.motion.style magnetic", "Make magnetic the default cursor motion for new sessions"),
         ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
+        ("cua-driver config set cursor.motion.timing native", "Drop the 600 ms floor of the default steady timing"),
         ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
     ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),
@@ -5139,7 +5276,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing, cursor.badges");
                     process::exit(64);
                 }
             };
@@ -5168,7 +5305,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects, cursor.badges");
                 process::exit(64);
             }
         }
@@ -5197,12 +5334,7 @@ pub fn run_config_cmd(
             // Parse value: try JSON, fall back to string.
             let parsed_value: serde_json::Value = serde_json::from_str(value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.to_owned()));
-            // Dotted keys (cursor.motion.style, ...) use the {key, value} shape.
-            let set_args = if key.contains('.') {
-                serde_json::json!({ "key": key, "value": parsed_value })
-            } else {
-                serde_json::json!({ key: parsed_value })
-            };
+            let set_args = serde_json::json!({ key: parsed_value });
             let result = call("set_config", set_args);
             exit_on_tool_error(&result);
             println!("Config updated.");
@@ -5222,10 +5354,10 @@ pub fn run_config_cmd(
                 "max_image_dimension": 0
             });
             call("set_config", defaults);
-            // Also clear the saved cursor motion defaults.
+            // Also clear the saved cursor motion defaults and badge mode.
             exit_on_tool_error(&call(
                 "set_config",
-                serde_json::json!({ "key": "cursor.motion", "value": null }),
+                serde_json::json!({ "cursor.motion": "default", "cursor.badges": "default" }),
             ));
             println!("Config reset to defaults.");
             let config = get_config();

@@ -1355,6 +1355,13 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
     }
 }
 
+/// Appended when `--on cloud` has no Cua cloud account: Spaces run on
+/// compute you bring, so point at the ways that need no Cua cloud.
+const BYO_COMPUTE_HINT: &str = "Cua Spaces run on computers you bring: this one (`--on local`), \
+     a machine you own (`cua auth login`, then `cua host setup --profile spare` on that machine \
+     and `--on host:<machine>` here), or your own cloud account (`cua cloud connect \
+     aws|gcp|modal`, then `--on aws`)";
+
 /// What a failed create kept: the sandbox ref, its cloud claim (pool and
 /// namespace) when it has one, and how to delete it.
 fn kept_message(i: &SandboxInfo) -> String {
@@ -1514,9 +1521,30 @@ async fn create(
         eprintln!("Starting a cloud sandbox (first start of an image can take a few minutes)");
     }
     let requested_name = o.name.clone();
+    // Each step of the create on a terminal (never in --json output).
+    let steps = {
+        use std::io::IsTerminal as _;
+        (!json && std::io::stderr().is_terminal()).then(|| {
+            let mut words = crate::util::CreateWords::for_image(
+                &o.image,
+                o.kind.as_deref().unwrap_or_default(),
+                false,
+            );
+            words.macos |= o.os.as_deref() == Some("macos");
+            words.vm |= words.macos;
+            Arc::new(crate::util::StepLines::new(words))
+        })
+    };
     let created = {
         let sandboxes = cua.sandboxes();
-        let mut create = Box::pin(sandboxes.create(o));
+        let mut create: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+            match &steps {
+                Some(steps) => {
+                    let steps = steps.clone();
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                }
+                None => Box::pin(sandboxes.create(o)),
+            };
         tokio::select! {
             r = &mut create => r,
             _ = tokio::signal::ctrl_c() => {
@@ -1535,6 +1563,9 @@ async fn create(
         }
     };
     crate::util::exit_on_ctrl_c();
+    if let Some(steps) = &steps {
+        steps.finish();
+    }
     if created.is_err()
         && a.keep_on_failure
         && let Some(n) = &requested_name
@@ -1545,12 +1576,20 @@ async fn create(
     let sb = created
         .map_err(|e| match e {
             // The cloud came from a default: say how to sign in or go back.
-            CuaError::ProviderNotConfigured(m) => CuaError::ProviderNotConfigured(
-                match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
-                    Some(hint) => format!("{m}; {hint}"),
-                    None => m,
-                },
-            ),
+            // The cloud came from a default: say how to sign in or go back
+            // (once: some SDK paths have said it already).
+            CuaError::ProviderNotConfigured(mut m) => {
+                if let Some(hint) =
+                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
+                    && !m.contains(&hint)
+                {
+                    m = format!("{m}; {hint}");
+                }
+                if on == On::Cloud {
+                    m = format!("{m}. {BYO_COMPUTE_HINT}");
+                }
+                CuaError::ProviderNotConfigured(m)
+            }
             other => other,
         })
         .map_err(|e| on_backend(e, &label))?;
@@ -2103,6 +2142,14 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
         .iter()
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
+        .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
         .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()

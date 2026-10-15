@@ -88,6 +88,22 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// Chromium stops painting and stops updating its accessibility tree while its
+/// window is not visible, which includes sitting on another Space (CUA-1351,
+/// cdb-v2-40: a click delivered off-Space only showed once the Space was shown).
+/// AppKit windows keep drawing, so they get no note.
+fn off_space_staleness_note(
+    on_current_space: Option<bool>,
+    chromium: bool,
+) -> Option<&'static str> {
+    (on_current_space == Some(false) && chromium).then_some(
+        "This browser window is on another Space. Chromium pauses painting and \
+         accessibility updates while its window is not visible, so this screenshot \
+         and tree can show an older state. Actions are still delivered: confirm \
+         their effect after the window is shown, not from this read.",
+    )
+}
+
 fn chromium_browser_window(pid: i32) -> bool {
     let identity = format!(
         "{} {}",
@@ -773,6 +789,15 @@ impl Tool for GetWindowStateTool {
                 structured["window_title"] = serde_json::json!(info.title);
             }
         }
+        let on_current_space = crate::windows::window_on_current_space_by_id(window_id);
+        if on_current_space == Some(false) {
+            structured["on_current_space"] = serde_json::json!(false);
+        }
+        if let Some(note) = off_space_staleness_note(on_current_space, chromium_browser_window(pid))
+        {
+            structured["off_space_staleness"] = serde_json::json!(note);
+            content.push(Content::text(note));
+        }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
             chromium_browser_window(pid).then_some(
@@ -1306,6 +1331,14 @@ mod window_scope_contract_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_off_space_chromium_windows_get_the_staleness_note() {
+        assert!(off_space_staleness_note(Some(false), true).is_some());
+        assert!(off_space_staleness_note(Some(false), false).is_none());
+        assert!(off_space_staleness_note(Some(true), true).is_none());
+        assert!(off_space_staleness_note(None, true).is_none());
+    }
     use crate::ax::tree::AXNode;
     use serde_json::json;
 

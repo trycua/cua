@@ -19,7 +19,14 @@
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
 #       [--arch universal|arm64|x86_64] [--sign IDENTITY] [--out DIR]
-#       [--feed-url URL] [--skip-cargo]
+#       [--feed-url URL] [--channel stable|beta] [--skip-cargo]
+#
+# --channel beta builds the beta channel: it talks to Cua staging by default
+# (Info.plist CuaEnv=staging, and the bundled cua is compiled with
+# CUA_DEFAULT_ENV=staging), with a staging session and home
+# (~/.cua/envs/staging). CUA_ENV=prod at launch still selects production.
+# stable (the default) is production. With --skip-cargo, build the reused
+# binaries with CUA_DEFAULT_ENV=staging yourself.
 #
 # --feed-url sets the updater's appcast (SUFeedURL; default Support/Info.plist's,
 # trycua/cua's rolling cua-spaces-latest release). The release workflow passes
@@ -52,6 +59,7 @@ identity="-"
 out="$here/.build/release-app"
 skip_cargo=0
 feed_url=""
+channel=stable
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version="$2"; shift ;;
@@ -61,7 +69,8 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift ;;
     --skip-cargo) skip_cargo=1 ;;
     --feed-url) feed_url="$2"; shift ;;
-    -h | --help) sed -n '5,37p' "$0"; exit 0 ;;
+    --channel) channel="$2"; shift ;;
+    -h | --help) sed -n '5,45p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -86,13 +95,18 @@ case "$arch" in
   arm64 | x86_64) archs="$arch" ;;
   *) echo "--arch must be universal, arm64 or x86_64" >&2; exit 2 ;;
 esac
+case "$channel" in
+  stable) default_env="" ;;
+  beta) default_env=staging ;;
+  *) echo "--channel must be stable or beta" >&2; exit 2 ;;
+esac
 triple() { [ "$1" = arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin; }
 
 target="${CARGO_TARGET_DIR:-$cua/target}"
 case "$target" in /*) ;; *) target="$cua/$target" ;; esac
 if [ "$skip_cargo" = 0 ]; then
   for a in $archs; do
-    (cd "$cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$(triple "$a")")
+    (cd "$cua" && CUA_DEFAULT_ENV="$default_env" cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$(triple "$a")")
   done
 fi
 
@@ -122,6 +136,10 @@ plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$plist"
 /usr/libexec/PlistBuddy -c "Delete :CuaVersion" "$plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CuaVersion string $version" "$plist"
+/usr/libexec/PlistBuddy -c "Delete :CuaEnv" "$plist" 2>/dev/null || true
+if [ -n "$default_env" ]; then
+  /usr/libexec/PlistBuddy -c "Add :CuaEnv string $default_env" "$plist"
+fi
 if [ -n "$feed_url" ]; then
   case "$feed_url" in https://*) ;; *) echo "--feed-url must be https" >&2; exit 2 ;; esac
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
@@ -133,7 +151,7 @@ done
 # Inside out: nested code first, the bundle last (its signature seals the
 # nested signatures). No --deep: each piece gets its own identifier and
 # entitlements.
-sign=(codesign --force --options runtime --sign "$identity")
+sign=("$here/scripts/retry-apple.sh" -- codesign --force --options runtime --sign "$identity")
 [ "$identity" = "-" ] || sign+=(--timestamp)
 # Sparkle, inside out, as its documentation orders it for a Developer ID
 # app outside the App Sandbox: the XPC services (the Downloader keeps its

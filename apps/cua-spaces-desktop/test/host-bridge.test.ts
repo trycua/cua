@@ -50,7 +50,9 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 /** The daemon's tools as the fixture daemon answers them. */
 class ToolBackend extends FixtureSpacesBackend {
   readonly tools: [string, Record<string, unknown>][] = [];
-  notifications = [{ id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "The report is ready", read: false }];
+  notifications: { id: string; at_ms: number; agent: string; kind: string; title: string; body: string; read: boolean; space?: string }[] = [
+    { id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "The report is ready", read: false },
+  ];
   agents: unknown[] = [];
   override async tool(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
     this.tools.push([tool, args]);
@@ -73,9 +75,12 @@ class ToolBackend extends FixtureSpacesBackend {
         return { ok: true, reachable: true, authorized: true, versioning: true, detail: null, applied: !args.dry_run };
       case "notifications_list":
         return { notifications: this.notifications };
-      case "notifications_ack":
-        this.notifications = this.notifications.map((n) => ({ ...n, read: true }));
+      case "notifications_ack": {
+        // As the daemon's feed: no ids is every entry.
+        const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+        this.notifications = this.notifications.map((n) => (ids.length === 0 || ids.includes(n.id) ? { ...n, read: true } : n));
         return {};
+      }
       case "persistent_agent_list":
         return { agents: this.agents };
       case "volume_approve":
@@ -185,9 +190,14 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       ["devices.rename", { id: "dev_old", name: "Old box" }],
       ["devices.revoke", { id: "dev_old" }],
       ["devices.confirmMachine", { id: "m2" }],
+      ["devices.createPairingCode", { team: null }],
+      ["devices.pairingCodes", {}],
+      ["devices.revokePairingCode", { id: "pc_fixture1" }],
+      ["teams.list", {}],
       ["storage.get", {}],
       ["storage.run", { request: { kind: "clear-cache" } }],
       ["notifications.list", {}],
+      ["notifications.markRead", { ids: ["n1"] }],
       ["notifications.markAllRead", {}],
       ["host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } }],
       ["host.action", { action: "provide-spaces" }],
@@ -220,6 +230,9 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       "devices.rename": { id: "dev_old", name: "Old box" },
       "devices.revoke": { id: "dev_old" },
       "devices.confirmMachine": { id: "m2" },
+      "devices.createPairingCode": { team: null },
+      "devices.revokePairingCode": { id: "pc_fixture1" },
+      "notifications.markRead": { ids: ["n1"] },
       "storage.run": { request: { kind: "clear-cache" } } as never,
       "host.setUp": { request: { mode: "direct", direct: "0.0.0.0:3211" } } as never,
       "host.action": { action: "provide-spaces" } as never,
@@ -442,6 +455,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(relay.calls.slice(-2)).toEqual(["revoke:dev_old", "confirm-machine:m2"]);
   });
 
+  it("makes, lists and revokes the codes that add a machine", async () => {
+    const made = (await call("devices.createPairingCode", { team: null })) as Record<string, unknown>;
+    expect(made).toMatchObject({ id: "pc_fixture1", state: "active", team: null, url: expect.stringContaining("/add/"), installSh: expect.stringContaining("--pair") });
+    expect(typeof made.expiresAt).toBe("number");
+    const listed = (await call("devices.pairingCodes", {})) as Record<string, unknown>[];
+    expect(listed).toEqual([expect.objectContaining({ id: "pc_fixture1", code: null, url: null })]);
+    expect(await call("devices.revokePairingCode", { id: "pc_fixture1" })).toBeNull();
+    expect(relay.calls.slice(-3)).toEqual(["create-pairing-code:", "pairing-codes", "revoke-pairing-code:pc_fixture1"]);
+  });
+
   it("announces a device asking to join once per launch", async () => {
     const started = startHost(bridge.context, { onboarded: () => true });
     await model.devices.refresh();
@@ -461,12 +484,18 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
 
   // MARK: Settings
 
-  it("lays out General with the Teams waitlist, Welcome and What is collected, and the runtimes", async () => {
-    const s = (await call("settings.get")) as { page: { sections: { id: string; rows: { id: string }[] }[] }; updateChannel: unknown };
+  it("lays out General with Teams, Welcome and What is collected, and the runtimes", async () => {
+    const s = (await call("settings.get")) as {
+      page: { sections: { id: string; rows: { id: string }[] }[] };
+      updateChannel: unknown;
+      globalShortcut: unknown;
+    };
     const rows = s.page.sections.flatMap((x) => x.rows.map((r) => r.id));
-    expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "telemetry", "telemetry-note", "launch-at-login"]));
+    expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "teams-manage", "teams-billing", "telemetry", "telemetry-note", "launch-at-login"]));
     expect(rows).toEqual(expect.arrayContaining(["macos-runtime", "linux-runtime"]));
     expect(s.updateChannel).toBe("stable");
+    // Another app holds ⌘⇧Space: the page says so.
+    expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
   });
 
   it("chooses each row as the Swift app does", async () => {
@@ -476,6 +505,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.menuBar).toBe(true);
     await call("settings.choose", { row: "auto-connect", option: "off" });
     expect(model.settings.autoConnect).toBe(false);
+    await call("settings.choose", { row: "team-current", option: "org-2" });
+    expect(model.settings.currentTeamId).toBe("org-2");
     await call("settings.choose", { row: "default-location", option: "cloud" });
     expect(model.settings.defaultLocation).toBe(native.AppLocation.Cloud);
     await call("settings.choose", { row: "telemetry", option: "off" });
@@ -492,12 +523,14 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(settingsEvents).toBeGreaterThan(0);
   });
 
-  it("offers every experiment but the New UI preview, which this app is", async () => {
+  it("offers every experiment but the New UI switch (Use classic UI), which this app is", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
     expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"]));
     expect(rows).not.toContain("experiment:web_ui");
+    expect(rows).not.toContain("experiment:classic_ui");
     expect(await code("settings.choose", { row: "experiment:web_ui", option: "off" })).toBe("unsupported");
+    expect(await code("settings.choose", { row: "experiment:classic_ui", option: "on" })).toBe("unsupported");
   });
 
   it("New Space's \u201cUse built-in Lume\u201d and \u201cUse built-in runtime\u201d change the Runtimes rows", async () => {
@@ -673,6 +706,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await make({ servicesIn: false });
     expect(await code("volume.overview")).toBe("unsupported");
     expect(await code("notifications.list")).toBe("unsupported");
+    expect(await code("notifications.markRead", { ids: ["n1"] })).toBe("unsupported");
     expect(await code("storage.run", { request: { kind: "mount" } })).toBe("unsupported");
     expect(await call("volume.storage")).toBeNull();
   });
@@ -691,6 +725,32 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.notificationsSeenMs).toBe(2000n);
     await call("notifications.markAllRead");
     expect(parts.notifications.feed[0]?.read).toBe(true);
+  });
+
+  it("marks one opened entry read, never all, and lists the Space each is about", async () => {
+    backend.notifications = [
+      { id: "n1", at_ms: 1000, agent: "ada", kind: "answer", title: "Done", body: "The report is ready", read: false, space: "local:dev" },
+      { id: "n2", at_ms: 2000, agent: "ada", kind: "message", title: "Ada", body: "Second", read: false },
+    ];
+    type Row = { id: string; read: boolean; space: string | null; body: string };
+    const list = async () => new Map(((await call("notifications.list")) as Row[]).map((r) => [r.id, r]));
+    const before = await list();
+    expect(before.get("n1")).toMatchObject({ space: "local:dev", read: false, body: "The report is ready" });
+    expect(before.get("n2")?.space).toBeNull();
+
+    expect(await call("notifications.markRead", { ids: ["n1"] })).toBeNull();
+    expect(backend.tools.filter(([t]) => t === "notifications_ack").at(-1)).toEqual(["notifications_ack", { ids: ["n1"] }]);
+    const after = await list();
+    expect(after.get("n1")?.read).toBe(true);
+    expect(after.get("n2")?.read).toBe(false);
+
+    // No ids marks nothing (the daemon would read it as every entry).
+    const acks = backend.tools.filter(([t]) => t === "notifications_ack").length;
+    await call("notifications.markRead", { ids: [] });
+    expect(backend.tools.filter(([t]) => t === "notifications_ack").length).toBe(acks);
+    expect((await list()).get("n2")?.read).toBe(false);
+    expect(await code("notifications.markRead", {})).toBe("bad_args");
+    expect(await code("notifications.markRead", { ids: [1] })).toBe("bad_args");
   });
 
   // MARK: The first run
@@ -735,6 +795,31 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     const items = menuItems(bridge.context);
     expect(items[0]!.label).toBe(native.appStatusLine(real.length));
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
+  });
+
+  it("the notch lists the Spaces, never a machine that only provides them (CUA-1619)", async () => {
+    const { wireView } = await import("../src/notch/core");
+    await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
+    backend.rowsNow = [
+      ...backend.rowsNow,
+      { ...backend.rowsNow[2]!, id: "relay:m1", name: "studio-mac", provider: "relay", host: undefined },
+      { ...backend.rowsNow[2]!, id: "relay:m1/space-1", name: "on-studio", provider: "relay", host: "m1" },
+    ];
+    await model.refresh();
+    // What the notch helper draws (NotchModel.view): the core's view of the
+    // app's Spaces (feedNotch hands it model.spaces, machines included).
+    const core = native as unknown as import("../src/notch/core").NotchCore;
+    const shown = core.appNotchReduce(core.appNotchInitial(), { tag: "Visibility", inner: { shown: true } });
+    const opened = core.appNotchReduce(shown.state, { tag: "Click" });
+    const view = wireView(core.appNotchView(opened.state, model.spaces));
+    const ids = view.tiles.map((t) => t.id);
+    expect(ids).toContain("relay:m1/space-1");
+    expect(ids).not.toContain("relay:m1");
+    expect(ids).not.toContain("this-mac");
+    expect(ids.some((id) => isMachineDesktop(model.spaces.find((s) => s.id === id)!))).toBe(false);
+    // The list and the menu's count are the same Spaces.
+    expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
+    expect(view.tab.count).toBe(String(ids.length));
   });
 
   it("says the launch is still waiting first", async () => {

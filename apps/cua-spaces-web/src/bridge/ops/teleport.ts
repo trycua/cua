@@ -244,6 +244,7 @@ export function consentToSdk(c: TeleportConsent): Json {
     exclude: c.exclude ?? [],
     from_vault: c.fromVault ?? null,
     include_passwords: Boolean(c.includePasswords),
+    password_domains: c.passwordDomains ?? null,
   };
 }
 

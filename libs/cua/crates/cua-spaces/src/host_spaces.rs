@@ -265,11 +265,173 @@ impl Drop for Slot<'_> {
     }
 }
 
+/// The creates a host runs now, by key ([`pb::HostSpaceCreating::key`]):
+/// the caller's account, and what the create is doing.
+#[derive(Clone, Default)]
+struct Creating(Arc<Mutex<HashMap<String, (String, pb::HostSpaceCreating)>>>);
+
+impl Creating {
+    /// Lists the create `key` of `account` until the returned guard drops
+    /// (the create ended, failed, or its call was dropped). `None` for an
+    /// empty key (a caller that predates keys).
+    fn follow(&self, key: &str, account: &str) -> Option<Following> {
+        if key.is_empty() {
+            return None;
+        }
+        let entry = pb::HostSpaceCreating {
+            key: key.to_string(),
+            phase: cua_sandbox_core::progress::Phase::Preparing.as_str().into(),
+            ..Default::default()
+        };
+        self.lock()
+            .insert(key.to_string(), (account.to_string(), entry));
+        Some(Following {
+            creating: self.clone(),
+            key: key.to_string(),
+        })
+    }
+
+    /// The creates `caller` may see: every one for the owner, its own
+    /// otherwise.
+    fn listed(&self, caller: &HostCaller) -> Vec<pb::HostSpaceCreating> {
+        let mut out: Vec<_> = self
+            .lock()
+            .values()
+            .filter(|(account, _)| caller.is_owner() || *account == caller.account)
+            .map(|(_, c)| c.clone())
+            .collect();
+        out.sort_by(|a, b| a.key.cmp(&b.key));
+        out
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, (String, pb::HostSpaceCreating)>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// A create [`Creating`] lists while this lives.
+struct Following {
+    creating: Creating,
+    key: String,
+}
+
+impl Following {
+    /// The create's progress sink: each report replaces what is listed.
+    fn sink(&self) -> crate::ProgressSink {
+        let creating = self.creating.clone();
+        let key = self.key.clone();
+        crate::ProgressSink::new(move |p| {
+            if let Some((_, c)) = creating.lock().get_mut(&key) {
+                *c = creating_pb(&key, p);
+            }
+        })
+    }
+}
+
+impl Drop for Following {
+    fn drop(&mut self) {
+        self.creating.lock().remove(&self.key);
+    }
+}
+
+/// A progress report as [`pb::HostSpaceCreating`].
+fn creating_pb(key: &str, p: &crate::CreateProgress) -> pb::HostSpaceCreating {
+    pb::HostSpaceCreating {
+        key: key.to_string(),
+        phase: p.phase.as_str().into(),
+        fraction: p.fraction,
+        detail: p.detail.clone(),
+        bytes_done: p.bytes.map(|b| b.done),
+        bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
+        bytes_per_second: p.bytes.and_then(|b| b.per_second),
+    }
+}
+
+/// [`pb::HostSpaceCreating`] as a progress report of the caller's own
+/// create. `None` for a phase it does not know, and for `ready`: the host
+/// is done, but the caller still connects to the Space and says ready
+/// itself.
+fn host_progress(c: &pb::HostSpaceCreating) -> Option<crate::CreateProgress> {
+    use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+    let phase = Phase::parse(&c.phase).filter(|p| *p != Phase::Ready)?;
+    let mut p = Progress::phase(phase).detail(c.detail.clone());
+    if let Some(f) = c.fraction {
+        p = p.fraction(f);
+    }
+    if let Some(done) = c.bytes_done {
+        p = p.bytes(Transfer {
+            done,
+            total: c.bytes_total.unwrap_or(0),
+            per_second: c.bytes_per_second,
+        });
+    }
+    Some(p)
+}
+
+/// How often a client asks a host how its create is doing.
+const HOST_PROGRESS_POLL: Duration = Duration::from_secs(1);
+
+/// How long a client asks before it decides the host does not list
+/// creates (it predates [`pb::GetHostSpacesResponse::creating`]) and stops.
+const HOST_PROGRESS_UNLISTED: Duration = Duration::from_secs(20);
+
+/// Runs `call` (the `CreateHostSpace` of the create `key`) and meanwhile
+/// reports what the host lists that create doing as this create's own
+/// progress, in order: the image download with its bytes, the disk, the
+/// boot. A host that predates the listing reports nothing, as before.
+async fn following_host<T>(
+    host: &cua_spacesd_client::SpacesdClient,
+    key: &str,
+    call: impl std::future::Future<Output = T>,
+) -> T {
+    let poll = async {
+        let started = tokio::time::Instant::now();
+        let mut listed = false;
+        let mut last: Option<crate::CreateProgress> = None;
+        loop {
+            tokio::time::sleep(HOST_PROGRESS_POLL).await;
+            if !listed && started.elapsed() >= HOST_PROGRESS_UNLISTED {
+                return std::future::pending::<()>().await;
+            }
+            let Ok(r) = host
+                .host_spaces()
+                .get_host_spaces(pb::GetHostSpacesRequest {})
+                .await
+            else {
+                continue;
+            };
+            let Some(c) = r.into_inner().creating.into_iter().find(|c| c.key == key) else {
+                continue;
+            };
+            listed = true;
+            let Some(p) = host_progress(&c) else {
+                continue;
+            };
+            // Never back to an earlier phase, never the same report twice.
+            if last
+                .as_ref()
+                .is_some_and(|l| p.phase.rank() < l.phase.rank() || *l == p)
+            {
+                continue;
+            }
+            cua_sandbox_core::progress::report(p.clone());
+            last = Some(p);
+        }
+    };
+    tokio::pin!(call);
+    tokio::select! {
+        out = &mut call => out,
+        () = poll => unreachable!("the poll never ends"),
+    }
+}
+
 /// The host half: what this machine's cua daemon does for
 /// `HostSpacesService` calls.
 pub struct HostSpacesServer {
     spaces: Spaces,
     reserved: Mutex<Reserved>,
+    /// The creates running here, with what each is doing now.
+    creating: Creating,
     /// The ports this host forwards to the Spaces it provides directly,
     /// by the Space's `local:` id.
     forwards: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -292,6 +454,7 @@ impl HostSpacesServer {
         Arc::new(Self {
             spaces,
             reserved: Mutex::default(),
+            creating: Creating::default(),
             forwards: Mutex::default(),
         })
     }
@@ -586,6 +749,7 @@ impl HostSpacesServer {
                 vec![]
             },
             images,
+            creating: self.creating.listed(caller),
         })
     }
 
@@ -712,9 +876,15 @@ impl HostSpacesServer {
         let slot = self
             .reserve(&policy, &provided_now, macos, &host_name)
             .map_err(|e| self.refuse(caller, &label, e))?;
+        // Listed in `GetHostSpaces` while it runs, for the caller to follow.
+        let key = Some(req.create_key.trim())
+            .filter(|k| !k.is_empty())
+            .unwrap_or(&attach.machine_id);
+        let following = self.creating.follow(key, &caller.account);
         let created = self
             .spaces
             .create(SpaceCreate {
+                progress: following.as_ref().map(Following::sink),
                 image: Some(image.clone()),
                 on: Some(On::Local),
                 kind,
@@ -1996,14 +2166,17 @@ impl Spaces {
                 owner: reg.machine.owner.id.clone(),
                 owner_email: reg.machine.owner.email.clone().unwrap_or_default(),
             }),
+            create_key: machine.clone(),
         };
         let created = async {
-            space
-                .spacesd()?
-                .host_spaces()
-                .create_host_space(request)
-                .await
-                .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+            let host = space.spacesd()?;
+            following_host(
+                host,
+                &machine,
+                host.host_spaces().create_host_space(request),
+            )
+            .await
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
         }
         .await;
         if let Err(e) = created {
@@ -2020,6 +2193,9 @@ impl Spaces {
         }
         // Its driver dials out on its own: wait (bounded) until the relay
         // lists it online.
+        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
+            cua_sandbox_core::progress::Phase::Connecting,
+        ));
         let deadline = tokio::time::Instant::now() + ONLINE_WAIT;
         let mut row = None;
         while tokio::time::Instant::now() < deadline {
@@ -2053,6 +2229,7 @@ impl Spaces {
         opts: SpaceCreate,
     ) -> Result<SpaceInfo> {
         let space = self.direct_host_space(&host).await?;
+        let key = format!("create-{:016x}", rand::random::<u64>());
         let request = pb::CreateHostSpaceRequest {
             image: opts.image.clone().unwrap_or_default(),
             kind: match opts.kind {
@@ -2069,21 +2246,24 @@ impl Spaces {
             disk_gb: opts.disk_gb.unwrap_or(0),
             attach: None,
             direct: true,
+            create_key: key.clone(),
         };
-        let made = space
-            .spacesd()?
-            .host_spaces()
-            .create_host_space(request)
-            .await
-            .map(tonic::Response::into_inner)
-            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?
-            .space
-            .ok_or_else(|| {
-                Error::host(
-                    "host spaces",
-                    format!("{} answered without the Space it created", host.name),
-                )
-            })?;
+        let host_client = space.spacesd()?;
+        let made = following_host(
+            host_client,
+            &key,
+            host_client.host_spaces().create_host_space(request),
+        )
+        .await
+        .map(tonic::Response::into_inner)
+        .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?
+        .space
+        .ok_or_else(|| {
+            Error::host(
+                "host spaces",
+                format!("{} answered without the Space it created", host.name),
+            )
+        })?;
         let SpaceId::Direct { authority } = SpaceId::parse(&host.space)? else {
             return Err(Error::invalid(format!(
                 "{} is not a direct Space",

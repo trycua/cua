@@ -393,6 +393,7 @@ impl SpacesBuilder {
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
                 connections: tokio::sync::Mutex::new(HashMap::new()),
+                mesh: crate::mesh::MeshClients::default(),
                 #[cfg(feature = "spaces-hotspot")]
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
                 #[cfg(feature = "spaces-agents")]
@@ -631,6 +632,16 @@ pub(crate) fn random_suffix() -> String {
     format!("{:010x}", rand::random::<u64>() & 0xff_ffff_ffff)
 }
 
+/// A name in the form [`SpaceCreate::name`] defaults to (`space-` and ten
+/// lowercase hex digits): one the SDK, or an app on its behalf, generated.
+/// A create under such a name cleans up after a failed start, as one with
+/// no name does.
+pub fn is_generated_name(name: &str) -> bool {
+    name.strip_prefix("space-").is_some_and(|hex| {
+        hex.len() == 10 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
 pub(crate) struct Inner {
     pub(crate) registry: Registry,
     /// Every Space's latest thumbnail ([`crate::thumbnails`]).
@@ -648,6 +659,8 @@ pub(crate) struct Inner {
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
+    /// Mesh nodes for `relay:` Spaces ([`crate::mesh`]).
+    pub(crate) mesh: crate::mesh::MeshClients,
     #[cfg(feature = "spaces-hotspot")]
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
     #[cfg(feature = "spaces-agents")]
@@ -745,8 +758,21 @@ impl Spaces {
                 Ok(info)
             })
             .collect::<Result<_>>()?;
+        // A Space this machine provides is in the registry as a local Space,
+        // and its relay machine lists it again under the host: once, as the
+        // local one (CUA-1527).
+        let provided_here: std::collections::HashSet<String> =
+            cua_host::provided::load_provided(&cua_host::Host::new(self.home_dir()).paths().dir)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| out.iter().any(|i| i.id == p.local_space))
+                .map(|p| p.relay_machine)
+                .collect();
         let cache = self.inner.relay_cache.lock().expect("relay cache");
         for m in cache.iter() {
+            if provided_here.contains(&m.id) {
+                continue;
+            }
             let mut info = relay_info(m);
             self.apply_reported(&mut info, m.online);
             if !info.host.is_empty() {
@@ -871,6 +897,37 @@ impl Spaces {
     pub fn set_relay(&self, relay: Option<crate::relay::RelayAccount>) {
         *self.inner.relay.write().expect("relay") = relay;
         self.inner.relay_cache.lock().expect("relay cache").clear();
+    }
+
+    /// `e`, from a call on `space`, with the reason when the call failed
+    /// because the Space's mesh connection was cut (a revoked device, the
+    /// mesh turned off): a transport error alone ("broken pipe") does not
+    /// say why. Other errors are returned as they are.
+    pub async fn explain_mesh_cut(&self, space: &str, e: Error) -> Error {
+        if !matches!(e, Error::Env(cua_spacesd_client::Error::Transport(_))) {
+            return e;
+        }
+        let Ok(id) = self.resolve(space) else {
+            return e;
+        };
+        match self
+            .inner
+            .mesh
+            .cut_reason(&id.to_string(), Duration::from_secs(2))
+            .await
+        {
+            Some(reason) => Error::host(
+                "the mesh",
+                format!("the connection to {id} over the mesh was cut: {reason}"),
+            ),
+            None => e,
+        }
+    }
+
+    /// The mesh node of each relay this runtime reached over the mesh:
+    /// its peers and, per peer, the path (direct or relayed) and counters.
+    pub async fn mesh_status(&self) -> Vec<(String, cua_mesh::Status)> {
+        self.inner.mesh.status().await
     }
 
     pub(crate) fn relay(&self) -> Result<crate::relay::RelayAccount> {
@@ -1305,8 +1362,17 @@ impl Spaces {
     pub async fn space(&self, space: &str) -> Result<Space> {
         let id = self.resolve(space)?;
         let key = id.to_string();
-        if let Some(s) = self.inner.connections.lock().await.get(&key).cloned() {
-            return Ok(s);
+        // Bound first: the cache's guard must be gone before the lock is
+        // taken again below.
+        let cached = self.inner.connections.lock().await.get(&key).cloned();
+        if let Some(s) = cached {
+            match self.inner.mesh.stale(&key, crate::mesh::policy).await {
+                None => return Ok(s),
+                Some(reason) => {
+                    tracing::info!(space = %key, %reason, "the mesh went away; reconnecting");
+                    self.inner.connections.lock().await.remove(&key);
+                }
+            }
         }
         let name = match (&id, self.inner.registry.get(&key)?) {
             (_, Some(record)) => Some(record.name),
@@ -1407,6 +1473,33 @@ impl Spaces {
                         .unwrap_or_else(|| format!("http://{authority}"));
                     let mut o = ConnectOptions::parse(&url)?;
                     o.token = credential.token.clone();
+                    // A machine on a self-hosted (static-token) relay: the
+                    // mesh when the relay coordinates one (pairing with the
+                    // env token), the relay's HTTPS path otherwise.
+                    if let (cua_spacesd_client::EndpointKind::Relay { machine_id }, Some(token)) =
+                        (o.endpoint.kind().clone(), credential.token.as_deref())
+                    {
+                        let relay_url = o.endpoint.origin();
+                        let via = crate::mesh::Via::Static {
+                            relay: &relay_url,
+                            token,
+                        };
+                        if let crate::mesh::Route::Mesh(m) = crate::mesh::connect_options(
+                            &self.inner.mesh,
+                            crate::mesh::Via::Static {
+                                relay: &relay_url,
+                                token,
+                            },
+                            &machine_id,
+                            crate::mesh::policy(),
+                        )
+                        .await?
+                        {
+                            tracing::info!(machine = %machine_id, "relay Space over the mesh");
+                            self.inner.mesh.note_routed(&id.to_string(), &via);
+                            o = *m;
+                        }
+                    }
                     (Some(o), None)
                 } else {
                     // Added by an MCP URL: the token belongs to that server.
@@ -1448,15 +1541,37 @@ impl Spaces {
             }
             SpaceId::Relay { machine_id } => {
                 let relay = self.relay()?;
-                let url = cua_host::RelayClient::new(&relay.url)?.machine_url(machine_id);
-                // The account token rides in `authorization` and this
-                // device's session next to it, fetched (and refreshed) per
-                // call; the relay checks both and swaps them for its signed
-                // identity assertion.
-                let bearer = crate::relay::RelayBearer { account: relay };
-                let mut o = ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
-                o.token = credential.token.clone();
-                (Some(o), None)
+                // The WireGuard®-based mesh first (end to end, direct when
+                // possible); the relay's HTTPS path when the relay or the
+                // machine does not speak it yet (see `crate::mesh`).
+                match crate::mesh::connect_options(
+                    &self.inner.mesh,
+                    crate::mesh::Via::Account(&relay),
+                    machine_id,
+                    crate::mesh::policy(),
+                )
+                .await?
+                {
+                    crate::mesh::Route::Mesh(o) => {
+                        tracing::info!(machine = %machine_id, "relay Space over the mesh");
+                        self.inner
+                            .mesh
+                            .note_routed(&id.to_string(), &crate::mesh::Via::Account(&relay));
+                        (Some(*o), None)
+                    }
+                    crate::mesh::Route::Relay => {
+                        let url = cua_host::RelayClient::new(&relay.url)?.machine_url(machine_id);
+                        // The account token rides in `authorization` and
+                        // this device's session next to it, fetched (and
+                        // refreshed) per call; the relay checks both and
+                        // swaps them for its signed identity assertion.
+                        let bearer = crate::relay::RelayBearer { account: relay };
+                        let mut o =
+                            ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
+                        o.token = credential.token.clone();
+                        (Some(o), None)
+                    }
+                }
             }
             SpaceId::Local { name } => {
                 let sandbox = self.inner.sandboxes.connect(name).await?;
@@ -1980,7 +2095,13 @@ impl Spaces {
             }
         };
         let create_id = opts.create_id.clone().filter(|c| !c.trim().is_empty());
-        let generated = opts.name.as_deref().is_none_or(|n| n.trim().is_empty());
+        // A name in the SDK's own form counts as generated: an app that
+        // shows the name before creating picks it the same way
+        // ([`is_generated_name`]).
+        let generated = opts
+            .name
+            .as_deref()
+            .is_none_or(|n| n.trim().is_empty() || is_generated_name(n.trim()));
         let named = |opts: &mut SpaceCreate| {
             let name = sanitize_label(
                 &opts
@@ -3226,6 +3347,22 @@ mod tests {
         assert_eq!(sanitize_label("Client_ID.42"), "client-id-42");
         assert_eq!(sanitize_label("--x--"), "x");
         assert_eq!(sanitize_label(&"a".repeat(80)).len(), 63);
+    }
+
+    #[test]
+    fn generated_names_are_the_sdks_own_form() {
+        let name = format!("space-{}", random_suffix());
+        assert!(is_generated_name(&name), "{name}");
+        assert!(is_generated_name("space-000000002a"));
+        for other in [
+            "space-2a",
+            "space-000000002A",
+            "dev",
+            "space-000000002ag",
+            "my-space-000000002a",
+        ] {
+            assert!(!is_generated_name(other), "{other}");
+        }
     }
 
     #[test]

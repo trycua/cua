@@ -4,10 +4,11 @@
 #   curl -fsSL https://cua.ai/install.sh | sh
 #   curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver
 #   curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes
+#   curl -fsSL https://cua.ai/install.sh | sh -s -- --pair K7QM-4XPB-2RHD
 #
 # In a terminal it shows a checklist of what to install. Items:
 #   cli         the cua CLI (always installed, except with --app-only)
-#   spaces      the Cua Spaces app (macOS only for now; default on macOS)
+#   spaces      the Cua Spaces app (macOS and Linux; default on both)
 #   cua-driver  cua-driver MCP and skill for your agents (default off)
 #   host        host this machine: `cua host setup` (default off)
 #
@@ -17,6 +18,10 @@
 #   --cli-only          install only the `cua` CLI (same as --only cli)
 #   --app-only          install only the Cua Spaces app (no CLI)
 #   --mode host|client  preselect the app's first-run choice (implies spaces)
+#   --pair CODE         add this machine to your account with a one-time code
+#                       from the Cua Spaces app (Add a machine): installs and
+#                       runs `cua host setup --pair CODE`, no sign-in, no checklist
+#   --relay URL         relay for --pair (default https://relay.cua.ai)
 #   --version VERSION   install this CLI release (default: latest)
 #   --prefix DIR        install under DIR (DIR/bin, DIR/Applications)
 #   --modify-path       add the bin dir to your shell profile
@@ -60,6 +65,8 @@ sel_host=0
 picked=0
 tty_saved=""
 mode=""
+pair_code=""
+relay_url=""
 version=""
 prefix=""
 modify_path=0
@@ -126,6 +133,18 @@ parse_args() {
             shift
             ;;
         --mode=*) mode="${1#--mode=}" ;;
+        --pair)
+            [ $# -ge 2 ] || die "--pair needs the code from the Cua Spaces app"
+            pair_code="$2"
+            shift
+            ;;
+        --pair=*) pair_code="${1#--pair=}" ;;
+        --relay)
+            [ $# -ge 2 ] || die "--relay needs a URL"
+            relay_url="$2"
+            shift
+            ;;
+        --relay=*) relay_url="${1#--relay=}" ;;
         --version)
             [ $# -ge 2 ] || die "--version needs a value"
             version="$2"
@@ -158,7 +177,7 @@ parse_args() {
         die "--only and --select are mutually exclusive"
     fi
     extra="$(items_in "$select_list$only_list")"
-    if [ "$cli_only" = 1 ] && [ -n "$extra" ]; then
+    if [ "$cli_only" = 1 ] && [ -n "$extra" ] && [ -z "$pair_code" ]; then
         die "--cli-only installs only the CLI; use --only $extra instead"
     fi
     if [ "$app_only" = 1 ]; then
@@ -166,6 +185,27 @@ parse_args() {
         *" cua-driver "* | *" host "*) die "--app-only skips the CLI, which cua-driver and host need" ;;
         esac
         want_cli=0
+    fi
+    if [ -n "$pair_code" ]; then
+        # Letters, digits and dashes only: it ends up on a command line.
+        case "$pair_code" in
+        *[!A-Za-z0-9-]*) die "--pair: '$pair_code' is not a pairing code (like K7QM-4XPB-2RHD)" ;;
+        esac
+        [ "$app_only" = 0 ] || die "--pair needs the CLI; drop --app-only"
+        [ "$cli_only" = 0 ] || only_list="$only_list,host"
+        select_list="$select_list,host"
+        if [ "$only_set" = 1 ]; then only_list="$only_list,host"; fi
+        # The code stands in for the account: no sign-in here.
+        onboarding=0
+    fi
+    if [ -n "$relay_url" ]; then
+        [ -n "$pair_code" ] || die "--relay goes with --pair"
+        case "$relay_url" in
+        *[!A-Za-z0-9:/._%-]*) die "--relay: '$relay_url' is not a plain URL" ;;
+        esac
+        # https anywhere; plain http only to this machine (local relays).
+        printf '%s\n' "$relay_url" | grep -Eq '^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://(localhost|127\.0\.0\.1)(:[0-9]+)?)(/[A-Za-z0-9._%/-]*)?$' ||
+            die "--relay must be an https:// URL (plain http only for localhost)"
     fi
     case "$mode" in
     "" | host | client) ;;
@@ -266,7 +306,7 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS.
+        # The app is a default on macOS and Linux.
         if spaces_supported; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
@@ -275,21 +315,20 @@ init_selection() {
         sel_spaces=1
     fi
     if [ "$sel_spaces" = 1 ] && ! spaces_supported; then
-        info "Cua Spaces is macOS-only for now; skipping the app on Linux"
+        info "Cua Spaces is not available for $os; skipping the app"
         sel_spaces=0
     fi
 }
 
-# Cua Spaces ships for macOS only for now (cd-cua-spaces.yml builds no Linux
-# app). To bring Linux back, return 0 for linux too (install_app_linux is
-# kept).
+# Cua Spaces ships for macOS (the SwiftUI app) and Linux (the Electron app,
+# .deb or AppImage).
 spaces_supported() {
-    [ "$os" = darwin ]
+    [ "$os" = darwin ] || [ "$os" = linux ]
 }
 
 # Show the checklist only when a human can answer it.
 wants_checklist() {
-    [ "$assume_yes" = 0 ] && [ "$only_set" = 0 ] && [ "$cli_only" = 0 ] &&
+    [ -z "$pair_code" ] && [ "$assume_yes" = 0 ] && [ "$only_set" = 0 ] && [ "$cli_only" = 0 ] &&
         [ "$app_only" = 0 ] && [ "${CUA_INSTALL_NONINTERACTIVE:-}" != 1 ] && tty_ok
 }
 
@@ -318,7 +357,7 @@ draw_rows() { # cursor row, or 0 for the numbered list
 # checklist: pick items with arrows/numbers + space, Enter to install.
 checklist() {
     rows="cli"
-    # Spaces is offered only where it ships (macOS).
+    # Spaces is offered only where it ships (macOS, Linux).
     if spaces_supported; then rows="$rows spaces"; fi
     rows="$rows cua-driver host"
     n=0
@@ -722,10 +761,17 @@ install_app_darwin() {
 
 install_app_linux() {
     deb_entry="$(manifest_entry app deb)"
-    if [ -z "$prefix" ] && [ "$(id -u)" = 0 ] && has apt-get && [ -n "$deb_entry" ]; then
-        if confirm "Install the Cua Spaces .deb with apt-get?" y; then
+    # Debian and Ubuntu: the .deb (apt resolves its dependencies), as root or
+    # with passwordless sudo. Anything else, or no privileges: the AppImage.
+    if [ -z "$prefix" ] && has apt-get && [ -n "$deb_entry" ]; then
+        sudo_cmd=""
+        if [ "$(id -u)" != 0 ]; then
+            if has sudo && sudo -n true 2>/dev/null; then sudo_cmd="sudo"; else sudo_cmd="none"; fi
+        fi
+        if [ "$sudo_cmd" != none ] && confirm "Install the Cua Spaces .deb with apt-get?" y; then
             download app deb
-            run apt-get install -y "$artifact"
+            # shellcheck disable=SC2086
+            run $sudo_cmd apt-get install -y "$artifact"
             app_path="cua-spaces"
             return
         fi
@@ -829,6 +875,10 @@ install_driver() {
 # provide Spaces for other devices (macOS VMs) needs Lume too, installed
 # separately with `cua runtime setup lume`.
 host_setup() {
+    if [ -n "$pair_code" ]; then
+        host_pair
+        return
+    fi
     if [ "$dry_run" = 1 ]; then
         say "[dry-run] $cua_bin host setup"
         return
@@ -846,6 +896,24 @@ host_setup() {
         fi
     fi
     warn "host setup did not finish; run 'cua auth login --remote' (over ssh) or 'cua auth login', then 'cua host setup' again"
+}
+
+# Add this machine with a pairing code (Add a machine in the app): joins
+# the account (or team) that made the code, with no sign-in here.
+host_pair() {
+    set -- "$cua_bin" host setup --pair "$pair_code"
+    if [ -n "$relay_url" ]; then set -- "$@" --relay "$relay_url"; fi
+    if [ "$dry_run" = 1 ]; then
+        say "[dry-run] $*"
+        return
+    fi
+    info "adding this machine to your account (cua host setup --pair)"
+    if "$@" </dev/null; then
+        say ""
+        say "This machine is added. It shows up in Cua Spaces on your other devices in a few seconds."
+        return
+    fi
+    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>"
 }
 
 # ---------------------------------------------------------------- onboarding
@@ -870,6 +938,8 @@ next_steps() {
 }
 
 run_onboarding() {
+    # --pair: the code stands in for the account; nothing to sign in to.
+    [ -z "$pair_code" ] || return 0
     if [ "$want_cli" = 0 ] || [ "$onboarding" = 0 ] || [ "$dry_run" = 1 ]; then
         next_steps
         return

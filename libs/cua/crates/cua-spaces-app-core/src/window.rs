@@ -375,10 +375,18 @@ mod tests {
     fn the_menu_and_the_notch_count_the_same_spaces() {
         use crate::host::{HostSummaryInput, this_machine_space};
         use crate::model::{SpaceOs, SpaceStatus};
+        // A Space your machine "studio" provides (This machine and studio's
+        // own desktop are machines, not Spaces).
         let mut remote = this_machine_space(None, 0, SpaceOs::Linux);
-        remote.id = "relay:studio".into();
-        remote.name = "Studio".into();
+        remote.id = "relay:studio/dev".into();
+        remote.name = "Dev".into();
         remote.status = SpaceStatus::Running;
+        remote.provider = Some(crate::model::SpaceProvider::Relay);
+        remote.host = Some("studio".into());
+        let mut studio = remote.clone();
+        studio.id = "relay:studio".into();
+        studio.name = "Studio".into();
+        studio.host = None;
         let hosting = HostSummaryInput {
             configured: true,
             service_running: true,
@@ -387,9 +395,10 @@ mod tests {
         };
         for (host, extra, want) in [
             (None, vec![], 0),
-            (Some(hosting.clone()), vec![], 1),
+            (Some(hosting.clone()), vec![], 0),
+            (None, vec![studio.clone()], 0),
             (None, vec![remote.clone()], 1),
-            (Some(hosting), vec![remote], 2),
+            (Some(hosting), vec![studio, remote], 1),
         ] {
             let mut spaces = vec![this_machine_space(host.as_ref(), 0, SpaceOs::Macos)];
             spaces.extend(extra);

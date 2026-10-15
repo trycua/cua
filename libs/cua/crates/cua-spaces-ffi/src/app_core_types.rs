@@ -2248,6 +2248,38 @@ pub struct AppReviewToggle {
     pub selected: bool,
 }
 
+/// One saved password of the Keyvault, as a review lists it: its site and
+/// username, never its value.
+pub type AppVaultPassword = core::teleport::review::VaultPassword;
+#[uniffi::remote(Record)]
+pub struct AppVaultPassword {
+    /// The item's id.
+    pub id: String,
+    /// Its site (`github.com`); empty when not known.
+    pub site: String,
+    /// Its username; empty when not known or hidden.
+    pub username: String,
+}
+
+/// One saved password choice in the review: a site of the browser (reading
+/// it now) or one saved password (from the Keyvault). Sites and usernames
+/// only: a password's value is never shown.
+pub type AppReviewPassword = core::teleport::review::ReviewPassword;
+#[uniffi::remote(Record)]
+pub struct AppReviewPassword {
+    /// What picking it toggles: the site (reading the app) or the item id
+    /// (from the Keyvault).
+    pub key: String,
+    /// The site (`github.com`), or "Saved password" when not known.
+    pub site: String,
+    /// The username, when known (a saved item).
+    pub username: String,
+    /// "2 passwords" (a site of the browser); empty for one saved item.
+    pub counts: String,
+    /// Chosen to send.
+    pub selected: bool,
+}
+
 /// The saved Keyvault items of the app being teleported.
 pub type AppVaultSource = core::teleport::review::VaultSource;
 #[uniffi::remote(Record)]
@@ -2262,6 +2294,15 @@ pub struct AppVaultSource {
     pub selected: Vec<String>,
     /// The app's saved passwords (ids), sent only when ticked.
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value), for
+    /// the review to list.
+    pub passwords: Vec<AppVaultPassword>,
+    /// The Keyvault daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status). Without it the review offers
+    /// the passwords as before (those of the chosen sites, or every saved
+    /// one) and lists none to pick: it never shows a choice the daemon
+    /// would not keep.
+    pub password_picks: bool,
 }
 
 /// The review's choices.
@@ -2287,6 +2328,15 @@ pub struct AppReviewChoice {
     /// The saved passwords are ticked to send (off unless the user ticks
     /// them; never remembered).
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send (reading the app).
+    pub password_domains: Vec<String>,
+    /// The saved passwords to send (ids, from the Keyvault).
+    pub password_items: Vec<String>,
+    /// The passwords list's search text.
+    pub password_query: String,
+    /// The password choice was made (the default is picked the first time
+    /// the box is ticked).
+    pub passwords_picked: bool,
 }
 
 /// What teleport can do with an app.
@@ -2528,6 +2578,9 @@ pub struct AppTeleportConsent {
     pub from_vault: Option<Vec<String>>,
     /// Also send the saved passwords (ticked in the review).
     pub include_passwords: bool,
+    /// Reading the app: the sites whose saved passwords to send (the
+    /// review's per-site choice); `None` when no password is sent this way.
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -2748,11 +2801,33 @@ pub enum AppPickerEvent {
         selected: Vec<String>,
         /// The app's saved passwords (ids): sent only when ticked.
         password_ids: Vec<String>,
+        /// The same passwords with their site and username (never a
+        /// value), for the review to list.
+        passwords: Vec<AppVaultPassword>,
+        /// The Keyvault daemon enforces a choice of passwords by site
+        /// (`password_domains` in its status); off for an older one.
+        password_picks: bool,
     },
     /// Tick or untick "Also send saved passwords".
     TogglePasswords {
         /// Ticked.
         value: bool,
+    },
+    /// Pick or drop one saved password choice (a site, or a saved item's
+    /// id: [`ReviewPassword::key`]).
+    TogglePassword {
+        /// The choice.
+        key: String,
+    },
+    /// Pick or drop every saved password choice the search shows.
+    SelectShownPasswords {
+        /// Pick (true) or drop.
+        value: bool,
+    },
+    /// The passwords list's search text.
+    PasswordQuery {
+        /// Text.
+        text: String,
     },
     /// The chosen saved items changed.
     VaultSelection {
@@ -2793,7 +2868,11 @@ pub struct AppReviewView {
     pub title: String,
     /// The consent lines.
     pub items: Vec<AppConsentItem>,
-    /// Plan steps.
+    /// What happens, in plan steps, when the review has nothing to choose
+    /// (no files, state, secrets or sites; e.g. "Just the app" for an app
+    /// the Space's image already has), so the review is never blank. Empty
+    /// otherwise: the lines below say what is sent, and a step's counts
+    /// would not follow what is turned off. The installs are in `items`.
     pub steps: Vec<AppPlanStepView>,
     /// The secrets checkbox shows.
     pub needs_acknowledgement: bool,
@@ -2849,6 +2928,14 @@ pub struct AppReviewView {
     pub include_passwords: bool,
     /// "Also send 14 saved passwords".
     pub passwords_label: String,
+    /// Ticked: the saved passwords to pick from (sites with counts when
+    /// reading the app, each saved password's site and username from the
+    /// Keyvault; never a value), filtered by the search.
+    pub passwords: Vec<AppReviewPassword>,
+    /// "2 of 5 sites", "2 of 5 passwords".
+    pub password_summary: String,
+    /// The passwords search text.
+    pub password_query: String,
     /// What the Keychain will do for this source, in a line.
     pub source_note: String,
 }
@@ -3011,6 +3098,7 @@ pub struct AppLocalStorage {
     pub container: Option<AppStorageVolume>,
     /// Catalog refs already pulled here.
     pub pulled: Vec<String>,
+    pub linux_runtime_download_bytes: u64,
 }
 
 /// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,
@@ -3203,6 +3291,10 @@ pub struct AppWizardEnv {
     /// `gpu_support`), when known. A runtime not listed has none: the
     /// Resources step shows no GPU row for it.
     pub gpus: Option<Vec<AppGpuChoice>>,
+    /// Picks the name an unnamed Space gets ([`generated_space_name`]);
+    /// `None`: this process's own randomness. A core without randomness
+    /// (the wasm build) is given one; tests give a fixed one.
+    pub name_seed: Option<u64>,
 }
 
 /// Create or connect by address.
@@ -3229,6 +3321,28 @@ pub struct AppAddressForm {
     pub busy: bool,
     /// The last error, in words.
     pub error: Option<String>,
+}
+
+/// A Resources slider whose value can be typed.
+pub type AppResourceField = core::wizard::ResourceField;
+#[uniffi::remote(Enum)]
+pub enum AppResourceField {
+    /// CPU cores.
+    Cpus,
+    /// Memory, GB.
+    Memory,
+    /// Disk, GB.
+    Disk,
+}
+
+/// A slider's value as typed.
+pub type AppResourceEdit = core::wizard::ResourceEdit;
+#[uniffi::remote(Record)]
+pub struct AppResourceEdit {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
 }
 
 /// The wizard's state.
@@ -3278,6 +3392,11 @@ pub struct AppWizardState {
     pub gpu: bool,
     /// The address form.
     pub address: AppAddressForm,
+    /// The name the Space gets when Name is left empty
+    /// ([`generated_space_name`], chosen when the wizard opens).
+    pub generated_name: String,
+    /// A slider's value being typed (its number was clicked).
+    pub resource_edit: Option<AppResourceEdit>,
 }
 
 /// An input to the wizard.
@@ -3362,6 +3481,21 @@ pub enum AppWizardAction {
     },
     /// The disk slider's Reset: back to the image's own disk.
     ResetDisk,
+    /// A slider's number clicked: its value can be typed.
+    EditResource {
+        /// Which slider.
+        field: AppResourceField,
+    },
+    /// The typed value's text.
+    SetResourceText {
+        /// Text.
+        text: String,
+    },
+    /// Return (or leaving the field): the typed value is used when it is
+    /// within the slider's limits; otherwise the field stays with why.
+    CommitResource,
+    /// Escape: the slider's value stays.
+    CancelResource,
     /// The GPU checkbox.
     SetGpu {
         /// Checked.
@@ -3656,6 +3790,18 @@ pub struct AppGpuRow {
     pub learn_more_url: Option<String>,
 }
 
+/// A slider's value being typed.
+pub type AppResourceEditView = core::wizard::ResourceEditView;
+#[uniffi::remote(Record)]
+pub struct AppResourceEditView {
+    /// Which slider.
+    pub field: AppResourceField,
+    /// The text as typed.
+    pub text: String,
+    /// Why it cannot be used, in one line (the slider's limits).
+    pub error: Option<String>,
+}
+
 /// The wizard as drawn.
 pub type AppWizardView = core::wizard::WizardView;
 #[uniffi::remote(Record)]
@@ -3747,8 +3893,14 @@ pub struct AppWizardView {
     pub resources_error: Option<String>,
     /// The GPU row (Resources), where the runtime offers a GPU.
     pub gpu: Option<AppGpuRow>,
+    /// A slider's value being typed: the field shows instead of its number
+    /// (its error is also the field's [`WizardField::error`]).
+    pub resource_edit: Option<AppResourceEditView>,
     /// Name as typed.
     pub name: String,
+    /// The name the Space gets: the one typed, else the generated one
+    /// (the Name field's placeholder).
+    pub space_name: String,
     /// The name breaks the DNS-label rule.
     pub name_invalid: bool,
     /// Why, in one line.
@@ -4151,6 +4303,10 @@ pub struct KvStatus {
     pub browse_until_ms: Option<u64>,
     /// "Never ask again" on the unlock prompt is on.
     pub skip_unlock_prompt: Option<bool>,
+    /// What the daemon supports beyond the original protocol
+    /// (`password_domains`: it reads only the saved passwords of the sites
+    /// picked for them); empty from a daemon that predates the list.
+    pub features: Vec<String>,
     /// An earlier preview's vault was found and set aside.
     pub reset_notice: Option<String>,
 }
@@ -4749,6 +4905,12 @@ pub struct KvVaultSource {
     /// The app's saved passwords (ids), never part of `ids`: they are sent
     /// only when ticked in the review.
     pub password_ids: Vec<String>,
+    /// The same passwords with their site and username (never a value),
+    /// for the review to list and pick from.
+    pub passwords: Vec<AppVaultPassword>,
+    /// The daemon enforces a choice of passwords by site
+    /// (`password_domains` in its status): the review may offer one.
+    pub password_picks: bool,
 }
 
 /// A sidebar category.
@@ -5316,6 +5478,8 @@ pub type AppOnboardingStep = core::onboarding::OnboardingStep;
 pub enum AppOnboardingStep {
     /// Welcome.
     Welcome,
+    /// Install the bundled `cua`, while its plan needs it.
+    Cli,
     /// Sign in to Cua.
     Signin,
     /// Coding agents: cua skills and the cua MCP server.
@@ -5370,8 +5534,14 @@ pub type AppOnboardingState = core::onboarding::OnboardingState;
 pub struct AppOnboardingState {
     /// Page.
     pub step: AppOnboardingStep,
-    /// Where `cua` was installed on first launch, when it was.
+    /// Where `cua` was installed, when it was.
     pub cli_target: Option<String>,
+    /// The bundled `cua`'s install plan, as the shell read it.
+    pub cli_plan: Option<AppCliInstallPlan>,
+    /// Continue on Command line: the shell is installing.
+    pub cli_installing: bool,
+    /// Why the install failed.
+    pub cli_error: Option<String>,
     /// Menu bar only (no notch). The same setting as Settings' "Spaces tab
     /// in the notch".
     pub menu_bar: bool,
@@ -5433,6 +5603,21 @@ pub enum AppOnboardingAction {
     CliInstalled {
         /// Where.
         target: Option<String>,
+    },
+    /// The bundled `cua`'s install plan, read or installed (any page).
+    CliPlanned {
+        /// The plan.
+        plan: AppCliInstallPlan,
+    },
+    /// Continue (`install`) or Skip from Command line.
+    CliDone {
+        /// Install.
+        install: bool,
+    },
+    /// The Command line page's install failed.
+    CliInstallFailed {
+        /// Why.
+        error: String,
     },
     /// A presentation card was picked (it stays on the page).
     PresentationPicked {
@@ -5741,12 +5926,11 @@ pub struct AppOnboardingCopy {
     pub permissions_title: String,
     /// The permission rows' button.
     pub open_settings: String,
-    /// The Sign in page's Teams line ("Teams · coming soon").
+    /// The Sign in page's Teams line ("Teams · manage them at app.cua.ai").
     pub teams: String,
-    /// Its link ("Join the waitlist").
+    /// Its link ("Open the account app").
     pub teams_link: String,
-    /// The link's URL: the website's Teams waitlist (the app collects
-    /// nothing).
+    /// The link's URL: the account app, which administers teams.
     pub teams_url: String,
 }
 
@@ -6334,9 +6518,11 @@ pub struct AppExperiments {
     pub cua_volume: bool,
     /// Your own clouds in the New Space wizard.
     pub your_cloud: bool,
-    /// Sharing a Space with other accounts.
+    /// Sharing a Space with other accounts. On unless turned off: a missing
+    /// key reads as on (the plans on cua.ai/pricing list sharing).
     pub sharing: bool,
-    /// The shared web UI, previewed in its own window.
+    /// The New UI (the shared web UI) is the main window: the user's choice
+    /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
     pub web_ui: bool,
 }
 
@@ -6376,8 +6562,16 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]).
+    /// ([`crate::experiments`]). Its `webUi` is the New UI as this launch
+    /// shows it ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
+    /// "on" there, the value older builds read.
     pub experiments: AppExperiments,
+    /// The New UI as the user chose it (Settings, Experiments, "Use classic
+    /// UI"); `None`: never chosen, so
+    /// [`crate::experiments::new_ui_default`] decides. An older build's
+    /// saved `webUi: true` reads as `Some(true)`; its `false` was only the
+    /// saved default, so it reads as never chosen ([`load`]).
+    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
@@ -6393,6 +6587,10 @@ pub struct AppSettings {
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
     pub auto_connect: bool,
+    /// Settings, Teams: the team (organization id) the account works in
+    /// when it is in several ([`crate::teams::current`]); `None` or an id
+    /// the account left: its first owned team.
+    pub current_team_id: Option<String>,
 }
 
 /// A pressed key combination.
@@ -6472,6 +6670,10 @@ pub struct AppSettingsInput {
     pub agents_busy: bool,
     /// Agents with an action running.
     pub agents_pending: Vec<String>,
+    /// Teams from the Spaces API (the host reads them), with the account
+    /// app's URL. None: the Teams section shows the production account
+    /// app's links only.
+    pub teams: Option<AppTeamsInput>,
     /// The account's Cua Cloud billing, once read (signed in).
     pub billing: Option<AppBillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
@@ -9020,4 +9222,359 @@ pub enum AppTelemetrySignal {
         /// Their ids (`cua_volume`, ...); empty: none.
         experiments: Vec<String>,
     },
+}
+
+/// One of the account's devices.
+pub type AppDeviceIn = core::machines::DeviceIn;
+#[uniffi::remote(Record)]
+pub struct AppDeviceIn {
+    /// `dev_…`.
+    pub id: String,
+    /// Its name (by default its hostname).
+    pub name: String,
+    /// `macos`, `windows`, `linux` (any case), or empty.
+    pub platform: String,
+    /// Last session (Unix seconds).
+    pub last_seen: Option<u64>,
+    /// This device.
+    pub current: bool,
+    /// `pending`, `enrolled`, `expired`, `revoked`, or empty.
+    pub state: String,
+}
+
+/// What [`page_rows`] reads: what a shell knows of its machines.
+pub type AppMachinesPageInput = core::machines::MachinesPageInput;
+#[uniffi::remote(Record)]
+pub struct AppMachinesPageInput {
+    /// The system this app runs on (names the first row "This Mac").
+    pub host_os: AppSpaceOs,
+    /// The Spaces list as the shell has it (registry rows as Spaces).
+    pub spaces: Vec<AppSpace>,
+    /// The account's devices (none while signed out).
+    pub devices: Vec<AppDeviceIn>,
+    /// The hostname each machine's cua-spacesd reported, by machine id.
+    pub hostnames: std::collections::HashMap<String, String>,
+    /// Whether the relay sees each machine connected now, by machine id.
+    pub presence: std::collections::HashMap<String, bool>,
+    /// Unix seconds.
+    pub now: u64,
+}
+
+/// One row of the Machines page.
+pub type AppMachinePageRow = core::machines::MachinePageRow;
+#[uniffi::remote(Record)]
+pub struct AppMachinePageRow {
+    /// The machine's id (`this-mac`, a relay machine id), or the device's
+    /// id for a device of its own.
+    pub id: String,
+    /// What the page calls it.
+    pub name: String,
+    /// Reached, connected to the relay, or (a device of its own) in a
+    /// session in the last [`DEVICE_ONLINE_SECS`].
+    pub online: bool,
+    /// `macos`, `linux`, `windows`, or empty when unknown.
+    pub os: String,
+    /// `local` (this machine) or `relay`.
+    pub via: String,
+    /// The machine this app runs on.
+    pub current: bool,
+    /// The device listed in this row, if any.
+    pub device: Option<String>,
+    /// A device that is none of the machines: listed, never a "Run on"
+    /// choice, and it has no Spaces or desktop of its own here.
+    pub device_only: bool,
+    /// The Spaces list's row that is this machine's own desktop
+    /// (`this-mac`, `relay:<machine>`), when there is one: the classic
+    /// UI's detail for it.
+    pub space_id: Option<String>,
+    /// Online, but its owner stopped sharing it.
+    pub stopped_sharing: bool,
+    /// The device's last session (Unix seconds), when it has a device.
+    pub last_seen: Option<u64>,
+    /// The row's status word, the same in every UI ([`status_word`]):
+    /// "Online", "Not sharing" or "Offline".
+    pub status: String,
+    /// The Spaces it runs that the Spaces list shows: this machine's local
+    /// Spaces, or the Spaces another machine provides (`host`).
+    pub spaces: u32,
+    /// "1 Space", "3 Spaces", "No Spaces" ([`spaces_label`]); empty for a
+    /// device of its own, which runs no Spaces.
+    pub spaces_label: String,
+}
+
+/// One step, in the order the checklist lists them
+/// ([`telemetry::CHECKLIST_STEPS`]).
+pub type AppChecklistStep = core::checklist::ChecklistStep;
+#[uniffi::remote(Enum)]
+pub enum AppChecklistStep {
+    /// Connect another computer you own.
+    AddMachine,
+    /// Create a Space.
+    CreateSpace,
+    /// Teleport an app into a Space.
+    Teleport,
+    /// Share a Space with someone.
+    Share,
+    /// Run an agent.
+    RunAgent,
+}
+
+/// What the checklist remembers between launches.
+pub type AppChecklistState = core::checklist::ChecklistState;
+#[uniffi::remote(Record)]
+pub struct AppChecklistState {
+    /// Steps done, each once, in checklist order.
+    pub done: Vec<AppChecklistStep>,
+    /// Closed with ×; Getting Started opens it again.
+    pub dismissed: bool,
+    /// It was on screen once (`checklist_shown` was recorded).
+    pub shown: bool,
+}
+
+/// `checklist::ChecklistAction`.
+pub type AppChecklistAction = core::checklist::ChecklistAction;
+#[uniffi::remote(Enum)]
+pub enum AppChecklistAction {
+    /// A step finished (a teleport ran, a Space was shared).
+    Done {
+        /// The step.
+        step: AppChecklistStep,
+    },
+    /// The checklist is on screen.
+    Shown,
+    /// Closed with ×.
+    Dismiss,
+    /// Getting Started (the palette, the Help menu): open it again.
+    Reopen,
+    /// What the app shows now: each `true` ticks its step off.
+    Observe {
+        /// One of your machines other than this one is listed.
+        other_machine: bool,
+        /// A Space of yours exists (running or stopped).
+        has_space: bool,
+        /// An agent exists or has run.
+        agent_ran: bool,
+    },
+    /// Progress kept elsewhere before (the web UI's own storage, another
+    /// copy of the file): its steps are ticked, and it stays closed or
+    /// shown if it was. Its events were recorded where it was ticked, so
+    /// none are recorded again.
+    Merge {
+        /// The other copy.
+        state: AppChecklistState,
+    },
+}
+
+/// What the app knows, for [`observe_from`].
+pub type AppChecklistSeen = core::checklist::ChecklistSeen;
+#[uniffi::remote(Record)]
+pub struct AppChecklistSeen {
+    /// The Machines page's rows ([`crate::machines::page_rows`]).
+    pub machines: Vec<AppMachinePageRow>,
+    /// The Spaces list.
+    pub spaces: Vec<AppSpace>,
+    /// Persistent agents listed.
+    pub agents: u32,
+    /// Agent runs listed in any Space.
+    pub runs: u32,
+}
+
+/// The state after an action and the usage events it means.
+pub type AppChecklistTransition = core::checklist::ChecklistTransition;
+#[uniffi::remote(Record)]
+pub struct AppChecklistTransition {
+    /// The new state (save it when it changed).
+    pub state: AppChecklistState,
+    /// `cua_onboarding_step` events to record (`checklist_<event>`).
+    pub signals: Vec<AppTelemetrySignal>,
+}
+
+/// One row of the checklist.
+pub type AppChecklistRow = core::checklist::ChecklistRow;
+#[uniffi::remote(Record)]
+pub struct AppChecklistRow {
+    /// The step.
+    pub step: AppChecklistStep,
+    /// "Add a machine".
+    pub title: String,
+    /// One line under the title.
+    pub detail: String,
+    /// The button that does it; hidden once done.
+    pub action: String,
+    /// Done (ticked, struck through).
+    pub done: bool,
+}
+
+/// The checklist as drawn.
+pub type AppChecklistView = core::checklist::ChecklistView;
+#[uniffi::remote(Record)]
+pub struct AppChecklistView {
+    /// On screen (not closed).
+    pub visible: bool,
+    /// Every step done.
+    pub complete: bool,
+    /// "Get started", or "You're set up" when complete.
+    pub title: String,
+    /// The line under the title.
+    pub detail: String,
+    /// "2 of 5".
+    pub progress: String,
+    /// The close button's accessibility label.
+    pub close_label: String,
+    /// The steps in order.
+    pub rows: Vec<AppChecklistRow>,
+}
+
+/// One command's default key.
+pub type AppKeybinding = core::palette::Keybinding;
+#[uniffi::remote(Record)]
+pub struct AppKeybinding {
+    /// `commandPalette.toggle`, `nav.spaces`, ...
+    pub command: String,
+    /// `mod+k`, `mod+shift+l`: `mod` is ⌘ on macOS and Ctrl elsewhere.
+    pub key: String,
+}
+
+/// What the palette matches a query against, for one command.
+pub type AppPaletteEntry = core::palette::PaletteEntry;
+#[uniffi::remote(Record)]
+pub struct AppPaletteEntry {
+    /// "Actions", "Go to", "Spaces".
+    pub group: String,
+    /// "New Space".
+    pub label: String,
+    /// Secondary text ("Linux").
+    pub hint: Option<String>,
+    /// Extra words it answers to ("create add").
+    pub keywords: Option<String>,
+}
+
+/// A person on a team.
+pub type AppTeamPersonInput = core::teams::TeamPersonInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamPersonInput {
+    pub email: String,
+    /// `owner`, `admin` or `member`.
+    pub role: String,
+}
+
+/// One team, as the Spaces API describes it.
+pub type AppTeamInput = core::teams::TeamInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamInput {
+    pub id: String,
+    /// The org's slug.
+    pub alias: String,
+    /// Its display name (empty: use the alias).
+    pub name: String,
+    /// The account's role in it.
+    pub role: String,
+    /// `free`, `teams`, ...
+    pub plan: String,
+    /// Paid seats.
+    pub seats: i64,
+    pub members: Vec<AppTeamPersonInput>,
+    /// Pending invites' emails (only owners and admins can read them).
+    pub invites: Vec<String>,
+}
+
+/// `teams::TeamsState`.
+pub type AppTeamsState = core::teams::TeamsState;
+#[uniffi::remote(Enum)]
+pub enum AppTeamsState {
+    /// Not signed in.
+    SignedOut,
+    /// Signed in, but this host does not read teams: only the links.
+    Unread,
+    /// Being read.
+    Loading,
+    /// The read failed.
+    Failed { message: String },
+    /// The account's teams (maybe none).
+    Ready { teams: Vec<AppTeamInput> },
+}
+
+/// Settings' Teams input.
+pub type AppTeamsInput = core::teams::TeamsInput;
+#[uniffi::remote(Record)]
+pub struct AppTeamsInput {
+    /// The account app for this environment (`https://app.cua.ai`, or
+    /// `https://app.staging.cua.ai` under `CUA_ENV=staging`).
+    pub account_app_url: String,
+    pub state: AppTeamsState,
+    /// The saved current team (`AppSettings::current_team_id`).
+    pub current_team_id: Option<String>,
+}
+
+/// The team whose allowance is pooled.
+pub type AppRelayUsageTeam = core::relay_usage::RelayUsageTeam;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsageTeam {
+    /// Team id.
+    pub id: String,
+    /// Seats sharing the allowance.
+    pub seats: u32,
+}
+
+/// The relay's answer (`cua_host::RelayUsage`, camelCase: the web bridge's
+/// `relay.usage` result). Every field has a default.
+pub type AppRelayUsage = core::relay_usage::RelayUsage;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsage {
+    /// The relay meters this account (false: no allowance applies).
+    pub metered: bool,
+    /// The month counted (`2026-10`).
+    pub period: String,
+    /// `free`, `pro`, `team`, ...
+    pub plan: String,
+    /// The team whose allowance is pooled.
+    pub team: Option<AppRelayUsageTeam>,
+    /// Live sessions now.
+    pub live_sessions: u32,
+    /// Live sessions allowed at once (none: no limit).
+    pub live_sessions_limit: Option<u32>,
+    /// Relay hours used this month (the team's, when pooled).
+    pub hours_used: f64,
+    /// Relay hours allowed this month (none: no limit).
+    pub hours_limit: Option<f64>,
+    /// This account's own relay hours this month.
+    pub my_hours_used: f64,
+    /// Past the allowance (sessions keep working).
+    pub soft_limit_reached: bool,
+    /// What is past it: `sessions` and/or `hours`.
+    pub reasons: Vec<String>,
+    /// Where to get more (https only; see [`checked`]).
+    pub upgrade_url: Option<String>,
+}
+
+/// The line above every page past the allowance.
+pub type AppRelayAllowanceNotice = core::relay_usage::RelayAllowanceNotice;
+#[uniffi::remote(Record)]
+pub struct AppRelayAllowanceNotice {
+    /// "You've used your free relay allowance for this month. ..."
+    pub text: String,
+    /// [`UPGRADE`].
+    pub upgrade: String,
+    /// What Upgrade opens; none: no Upgrade button.
+    pub upgrade_url: Option<String>,
+    /// [`DISMISS`].
+    pub dismiss: String,
+    /// What a dismissal remembers: the month and the reasons. A new month,
+    /// or another limit reached, shows the notice again.
+    pub dismiss_key: String,
+}
+
+/// The allowance as drawn.
+pub type AppRelayUsageView = core::relay_usage::RelayUsageView;
+#[uniffi::remote(Record)]
+pub struct AppRelayUsageView {
+    /// [`ROW_LABEL`].
+    pub label: String,
+    /// "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+    /// team pool when there is one.
+    pub line: String,
+    /// "Free plan" (empty when the relay names none).
+    pub plan: String,
+    /// Past the allowance.
+    pub notice: Option<AppRelayAllowanceNotice>,
 }

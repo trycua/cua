@@ -77,10 +77,15 @@ export const WEBKIT_PAGE_OPS = [
   "devices.rename",
   "devices.revoke",
   "devices.confirmMachine",
+  "devices.createPairingCode",
+  "devices.pairingCodes",
+  "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
   "spaces.windows",
@@ -210,7 +215,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "teleport.thumbnail": call("teleport.thumbnail"),
     "teleport.plan": async ({ spaceId, entry, move, files, sensitiveGroups }) =>
       planFromWk(await request<Json>("teleport.plan", { spaceId, entry: { id: entry?.id }, move, files, sensitiveGroups })),
-    "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }),
+    // As long as the run takes (an install downloads the app); it reports
+    // progress as it goes (teleport.progress) and answers when it is done.
+    "teleport.run": ({ spaceId, plan, consent, runId }) => request("teleport.run", { spaceId, plan: { json: plan?.json }, consent, runId }, null),
     "teleport.sites": async ({ providerId }) => snake(await request("teleport.sites", { providerId })) as KvInventory,
     "teleport.remembered": async ({ providerId, spaceId }) => (await request<string[] | null>("teleport.remembered", { providerId, spaceId })) ?? null,
     "teleport.streamWindow": none("teleport.streamWindow"),
@@ -244,10 +251,15 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "devices.rename": none("devices.rename"),
     "devices.revoke": none("devices.revoke"),
     "devices.confirmMachine": none("devices.confirmMachine"),
+    "devices.createPairingCode": ({ team }) => request("devices.createPairingCode", { team: team ?? null }),
+    "devices.pairingCodes": list("devices.pairingCodes"),
+    "devices.revokePairingCode": none("devices.revokePairingCode"),
+    "teams.list": call("teams.list"),
     "storage.get": call("storage.get"),
     "storage.run": call("storage.run"),
     "notifications.list": list("notifications.list"),
     "notifications.markAllRead": none("notifications.markAllRead"),
+    "notifications.markRead": none("notifications.markRead"),
 
     // Only known signals of fixed words leave the page; the host drops
     // them all while usage data is off.

@@ -342,12 +342,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Creating… 1%",
+              "Status: Preparing the disk… 1%",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "pending:2",
-            "previewText": "Creating…",
+            "previewText": "Preparing the disk…",
             "progress": 13,
             "progressText": null
           },
@@ -403,7 +403,7 @@
           "os-linux demo [Running] - -"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Starting 13 Creating…",
+          "os-macos Mac, macOS, This Mac, Starting 13 Preparing the disk…",
           "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
           "os-linux demo, Linux, This Mac, Running - -"
         ]
@@ -429,12 +429,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Creating… 1%",
+              "Status: Preparing the disk… 1%",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "pending:2",
-            "previewText": "Creating…",
+            "previewText": "Preparing the disk…",
             "progress": 13,
             "progressText": null
           },
@@ -490,7 +490,7 @@
           "os-linux demo [Running] - -"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Starting 13 Creating…",
+          "os-macos Mac, macOS, This Mac, Starting 13 Preparing the disk…",
           "os-linux New Space, Linux, This Mac, Starting 805 Booting…",
           "os-linux demo, Linux, This Mac, Running - -"
         ]

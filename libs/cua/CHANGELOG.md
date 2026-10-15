@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2](https://github.com/trycua/cua/compare/cua-sdk-v0.4.1...cua-sdk-v0.4.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **cua-cli:** open the sign-in URL on Windows without cmd.exe, so `cua auth login` no longer drops every parameter after the first `&` (CUA-1701) ([#5260](https://github.com/trycua/cua/issues/5260)) ([c6fed85](https://github.com/trycua/cua/commit/c6fed85957547ca4c5aef8cccd755ff7c11cf9e3))
+* **cua-auth:** split a long session over several Windows Credential Manager entries, so sign-in persists past the 2,560-byte entry limit (CUA-1701) ([#5111](https://github.com/trycua/cua/issues/5111)) ([b6db8a1](https://github.com/trycua/cua/commit/b6db8a141de871eeed592e528f9b401963693623))
+
 ## [0.4.1](https://github.com/trycua/cua/compare/cua-sdk-v0.4.0...cua-sdk-v0.4.1) (2026-10-05)
 
 

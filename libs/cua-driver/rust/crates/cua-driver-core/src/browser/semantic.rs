@@ -80,6 +80,7 @@ struct DomMeta {
     attrs: HashMap<String, String>,
     order: usize,
     css_hidden: bool,
+    transparent: bool,
     parent_backend_node_id: Option<i64>,
     frame_id: Option<String>,
 }
@@ -297,6 +298,10 @@ pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
         let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
         let attrs = attributes(node);
         let hidden = inherited_hidden || statically_hidden(&attrs);
+        let transparent = statically_transparent(&attrs)
+            || parent_backend_node_id
+                .and_then(|parent| index.nodes.get(&parent))
+                .is_some_and(|parent| parent.transparent);
         let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
         let frame_id = if node_type == 9 {
             node.get("frameId").and_then(Value::as_str)
@@ -319,6 +324,7 @@ pub(crate) fn build_dom_index(root: &Value) -> DomIndex {
                     attrs,
                     order: *order,
                     css_hidden: hidden,
+                    transparent,
                     parent_backend_node_id,
                     frame_id: frame_id.map(str::to_owned),
                 },
@@ -730,12 +736,21 @@ fn statically_hidden(attrs: &HashMap<String, String>) -> bool {
     if attrs.contains_key("hidden") || attrs.get("aria-hidden").is_some_and(|v| v == "true") {
         return true;
     }
+    inline_style(attrs).any(|(property, value)| hiding_style(property, value))
+}
+
+fn statically_transparent(attrs: &HashMap<String, String>) -> bool {
+    inline_style(attrs).any(|(property, value)| {
+        property.trim().eq_ignore_ascii_case("opacity") && hiding_style(property, value)
+    })
+}
+
+fn inline_style(attrs: &HashMap<String, String>) -> impl Iterator<Item = (&str, &str)> {
     attrs
         .get("style")
         .into_iter()
         .flat_map(|style| style.split(';'))
         .filter_map(|declaration| declaration.split_once(':'))
-        .any(|(property, value)| hiding_style(property, value))
 }
 
 fn hiding_style(property: &str, value: &str) -> bool {
@@ -761,7 +776,9 @@ fn classify_visibility(
     viewport: &Viewport,
 ) -> BrowserVisibility {
     let rendered = layout.is_some_and(|layout| layout.bounds.is_some_and(Rect::has_area));
-    if (dom.is_some_and(|meta| meta.css_hidden) && !rendered) || layout.is_some_and(layout_hidden) {
+    if dom.is_some_and(|meta| meta.transparent || (meta.css_hidden && !rendered))
+        || layout.is_some_and(layout_hidden)
+    {
         return BrowserVisibility::CssHidden;
     }
     let Some(layout) = layout else {
@@ -1176,6 +1193,7 @@ mod tests {
             attrs: HashMap::from([("type".into(), "file".into())]),
             order: 0,
             css_hidden: false,
+            transparent: false,
             parent_backend_node_id: None,
             frame_id: None,
         };

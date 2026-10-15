@@ -1,0 +1,225 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import { describe, expect, it } from "vitest";
+import {
+  ELEVATED_INSTALL_SCRIPT,
+  START_PATIENCE_MS,
+  WindowsRuntime,
+  currentUser,
+  installFailedText,
+  parseInstallResult,
+  parseVirtualization,
+  signedByDocker,
+  windowsRuntimeAdvice,
+  type WindowsRuntimeFacts,
+  type WindowsSystem,
+} from "./windows-runtime";
+
+const CLEAN: WindowsRuntimeFacts = { dockerInstalled: false, dockerRunning: false, virtualization: "on", restartPending: false };
+const IDLE = { kind: "idle" } as const;
+
+describe("windowsRuntimeAdvice", () => {
+  it("offers the install on a clean PC (A10: no Docker Desktop)", () => {
+    const a = windowsRuntimeAdvice(CLEAN, IDLE, 0);
+    expect(a.reason).toMatch(/Docker Desktop, which isn't installed/);
+    expect(a.fix).toMatchObject({ action: "install-docker", label: "Install Docker Desktop", busy: false });
+    expect(a.fix?.note).toMatch(/administrator approval/);
+    expect(a.fix?.termsUrl).toMatch(/^https:\/\/www\.docker\.com\//);
+  });
+
+  it("says virtualization is off and offers nothing to install", () => {
+    const a = windowsRuntimeAdvice({ ...CLEAN, virtualization: "off" }, IDLE, 0);
+    expect(a.reason).toMatch(/virtualization is turned off/);
+    expect(a.reason).toMatch(/another computer/);
+    expect(a.fix).toBeNull();
+  });
+
+  it("asks for a restart after the install, with no button", () => {
+    const a = windowsRuntimeAdvice({ ...CLEAN, dockerInstalled: true, restartPending: true }, IDLE, 0);
+    expect(a.reason).toMatch(/^Restart this PC/);
+    expect(a.fix).toBeNull();
+  });
+
+  it("offers to start an installed Docker Desktop that isn't running", () => {
+    const a = windowsRuntimeAdvice({ ...CLEAN, dockerInstalled: true }, IDLE, 0);
+    expect(a.reason).toMatch(/installed but not running/);
+    expect(a.fix).toMatchObject({ action: "start-docker", busy: false });
+  });
+
+  it("waits while Docker Desktop starts, then says where to look", () => {
+    const facts = { ...CLEAN, dockerInstalled: true, dockerRunning: true };
+    const soon = windowsRuntimeAdvice(facts, { kind: "starting", since: 0 }, 10_000);
+    expect(soon.reason).toMatch(/is starting/);
+    expect(soon.fix).toMatchObject({ action: null, busy: true });
+    const late = windowsRuntimeAdvice(facts, { kind: "starting", since: 0 }, START_PATIENCE_MS + 1);
+    expect(late.reason).toMatch(/finish it there/);
+  });
+
+  it("shows the download's progress and the install as busy", () => {
+    expect(windowsRuntimeAdvice(CLEAN, { kind: "downloading", percent: 42 }, 0).fix).toMatchObject({ label: "Downloading Docker Desktop… 42%", busy: true, action: null });
+    expect(windowsRuntimeAdvice(CLEAN, { kind: "installing" }, 0).fix).toMatchObject({ busy: true, action: null });
+  });
+
+  it("says why an install failed and offers it again", () => {
+    const a = windowsRuntimeAdvice(CLEAN, { kind: "failed", message: installFailedText(new Error("cancelled")) }, 0);
+    expect(a.reason).toMatch(/prompt was declined/);
+    expect(a.fix?.action).toBe("install-docker");
+  });
+});
+
+describe("probe parsing", () => {
+  it("counts a running hypervisor as virtualization on (it hides the firmware flag)", () => {
+    expect(parseVirtualization("True|False")).toBe("on");
+    expect(parseVirtualization("False|True")).toBe("on");
+    expect(parseVirtualization("False|False")).toBe("off");
+    expect(parseVirtualization("")).toBe("unknown");
+  });
+
+  it("accepts only Docker's valid signature", () => {
+    const subject = "CN=Docker Inc, O=Docker Inc, L=Palo Alto, S=California, C=US";
+    expect(signedByDocker(`Valid|${subject}`)).toBe(true);
+    expect(signedByDocker(`HashMismatch|${subject}`)).toBe(false);
+    expect(signedByDocker("Valid|CN=Someone Else, O=Evil Corp")).toBe(false);
+    expect(signedByDocker("NotSigned|")).toBe(false);
+  });
+
+  it("reads the elevated script's result", () => {
+    expect(parseInstallResult("0|False|True\r\n")).toEqual({ installer: 0, addedToGroup: false, wslReady: true });
+    expect(parseInstallResult("3010|True|False")).toEqual({ installer: 3010, addedToGroup: true, wslReady: false });
+    expect(parseInstallResult("")).toBeNull();
+  });
+
+  it("names the signed-in user for docker-users", () => {
+    expect(currentUser({ USERDOMAIN: "PC", USERNAME: "ana" })).toBe("PC\\ana");
+    expect(currentUser({ USERNAME: "ana" })).toBe("ana");
+    expect(currentUser({})).toBe("");
+  });
+
+  it("installs with Docker's documented silent flags and the WSL package", () => {
+    expect(ELEVATED_INSTALL_SCRIPT).toContain("'install','--quiet','--accept-license','--backend=wsl-2'");
+    expect(ELEVATED_INSTALL_SCRIPT).toContain("Add-LocalGroupMember -Group 'docker-users'");
+    expect(ELEVATED_INSTALL_SCRIPT).toContain("wsl.exe --install --no-distribution --web-download");
+  });
+});
+
+/** A Windows that answers from `state`, recording what was run. */
+function fakeSystem(state: {
+  installed?: boolean;
+  running?: boolean;
+  hv?: string;
+  rebootPending?: boolean;
+  signature?: string;
+  result?: string;
+  elevated?: { code: number; stderr?: string };
+}) {
+  const ran: string[] = [];
+  const files = new Map<string, string>();
+  const sys: WindowsSystem = {
+    exists: async () => state.installed ?? false,
+    running: async () => state.running ?? false,
+    async powershell(script) {
+      ran.push(script);
+      if (script.includes("Win32_ComputerSystem")) return { code: 0, stdout: state.hv ?? "True|True", stderr: "" };
+      if (script.includes("RebootPending")) return { code: 0, stdout: state.rebootPending ? "pending" : "clear", stderr: "" };
+      if (script.includes("Get-AuthenticodeSignature")) return { code: 0, stdout: state.signature ?? "Valid|CN=Docker Inc, O=Docker Inc", stderr: "" };
+      if (script.includes("-Verb RunAs")) {
+        const r = state.elevated ?? { code: 0 };
+        const result = [...files.keys()].find((k) => k.endsWith(".result"));
+        if (result && state.result !== undefined) files.set(result, state.result);
+        return { code: r.code, stdout: "", stderr: r.stderr ?? "" };
+      }
+      return { code: 1, stdout: "", stderr: "unexpected" };
+    },
+    async download(_url, _to, progress) {
+      ran.push("download");
+      progress(50);
+    },
+    async writeFile(path, text) {
+      files.set(path, text);
+    },
+    readFile: async (path) => files.get(path) ?? "",
+    launch(path) {
+      ran.push(`launch ${path}`);
+      state.running = true;
+    },
+  };
+  return { sys, ran, files };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+describe("WindowsRuntime", () => {
+  it("installs, then starts Docker Desktop when no restart is needed", async () => {
+    const f = fakeSystem({ result: "0|False|True" });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp", () => 1_000);
+    expect((await w.advice()).fix?.action).toBe("install-docker");
+    w.run("install-docker");
+    await settle();
+    await settle();
+    await settle();
+    expect(f.ran).toContain("download");
+    const elevated = f.ran.find((s) => s.includes("-Verb RunAs"))!;
+    expect(elevated).toContain("'-File','C:\\tmp");
+    expect(f.files.get([...f.files.keys()].find((k) => k.endsWith(".ps1"))!)).toBe(ELEVATED_INSTALL_SCRIPT);
+    expect(f.ran.some((s) => s.startsWith("launch ") && s.endsWith("Docker Desktop.exe"))).toBe(true);
+    f.sys.exists = async () => true;
+    expect((await w.advice()).fix).toMatchObject({ busy: true, label: "Waiting for Docker Desktop…" });
+    w.settled();
+  });
+
+  it("asks for a restart when Windows turned WSL 2 on", async () => {
+    const f = fakeSystem({ result: "0|False|False" });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    w.run("install-docker");
+    for (let i = 0; i < 5; i++) await settle();
+    f.sys.exists = async () => true;
+    const a = await w.advice();
+    expect(a.reason).toMatch(/^Restart this PC/);
+    expect(f.ran.some((s) => s.startsWith("launch "))).toBe(false);
+  });
+
+  it("asks for a restart when the user just joined docker-users", async () => {
+    const f = fakeSystem({ result: "0|True|True" });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    w.run("install-docker");
+    for (let i = 0; i < 5; i++) await settle();
+    expect((await w.advice()).reason).toMatch(/^Restart this PC/);
+  });
+
+  it("refuses an installer not signed by Docker", async () => {
+    const f = fakeSystem({ signature: "Valid|CN=Mallory, O=Mallory" });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    w.run("install-docker");
+    for (let i = 0; i < 5; i++) await settle();
+    expect((await w.advice()).reason).toMatch(/isn't signed by Docker/);
+    expect(f.ran.some((s) => s.includes("-Verb RunAs"))).toBe(false);
+  });
+
+  it("says so when the UAC prompt is declined", async () => {
+    const f = fakeSystem({ elevated: { code: 1, stderr: "This command cannot be run due to the error: The operation was canceled by the user." } });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    w.run("install-docker");
+    for (let i = 0; i < 5; i++) await settle();
+    const a = await w.advice();
+    expect(a.reason).toMatch(/prompt was declined/);
+    expect(a.fix?.action).toBe("install-docker");
+  });
+
+  it("starts an installed Docker Desktop", async () => {
+    const f = fakeSystem({ installed: true });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    expect((await w.advice()).fix?.action).toBe("start-docker");
+    w.run("start-docker");
+    expect(f.ran.some((s) => s.startsWith("launch "))).toBe(true);
+    expect((await w.advice()).fix?.busy).toBe(true);
+  });
+
+  it("reads virtualization once", async () => {
+    const f = fakeSystem({ hv: "False|False" });
+    const w = new WindowsRuntime(f.sys, "C:\\tmp");
+    expect((await w.advice()).reason).toMatch(/virtualization is turned off/);
+    await w.advice();
+    expect(f.ran.filter((s) => s.includes("Win32_ComputerSystem"))).toHaveLength(1);
+  });
+});

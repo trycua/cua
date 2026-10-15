@@ -77,4 +77,57 @@ describe.skipIf(!wasmBuilt)("the first Space on the last onboarding page (real r
     expect(creates[0]!.config.kind).toBe("container");
     expect(creates[0]!.config.image).toBeTruthy();
   });
+
+  // A10 (15 Oct clean Windows 11): no Docker Desktop, and nothing to do
+  // about it from the app. The host now offers the install; Windows' words.
+  it("offers the host's runtime fix under the cards, and runs it", async () => {
+    const fixes: unknown[] = [];
+    await mountDone(
+      (local) => ({
+        ...local,
+        available: false,
+        backends: [],
+        error: "Local Spaces on Windows run in Docker Desktop, which isn't installed yet.",
+        fix: { action: "install-docker", label: "Install Docker Desktop", note: "About 600 MB.", busy: false, termsUrl: "https://www.docker.com/legal/" },
+      }),
+      (op, args) => {
+        if (op === "spaces.fixRuntime") {
+          fixes.push(args);
+          return null;
+        }
+        return undefined;
+      },
+    );
+    await screen.findByText("Create your first Space");
+    const install = await screen.findByRole("button", { name: "Install Docker Desktop" });
+    expect(screen.getByRole("button", { name: "Docker's terms" })).toBeTruthy();
+    for (const os of ["macos", "linux", "windows"]) expect(createOf(os).disabled, os).toBe(true);
+    fireEvent.click(install);
+    await waitFor(() => expect(fixes).toEqual([{ action: "install-docker" }]));
+  });
+
+  it("shows a running fix as busy, with no action to press", async () => {
+    await mountDone((local) => ({
+      ...local,
+      available: false,
+      backends: [],
+      error: "Docker Desktop is starting.",
+      fix: { action: null, label: "Waiting for Docker Desktop…", note: null, busy: true, termsUrl: null },
+    }));
+    const waiting = (await screen.findByRole("button", { name: "Waiting for Docker Desktop…" })) as HTMLButtonElement;
+    expect(waiting.disabled).toBe(true);
+  });
+
+  it("offers no fix once a runtime is ready", async () => {
+    await mountDone((local) => ({
+      ...local,
+      backends: ["docker"],
+      macosImage: null,
+      hostArch: "amd64",
+      fix: { action: "start-docker", label: "Start Docker Desktop", note: null, busy: false, termsUrl: null },
+    }));
+    await screen.findByText("Create your first Space");
+    await waitFor(() => expect(createOf("linux").disabled).toBe(false));
+    expect(screen.queryByRole("button", { name: "Start Docker Desktop" })).toBeNull();
+  });
 });

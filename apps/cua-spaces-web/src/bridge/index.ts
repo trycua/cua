@@ -93,7 +93,17 @@ export type * from "./contracts/devices";
 export type * from "./contracts/notifications";
 export * from "./settings-hooks";
 export { hasNotch, passedSteps, signInCodeText, type SavedOnboarding } from "./onboarding";
-export { useConnectCloud, useFirstSpaceOffers, useNewSpaceRequests, useNewSpaceWizard, type ConnectCloudHook, type FirstSpaceHook, type NewSpaceWizardHook } from "./new-space-hooks";
+export {
+  useConnectCloud,
+  useFirstSpaceOffers,
+  useNewSpaceRequests,
+  useNewSpaceWizard,
+  useRuntimeFix,
+  type ConnectCloudHook,
+  type FirstSpaceHook,
+  type NewSpaceWizardHook,
+  type RuntimeFixHook,
+} from "./new-space-hooks";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";

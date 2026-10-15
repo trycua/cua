@@ -47,8 +47,9 @@ export const METHODS = [
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player, the
- * first run's state (the SwiftUI app draws its first run natively), and
- * presence over the page's video (the SwiftUI app draws it natively). */
-export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave"] as const;
+ * first run's state (the SwiftUI app draws its first run natively),
+ * presence over the page's video (the SwiftUI app draws it natively), and
+ * New Space's runtime fix on Windows ("Install Docker Desktop"). */
+export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 export type Method = (typeof METHODS)[number] | (typeof ELECTRON_METHODS)[number];

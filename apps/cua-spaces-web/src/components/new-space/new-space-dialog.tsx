@@ -16,6 +16,7 @@ import { useCreateFromWizard } from "@/hooks/use-new-space";
 import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
+import { RuntimeFixRow } from "./runtime-fix";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -358,6 +359,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
               ) : (
                 error
               )}
+              {error && !v.runtimeSwitch && v.plan.placement === "local" ? <RuntimeFixRow /> : null}
               {v.placementHint ? <Note data-placement-hint="">{v.placementHint}</Note> : null}
             </>
           }

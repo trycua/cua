@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 
 export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
 
@@ -379,6 +380,8 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
           );
         })}
       </ul>
+      {/* Windows without Docker Desktop: install or start it from here, and the cards follow. */}
+      {images.some((image) => first.blockedReason(image.ref) !== null) ? <RuntimeFixRow /> : null}
     </section>
   );
 }

@@ -61,6 +61,7 @@ import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
@@ -650,6 +651,10 @@ export function createWebkitAdapter(
           "presence.leave": (args: OpArgs<"presence.leave">) => request<null>("presence.leave", { ...args }),
         }
       : unsupportedPresenceOps("webkit")),
+    // Windows' "Install Docker Desktop": a Mac sets up its runtimes itself.
+    ...(electron
+      ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
+      : unsupportedRuntimeFixOps("webkit")),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

@@ -152,6 +152,16 @@ fn set_app_focused_window(pid: pid_t, wid: u32) -> bool {
 /// guard that hands key back. `Err` when it cannot be confirmed.
 pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeyScope, String> {
     let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
+    // An app with no focused window has never been active: it has no key
+    // window to hand over, and keys posted to it are dropped silently while
+    // the call still reports success (LibreOffice, CUA-1767). Refuse.
+    if previous.is_none() {
+        return Err(format!(
+            "pid {pid} has no focused window (it has not been active yet), so window \
+             {target_wid} cannot be confirmed as its key window and no keys were sent. \
+             Activate the app once (bring_to_front) or use delivery_mode:\"foreground\""
+        ));
+    }
     let settle = || std::thread::sleep(std::time::Duration::from_millis(120));
     let primed = prime_exact_window_key(
         target_wid,

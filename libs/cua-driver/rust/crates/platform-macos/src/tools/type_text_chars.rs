@@ -104,6 +104,11 @@ impl Tool for TypeTextCharsTool {
             None
         };
 
+        let _key_scope = match super::acquire_key_scope(pid, window_id, false).await {
+            Ok(scope) => scope,
+            Err(refusal) => return refusal,
+        };
+
         // Pre-focus element if requested.
         if !type_chars_only {
             if let Some(guard) = element_guard.as_ref().cloned() {
@@ -118,7 +123,6 @@ impl Tool for TypeTextCharsTool {
 
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
-            let _scope = super::key_scope(pid, window_id).map_err(|e| anyhow::anyhow!(e))?;
             crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
         })
         .await;

@@ -331,6 +331,13 @@ impl Tool for PressKeyTool {
             None
         };
 
+        // The addressed window must be the app's confirmed key window before
+        // any key (or focus click) goes out; otherwise refuse (window_not_key).
+        let _key_scope = match super::acquire_key_scope(pid, window_id, fg).await {
+            Ok(scope) => scope,
+            Err(refusal) => return refusal,
+        };
+
         // px form: pixel-click to focus, then the key goes to the focused element.
         // Reuses click's translation + delivery_mode; after it, deliver via the
         // plain background path (the focus-click already handled fronting if fg).
@@ -447,8 +454,6 @@ impl Tool for PressKeyTool {
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        let _scope =
-                            super::key_scope(pid, window_id).map_err(|e| anyhow::anyhow!(e))?;
                         crate::input::keyboard::press_key(pid, &key, &m)
                     })
                 })

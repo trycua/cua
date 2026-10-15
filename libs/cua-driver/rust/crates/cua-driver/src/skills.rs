@@ -47,9 +47,12 @@
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
-//! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
-//!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
-//!   May-2026 transition, so existing installs migrate forward unchanged.
+//! - Antigravity IDE: `~/.gemini/config/skills/` (global skills directory;
+//!   Antigravity also accepts the legacy `~/.gemini/antigravity/skills/`)
+//! - Antigravity CLI (`agy`): `~/.gemini/antigravity-cli/skills/`
+//! - Gemini CLI (legacy): `~/.gemini/skills/` — the pre-Antigravity location.
+//!   Antigravity does not scan it; it stays a target so existing installs keep
+//!   their link.
 //! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
 //!   macOS/Linux or `%LOCALAPPDATA%\hermes\skills\` on Windows. This is the
 //!   user-level skill space Hermes resolves at agent load time (separate from
@@ -247,11 +250,24 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".config/opencode/skills"),
         install_marker: None,
     },
-    // Antigravity CLI + Antigravity IDE share the `.gemini/skills/` dir
-    // (the same path Gemini CLI used pre-May-2026). Registering the
-    // single shared path means both surfaces pick up the same symlink.
+    // Antigravity discovers global skills in its own directories, not in
+    // the Gemini CLI's `.gemini/skills/`: the IDE (and the `agy` CLI in
+    // current releases) scans `.gemini/config/skills/`, and the CLI docs
+    // name `.gemini/antigravity-cli/skills/`. Link into each one that exists.
     Agent {
-        label: "Antigravity",
+        label: "Antigravity IDE",
+        parent: AgentParent::Home(".gemini/config/skills"),
+        install_marker: None,
+    },
+    Agent {
+        label: "Antigravity CLI",
+        parent: AgentParent::Home(".gemini/antigravity-cli/skills"),
+        install_marker: None,
+    },
+    // Pre-Antigravity Gemini CLI location. Kept so existing installs that
+    // linked here are still managed (status, update and uninstall).
+    Agent {
+        label: "Gemini CLI (legacy)",
         parent: AgentParent::Home(".gemini/skills"),
         install_marker: None,
     },

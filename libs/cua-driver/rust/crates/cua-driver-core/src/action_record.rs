@@ -1821,6 +1821,7 @@ mod tests {
                 "ref": "secret-ref",
                 "destination_ref": "secret-destination",
                 "input_route": input_route,
+                "delivery_mode": "foreground",
             });
             let structured = serde_json::json!({
                 "status": "ok",

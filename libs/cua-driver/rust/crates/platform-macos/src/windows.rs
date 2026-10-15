@@ -106,6 +106,19 @@ pub(crate) fn pid_windows_with_space_snapshot(pid: i32, on_screen_only: bool) ->
     )
 }
 
+/// On-screen windows of `pid` on every layer, without the Space snapshot.
+/// Cheap enough to poll during a gesture (the drag tool watches for a
+/// drag-image window at the dragging level).
+pub(crate) fn pid_on_screen_windows_any_layer(pid: i32) -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(pid),
+        false,
+    )
+    .windows
+}
+
 pub(crate) fn prefer_layer0(windows: &mut Vec<WindowInfo>) {
     if windows.iter().any(|w| w.layer == 0) {
         windows.retain(|w| w.layer == 0);

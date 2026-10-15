@@ -3480,10 +3480,21 @@ fn run_permissions_status(json: bool) {
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
-        crate::serve::send_request(&socket, &req)
+        let result = crate::serve::send_request(&socket, &req)
             .ok()
             .filter(|r| r.ok)
-            .and_then(|r| r.result)
+            .and_then(|r| r.result);
+        if let Some(content) = result
+            .as_ref()
+            .filter(|res| !json && res["structuredContent"].get("accessibility").is_none())
+            .and_then(|res| res["content"].as_array())
+        {
+            for text in content.iter().filter_map(|item| item["text"].as_str()) {
+                println!("{text}");
+            }
+            return;
+        }
+        result
             .and_then(|res| res.get("structuredContent").cloned())
             // Trust the booleans ONLY when the answering daemon is its own
             // responsible process (`driver-daemon`). Otherwise those grants

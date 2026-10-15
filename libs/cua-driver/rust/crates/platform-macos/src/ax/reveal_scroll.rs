@@ -32,22 +32,6 @@ pub struct RevealOutcome {
     pub moved: f64,
 }
 
-impl RevealOutcome {
-    fn from_movement(role: &str, moved: f64) -> Option<Self> {
-        (moved.is_finite() && moved > 0.5).then(|| Self {
-            container_role: role.to_owned(),
-            moved,
-        })
-    }
-
-    fn from_estimated_movement(role: &str, moved: f64) -> Option<Self> {
-        if !moved.is_finite() {
-            return None;
-        }
-        Self::from_movement(role, moved.max(1.0))
-    }
-}
-
 /// `[x, y, w, h]` in screen points.
 type Rect = [f64; 4];
 
@@ -179,7 +163,7 @@ pub fn pick_clamped(
 /// inner scroller is the page's AXWebArea. The groups between the hit
 /// element and that ancestor that clip content past their edge are tried
 /// first, innermost out; the scroll-role container is the last resort. The
-/// first one that moves wins, and the end is reported only when none moved.
+/// first one that moves wins.
 ///
 /// # Safety
 ///
@@ -194,24 +178,21 @@ pub unsafe fn reveal_scroll(
     let hit = element_at_screen_position(pid, point.0, point.1)?;
     let candidates = scroll_candidates(hit, direction);
     CFRelease(hit as CFTypeRef);
-    let mut at_end = None;
     let mut candidates = candidates.into_iter();
     while let Some((container, role)) = candidates.next() {
         let outcome = reveal_in(container, &role, window, direction, distance);
         CFRelease(container as CFTypeRef);
         match outcome {
-            Some(outcome) if !outcome.at_end => {
+            Some(outcome) => {
                 for (rest, _) in candidates {
                     CFRelease(rest as CFTypeRef);
                 }
                 return Some(outcome);
             }
-            // Keep the outermost end: the scroll-role container comes last.
-            Some(outcome) => at_end = Some(outcome),
             None => {}
         }
     }
-    at_end
+    None
 }
 
 /// The elements at or above `element` to try, innermost first and retained:
@@ -368,7 +349,10 @@ unsafe fn reveal_in(
             "right" => before[0] - after[0],
             _ => after[0] - before[0],
         };
-        RevealOutcome::from_movement(role, moved)
+        (moved > 0.5).then(|| RevealOutcome {
+            container_role: role.to_owned(),
+            moved,
+        })
     } else if let Some(pick) = pick_clamped(viewport, direction, distance, &nodes) {
         // A clamped sliver: it scrolled when it now shows at a real size
         // inside the viewport or a visible reference moved (or left). Its old
@@ -384,13 +368,10 @@ unsafe fn reveal_in(
         let reference_after = reference.and_then(|at| element_screen_rect(elements[at]));
         let shown =
             after.is_some_and(|rect| real_size(rect) && intersect(rect, viewport).is_some());
-        // A nested scroller can reveal the selected row while a reference
-        // elsewhere in the web area stays fixed. Either observation can
-        // establish movement; neither proves that the scroller is at its end.
         if content_moved(reference_before, reference_after) != Some(true) && !shown {
             return finish(elements, None);
         }
-        after.filter(|rect| real_size(*rect)).and_then(|after| {
+        after.filter(|rect| real_size(*rect)).map(|after| {
             let past = (pick.rows as f64 - 1.0) * pick.pitch;
             let [vx, vy, vw, vh] = viewport;
             let moved = match direction {
@@ -399,11 +380,12 @@ unsafe fn reveal_in(
                 "right" => vx + vw + past - after[0],
                 _ => after[0] + after[2] - (vx - past),
             };
-            RevealOutcome::from_estimated_movement(role, moved)
+            RevealOutcome {
+                container_role: role.to_owned(),
+                moved: moved.max(1.0),
+            }
         })
     } else {
-        // A bounded AX traversal with no reveal candidate cannot establish
-        // the scroll range or exclude content in a nested container.
         None
     };
     finish(elements, outcome)
@@ -451,37 +433,6 @@ mod tests {
 
     fn row(y: f64) -> Rect {
         [10.0, y, 600.0, 40.0]
-    }
-
-    #[test]
-    fn reveal_outcome_requires_observed_movement() {
-        for moved in [0.0, 0.5, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert_eq!(RevealOutcome::from_movement("AXWebArea", moved), None);
-        }
-        assert_eq!(
-            RevealOutcome::from_movement("AXScrollArea", 42.0),
-            Some(RevealOutcome {
-                container_role: "AXScrollArea".to_owned(),
-                moved: 42.0,
-            })
-        );
-    }
-
-    #[test]
-    fn estimated_movement_rejects_nonfinite_values_before_clamping() {
-        for moved in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert_eq!(
-                RevealOutcome::from_estimated_movement("AXWebArea", moved),
-                None
-            );
-        }
-        assert_eq!(
-            RevealOutcome::from_estimated_movement("AXWebArea", 0.0)
-                .unwrap()
-                .moved,
-            1.0,
-            "an already-confirmed reveal keeps the minimum distance estimate"
-        );
     }
 
     #[test]

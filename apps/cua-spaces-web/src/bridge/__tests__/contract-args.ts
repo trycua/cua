@@ -123,6 +123,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "storage.run": { request: { kind: "clear-cache" } },
   "notifications.list": {},
   "notifications.markAllRead": {},
+  "notifications.markRead": { ids: ["n1"] },
   "telemetry.track": { signals: [{ type: "step", step: "app_launched", ok: true }] },
   "spaces.usage": { spaceId: SPACE },
   "spaces.windows": { spaceId: SPACE },

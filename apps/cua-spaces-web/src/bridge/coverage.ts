@@ -156,6 +156,7 @@ export const HOST_COVERAGE = {
   // Notifications (ops/notifications.ts).
   "notifications.list": { webkit: { methods: ["notifications.list"] }, tauri: NT["notifications.list"] },
   "notifications.markAllRead": { webkit: { methods: ["notifications.markAllRead"] }, tauri: NT["notifications.markAllRead"] },
+  "notifications.markRead": { webkit: { methods: ["notifications.markRead"] }, tauri: NT["notifications.markRead"] },
   ...TELEMETRY_COVERAGE,
   ...SPACE_DETAIL_COVERAGE,
   ...HOST_SETUP_COVERAGE,

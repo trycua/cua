@@ -29,6 +29,7 @@ import { LiveGate, PendingAccount, PendingSpacesBackend, type LiveServices } fro
 import { LiveAccount, LiveTelemetry, hostAccount } from "./services";
 import { BundledCuaKeychain, StartupModel } from "./startup";
 import { withTimeout } from "./time";
+import { WindowsRuntime, nodeWindowsSystem } from "./windows-runtime";
 
 /** Whether the first run finished (`onboarding.json`'s `completed`); null when unknown. */
 export function readOnboardingCompleted(file: string): boolean | null {
@@ -124,6 +125,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
     checklistPath: path.join(path.dirname(settingsPath), "checklist.json"),
     checklistSeedPath: platform === "darwin" ? path.join(swiftSupportDir(env.HOME || os.homedir()), "checklist.json") : null,
     hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
+    windowsRuntime: platform === "win32" ? new WindowsRuntime(nodeWindowsSystem(), path.join(os.tmpdir(), "cua-spaces")) : null,
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.

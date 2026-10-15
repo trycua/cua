@@ -46,6 +46,7 @@ import type { AccountRunning, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SpaceThumbnails } from "./thumbnails";
 import { noLocalRuntimeReason } from "./local-runtime";
+import type { RuntimeFix, RuntimeFixAction, WindowsRuntime, WindowsRuntimeAdvice } from "./windows-runtime";
 import { TimeoutError, sleep, withTimeout } from "./time";
 
 /** What changed, for the page's events. */
@@ -77,6 +78,8 @@ export interface AppModelDeps {
   checklistSeedPath?: string | null;
   /** The system this app runs on (names This machine on the Machines page). */
   hostOs?: AppSpaceOs;
+  /** What New Space offers when Windows has no local runtime (null elsewhere). */
+  windowsRuntime?: WindowsRuntime | null;
 }
 
 /** The create the daemon never took. */
@@ -152,6 +155,9 @@ export class AppModel {
   linuxSource: string | null = null;
   /** Your machines that provide Spaces, as New Space last read them. */
   hosts: AppSpaceHost[] = [];
+  /** Windows without a local runtime: why, and the fix New Space offers (null when one is ready). */
+  runtimeAdvice: WindowsRuntimeAdvice | null = null;
+  readonly windowsRuntime: WindowsRuntime | null;
   /** How long one read of the registry may take before a refresh gives up on it (s). */
   listTimeout = 20;
   /** How long the host's own reads in a refresh may take (s). */
@@ -213,6 +219,7 @@ export class AppModel {
     this.checklist.telemetry = d.telemetry;
     this.checklist.onChange = () => this.changed("checklist");
     this.settingsPath = d.settingsPath;
+    this.windowsRuntime = d.windowsRuntime ?? null;
     this.servicesInNow = d.servicesIn;
     this.maxCpus = Math.max(2, Math.min(16, d.cpus));
     this.settings = d.native.appSettingsLoad(d.settingsPath);
@@ -538,7 +545,31 @@ export class AppModel {
     this.hosts = hosts;
     // Lume did not answer this time: keep what it said last.
     this.runningMacosVms = vms ?? this.runningMacosVms;
+    await this.readRuntimeAdvice(runtimes);
     return this.wizardEnv(cloud, runtimes, storage, pricing, gpus);
+  }
+
+  /** Windows: what is missing for local Spaces and what the app can do about it. */
+  private async readRuntimeAdvice(runtimes: LocalRuntimes | null): Promise<void> {
+    const w = this.windowsRuntime;
+    if (!w || !runtimes) return;
+    if (runtimes.ready.length > 0) {
+      w.settled();
+      this.runtimeAdvice = null;
+      return;
+    }
+    this.runtimeAdvice = await w.advice().catch(() => null);
+  }
+
+  /** The fix New Space shows beside the reason (Windows only). */
+  get runtimeFix(): RuntimeFix | null {
+    return this.runtimeAdvice?.fix ?? null;
+  }
+
+  /** Runs a New Space fix ("Install Docker Desktop"); the page reads the options again to follow it. */
+  fixRuntime(action: RuntimeFixAction): void {
+    if (!this.windowsRuntime) throw new Error("no runtime fix on this system");
+    this.windowsRuntime.run(action);
   }
 
   /** What New Space knows without asking anything: the env while the live services are still starting. */
@@ -558,7 +589,10 @@ export class AppModel {
       defaultLocation: this.settings.defaultLocation,
       cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
-      localReason: backends && backends.length === 0 ? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")) : undefined,
+      localReason:
+        backends && backends.length === 0
+          ? (this.runtimeAdvice?.reason ?? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")))
+          : undefined,
       localBackends: backends,
       localDetails: runtimes?.details,
       maxCpus: this.maxCpus,

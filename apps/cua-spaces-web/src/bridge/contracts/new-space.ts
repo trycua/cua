@@ -49,8 +49,25 @@ export interface LocalStatus {
   containerImage?: string;
   macosImage?: string | null;
   error: string | null;
+  /** What the host can do about `error` (Windows: install or start Docker Desktop). */
+  fix?: RuntimeFix | null;
   hostArch?: string;
   storage?: LocalStorage | null;
+}
+
+/** `spaces.fixRuntime`'s actions. */
+export type RuntimeFixAction = "install-docker" | "start-docker";
+
+/** A step the host offers next to "no local runtime" (`LocalStatus.fix`). */
+export interface RuntimeFix {
+  /** What the button runs; null while something runs, or when only the person can act. */
+  action: RuntimeFixAction | null;
+  label: string;
+  note: string | null;
+  /** Something runs now: read the options again until it settles. */
+  busy: boolean;
+  /** Terms the action accepts, linked beside the note. */
+  termsUrl: string | null;
 }
 
 /** A runtime's GPU option (`gpu_support`). */

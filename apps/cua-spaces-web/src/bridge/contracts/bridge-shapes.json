@@ -1306,6 +1306,16 @@
             "null"
           ]
         },
+        "fix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeFix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "hostArch": {
           "type": "string"
         },
@@ -1966,6 +1976,43 @@
         "visible",
         "appId",
         "targetEpoch"
+      ]
+    },
+    "RuntimeFix": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "install-docker",
+            "start-docker",
+            null
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "busy": {
+          "type": "boolean"
+        },
+        "termsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "label",
+        "note",
+        "busy",
+        "termsUrl"
       ]
     },
     "SessionSnapshot": {
@@ -4744,6 +4791,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "spaces.fixRuntime": {
+      "type": "null"
     },
     "spaces.list": {
       "type": "array",

@@ -45,6 +45,7 @@ import type {
   ConnectedCloud,
   GpuChoice,
   LocalStatus,
+  RuntimeFix,
   LocalStorage,
   NewSpaceOptions,
   StorageVolume,
@@ -417,6 +418,12 @@ const LocalStatusShape = ref(
     containerImage: opt(str),
     macosImage: optNull(str),
     error: nullable(str),
+    fix: optNull(
+      ref(
+        "RuntimeFix",
+        obj<RuntimeFix>()({ action: nullable(oneOf("install-docker", "start-docker")), label: str, note: nullable(str), busy: bool, termsUrl: nullable(str) }),
+      ),
+    ),
     hostArch: opt(str),
     storage: optNull(LocalStorageShape),
   }),
@@ -830,6 +837,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   }),
   "presence.publish": nul,
   "presence.leave": nul,
+  "spaces.fixRuntime": nul,
 
   "about.get": AboutShape,
   "about.set": AboutShape,

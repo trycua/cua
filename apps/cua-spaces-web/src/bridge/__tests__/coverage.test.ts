@@ -17,6 +17,7 @@ import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
 import { CHECKLIST_ARGS } from "../ops/checklist";
 import { PRESENCE_ARGS } from "../ops/presence";
+import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type OpArgs, type OpName } from "../protocol";
@@ -125,6 +126,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...RELAY_USAGE_ARGS,
   ...CHECKLIST_ARGS,
   ...PRESENCE_ARGS,
+  ...RUNTIME_FIX_ARGS,
 };
 
 const unsupportedOn = (op: OpName, host: "webkit" | "tauri") =>

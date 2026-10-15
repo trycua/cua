@@ -40,6 +40,7 @@ import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, ty
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
 import { unsupportedPresenceOps } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
@@ -478,6 +479,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...unsupportedStreamOps("demo"),
     ...unsupportedChecklistOps("demo"),
     ...unsupportedPresenceOps("demo"),
+    ...unsupportedRuntimeFixOps("demo"),
   };
 
   return {

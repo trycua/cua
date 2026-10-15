@@ -24746,7 +24746,7 @@ public struct PairingCode: Equatable, Hashable {
      */
     public var code: String?
     /**
-     * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
      * when just made.
      */
     public var url: String?
@@ -24793,7 +24793,7 @@ public struct PairingCode: Equatable, Hashable {
          * `XXXX-XXXX-XXXX`: only when just made.
          */code: String?,
         /**
-         * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+         * `https://cua.ai/add/<code>` (the link and the QR code): only
          * when just made.
          */url: String?,
         /**

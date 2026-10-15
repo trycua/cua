@@ -24,7 +24,7 @@ pub const PAIRING_TOKEN_PREFIX: &str = "cpc_";
 /// Characters of a code.
 pub const PAIRING_CODE_LEN: usize = 12;
 /// Where an add-machine link opens.
-pub const ADD_MACHINE_BASE_URL: &str = "https://spaces.cua.ai/add";
+pub const ADD_MACHINE_BASE_URL: &str = "https://cua.ai/add";
 
 const ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -72,7 +72,7 @@ pub fn display_pairing_code(code: &str) -> String {
     }
 }
 
-/// The add-machine link for `code`: `https://spaces.cua.ai/add/<code>`,
+/// The add-machine link for `code`: `https://cua.ai/add/<code>`,
 /// plus `?relay=<url>` when the machine must join another relay than
 /// [`DEFAULT_RELAY_URL`].
 pub fn add_machine_url(code: &str, relay: &str) -> String {
@@ -254,7 +254,7 @@ mod tests {
             Some("K7QM4XPB2RHD")
         );
         assert_eq!(
-            normalize_pairing_code("https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
+            normalize_pairing_code("https://cua.ai/add/K7QM-4XPB-2RHD?relay=x").as_deref(),
             Some("K7QM4XPB2RHD")
         );
         assert_eq!(
@@ -268,10 +268,8 @@ mod tests {
             other => panic!("expected InvalidArgument, got {:?}", other.map(|t| t.0)),
         }
         assert_eq!(
-            pairing_link_relay(
-                "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
-            )
-            .as_deref(),
+            pairing_link_relay("https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")
+                .as_deref(),
             Some("https://r.example")
         );
         assert_eq!(pairing_link_relay("K7QM-4XPB-2RHD"), None);
@@ -282,11 +280,11 @@ mod tests {
     fn links_and_commands_carry_a_custom_relay_only() {
         assert_eq!(
             add_machine_url("k7qm4xpb2rhd", DEFAULT_RELAY_URL),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD"
+            "https://cua.ai/add/K7QM-4XPB-2RHD"
         );
         assert_eq!(
             add_machine_url("K7QM4XPB2RHD", "https://relay.example.com/"),
-            "https://spaces.cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
+            "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Frelay.example.com"
         );
         assert_eq!(
             install_command("K7QM4XPB2RHD", DEFAULT_RELAY_URL, "linux"),

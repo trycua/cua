@@ -10997,7 +10997,7 @@ export type PairingCode = {
      */
     code?: string,
     /**
-     * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
      * when just made.
      */
     url?: string,

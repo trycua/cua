@@ -261,6 +261,8 @@ async function checkHostPanel(page: Page, cp: Of<"host-panel">): Promise<void> {
   const detail = page.locator('[data-machine-detail="this-mac"]');
   if (m.notice) await expect(detail.locator("[data-machine-notice]")).toContainText(m.notice);
   else await expect(detail.locator("[data-machine-notice]")).toHaveCount(0);
+  // The notice's button (Sign In, Resume Sharing), when it has one.
+  await expect.poll(() => texts(page, "[data-machine-notice] button")).toEqual(m.notice && m.noticeAction ? [m.noticeAction.label] : []);
   await expect.poll(() => attrs(page, "[data-machine-toggle]", "data-machine-toggle")).toEqual(m.toggles.map((t) => t.id));
   await expect
     .poll(() => attrs(page, "[data-machine-toggle] [role=switch]", "aria-checked"))

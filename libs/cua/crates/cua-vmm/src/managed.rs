@@ -375,20 +375,28 @@ fn vm_cpus() -> u32 {
 // Memory is not a ceiling the way CPUs are: every Space's container may use
 // its whole memory limit, and when the Spaces' limits add up to more than
 // the VM has, the guest kernel kills one of them (a gVisor sandbox) and the
-// Space stops on its own. So the VM is sized to what its Spaces may use,
-// and a Space that would not fit is refused instead of overcommitting.
-// A container's /dev/shm is tmpfs inside its own memory limit, so the limit
-// already counts it.
+// Space stops on its own. A container's /dev/shm is tmpfs inside its own
+// memory limit, so the limit already counts it.
+//
+// So the VM boots at a large ceiling ([`ceiling_gib`]: 75% of this Mac's
+// memory, at most 32 GiB) instead of a size picked for the Spaces it runs,
+// and a Space starts as long as the running Spaces' limits and its own fit
+// under that ceiling: no refusal and no VM restart before then. That costs
+// little: Virtualization.framework backs guest memory only as the guest
+// touches it (a 48 GiB VM idles at about 1.9 GB on the host, against 1.05 GB
+// at 4 GiB; the difference is the guest's page tables for the memory map,
+// about 1.8% of the ceiling), macOS compresses and swaps idle VM pages
+// under pressure, and every page goes back to the Mac when the VM stops,
+// which it does once no Linux Space runs. What it does not do is return
+// pages while Spaces run (its balloon has no free page reporting): memory a
+// stopped Space used stays with the VM until the VM stops.
 
 /// The VM's memory besides the Spaces': the kernel, dockerd, containerd.
 pub const OVERHEAD_MIB: u64 = 1024;
-/// The smallest VM (the size it always had).
+/// The smallest VM (the size it had before it was sized from the Mac).
 pub const MIN_GIB: u32 = 4;
-/// Room the VM keeps for two more Spaces at the default 2 GiB beyond the
-/// ones it knows, so new Spaces start without a restart (a VM booted for an
-/// image pull does not know the Space being created yet). The host gives
-/// the VM memory only as the guest touches it, so unused room costs little.
-pub const HEADROOM_MIB: u64 = 4096;
+/// The largest VM.
+pub const MAX_GIB: u32 = 32;
 
 /// This Mac's memory in MiB.
 pub fn host_memory_mib() -> Option<u64> {
@@ -414,25 +422,13 @@ pub fn host_memory_mib() -> Option<u64> {
     }
 }
 
-/// The most the VM may have: half this Mac's memory (never below
-/// [`MIN_GIB`]; [`MIN_GIB`] when it is unknown).
-pub fn cap_gib(host_mib: Option<u64>) -> u32 {
+/// The VM's memory: 75% of this Mac's memory, at most [`MAX_GIB`] and at
+/// least [`MIN_GIB`] ([`MIN_GIB`] when it is unknown).
+pub fn ceiling_gib(host_mib: Option<u64>) -> u32 {
     host_mib
-        .map(|m| (m / 2 / 1024) as u32)
+        .map(|m| (m * 3 / 4 / 1024).min(u64::from(MAX_GIB)) as u32)
         .unwrap_or(MIN_GIB)
         .max(MIN_GIB)
-}
-
-/// Whole GiB holding `mib`.
-fn gib_for(mib: u64) -> u32 {
-    mib.div_ceil(1024) as u32
-}
-
-/// The VM to boot for Spaces reserving `reserved` MiB in all (every
-/// Space it holds, running or not, so starting them later fits): their
-/// memory, the overhead and the headroom, within [`MIN_GIB`]..=`cap`.
-pub fn boot_gib(reserved: u64, cap: u32) -> u32 {
-    gib_for(reserved + OVERHEAD_MIB + HEADROOM_MIB).clamp(MIN_GIB, cap.max(MIN_GIB))
 }
 
 /// Whether a Space asking for `new` MiB fits the VM.
@@ -462,49 +458,45 @@ pub fn room(gib: u32) -> u64 {
 }
 
 /// Whether a Space asking for `new` MiB fits a VM of `vm_gib` where the
-/// running (or paused) Spaces reserve `running` MiB; `all` is what every
-/// Space it holds reserves, `new` included (the size of a restart). With
-/// nothing running, a VM too small for all its Spaces is restarted then
-/// (nothing is lost), not later, when the next Space would be refused.
-pub fn fit(new: u64, running: u64, all: u64, vm_gib: u32, cap: u32) -> Fit {
+/// running (or paused) Spaces reserve `running` MiB, the VM's size being
+/// `ceiling` GiB once booted by this version. A VM still at an older,
+/// smaller size (once, after an update) is restarted at the ceiling when
+/// nothing runs in it (nothing is lost), and never under running Spaces.
+pub fn fit(new: u64, running: u64, vm_gib: u32, ceiling: u32) -> Fit {
+    let most = room(ceiling);
+    if new > most {
+        return Fit::Refuse(format!(
+            "This Linux Space asks for {} GB of memory, but Linux Spaces can use at most {} GB \
+             on this Mac. Give it less memory.",
+            gb(new),
+            gb(most)
+        ));
+    }
+    if running + new > most {
+        return Fit::Refuse(format!(
+            "Not enough memory for this Linux Space ({} GB): Linux Spaces can use at most {} GB \
+             on this Mac and your running Linux Spaces reserve {} GB. Stop a Linux Space and try \
+             again, or give this one less memory.",
+            gb(new),
+            gb(most),
+            gb(running)
+        ));
+    }
+    if vm_gib >= ceiling {
+        return Fit::Fits;
+    }
     if running == 0 {
-        let all = all.max(new);
-        return if new > room(cap) {
-            Fit::Refuse(format!(
-                "This Linux Space asks for {} GB of memory, but Linux Spaces can use at most {} GB \
-                 on this Mac (half its memory). Give it less memory.",
-                gb(new),
-                gb(room(cap))
-            ))
-        } else if room(vm_gib) < all.min(room(cap)) {
-            Fit::Restart(boot_gib(all, cap))
-        } else {
-            Fit::Fits
-        };
+        return Fit::Restart(ceiling);
     }
     if running + new <= room(vm_gib) {
         return Fit::Fits;
     }
-    let what = if running + new <= room(cap) {
-        format!(
-            "the Linux runtime has room for {} GB and your running Linux Spaces reserve {} GB. \
-             Stop your running Linux Spaces and try again (the runtime then restarts with more \
-             memory), or give this one less memory.",
-            gb(room(vm_gib)),
-            gb(running)
-        )
-    } else {
-        format!(
-            "Linux Spaces can use at most {} GB on this Mac (half its memory) and your running \
-             Linux Spaces reserve {} GB. Stop a Linux Space and try again, or give this one less \
-             memory.",
-            gb(room(cap)),
-            gb(running)
-        )
-    };
     Fit::Refuse(format!(
-        "Not enough memory for this Linux Space ({} GB): {what}",
-        gb(new)
+        "Not enough memory for this Linux Space ({} GB): the Linux runtime still has its old \
+         size of {} GB. Stop your running Linux Spaces once and it restarts with up to {} GB.",
+        gb(new),
+        vm_gib,
+        gb(most)
     ))
 }
 
@@ -521,31 +513,9 @@ fn memory_gib_of(profile: &str) -> Option<u32> {
         .and_then(|v| v.trim().parse().ok())
 }
 
-/// What each Space this runtime holds reserves (MiB by container name),
-/// as last seen while the VM ran: the VM boots for all of them.
-fn reserved_file() -> PathBuf {
-    root().join("space-memory.json")
-}
-
-fn reserved_by_name() -> std::collections::BTreeMap<String, u64> {
-    std::fs::read(reserved_file())
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
-fn save_reserved(rows: &[(String, crate::types::Status, u64)]) {
-    let map: std::collections::BTreeMap<&str, u64> =
-        rows.iter().map(|(n, _, m)| (n.as_str(), *m)).collect();
-    if let Ok(b) = serde_json::to_vec(&map) {
-        let _ = std::fs::write(reserved_file(), b);
-    }
-}
-
-/// Spaces being created or started in this process (MiB by name, and
-/// whether their fit check passed, so they may be starting in the engine
-/// now): several creates at once are all counted.
-static PENDING: std::sync::Mutex<std::collections::BTreeMap<String, (u64, bool)>> =
+/// Spaces admitted in this process and starting now (MiB by name), not
+/// running in the engine yet: creates that arrive together all count.
+static PENDING: std::sync::Mutex<std::collections::BTreeMap<String, u64>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// Engine work (an image pull, a commit) that a VM restart would cut short.
@@ -575,39 +545,25 @@ impl Drop for Busy {
 static SIZING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// A Space in [`PENDING`] until it is dropped.
-#[cfg_attr(not(feature = "lume"), allow(dead_code))]
+#[cfg(feature = "lume")]
 struct Pending(String);
 
-#[cfg_attr(not(feature = "lume"), allow(dead_code))]
+#[cfg(feature = "lume")]
 impl Pending {
-    /// Waiting for its fit check (`admitted` false) or past it.
-    fn new(name: &str, mib: u64, admitted: bool) -> Self {
+    fn new(name: &str, mib: u64) -> Self {
         PENDING
             .lock()
             .expect("pending")
-            .insert(name.to_string(), (mib, admitted));
+            .insert(name.to_string(), mib);
         Self(name.to_string())
     }
 }
 
+#[cfg(feature = "lume")]
 impl Drop for Pending {
     fn drop(&mut self) {
         PENDING.lock().expect("pending").remove(&self.0);
     }
-}
-
-/// The VM's memory for the next boot: every Space it holds and every one
-/// being created.
-fn next_boot_gib() -> u32 {
-    let mut all = reserved_by_name();
-    all.extend(
-        PENDING
-            .lock()
-            .expect("pending")
-            .iter()
-            .map(|(n, (m, _))| (n.clone(), *m)),
-    );
-    boot_gib(all.values().sum(), cap_gib(host_memory_mib()))
 }
 
 /// A `colima` command that sees only cua's own Colima, Lima and VM.
@@ -733,7 +689,7 @@ pub async fn ensure() -> Result<String> {
     } else {
         None
     };
-    let (cpus, mem) = (vm_cpus(), next_boot_gib());
+    let (cpus, mem) = (vm_cpus(), ceiling_gib(host_memory_mib()));
     let arch = if cfg!(target_arch = "x86_64") {
         "x86_64"
     } else {
@@ -1256,69 +1212,48 @@ mod engine_impl {
             new: Option<u64>,
         ) -> Result<(Arc<ContainerRuntime>, Pending)> {
             let _one = SIZING.lock().await;
-            let mut was_up = running();
             loop {
                 let rt = self.engine().await?;
                 let rows = rt.memory_reservations().await?;
-                save_reserved(&rows);
                 let me = rows.iter().find(|(n, _, _)| n == name);
                 let new = new.or(me.map(|(_, _, m)| *m)).unwrap_or(2048);
                 // Running or paused: it holds its memory already.
                 if me.is_some_and(|(_, s, _)| *s != Status::Stopped) {
-                    return Ok((rt, Pending::new(name, new, true)));
+                    return Ok((rt, Pending::new(name, new)));
                 }
                 let up = |n: &str| rows.iter().any(|(r, s, _)| r == n && *s != Status::Stopped);
-                // Others being created here: past their fit check they may
-                // be starting in the engine (they count as running); still
-                // waiting for it, they count for the size only.
-                let (mut admitted, mut waiting) = (0, 0);
-                for (n, (m, ok)) in PENDING.lock().expect("pending").iter() {
-                    if n != name && !up(n) {
-                        if *ok {
-                            admitted += m;
-                        } else {
-                            waiting += m;
-                        }
-                    }
-                }
                 // Paused containers keep their memory in the VM: they count
-                // as running.
+                // as running. So do Spaces admitted here and still starting.
+                let starting: u64 = PENDING
+                    .lock()
+                    .expect("pending")
+                    .iter()
+                    .filter(|(n, _)| n.as_str() != name && !up(n))
+                    .map(|(_, m)| *m)
+                    .sum();
                 let running: u64 = rows
                     .iter()
                     .filter(|(n, s, _)| n != name && *s != Status::Stopped)
                     .map(|(_, _, m)| *m)
                     .sum::<u64>()
-                    + admitted;
-                let all: u64 = rows
-                    .iter()
-                    .filter(|(n, _, _)| n != name)
-                    .map(|(_, _, m)| *m)
-                    .sum::<u64>()
-                    + admitted
-                    + waiting
-                    + new;
+                    + starting;
                 let vm = configured_gib().unwrap_or(MIN_GIB);
-                let verdict = match fit(new, running, all, vm, cap_gib(host_memory_mib())) {
-                    // Booted just now, for what it knew then: no second boot
-                    // while the Space fits.
-                    Fit::Restart(_) if !was_up && new <= room(vm) => Fit::Fits,
-                    v => v,
-                };
-                match verdict {
-                    Fit::Fits => return Ok((rt, Pending::new(name, new, true))),
+                match fit(new, running, vm, ceiling_gib(host_memory_mib())) {
+                    Fit::Fits => return Ok((rt, Pending::new(name, new))),
                     Fit::Refuse(why) => {
                         tracing::warn!(space = %name, vm_gib = vm, running_mib = running, "{why}");
                         return Err(VmmError::other(why));
                     }
                     // An image pull or a commit is under way: restart once it
-                    // is over (with what is known then).
+                    // is over.
                     Fit::Restart(_) if BUSY.load(std::sync::atomic::Ordering::SeqCst) > 0 => {
                         drop(rt);
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     }
                     Fit::Restart(gib) => {
-                        // Nothing runs in it, so nothing is lost: stop it and
-                        // boot it again, sized for every Space it holds.
+                        // A VM an older version booted at its fixed size, and
+                        // nothing runs in it, so nothing is lost: boot it again
+                        // at the ceiling (once per Mac).
                         tracing::info!(
                             space = %name,
                             from_gib = vm,
@@ -1332,9 +1267,6 @@ mod engine_impl {
                         drop(rt);
                         stop(&names).await?;
                         *self.engine.lock().await = None;
-                        // The next boot is sized for what is known now: never
-                        // a second restart for the same start.
-                        was_up = false;
                     }
                 }
             }
@@ -1345,9 +1277,6 @@ mod engine_impl {
             let Some(rt) = self.engine_if_running().await else {
                 return;
             };
-            if let Ok(rows) = rt.memory_reservations().await {
-                save_reserved(&rows);
-            }
             let Ok(list) = rt.list().await else {
                 return;
             };
@@ -1381,9 +1310,6 @@ mod engine_impl {
             let need = spec.memory_mb
                 + spec.sidecars.len() as u64
                     * (crate::container::SIDECAR_MEMORY_BYTES as u64 >> 20);
-            // Counted before the fit check, so a VM that boots for several
-            // creates at once is sized for all of them.
-            let _early = Pending::new(&spec.name, need, false);
             let (rt, _room) = self.make_room(&spec.name, Some(need)).await?;
             rt.start(spec).await
         }
@@ -1545,83 +1471,73 @@ mod tests {
         assert!(!y.contains("mounts"));
     }
 
-    /// Three 2 GiB Spaces on a 16 GB Mac: the VM boots for all of them
-    /// (6 GiB + 1 GiB overhead + room for one more, capped at half the Mac),
-    /// so the third one no longer overcommits a fixed 4 GiB VM.
+    /// The VM boots at 75% of the Mac, at most 32 GiB, at least 4 GiB:
+    /// the host backs it only as the guest touches it.
     #[test]
-    fn the_vm_is_sized_for_its_spaces_within_half_the_mac() {
-        let mac16 = cap_gib(Some(16 << 10));
-        assert_eq!(mac16, 8);
-        assert_eq!(cap_gib(Some(96 << 10)), 48);
-        assert_eq!(cap_gib(Some(4 << 10)), MIN_GIB);
-        assert_eq!(cap_gib(None), MIN_GIB);
-        // Nothing known yet (a VM booted for the first image pull): room
-        // for two default Spaces.
-        assert_eq!(boot_gib(0, mac16), 5);
-        assert_eq!(boot_gib(2048, mac16), 7);
-        // Three 2 GiB Spaces: 6 + 1 + 4 = 11 GiB, capped at half the Mac.
-        assert_eq!(boot_gib(3 * 2048, mac16), 8);
-        assert_eq!(boot_gib(3 * 2048, 48), 11);
-        assert_eq!(boot_gib(1500, 48), 7);
-        // Never below the old size, on a small Mac too.
-        assert_eq!(boot_gib(0, cap_gib(Some(8 << 10))), 4);
+    fn the_vm_boots_at_three_quarters_of_the_mac_up_to_32_gib() {
+        assert_eq!(ceiling_gib(Some(8 << 10)), 6);
+        assert_eq!(ceiling_gib(Some(16 << 10)), 12);
+        assert_eq!(ceiling_gib(Some(32 << 10)), 24);
+        assert_eq!(ceiling_gib(Some(96 << 10)), MAX_GIB);
+        assert_eq!(ceiling_gib(Some(192 << 10)), MAX_GIB);
+        assert_eq!(ceiling_gib(Some(4 << 10)), MIN_GIB);
+        assert_eq!(ceiling_gib(None), MIN_GIB);
         // The running VM's size is read back from the profile it booted from.
-        assert_eq!(memory_gib_of(&profile_yaml("aarch64", 4, 8)), Some(8));
+        assert_eq!(memory_gib_of(&profile_yaml("aarch64", 4, 12)), Some(12));
         #[cfg(target_os = "macos")]
         assert!(host_memory_mib().is_some_and(|m| m >= 4096));
     }
 
     #[test]
-    fn a_space_that_would_overcommit_the_vm_is_refused_or_the_idle_vm_grows() {
-        // 16 GB Mac, VM booted for three 2 GiB Spaces (8 GiB): all three fit.
-        assert_eq!(fit(2048, 2 * 2048, 3 * 2048, 8, 8), Fit::Fits);
-        // A fourth while three run: over half the Mac; refused.
-        let Fit::Refuse(why) = fit(2048, 3 * 2048, 4 * 2048, 8, 8) else {
-            panic!("a fourth 2 GiB Space must be refused on a 16 GB Mac");
+    fn spaces_start_until_the_mac_is_full_and_never_overcommit() {
+        // 16 GB Mac: a 12 GiB VM, room for 11 GB of Spaces. Three, four
+        // and five 2 GB Spaces start with no restart and no refusal.
+        assert_eq!(fit(2048, 2 * 2048, 12, 12), Fit::Fits);
+        assert_eq!(fit(2048, 4 * 2048, 12, 12), Fit::Fits);
+        // A sixth would overcommit it: refused, with what to do.
+        let Fit::Refuse(why) = fit(2048, 5 * 2048, 12, 12) else {
+            panic!("a sixth 2 GB Space must be refused on a 16 GB Mac");
         };
         assert_eq!(
             why,
-            "Not enough memory for this Linux Space (2 GB): Linux Spaces can use at most 7 GB \
-             on this Mac (half its memory) and your running Linux Spaces reserve 6 GB. Stop a \
-             Linux Space and try again, or give this one less memory."
+            "Not enough memory for this Linux Space (2 GB): Linux Spaces can use at most 11 GB \
+             on this Mac and your running Linux Spaces reserve 10 GB. Stop a Linux Space and try \
+             again, or give this one less memory."
         );
-        // A 5 GiB VM with two 2 GiB Spaces running: it could grow, but not
-        // under them; refused with what to do.
-        let Fit::Refuse(why) = fit(2048, 2 * 2048, 3 * 2048, 5, 8) else {
-            panic!("never restart the VM under running Spaces");
-        };
-        assert!(why.contains("has room for 4 GB"), "{why}");
-        assert!(why.contains("Stop your running Linux Spaces"), "{why}");
-        // The same with nothing running: restart it now, sized for all
-        // three, rather than refuse the second one later.
-        assert_eq!(fit(2048, 0, 3 * 2048, 5, 8), Fit::Restart(8));
-        assert_eq!(fit(2048, 0, 3 * 2048, 8, 8), Fit::Fits);
-        // A VM bigger than needed is kept.
-        assert_eq!(fit(2048, 0, 2048, 8, 8), Fit::Fits);
-        // A VM booted for the image pull of the first Space (5 GiB): that
-        // Space and a second one fit without a restart.
-        assert_eq!(fit(2048, 0, 2048, 5, 8), Fit::Fits);
-        assert_eq!(fit(2048, 2048, 2 * 2048, 5, 8), Fit::Fits);
-        // The old 4 GiB VM after an update, three Spaces known, none
-        // running: it grows before the first one starts.
-        assert_eq!(fit(2048, 0, 3 * 2048, 4, 8), Fit::Restart(8));
-        // One Space bigger than half the Mac, nothing running.
-        let Fit::Refuse(why) = fit(8192, 0, 8192, 4, 8) else {
-            panic!("an 8 GB Space cannot run on a 16 GB Mac");
+        // 96 GB Mac: 32 GiB, fifteen 2 GB Spaces.
+        assert_eq!(fit(2048, 14 * 2048, 32, 32), Fit::Fits);
+        assert!(matches!(fit(2048, 15 * 2048, 32, 32), Fit::Refuse(_)));
+        // One Space bigger than the Mac allows.
+        let Fit::Refuse(why) = fit(16 << 10, 0, 12, 12) else {
+            panic!("a 16 GB Space cannot run on a 16 GB Mac");
         };
         assert_eq!(
             why,
-            "This Linux Space asks for 8 GB of memory, but Linux Spaces can use at most 7 GB on \
-             this Mac (half its memory). Give it less memory."
+            "This Linux Space asks for 16 GB of memory, but Linux Spaces can use at most 11 GB \
+             on this Mac. Give it less memory."
         );
-        // The old fixed 4 GiB VM with two 2 GiB Spaces running: the third
-        // used to be started and later killed.
-        assert!(matches!(
-            fit(2048, 2 * 2048, 3 * 2048, 4, 8),
-            Fit::Refuse(_)
-        ));
         assert_eq!(gb(1536), "1.5");
         assert_eq!(gb(3 * 1024), "3");
+    }
+
+    /// A VM an older version booted at its fixed 4 GiB: restarted at the
+    /// ceiling once nothing runs, never under running Spaces.
+    #[test]
+    fn an_old_4_gib_vm_grows_once_nothing_runs_in_it() {
+        assert_eq!(fit(2048, 0, 4, 12), Fit::Restart(12));
+        // Spaces run: one that fits the old VM starts...
+        assert_eq!(fit(1024, 2048, 4, 12), Fit::Fits);
+        // ...one that does not is refused (it used to start and be killed).
+        let Fit::Refuse(why) = fit(2048, 2 * 2048, 4, 12) else {
+            panic!("never restart the VM under running Spaces");
+        };
+        assert_eq!(
+            why,
+            "Not enough memory for this Linux Space (2 GB): the Linux runtime still has its old \
+             size of 4 GB. Stop your running Linux Spaces once and it restarts with up to 11 GB."
+        );
+        // At the ceiling, nothing restarts.
+        assert_eq!(fit(2048, 0, 12, 12), Fit::Fits);
     }
 
     #[test]

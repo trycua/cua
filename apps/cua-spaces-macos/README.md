@@ -278,7 +278,8 @@ for Windows and Linux.
 - The cost is a second UI to keep up; the core and the parity flows keep that
   to rendering.
 
-This app is the macOS release; the Tauri app ships for Windows and Linux.
+This app is the macOS release; the Electron app (`apps/cua-spaces-desktop`)
+ships for Windows and Linux.
 
 ## Release
 

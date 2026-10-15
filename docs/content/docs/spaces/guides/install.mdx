@@ -6,12 +6,12 @@ description: 'Install the Cua Spaces app and the cua CLI on macOS, Windows or Li
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Cua Spaces 0.9.0 runs on macOS, Windows and Linux. One command installs the
-`cua` CLI and the app. Download buttons are on the
-[download page](https://cua.ai/download), and every installer is attached to
+Cua Spaces 0.9.0 runs on macOS, Windows (preview) and Linux. One command installs the
+`cua` CLI and the app. The [download page](https://cua.ai/download) has
+the app for macOS, Windows (preview) and Linux, and every installer is attached to
 the [GitHub releases](https://github.com/trycua/cua/releases).
 
-<Tabs items={['macOS', 'Windows', 'Linux']}>
+<Tabs items={['macOS', 'Windows (preview)', 'Linux']}>
   <Tab value="macOS">
     ```bash skip="host-install"
     curl -fsSL https://cua.ai/install.sh | sh
@@ -19,7 +19,7 @@ the [GitHub releases](https://github.com/trycua/cua/releases).
 
     Or open the universal `.dmg` (or `.pkg`) from the release. macOS 26 or later.
   </Tab>
-  <Tab value="Windows">
+  <Tab value="Windows (preview)">
     <Callout type="warn">
       Cua Spaces for Windows is a preview. Expect rough edges and tell us what
       you hit.

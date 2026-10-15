@@ -903,16 +903,12 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
             "$HOME/.agents/skills/$SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
             "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
-            "$HOME/.gemini/config/skills/$SKILL_PACK_NAME" \
-            "$HOME/.gemini/antigravity-cli/skills/$SKILL_PACK_NAME" \
             "$HOME/.gemini/skills/$SKILL_PACK_NAME" \
             "$HOME/.hermes/skills/$SKILL_PACK_NAME" \
             "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME" \
-            "$HOME/.gemini/config/skills/$LEGACY_SKILL_PACK_NAME" \
-            "$HOME/.gemini/antigravity-cli/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.gemini/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.hermes/skills/$LEGACY_SKILL_PACK_NAME"; do
             if [[ -L "$SKILL_LINK" ]]; then
@@ -920,6 +916,29 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 log "removed skill symlink $SKILL_LINK"
             elif [[ -d "$SKILL_LINK" ]]; then
                 log "$SKILL_LINK is a real directory, not a symlink (skipping)"
+            else
+                log "no skill symlink at $SKILL_LINK (skipping)"
+            fi
+        done
+        # Antigravity's skill directories are commonly hand-managed, so a
+        # link there is removed only when it points into this driver's own
+        # home (where `skills install` keeps the pack).
+        for SKILL_LINK in \
+            "$HOME/.gemini/config/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity-cli/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/config/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity-cli/skills/$LEGACY_SKILL_PACK_NAME"; do
+            if [[ -L "$SKILL_LINK" ]]; then
+                SKILL_LINK_TARGET="$(readlink "$SKILL_LINK")"
+                case "$SKILL_LINK_TARGET" in
+                    "$HOME_DIR"/*|"$LEGACY_HOME_DIR"/*)
+                        rm -f "$SKILL_LINK"
+                        log "removed skill symlink $SKILL_LINK" ;;
+                    *)
+                        log "$SKILL_LINK points outside the driver home (skipping)" ;;
+                esac
             else
                 log "no skill symlink at $SKILL_LINK (skipping)"
             fi
@@ -1052,6 +1071,7 @@ for SKILL_LINK in \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
     "$HOME/.gemini/config/skills/cua-driver" \
+    "$HOME/.gemini/antigravity/skills/cua-driver" \
     "$HOME/.gemini/antigravity-cli/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
     "$HOME/.hermes/skills/cua-driver"; do

@@ -2948,6 +2948,11 @@ impl Spaces {
                 self.drop_connection(&id).await;
                 let state = if on {
                     sandboxes.power_on(name).await?;
+                    // What extensions keep for a connected Space (its Cua
+                    // Volume) ended with the connection above: start it
+                    // again now, not only when something next connects.
+                    #[cfg(feature = "mcp")]
+                    self.notify_connected(&id);
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(name).await?

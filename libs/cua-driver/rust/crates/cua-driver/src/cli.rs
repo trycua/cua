@@ -3471,11 +3471,7 @@ fn run_permissions_status(json: bool) {
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some("check_permissions".into()),
-            args: Some(if cfg!(target_os = "macos") {
-                serde_json::json!({ "prompt": false })
-            } else {
-                serde_json::json!({})
-            }),
+            args: Some(permissions_status_args(cfg!(target_os = "macos"))),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
@@ -3611,6 +3607,10 @@ fn run_permissions_status(json: bool) {
     }
 }
 
+fn permissions_status_args(macos: bool) -> serde_json::Value {
+    serde_json::Map::from_iter(macos.then(|| ("prompt".into(), false.into()))).into()
+}
+
 fn permission_status_reply_text(result: &serde_json::Value, macos: bool) -> Option<String> {
     let structured = &result["structuredContent"];
     let refused = result["isError"] == true
@@ -3624,14 +3624,15 @@ fn permission_status_reply_text(result: &serde_json::Value, macos: bool) -> Opti
         .filter_map(|item| item["text"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    let text = Some(text)
+        .filter(|text| !text.is_empty())
+        .or_else(|| serde_json::to_string_pretty(structured).ok())?;
     if refused {
         return Some(format!(
             "Permission status: ❓ unknown (the daemon refused the check, so nothing was checked)\n  {text}"
         ));
     }
     Some(text)
-        .filter(|text| !text.is_empty())
-        .or_else(|| serde_json::to_string_pretty(structured).ok())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -6047,6 +6048,32 @@ mod tests {
             args.get("probe_direct_capture"),
             Some(&serde_json::json!(false))
         );
+    }
+
+    #[test]
+    fn permission_status_sends_prompt_only_on_macos() {
+        assert_eq!(
+            permissions_status_args(true),
+            serde_json::json!({ "prompt": false })
+        );
+        assert_eq!(permissions_status_args(false), serde_json::json!({}));
+    }
+
+    #[test]
+    fn permission_status_keeps_a_textless_refusal_detail() {
+        let result = serde_json::json!({
+            "isError": true,
+            "structuredContent": {
+                "refusal": { "code": "invalid_arguments", "message": "unknown argument prompt" },
+                "status": "refused"
+            }
+        });
+        for macos in [false, true] {
+            let text = permission_status_reply_text(&result, macos).expect("refusal text");
+            assert!(text.starts_with("Permission status: ❓ unknown"));
+            assert!(text.contains("invalid_arguments"));
+            assert!(text.contains("unknown argument prompt"));
+        }
     }
 
     #[test]

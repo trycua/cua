@@ -1098,6 +1098,46 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_ide_target_matches_its_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity IDE")
+            .expect("Antigravity IDE must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/config/skills")
+        ));
+    }
+
+    #[test]
+    fn antigravity_cli_target_matches_its_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity CLI")
+            .expect("Antigravity CLI must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/antigravity-cli/skills")
+        ));
+    }
+
+    #[test]
+    fn legacy_gemini_skill_directory_stays_a_separate_target() {
+        // `~/.gemini/skills/` is the pre-Antigravity Gemini CLI location.
+        // Antigravity does not scan it, so it must not be the only
+        // Antigravity target, but existing installs keep their link.
+        let legacy: Vec<_> = AGENTS
+            .iter()
+            .filter(|agent| matches!(agent.parent, AgentParent::Home(".gemini/skills")))
+            .collect();
+
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].label, "Gemini CLI (legacy)");
+    }
+
+    #[test]
     fn hermes_target_prefers_hermes_home() {
         let path = resolve_hermes_skills_dir(Some("/profiles/work"), || {
             panic!("the fallback must not be read")

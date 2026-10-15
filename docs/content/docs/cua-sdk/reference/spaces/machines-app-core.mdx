@@ -1,6 +1,6 @@
 ---
 title: "Machines page"
-description: "The Machines page's rows: this machine, your machines and your devices, each computer once."
+description: "The Machines page: this machine, your machines and your devices, each computer once, and each machine's page."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account's devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.
+`app_machines_page_rows` builds the Machines page's rows from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account's devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. `app_machines_view` draws the page from them: the list in groups (your machines, those offline for 30 days or more, team machines) with one line each, and each machine's page (its Provide Spaces and Share this desktop switches, editable on this machine only; the Spaces on it, as links to each Space; New Space here; Details; rename; and Remove from account). Every Spaces UI draws this view.
 
 ## `AppDeviceIn` record
 
@@ -63,6 +63,151 @@ Returned by [`app_machines_page_input_from_json`](#app_machines_page_input_from_
 | `hostnames` | `HashMap<String, String>` |  | The hostname each machine's cua-spacesd reported, by machine id. |
 | `presence` | `HashMap<String, bool>` |  | Whether the relay sees each machine connected now, by machine id. |
 | `now` | `u64` |  | Unix seconds. |
+
+## `AppMachinesView` record
+
+Returned by [`app_machines_view`](#app_machines_view).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `summary` | `String` |  | "3 machines, 2 online". |
+| `groups` | [`Vec<AppMachinesViewGroup>`](#appmachinesviewgroup-record) |  | The list's groups (only those with machines). |
+| `machines` | [`Vec<AppMachinesViewMachine>`](#appmachinesviewmachine-record) |  | Every machine, in list order. |
+
+## `AppMachinesViewAbout` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `computer_name` / `computerName` | `String` |  | Its name ("Dillon's MacBook Pro"). |
+| `app_version` / `appVersion` | `String` |  | The app's version ("0.9.1"). |
+| `os_version` / `osVersion` | `String` |  | Its system and version ("macOS 26.5.2"). |
+
+## `AppMachinesViewFact` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "OS", "App", "Connection", "Service". |
+| `value` | `String` |  | Its value. |
+
+## `AppMachinesViewGroup` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | `yours`, `old` or `team`. |
+| `title` | `String` |  | "Your machines", "Offline for 30+ days (2)", "Team machines". |
+| `collapsed` | `bool` |  | Collapsed until opened (the old machines). |
+| `ids` | `Vec<String>` |  | Its machines' ids, in order. |
+| `remove_all` / `removeAll` | [`Option<AppMachinesViewRemoveAll>`](#appmachinesviewremoveall-record) |  | Remove old machines. |
+
+## `AppMachinesViewInput` record
+
+Returned by [`app_machines_view_input_from_json`](#app_machines_view_input_from_json).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `page` | [`AppMachinesPageInput`](#appmachinespageinput-record) |  | What the rows are listed from (`machines.page_rows`). |
+| `relay` | [`Vec<AppMachinesViewRelay>`](#appmachinesviewrelay-record) |  | The account's relay machines (none while signed out). |
+| `host` | [`Option<AppHostState>`](/cua-sdk/reference/spaces/app-core/this-machine#apphoststate-record) |  | This machine's host state (`None` while it loads). |
+| `about` | [`AppMachinesViewAbout`](#appmachinesviewabout-record) |  | This computer. |
+| `rows` | [`Option<Vec<AppMachinePageRow>>`](#appmachinepagerow-record) |  | The rows when the shell already listed them (an older host's rows, merged by the web UI); `None`: `machines.page_rows` of `page`. |
+
+## `AppMachinesViewMachine` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The row's id (`MachinePageRow.id`). |
+| `name` | `String` |  | Its name. |
+| `badge` | `Option<String>` |  | "This Mac" on the machine this app runs on. |
+| `line` | `String` |  | The row's one muted line ("2 Spaces running", "Ready for Spaces", "Offline · last seen 9 days ago"). |
+| `online` | `bool` |  | Usable now (the green dot): online and sharing. |
+| `os` | `String` |  | `macos`, `linux`, `windows`, or empty. |
+| `current` | `bool` |  | The machine this app runs on. |
+| `team` | `bool` |  | Someone shares it with you (a team machine). |
+| `status` | `String` |  | The page's status line ("Online", "Offline · last seen 9 days ago"). |
+| `shared_by` / `sharedBy` | `Option<String>` |  | After the status: who shares it ("Shared by your team"). |
+| `rename` | [`Option<AppMachinesViewRename>`](#appmachinesviewrename-record) |  | Rename, when it can be renamed from here. |
+| `notice` | `Option<String>` |  | One line over the switches (offline, signed out). |
+| `notice_action` / `noticeAction` | [`Option<AppHostAction>`](/cua-sdk/reference/spaces/app-core/this-machine#apphostaction-record) |  | The notice's button (Sign In). |
+| `toggles` | [`Vec<AppMachinesViewToggle>`](#appmachinesviewtoggle-record) |  | Provide Spaces, then Share this desktop. |
+| `toggles_note` / `togglesNote` | `Option<String>` |  | Under read-only switches: where they change. |
+| `spaces_title` / `spacesTitle` | `String` |  | "Spaces on this machine". |
+| `spaces` | [`Vec<AppMachinesViewSpace>`](#appmachinesviewspace-record) |  | The Spaces on it. |
+| `spaces_empty` / `spacesEmpty` | `Option<String>` |  | When it has none. |
+| `new_space` / `newSpace` | [`AppMachinesViewNewSpace`](#appmachinesviewnewspace-record) |  | New Space here. |
+| `details_title` / `detailsTitle` | `String` |  | "Details" (collapsed). |
+| `details` | [`Vec<AppMachinesViewFact>`](#appmachinesviewfact-record) |  | OS, App, Connection, Service. |
+| `remove` | [`Option<AppMachinesViewRemove>`](#appmachinesviewremove-record) |  | Remove from account (none for a team machine). |
+
+## `AppMachinesViewNewSpace` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "New Space here". |
+| `on` | `String` |  | The wizard's placement (`local`, `host:<id>`). |
+| `enabled` | `bool` |  | Can be pressed now. |
+| `help` | `Option<String>` |  | Why not, when it cannot. |
+
+## `AppMachinesViewRelay` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | Machine id. |
+| `role` | `String` |  | `owner`, or `shared` for a machine someone shares with you. |
+| `team` | `Option<String>` |  | The team you reach it through, for a team machine. |
+| `owner_email` / `ownerEmail` | `Option<String>` |  | Its owner's email, when the relay says. |
+| `provides_spaces` / `providesSpaces` | `Option<bool>` |  | It creates Spaces for your devices (`None`: it did not say). |
+
+## `AppMachinesViewRemove` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "Remove from account". |
+| `enabled` | `bool` |  | Can be pressed now. |
+| `help` | `Option<String>` |  | Why not, when it cannot. |
+| `host` | `bool` |  | This machine: its host setup is removed (the host's `remove`). |
+| `machine` | `Option<String>` |  | Another machine: it leaves the relay directory (`relay:<id>`). |
+| `device` | `Option<String>` |  | The device on it, revoked too. |
+| `confirm` | [`AppHostConfirm`](/cua-sdk/reference/spaces/app-core/this-machine#apphostconfirm-record) |  | Asked first. |
+
+## `AppMachinesViewRemoveAll` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "Remove old machines". |
+| `confirm` | [`AppHostConfirm`](/cua-sdk/reference/spaces/app-core/this-machine#apphostconfirm-record) |  | Asked first. |
+| `removes` | [`Vec<AppMachinesViewRemove>`](#appmachinesviewremove-record) |  | What each removal does. |
+
+## `AppMachinesViewRename` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `target` | `String` |  | `host` (This machine's host setup), `machine` (another machine of yours on the relay) or `device` (one of your devices). |
+| `id` | `String` |  | The id it is saved under (the relay machine's or the device's). |
+| `title` | `String` |  | The dialog's title. |
+| `confirm_label` / `confirmLabel` | `String` |  | Its confirming button. |
+
+## `AppMachinesViewSpace` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The Space's id (its page). |
+| `name` | `String` |  | Its name. |
+| `os` | `String` |  | Its system ("Ubuntu 24.04.5 LTS", "macOS"). |
+| `status` | `String` |  | Its status word ("Running", "Stopped"). |
+| `running` | `bool` |  | Running (the green dot). |
+
+## `AppMachinesViewToggle` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | `spaces` or `desktop`. |
+| `label` | `String` |  | "Provide Spaces", "Share this desktop". |
+| `help` | `String` |  | One line under it. |
+| `on` | `bool` |  | On now. |
+| `editable` | `bool` |  | Changed here (This machine); another machine's are read-only. |
+| `enabled` | `bool` |  | Can be flipped now. |
+| `actions` | [`Vec<AppHostActionId>`](/cua-sdk/reference/spaces/app-core/this-machine#apphostactionid-enum) |  | What flipping it runs, in order (the host's actions). |
+| `setup` | `Option<String>` |  | Before This machine is set up: flipping it opens the setup form with this profile (`desktop` or `spare`). |
 
 ## `app_machines_page_input_from_json`
 
@@ -118,3 +263,58 @@ pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePage
 | `input` | [`AppMachinesPageInput`](#appmachinespageinput-record) | required |
 
 **Returns** [`Vec<AppMachinePageRow>`](#appmachinepagerow-record)
+
+## `app_machines_view`
+
+The Machines page as every UI draws it: the list in groups, one line
+per row, and each machine's page.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appMachinesView(input: AppMachinesViewInput) -> AppMachinesView
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_machines_view(input: AppMachinesViewInput) -> AppMachinesView
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `input` | [`AppMachinesViewInput`](#appmachinesviewinput-record) | required |
+
+**Returns** [`AppMachinesView`](#appmachinesview-record)
+
+## `app_machines_view_input_from_json`
+
+Machines view input from JSON (fixtures, parity flows).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appMachinesViewInputFromJson(json: String) throws -> AppMachinesViewInput
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_machines_view_input_from_json(json: String) -> Result<AppMachinesViewInput, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `json` | `String` | required |
+
+**Returns** [`AppMachinesViewInput`](#appmachinesviewinput-record) · **Raises** [`CuaError`](/cua-sdk/reference/errors)

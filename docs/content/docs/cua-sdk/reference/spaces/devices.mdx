@@ -33,6 +33,7 @@ Returned by [`Auth.devices`](/cua-sdk/reference/auth#authdevices).
 | [`enroll`](#devicesenroll) | Registers this device (creating its key on first use). |
 | [`pairing_codes`](#devicespairing_codes) | The account's pairing codes, newest first (without the codes). |
 | [`rename`](#devicesrename) | Renames a device (from this enrolled device). |
+| [`rename_machine`](#devicesrename_machine) | Renames `machine_id`, a machine the account owns, on the relay (from this enrolled device). |
 | [`revoke`](#devicesrevoke) | Revokes a device (from this enrolled device). |
 | [`revoke_pairing_code`](#devicesrevoke_pairing_code) | Revokes an unused pairing code (`pc_…`). |
 | [`snapshot`](#devicessnapshot) | The account's devices, the grace period, the newest `audit_limit` audit events and the machines' names. |
@@ -428,6 +429,58 @@ pub async fn rename(&self, id: String, name: String) -> Result<RelayDevice, CuaE
 | `name` | `String` | required |
 
 **Returns** [`RelayDevice`](#relaydevice-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Devices.rename_machine`
+
+Renames `machine_id`, a machine the account owns, on the relay (from
+this enrolled device). When it is this machine's own registration,
+its host setup takes the new name too.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def rename_machine(self, machine_id: str, name: str) -> RelayMachine
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<RelayMachine>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func renameMachine(machineId: String, name: String) async throws -> RelayMachine
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun renameMachine(machineId: String, name: String): RelayMachine
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn rename_machine(&self, machine_id: String, name: String) -> Result<RelayMachine, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `machine_id` | `String` | required |
+| `name` | `String` | required |
+
+**Returns** [`RelayMachine`](/cua-sdk/reference/spaces/host#relaymachine-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Devices.revoke`
 

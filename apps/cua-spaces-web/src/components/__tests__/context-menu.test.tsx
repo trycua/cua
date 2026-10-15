@@ -231,7 +231,7 @@ describe.skipIf(!wasmBuilt)("a Space's menu on the Spaces page", () => {
       "-",
       "space.teleport",
       "space.sendFiles",
-      // (Share follows Settings, Experiments: off here, as on its page.)
+      "space.share",
       "-",
       "space.copyName",
       "space.copyId",
@@ -252,7 +252,7 @@ describe.skipIf(!wasmBuilt)("a Space's menu on the Spaces page", () => {
     expect(off).toContain("space.start");
     expect(off).not.toContain("space.stop");
     expect(off).not.toContain("space.sendFiles");
-    expect(off.filter((i) => i.startsWith("space.teleport"))).toEqual(["space.teleport (off)"]);
+    expect(off.filter((i) => i.startsWith("space.teleport") || i.startsWith("space.share"))).toEqual(["space.teleport (off)", "space.share (off)"]);
   });
 
   it("stops a Space only after the confirmation, through the page's own action", async () => {

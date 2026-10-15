@@ -263,7 +263,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       const made: PairingCode = {
         id: `pc_demo${pairingSeq}`,
         code,
-        url: `https://spaces.cua.ai/add/${code}`,
+        url: `https://cua.ai/add/${code}`,
         installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
         installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
         state: "active",
@@ -342,6 +342,10 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     "notifications.list": () => feed.map((n) => ({ ...n })),
     "notifications.markAllRead": () => {
       feed = feed.map((n) => ({ ...n, read: true }));
+      return null;
+    },
+    "notifications.markRead": ({ ids }) => {
+      feed = feed.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n));
       return null;
     },
   };

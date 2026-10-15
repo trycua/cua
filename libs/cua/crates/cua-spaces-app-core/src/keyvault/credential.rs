@@ -289,6 +289,7 @@ mod tests {
         KeyvaultOverview {
             availability: availability.into(),
             status: Some(KvStatus {
+                features: vec![],
                 version: "0".into(),
                 initialized: availability != "no_vault",
                 unlocked: availability == "ready",

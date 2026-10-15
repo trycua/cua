@@ -632,6 +632,16 @@ pub(crate) fn random_suffix() -> String {
     format!("{:010x}", rand::random::<u64>() & 0xff_ffff_ffff)
 }
 
+/// A name in the form [`SpaceCreate::name`] defaults to (`space-` and ten
+/// lowercase hex digits): one the SDK, or an app on its behalf, generated.
+/// A create under such a name cleans up after a failed start, as one with
+/// no name does.
+pub fn is_generated_name(name: &str) -> bool {
+    name.strip_prefix("space-").is_some_and(|hex| {
+        hex.len() == 10 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
 pub(crate) struct Inner {
     pub(crate) registry: Registry,
     /// Every Space's latest thumbnail ([`crate::thumbnails`]).
@@ -2085,7 +2095,13 @@ impl Spaces {
             }
         };
         let create_id = opts.create_id.clone().filter(|c| !c.trim().is_empty());
-        let generated = opts.name.as_deref().is_none_or(|n| n.trim().is_empty());
+        // A name in the SDK's own form counts as generated: an app that
+        // shows the name before creating picks it the same way
+        // ([`is_generated_name`]).
+        let generated = opts
+            .name
+            .as_deref()
+            .is_none_or(|n| n.trim().is_empty() || is_generated_name(n.trim()));
         let named = |opts: &mut SpaceCreate| {
             let name = sanitize_label(
                 &opts
@@ -3331,6 +3347,22 @@ mod tests {
         assert_eq!(sanitize_label("Client_ID.42"), "client-id-42");
         assert_eq!(sanitize_label("--x--"), "x");
         assert_eq!(sanitize_label(&"a".repeat(80)).len(), 63);
+    }
+
+    #[test]
+    fn generated_names_are_the_sdks_own_form() {
+        let name = format!("space-{}", random_suffix());
+        assert!(is_generated_name(&name), "{name}");
+        assert!(is_generated_name("space-000000002a"));
+        for other in [
+            "space-2a",
+            "space-000000002A",
+            "dev",
+            "space-000000002ag",
+            "my-space-000000002a",
+        ] {
+            assert!(!is_generated_name(other), "{other}");
+        }
     }
 
     #[test]

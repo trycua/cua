@@ -139,10 +139,15 @@ extension WebUIBridge {
         case "notifications.list":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.pollNotifications()
-            return BridgeValue.encode(model.persistent.feed)
+            return model.persistent.feedRows()
         case "notifications.markAllRead":
             guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
             await model.persistent.markAllRead()
+            return NSNull()
+        case "notifications.markRead":
+            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
+            await model.persistent.markRead(ids: ids)
             return NSNull()
 
         // Usage events
@@ -667,7 +672,8 @@ extension WebUIBridge {
             cookieDomains: c["cookieDomains"] as? [String],
             exclude: c["exclude"] as? [String] ?? [],
             fromVault: c["fromVault"] as? [String],
-            includePasswords: c["includePasswords"] as? Bool ?? false))
+            includePasswords: c["includePasswords"] as? Bool ?? false,
+            passwordDomains: c["passwordDomains"] as? [String]))
     }
 
     /// A run's report, as the page reads it (`RunReport`).

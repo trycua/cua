@@ -109,6 +109,7 @@ describe("tauri adapter", () => {
         spaceId: "s",
         agents: null,
         signals: [],
+        ids: ["n1"],
         // storage.run takes a StorageRequest; host.setUp the host form's request.
         request: op === "host.setUp" ? { mode: "relay" } : { kind: "clear-cache" },
         action: "stop-sharing",

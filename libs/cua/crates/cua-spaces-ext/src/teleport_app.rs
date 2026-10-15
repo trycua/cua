@@ -328,6 +328,7 @@ impl SpaceAppTeleport for Space {
                     cookie_domains: plan.cookie_domains.clone(),
                     from_vault: plan.from_vault.clone(),
                     include_passwords: plan.include_passwords,
+                    password_domains: plan.password_domains.clone(),
                 };
                 let app = plan.app.name.clone();
                 let receipt = self

@@ -643,6 +643,10 @@ mod space_side {
         /// Also send the saved passwords: only when ticked in the review.
         #[uniffi(default = false)]
         pub include_passwords: bool,
+        /// The sites whose saved passwords to send (the review's own
+        /// choice; `None`: those of `cookie_domains`).
+        #[uniffi(default = None)]
+        pub password_domains: Option<Vec<String>>,
     }
 
     /// One progress event of [`Teleport::run`].
@@ -873,6 +877,7 @@ mod space_side {
                     exclude: consent.exclude.clone(),
                     from_vault: consent.from_vault.clone(),
                     include_passwords: consent.include_passwords,
+                    password_domains: consent.password_domains.clone(),
                 })
                 .map_err(crate::teleport_app::ux_err)?;
             let sessions = sessions(self);

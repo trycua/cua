@@ -3,7 +3,7 @@
 
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import { GlobeIcon, LoaderCircleIcon, SearchIcon } from "lucide-react";
+import { GlobeIcon, KeyRoundIcon, LoaderCircleIcon, SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { ReviewView, TeleportSession, TeleportStore } from "@/bridge";
@@ -77,14 +77,26 @@ export function TeleportReview({
       {r.offersPasswords ? (
         <Group>
           <label className="flex cursor-default items-start gap-3 px-4 py-2.5">
-            <Checkbox className="mt-0.5" checked={r.includePasswords} onCheckedChange={(value) => teleport.send({ type: "toggle-passwords", value })} />
-            <span>
+            <Checkbox
+              className="mt-0.5"
+              data-review-passwords=""
+              checked={r.includePasswords}
+              onCheckedChange={(value) => teleport.send({ type: "toggle-passwords", value })}
+            />
+            <span className="min-w-0 flex-1">
               <span className="block text-[13px]">{r.passwordsLabel}</span>
               <span className="block text-xs text-muted-foreground">
                 Off by default. Passwords are re-encrypted for the browser in the Space and need that browser to have been opened once.
               </span>
             </span>
+            {r.includePasswords && r.passwordSummary ? (
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-review-passwords-summary>
+                {r.passwordSummary}
+              </span>
+            ) : null}
           </label>
+          {/* The picker only where the Keyvault keeps the choice (the core lists rows then). */}
+          {r.includePasswords && r.passwordSummary ? <Passwords review={r} teleport={teleport} /> : null}
         </Group>
       ) : null}
 
@@ -213,6 +225,55 @@ function Gate({ data, checked, onChange, note, children }: { data: string; check
         {note ? <span className="block text-xs text-muted-foreground">{note}</span> : null}
       </span>
     </label>
+  );
+}
+
+/** The saved passwords to pick, as the sites are: a site with how many it
+ * holds (reading the app), or each saved password's site and username (from
+ * the Keyvault). Never a value. */
+function Passwords({ review: r, teleport }: { review: ReviewView; teleport: TeleportStore }) {
+  const rows = r.passwords ?? [];
+  return (
+    <div className="border-t">
+      <div className="flex items-center gap-2 border-b px-4 py-1.5">
+        <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <input
+          aria-label="Search saved passwords"
+          placeholder="Search saved passwords"
+          value={r.passwordQuery ?? ""}
+          onChange={(e) => teleport.send({ type: "password-query", text: e.target.value })}
+          className="h-7 min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+        />
+        <button type="button" className="text-xs text-brand hover:underline" onClick={() => teleport.send({ type: "select-shown-passwords", value: true })}>
+          All
+        </button>
+        <button type="button" className="text-xs text-brand hover:underline" onClick={() => teleport.send({ type: "select-shown-passwords", value: false })}>
+          None
+        </button>
+      </div>
+      {rows.length ? (
+        <ul className="max-h-52 divide-y overflow-y-auto">
+          {rows.map((p) => (
+            <li key={p.key} data-review-password={p.key} data-selected={p.selected || undefined}>
+              <label className="flex cursor-default items-center gap-2.5 px-4 py-2">
+                <Checkbox
+                  aria-label={`Send ${[p.site, p.username].filter(Boolean).join(" ")}`}
+                  checked={p.selected}
+                  onCheckedChange={() => teleport.send({ type: "toggle-password", key: p.key })}
+                />
+                <KeyRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate text-[13px]">{p.site}</span>
+                {p.username ? <span className="truncate text-xs text-muted-foreground">{p.username}</span> : null}
+                <span className="flex-1" />
+                {p.counts ? <span className="shrink-0 text-xs text-muted-foreground">{p.counts}</span> : null}
+              </label>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-[13px] text-muted-foreground">No saved passwords match.</p>
+      )}
+    </div>
   );
 }
 

@@ -283,6 +283,34 @@ struct WebUIHostTests {
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
     }
 
+    /// The page opens one notification and marks just that one read; the
+    /// list carries the Space each entry is about (its Open Space).
+    @Test func oneNotificationIsMarkedReadAndCarriesItsSpace() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        backend.agents.notifications.append(["id": "n2", "at_ms": backend.agents.now - 30_000, "agent": "ada", "kind": "message",
+                                             "title": "ada", "body": "Second.", "read": false])
+        let (bridge, _) = bridge(backend: backend)
+        func list() async throws -> [String: [String: Any]] {
+            let rows = try await bridge.handle("notifications.list", [:]) as? [[String: Any]] ?? []
+            return Dictionary(rows.map { ($0["id"] as? String ?? "", $0) }, uniquingKeysWith: { a, _ in a })
+        }
+        let before = try await list()
+        #expect(before["n1"]?["space"] as? String == "local:dev")
+        #expect(before["n2"]?["space"] is NSNull)
+        #expect(before["n1"]?["body"] as? String == "Your research is ready.")
+        #expect(before["n1"]?["read"] as? Bool == false)
+
+        #expect(try await bridge.handle("notifications.markRead", ["ids": ["n1"]]) is NSNull)
+        let after = try await list()
+        #expect(after["n1"]?["read"] as? Bool == true)
+        #expect(after["n2"]?["read"] as? Bool == false)
+
+        // No ids marks nothing (the daemon would read it as every entry).
+        _ = try await bridge.handle("notifications.markRead", ["ids": [String]()])
+        #expect(try await list()["n2"]?["read"] as? Bool == false)
+        #expect(await failure(bridge, "notifications.markRead", [:]) == "bad_args")
+    }
+
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {
         let m = PersistentModel(tools: FakeAgentsTools())
         let agents = try await m.listAgents()
@@ -426,6 +454,7 @@ struct WebUIHostTests {
         let (bridge, _) = bridge()
         #expect(await failure(bridge, "volume.overview", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.list", [:]) == "unsupported")
+        #expect(await failure(bridge, "notifications.markRead", ["ids": ["n1"]]) == "unsupported")
         #expect(await failure(bridge, "about.set", ["autoCheck": true]) == "unsupported")
         #expect(await failure(bridge, "host.openSettings", ["url": "https://example.com"]) == "bad_args")
         #expect(await failure(bridge, "volume.reveal", ["path": "/etc/hosts"]) == "bad_args")

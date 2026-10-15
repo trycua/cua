@@ -140,6 +140,9 @@ struct ParityTests {
         case "set-address": return .setAddress(url: a["url"] as! String)
         case "set-token": return .setToken(token: a["token"] as! String)
         case "set-address-name": return .setAddressName(name: a["name"] as! String)
+        // Typed slider values, decoded as the core does.
+        case "edit-resource", "set-resource-text", "commit-resource", "cancel-resource":
+            return try! appWizardActionFromJson(json: text(a))
         case let other: fatalError("unmapped wizard action \(other)")
         }
     }
@@ -154,7 +157,7 @@ struct ParityTests {
     }
 
     func wizardFrame(_ v: AppWizardView) -> [String: Any] {
-        [
+        var out: [String: Any] = [
             "step": Int(v.step),
             "canContinue": v.canContinue,
             "primaryLabel": v.primaryLabel,
@@ -200,6 +203,16 @@ struct ParityTests {
                 "submit": v.address.submit.map { "\($0.url) token=\($0.token ?? "") name=\($0.name ?? "")" } ?? NSNull(),
             ] as [String: Any],
         ]
+        // A slider's value being typed, only while one is.
+        if let e = v.resourceEdit {
+            let field = switch e.field {
+            case .cpus: "cpus"
+            case .memory: "memory"
+            case .disk: "disk"
+            }
+            out["resourceEdit"] = "\(field): \(e.text)" + (e.error.map { " !\($0)" } ?? "")
+        }
+        return out
     }
 
     func storage(_ s: [String: Any]) -> AppLocalStorage {
@@ -486,7 +499,8 @@ struct ParityTests {
     // MARK: - teleport-review
 
     func pickerFrame(_ s: AppPickerState) -> [String: Any] {
-        let review: Any = appPickerReview(state: s).map { r -> [String: Any] in
+        let r0 = appPickerReview(state: s)
+        let review: Any = r0.map { r -> [String: Any] in
             [
                 "title": r.title,
                 "items": r.items.map { "\(word($0.kind)):\($0.label)\($0.sensitive ? " (secret)" : "")" },
@@ -497,7 +511,7 @@ struct ParityTests {
                 "warnings": r.warnings,
             ]
         } ?? NSNull()
-        return [
+        var out: [String: Any] = [
             "step": word(s.step),
             "selectedId": opt(s.selectedId),
             "entry": opt(s.entry?.id),
@@ -513,6 +527,16 @@ struct ParityTests {
             },
             "planSensitive": appPickerPlanSensitive(state: s).map(word),
         ]
+        // Saved passwords, while the review offers them.
+        if let r = r0, r.offersPasswords {
+            out["passwords"] = [
+                "label": r.passwordsLabel,
+                "on": r.includePasswords,
+                "summary": r.passwordSummary,
+                "rows": r.passwords.map { "\($0.site) \($0.username) (\($0.counts)) [\($0.selected ? "x" : " ")]" },
+            ] as [String: Any]
+        }
+        return out
     }
 
     func word(_ g: AppSensitiveGroup) -> String {
@@ -553,6 +577,10 @@ struct ParityTests {
             case "acknowledge-relay-plaintext": event = .acknowledgeRelayPlaintext(value: e["value"] as! Bool)
             case "sensitive": event = .sensitive(group: group(e["group"] as! String), value: e["value"] as! Bool)
             case "back": event = .back
+            // The review's sites, saved items and passwords, decoded as the core does.
+            case "domains-loaded", "toggle-passwords", "toggle-password", "password-query",
+                 "select-shown-passwords", "vault-items", "send-from":
+                event = try appPickerEventFromJson(json: text(e))
             case "progress":
                 let p = e["event"] as! [String: Any]
                 event = .progress(event: AppTeleportRunEvent(
@@ -570,7 +598,14 @@ struct ParityTests {
             frames.append(["picker": e["type"]!, "frame": pickerFrame(s)])
         }
         let consent = appPickerConsent(state: s)
-        frames.append(["consent": ["approved": consent.approved, "acknowledgeSensitive": consent.acknowledgeSensitive, "acknowledgeRelayPlaintext": consent.acknowledgeRelayPlaintext, "saveToKeyvault": consent.saveToKeyvault]])
+        var consentFrame: [String: Any] = ["approved": consent.approved, "acknowledgeSensitive": consent.acknowledgeSensitive, "acknowledgeRelayPlaintext": consent.acknowledgeRelayPlaintext, "saveToKeyvault": consent.saveToKeyvault]
+        // The fields the core leaves out at their defaults.
+        if let d = consent.cookieDomains { consentFrame["cookieDomains"] = d }
+        if !consent.exclude.isEmpty { consentFrame["exclude"] = consent.exclude }
+        if let v = consent.fromVault { consentFrame["fromVault"] = v }
+        if consent.includePasswords { consentFrame["includePasswords"] = true }
+        if let d = consent.passwordDomains { consentFrame["passwordDomains"] = d }
+        frames.append(["consent": consentFrame])
 
         let spaces = try appSpacesFromJson(json: text(f["spaces"]))
         frames += notchFrames(f["notch"] as! [[String: Any]], spaces: spaces)

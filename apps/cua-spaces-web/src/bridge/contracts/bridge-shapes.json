@@ -1753,6 +1753,12 @@
         },
         "read": {
           "type": "boolean"
+        },
+        "space": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2895,6 +2901,12 @@
           "items": {
             "$ref": "#/$defs/GpuChoice"
           }
+        },
+        "nameSeed": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4492,6 +4504,9 @@
     "notifications.markAllRead": {
       "type": "null"
     },
+    "notifications.markRead": {
+      "type": "null"
+    },
     "presence.join": {
       "type": "object",
       "properties": {
@@ -6003,6 +6018,9 @@
       }
     },
     "notifications.markAllRead": {
+      "type": "null"
+    },
+    "notifications.markRead": {
       "type": "null"
     },
     "relay.usage": {

@@ -188,7 +188,15 @@ struct SnapshotTests {
             #expect(space.os.label == expected)
             var notch = appNotchInitial()
             notch.open = true
-            let tile = try #require(appNotchView(state: notch, spaces: [space]).tiles.first)
+            // The machine itself is no notch tile (CUA-1619): a Space it
+            // provides, with the same OS, is.
+            var providedRow = row
+            providedRow.id = "relay:test-host/dev"
+            providedRow.host = "test-host"
+            let provided = appRowsToSpaces(rows: [providedRow], nowMs: 0)[0]
+            #expect(appNotchView(state: notch, spaces: [space]).tiles.isEmpty)
+            let tile = try #require(appNotchView(state: notch, spaces: [space, provided]).tiles.first)
+            #expect(tile.id == provided.id)
             #expect(tile.symbol == (os == nil ? "computer" : "os-macos"))
             let view = VStack(alignment: .leading, spacing: 12) {
                 HStack { OsIconImage(id: tile.symbol, size: 18); Text(space.name) }

@@ -123,7 +123,8 @@ async function checkPicker(page: Page, cp: Cp<"picker">): Promise<void> {
       await expect(page.locator("[data-teleport-title]")).toHaveText(r.title);
       // Every install and every line the user can turn off, with secrets marked.
       const kind = (i: { kind: string; sensitive: boolean }) => (i.kind === "install" ? "install" : i.sensitive ? "secret" : "state");
-      const shown = r.items.filter((i) => i.kind === "install" || r.toggles.some((t) => t.key === i.key));
+      // Sending from the Keyvault, the saved items are the list: no "Also sent".
+      const shown = r.items.filter((i) => i.kind === "install" || (r.source !== "vault" && r.toggles.some((t) => t.key === i.key)));
       await expect
         .poll(() =>
           root.locator("[data-review-item]").evaluateAll((els) =>
@@ -134,6 +135,11 @@ async function checkPicker(page: Page, cp: Cp<"picker">): Promise<void> {
       if (r.leavesText) await expect(page.locator("[data-review-leaves]")).toHaveText(r.leavesText);
       else await expect(page.locator("[data-review-leaves]")).toHaveCount(0);
       await expect.poll(() => root.locator("[data-review-warning]").allTextContents()).toEqual(r.warnings);
+      // Saved passwords: the picker only where the Keyvault keeps the choice.
+      const picking = r.offersPasswords && r.includePasswords && Boolean(r.passwordSummary);
+      await expect
+        .poll(() => root.locator("[data-review-password]").evaluateAll((els) => els.map((e) => `${e.getAttribute("data-review-password")}${e.hasAttribute("data-selected") ? " x" : ""}`)))
+        .toEqual(picking ? (r.passwords ?? []).map((p) => `${p.key}${p.selected ? " x" : ""}`) : []);
       for (const [gate, needed, checked] of [
         ["ack", r.needsAcknowledgement, r.acknowledged],
         ["ack-relay", r.needsRelayPlaintextAcknowledgement, r.acknowledgedRelayPlaintext],

@@ -618,7 +618,13 @@ impl Backend for DaemonBackend {
             // source's key here, never written to disk; the receiver
             // re-encrypts them under its own.
             if spec.passwords && spec.confirm_passwords {
-                let sites: Vec<String> = spec.domains.clone().unwrap_or_default();
+                // The review's choice of passwords, else those of the
+                // chosen sites.
+                let sites: Vec<String> = spec
+                    .password_domains
+                    .clone()
+                    .or_else(|| spec.domains.clone())
+                    .unwrap_or_default();
                 for l in self.site_logins_for(&spec.app, spec.profile.clone(), &sites)? {
                     keep(&mut out, &display, &scope, record::password_record(&l)?);
                 }

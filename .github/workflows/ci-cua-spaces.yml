@@ -82,6 +82,9 @@ jobs:
   scope:
     name: bundle scope
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: .
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
     steps:

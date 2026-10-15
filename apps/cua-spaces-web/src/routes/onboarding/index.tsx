@@ -4,7 +4,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 
-import { useFirstSpaceOffers, useOnboarding, useOnboardingVolume, useSession, useSpaces, useThisMachine, type OnboardingHook, type OnboardingView, type SandboxImage } from "@/bridge";
+import {
+  useFirstSpaceOffers,
+  useMachines,
+  useOnboarding,
+  useOnboardingVolume,
+  useSession,
+  useSpaces,
+  useThisMachine,
+  type OnboardingHook,
+  type OnboardingView,
+  type SandboxImage,
+} from "@/bridge";
+import { AddMachineDialog } from "@/components/add-machine-dialog";
 import { CuaLogo } from "@/components/cua-logo";
 import { useAgentsStep, type AgentsStep } from "@/components/volume/use-agents-step";
 import { OsIcon } from "@/components/os-icon";
@@ -382,7 +394,24 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
       </ul>
       {/* Windows without Docker Desktop: install or start it from here, and the cards follow. */}
       {images.some((image) => first.blockedReason(image.ref) !== null) ? <RuntimeFixRow /> : null}
+      {/* Nothing runs here (no runtime, virtualization off): another computer can run them. */}
+      {first.known && images.length > 0 && images.every((image) => first.blockedReason(image.ref) !== null) ? <AnotherComputer /> : null}
     </section>
+  );
+}
+
+/** "Or run Spaces on another computer": Add a machine, from the last page. */
+function AnotherComputer() {
+  const [adding, setAdding] = useState(false);
+  const { setupGuide } = useMachines();
+  return (
+    <div data-first-space-elsewhere="" className="mt-3 flex items-center gap-3">
+      <p className="text-xs text-muted-foreground">Or run Spaces on another computer you use: add it here and create Spaces on it from this one.</p>
+      <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+        Add a machine
+      </Button>
+      <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
+    </div>
   );
 }
 

@@ -57,6 +57,8 @@ describe.skipIf(!wasmBuilt)("the first Space on the last onboarding page (real r
     await screen.findByText("Create your first Space");
     await waitFor(() => expect(card("linux")?.querySelector("[data-first-space-blocked]")).toBeTruthy());
     for (const os of ["macos", "linux", "windows"]) expect(createOf(os).disabled, os).toBe(true);
+    // Another computer can run them: Add a machine is right here.
+    expect(await screen.findByRole("button", { name: "Add a machine" })).toBeTruthy();
   });
 
   // CUA-1712: Create sent no `kind`, and the Electron host (Linux, Windows)
@@ -129,5 +131,6 @@ describe.skipIf(!wasmBuilt)("the first Space on the last onboarding page (real r
     await screen.findByText("Create your first Space");
     await waitFor(() => expect(createOf("linux").disabled).toBe(false));
     expect(screen.queryByRole("button", { name: "Start Docker Desktop" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add a machine" })).toBeNull();
   });
 });

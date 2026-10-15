@@ -37,6 +37,10 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func add(url: String, token: String?, name: String?) async throws
     /// Deletes a created Space, or forgets one added by address.
     func remove(id: String, removeOnly: Bool) async throws
+    /// Takes one of your machines (`relay:<machine>`) off the relay
+    /// directory (`Spaces.relay_unregister`): Remove from account on the
+    /// Machines page. The relay refuses one that is online.
+    func relayUnregister(id: String) async throws
     /// Turns a Space off (`on` false: suspended or stopped, as its provider
     /// can) or back on (`stop_space` / `start_space`).
     func setPower(id: String, on: Bool) async throws
@@ -120,6 +124,9 @@ public extension SpacesBackend {
         throw FixtureError(message: "This Space's runs can't be read here")
     }
     func lumeSource() async -> String? { nil }
+    func relayUnregister(id: String) async throws {
+        throw FixtureError(message: "Machines can't be removed here")
+    }
     func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
     func linuxSource() async -> String? { nil }
@@ -300,6 +307,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func add(url: String, token: String?, name: String?) async throws {
         _ = try await cua.spaces().add(url: url, token: token, name: name)
+    }
+
+    public func relayUnregister(id: String) async throws {
+        _ = try await cua.spaces().relayUnregister(space: id)
     }
 
     public func remove(id: String, removeOnly: Bool) async throws {
@@ -653,6 +664,15 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public private(set) var removed: [String] = []
     /// The ids of those that were only forgotten (Remove from List).
     public private(set) var forgotten: [String] = []
+    /// The machines taken off the relay (Remove from account).
+    public private(set) var unregistered: [String] = []
+
+    public func relayUnregister(id: String) async throws {
+        await MainActor.run {
+            unregistered.append(id)
+            fixtureRows.removeAll { $0.id == id }
+        }
+    }
     /// The fixture cloud is connected (`cloud_connect` ran).
     public var fixtureCloudConnected = false
     /// The cloud tools called, in order.

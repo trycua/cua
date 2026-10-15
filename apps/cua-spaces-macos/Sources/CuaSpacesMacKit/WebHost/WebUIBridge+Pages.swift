@@ -127,6 +127,18 @@ extension WebUIBridge {
             guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
             return BridgeValue.encode(usage)
 
+        // The Machines page: rename a machine, Remove from account (what
+        // each does to which machine is the core's `machines_view`).
+        case "machines.rename":
+            try await model.renameMachine(id: try string(args, "id"), name: try string(args, "name"))
+            return NSNull()
+        case "machines.remove":
+            let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
+            try await model.removeMachine(machine: machine, device: device)
+            return NSNull()
+
         // Settings, Storage
         case "storage.get":
             let storage = model.storage

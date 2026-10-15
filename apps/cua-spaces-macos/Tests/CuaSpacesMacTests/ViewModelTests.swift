@@ -403,9 +403,11 @@ struct ViewModelTests {
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
                                     "experiment:classic_ui"])
-        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
+        // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default);
+        // Sharing is on by default (#5218).
         #expect(toggles.allSatisfy { r in
-            r.options.first { $0.id == (r.id == "experiment:classic_ui" ? "on" : "off") }?.active == true
+            let on = r.id == "experiment:classic_ui" || r.id == "experiment:sharing"
+            return r.options.first { $0.id == (on ? "on" : "off") }?.active == true
         })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
@@ -1062,10 +1064,11 @@ struct ViewModelTests {
         #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help == "Suspend")
-        // No Share without the Sharing experiment; with it, before power.
+        // Share before power (Sharing is on by default, #5218); none with it off.
+        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
+        model.chooseExperiment(row: "experiment:sharing", option: "off")
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .power, .delete, .open])
         model.chooseExperiment(row: "experiment:sharing", option: "on")
-        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
 
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.

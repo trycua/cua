@@ -89,6 +89,7 @@ pub enum Command {
     },
     Status {
         socket: Option<String>,
+        pid_file: Option<String>,
     },
     /// `cua-driver sessions list [--json]` — content-free operator view of
     /// the live sessions owned by the selected daemon runtime.
@@ -880,7 +881,10 @@ pub fn parse_command() -> Command {
                 all,
             }
         }
-        Some("status") => Command::Status { socket },
+        Some("status") => Command::Status {
+            socket,
+            pid_file: flag_value(&args, "--pid-file"),
+        },
         Some("sessions") => {
             let subcommand = pos.next().unwrap_or("list");
             if subcommand != "list" {
@@ -4376,7 +4380,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"Path","default_value":null,"is_optional":true},
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true},
                     {"name":"permission-mode","short_name":null,"help":"Immutable agent authorization mode: standard, bounded, or unrestricted.","type":"String","default_value":"standard","is_optional":true},
                     {"name":"grant","short_name":null,"help":"Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.","type":"String","default_value":null,"is_optional":true,"is_repeatable":true},
                     {"name":"capability-manifest","short_name":null,"help":"Optional narrow-only tool/resource ceiling; required in bounded mode.","type":"Path","default_value":null,"is_optional":true},
@@ -4435,7 +4439,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
-                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"Path","default_value":null,"is_optional":true}
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path.","type":"Path","default_value":null,"is_optional":true}
                 ],
                 "flags": no_flags,
                 "subcommands": no_subcommands

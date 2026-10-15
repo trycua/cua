@@ -271,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         start(Self.model)
+        Task.detached(priority: .utility) { InstallerCleanup.ejectInstallers() }
     }
 
     /// The Dock icon (or opening the app again) with no window up: the main

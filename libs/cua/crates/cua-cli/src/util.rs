@@ -142,24 +142,56 @@ pub fn open_browser(url: &str) -> bool {
     if std::env::var_os("CUA_NO_BROWSER").is_some() || !interactive() {
         return false;
     }
-    let mut cmd = if cfg!(target_os = "macos") {
-        let mut c = std::process::Command::new("open");
-        c.arg(url);
-        c
-    } else if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", "", url]);
-        c
-    } else {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(url);
-        c
+    launch_url(url)
+}
+
+/// Hands `url` to the OS's default handler.
+///
+/// Windows uses `ShellExecuteW`, never `cmd /C start`: cmd.exe reads an
+/// unquoted `&` as a command separator, so a sign-in URL arrived as
+/// `...?response_type=code` with every other query parameter lost (CUA-1701).
+#[cfg(windows)]
+fn launch_url(url: &str) -> bool {
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (verb, target) = (wide("open"), wide(url));
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
     };
-    cmd.stdin(std::process::Stdio::null())
+    // Values above 32 mean success.
+    r as isize > 32
+}
+
+#[cfg(not(windows))]
+fn launch_url(url: &str) -> bool {
+    let (program, args) = launch_command(url);
+    std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .is_ok()
+}
+
+/// The command that opens `url` on macOS and Linux. The URL is one argv
+/// entry, passed through exactly; no shell sees it.
+#[cfg(not(windows))]
+fn launch_command(url: &str) -> (&'static str, Vec<String>) {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    (program, vec![url.to_string()])
 }
 
 /// A reqwest client with sane timeouts.
@@ -310,4 +342,17 @@ pub fn exit_on_ctrl_c() {
             std::process::exit(130);
         }
     });
+}
+
+#[cfg(all(test, not(windows)))]
+mod browser_tests {
+    /// A real sign-in URL: several `&`-joined parameters (CUA-1701).
+    const SIGN_IN: &str = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/auth?response_type=code&client_id=cua-cli&redirect_uri=http%3A%2F%2F127.0.0.1%3A54968%2Fcallback&scope=openid&state=s&code_challenge=c&code_challenge_method=S256";
+
+    #[test]
+    fn the_url_reaches_the_opener_whole() {
+        let (program, args) = super::launch_command(SIGN_IN);
+        assert_ne!(program, "cmd");
+        assert_eq!(args, vec![SIGN_IN.to_string()]);
+    }
 }

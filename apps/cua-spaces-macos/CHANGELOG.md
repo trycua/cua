@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/trycua/cua/compare/cua-spaces-v0.9.1...cua-spaces-v0.9.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **spaces:** one-time migration turns Space sharing on for 0.9.0 settings (CUA-1668) ([#5225](https://github.com/trycua/cua/issues/5225)) ([749636a](https://github.com/trycua/cua/commit/749636a5df27e773aaeee03baf083e9761a7f99d))
+
 ## [0.9.1](https://github.com/trycua/cua/compare/cua-spaces-v0.9.0...cua-spaces-v0.9.1) (2026-10-15)
 
 

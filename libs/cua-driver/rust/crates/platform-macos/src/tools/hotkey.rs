@@ -327,13 +327,21 @@ impl Tool for HotkeyTool {
                             );
                         }
                     }
-                    return super::invoke_menu::run_in_background(
+                    let menu_result = super::invoke_menu::run_in_background(
                         pid,
                         wid,
                         item.path,
-                        super::invoke_menu::MenuRequest::KeyEquivalent(key_display),
+                        super::invoke_menu::MenuRequest::KeyEquivalent(key_display.clone()),
                     )
                     .await;
+                    // The menu route is only a better route when it works. A
+                    // refusal (an item macOS keeps disabled while the app is in
+                    // the background, as LibreOffice's Format > Bold does) must
+                    // not end the call: the caller named a window, so the combo
+                    // goes to that window as key events below (CUA-1767).
+                    if menu_result.is_error != Some(true) {
+                        return menu_result;
+                    }
                 }
             }
         }
@@ -380,7 +388,9 @@ impl Tool for HotkeyTool {
                     pid,
                     wid,
                     element_ptr,
-                    cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    super::window_keyboard_action(
+                        cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    ),
                 )
                 .await
                 {
@@ -574,10 +584,14 @@ impl Tool for HotkeyTool {
                         // background (default): auth-envelope post to the pid, no
                         // raise — even when window_id was supplied for targeting.
                         (false, false, _, Some(ptr)) => {
-                            focus_hotkey_element(pid, ptr)?;
-                            crate::input::keyboard::hotkey(pid, &key, &m)
+                            super::post_keys_to_window(pid, window_id, || {
+                                focus_hotkey_element(pid, ptr)?;
+                                crate::input::keyboard::hotkey(pid, &key, &m)
+                            })
                         }
-                        _ => crate::input::keyboard::hotkey(pid, &key, &m),
+                        _ => super::post_keys_to_window(pid, window_id, || {
+                            crate::input::keyboard::hotkey(pid, &key, &m)
+                        }),
                     }
                 })
                 .await

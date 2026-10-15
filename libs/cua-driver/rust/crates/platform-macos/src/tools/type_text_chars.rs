@@ -91,7 +91,9 @@ impl Tool for TypeTextCharsTool {
                 pid,
                 wid,
                 element_ptr,
-                cua_driver_core::background_input::BackgroundAction::InsertText,
+                super::window_keyboard_action(
+                    cua_driver_core::background_input::BackgroundAction::InsertText,
+                ),
             )
             .await
             {
@@ -116,7 +118,9 @@ impl Tool for TypeTextCharsTool {
 
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
-            crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
+            super::post_keys_to_window(pid, window_id, || {
+                crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
+            })
         })
         .await;
 

@@ -859,7 +859,10 @@ async fn background_keyboard_policy(
         }
     };
     let target = ExactWindowTarget { pid, window_id };
-    match decide_background_input(target, &facts, BackgroundAction::InsertText) {
+    // The exact window is made key for the key post (see
+    // `super::post_keys_to_window`), so a sibling window is not ambiguous.
+    let action = super::window_keyboard_action(BackgroundAction::InsertText);
+    match decide_background_input(target, &facts, action) {
         BackgroundInputDecision::Execute { .. } => Ok((lease, BackgroundKeyboardPolicy::Allowed)),
         BackgroundInputDecision::Refuse(refusal) => {
             let semantic_available = element_ptr.is_some()
@@ -1245,7 +1248,12 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
-    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    // Background rungs (`settle_ms == 0`) address a window: make it the app's
+    // key window for the post so the keys reach it, not a sibling.
+    let key_window = if settle_ms == 0 { window_id } else { None };
+    super::post_keys_to_window(pid, key_window, || {
+        crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
+    })?;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
     // particular, Chromium can acknowledge the posting process while a long
@@ -1545,6 +1553,7 @@ fn type_text_blocking(
     if !explicit_target && window_id.is_some() {
         let accepts_text = ax_target.is_some_and(|(element, _, _)| unsafe {
             focused_accepts_text(element)
+                || focused_is_editor_surface(pid, element)
                 || target_in_web_area(pid, Some((element as usize, None)), window_id)
         });
         if !accepts_text {
@@ -1686,6 +1695,42 @@ fn is_text_input_role(role: &str) -> bool {
     )
 }
 
+/// Roles of a focused element that is an editing surface without being a text
+/// field: a spreadsheet grid or cell, a document canvas, the scroll view that
+/// hosts one (LibreOffice Calc and Writer, Numbers, Pages). Keys typed into
+/// them edit the document, so a pid-routed key post is the right route.
+/// Lists and outlines stay out: there typed keys move the selection.
+fn is_editor_surface_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXLayoutArea" | "AXLayoutItem" | "AXScrollArea" | "AXTable" | "AXCell" | "AXGroup"
+    )
+}
+
+/// Apps whose focused views of those roles are file or item browsers, where
+/// typed keys drive type-to-select rather than edit.
+fn is_item_browser_app(bundle_id: &str) -> bool {
+    matches!(bundle_id, "com.apple.finder" | "com.apple.dock")
+}
+
+fn editor_surface_accepts_keys(role: &str, bundle_id: &str) -> bool {
+    is_editor_surface_role(role) && !is_item_browser_app(bundle_id)
+}
+
+/// Whether the focused element is an editing surface that takes typed keys
+/// even though it is not a text field (CUA-1767).
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn focused_is_editor_surface(pid: i32, element: AXUIElementRef) -> bool {
+    let role = copy_string_attr(element, "AXRole").unwrap_or_default();
+    if !is_editor_surface_role(&role) {
+        return false;
+    }
+    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
+    editor_surface_accepts_keys(&role, &bundle_id)
+}
+
 const NO_FOCUSED_TEXT_INPUT: &str = "no_focused_text_input";
 
 fn no_focused_text_input_refusal(
@@ -1710,6 +1755,30 @@ fn no_focused_text_input_refusal(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn editor_surfaces_take_keys_but_item_browsers_do_not() {
+        for role in ["AXLayoutArea", "AXScrollArea", "AXTable", "AXCell"] {
+            assert!(super::editor_surface_accepts_keys(
+                role,
+                "org.libreoffice.script"
+            ));
+            assert!(super::editor_surface_accepts_keys(
+                role,
+                "com.apple.iWork.Numbers"
+            ));
+            assert!(!super::editor_surface_accepts_keys(
+                role,
+                "com.apple.finder"
+            ));
+        }
+        for role in ["AXOutline", "AXList", "AXRow", "AXButton", "AXMenuItem", ""] {
+            assert!(!super::editor_surface_accepts_keys(
+                role,
+                "org.libreoffice.script"
+            ));
+        }
+    }
+
     #[test]
     fn chromium_native_field_refuses_only_background_submits() {
         let refusal = super::chromium_native_field_submit_refusal(true, "file:///tmp/report.log\n")

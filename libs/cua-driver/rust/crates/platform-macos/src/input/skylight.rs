@@ -53,6 +53,34 @@ type CopyManagedDisplayForWindowFn = unsafe extern "C" fn(u32, u32) -> *mut c_vo
 /// `uint64_t SLSManagedDisplayGetCurrentSpace(uint32_t cid, CFStringRef display)`
 type ManagedDisplayGetCurrentSpaceFn = unsafe extern "C" fn(u32, *const c_void) -> u64;
 
+/// Run `f` (a pid-routed key post) with `target_wid` as the app's key window.
+///
+/// Key events posted to a pid reach that app's key window. With several
+/// windows open (a Find & Replace dialog beside a sheet) that may not be the
+/// requested one. This sends the exact window a focus record (no activation,
+/// no raise, no real pointer; the user's front window keeps key status),
+/// runs `f`, then hands key back to the window that had it. It is a no-op
+/// when the target already has key, or when the SPIs are unavailable (the
+/// keys then go where they would have gone anyway).
+pub fn with_exact_window_key<T>(pid: pid_t, target_wid: u32, f: impl FnOnce() -> T) -> T {
+    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
+    if previous == Some(target_wid) {
+        return f();
+    }
+    let switched = activate_without_raise_with(pid, target_wid, false);
+    if switched {
+        // Let AppKit install the window as key before the first event.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+    let out = f();
+    if switched {
+        if let Some(previous) = previous {
+            activate_without_raise_with(pid, previous, false);
+        }
+    }
+    out
+}
+
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
 
 /// `OSStatus SLPSSetFrontProcessWithOptions(const void *psn, uint32_t windowID, uint32_t options)`

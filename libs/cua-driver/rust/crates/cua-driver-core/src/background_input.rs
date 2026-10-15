@@ -90,13 +90,23 @@ pub enum BackgroundAction {
     InsertText,
     /// Process-scoped key/hotkey without an action-specific verifier.
     GenericKey,
+    /// Process-scoped keys whose transport first makes the exact target window
+    /// the app's key window (a window focus record: no activation, no raise,
+    /// the user's front window keeps key status) and hands key back after. A
+    /// second same-pid window is then not a competing destination, because
+    /// the keys are routed to the requested window explicitly. Callers use
+    /// this only where that transport is available; otherwise they ask for
+    /// `InsertText` / `GenericKey` and keep the fail-closed ambiguity guard.
+    ExactWindowKeys,
 }
 
 impl BackgroundAction {
     fn is_pid_keyboard(self) -> bool {
         matches!(
             self,
-            BackgroundAction::InsertText | BackgroundAction::GenericKey
+            BackgroundAction::InsertText
+                | BackgroundAction::GenericKey
+                | BackgroundAction::ExactWindowKeys
         )
     }
 }
@@ -271,7 +281,9 @@ pub fn decide_background_input(
                 },
             }
         }
-        BackgroundAction::InsertText | BackgroundAction::GenericKey => {
+        BackgroundAction::InsertText
+        | BackgroundAction::GenericKey
+        | BackgroundAction::ExactWindowKeys => {
             if visibility_disproven {
                 return refuse(
                     refusal_codes::MINIMIZED_OR_HIDDEN,
@@ -286,7 +298,9 @@ pub fn decide_background_input(
                 );
             }
             debug_assert!(action.is_pid_keyboard());
-            if facts.competing_keyboard_destinations > 0 {
+            if facts.competing_keyboard_destinations > 0
+                && action != BackgroundAction::ExactWindowKeys
+            {
                 return refuse(
                     refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY,
                     format!(
@@ -545,6 +559,43 @@ mod tests {
                     "{action:?}"
                 );
             }
+        }
+    }
+
+    /// CUA-1767: a second window of the same process (LibreOffice's Find &
+    /// Replace beside the sheet) is not an ambiguity when the transport makes
+    /// the exact window key first. Every other guard still applies.
+    #[test]
+    fn exact_window_keys_ignore_sibling_windows_but_keep_other_guards() {
+        let facts = BackgroundTargetFacts {
+            competing_keyboard_destinations: 2,
+            ..matched_facts()
+        };
+        assert!(
+            decide_background_input(TARGET, &facts, BackgroundAction::ExactWindowKeys).is_execute()
+        );
+        for broken in [
+            BackgroundTargetFacts {
+                target_minimized: Some(true),
+                ..facts.clone()
+            },
+            BackgroundTargetFacts {
+                app_hidden: None,
+                ..facts.clone()
+            },
+            BackgroundTargetFacts {
+                ax_window_present: false,
+                ..facts.clone()
+            },
+            BackgroundTargetFacts {
+                element: ElementAncestry::OutsideTargetWindow,
+                ..facts.clone()
+            },
+        ] {
+            assert!(
+                !decide_background_input(TARGET, &broken, BackgroundAction::ExactWindowKeys)
+                    .is_execute()
+            );
         }
     }
 

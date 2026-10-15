@@ -389,6 +389,33 @@ async fn decide_background_window_action(
     }
 }
 
+/// The keyboard action class for a window-addressed background key or text
+/// request. When the focus-record transport exists the exact window is made
+/// the app's key window for the duration of the post (see
+/// [`post_keys_to_window`]), so a second same-pid window is not ambiguous.
+/// Without it the caller's fail-closed `generic` class applies.
+pub(crate) fn window_keyboard_action(
+    generic: cua_driver_core::background_input::BackgroundAction,
+) -> cua_driver_core::background_input::BackgroundAction {
+    if crate::input::skylight::is_focus_without_raise_available() {
+        cua_driver_core::background_input::BackgroundAction::ExactWindowKeys
+    } else {
+        generic
+    }
+}
+
+/// Post pid-routed keys so they reach `window_id`: the window is made key
+/// inside the app for the post and key is handed back after. No activation,
+/// no raise, no pointer. Without a window or the SPIs it just runs `f`.
+pub(crate) fn post_keys_to_window<T>(pid: i32, window_id: Option<u32>, f: impl FnOnce() -> T) -> T {
+    match window_id {
+        Some(wid) if crate::input::skylight::is_focus_without_raise_available() => {
+            crate::input::skylight::with_exact_window_key(pid as libc::pid_t, wid, f)
+        }
+        _ => f(),
+    }
+}
+
 /// Acquire the per-PID mutation coordinator, gather fresh exact-target facts,
 /// and ask the pure core for one background decision. `element_ptr` must stay
 /// retained by the caller until the returned lease is dropped.

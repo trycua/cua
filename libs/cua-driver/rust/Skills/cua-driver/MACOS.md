@@ -618,7 +618,7 @@ starting point for new browser workflows.
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
 | `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | `set_value` the full new name on the file's name cell in a Finder window that lists it (renamed through Finder in the background and read back from disk) |
-| `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input; keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
+| `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input or an editing surface (spreadsheet grid, document canvas: `AXLayoutArea`, `AXScrollArea`, `AXTable`, `AXCell`, `AXGroup`; not in Finder/Dock); keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
 
 ## Example end-to-end task (macOS)
 
@@ -637,3 +637,7 @@ starting point for new browser workflows.
 If the user instead asks to navigate _within_ an already-open Finder
 window, use the menu-bar flow from "Navigating native menu bars"
 above (`invoke_menu` with a path such as `["Go", "Downloads"]`).
+
+### LibreOffice, Numbers and other editors in the background
+
+With `window_id`, `type_text`, `press_key` and `hotkey` post keys to that exact window: the driver makes it the app's key window through a focus record (no raise, no activation, real pointer untouched), posts, and hands key back. A second window of the same app (Find & Replace, another document) is no longer `same_pid_keyboard_ambiguity`. A command key whose menu route is refused (item disabled while the app is in the background) falls through to key events in that window. Recipe: Name Box navigation (`type_text` `A1\n`), type with `\n` and `\t`, then read the cell back.

@@ -31,6 +31,28 @@ on:
       - "libs/images/sandbox-images.json"
       - "libs/cua/crates/cua-icon-cache/**"
       - ".github/workflows/ci-cua-spaces-macos.yml"
+  # Also on main, so a binding that went stale there is seen at once, not by
+  # the next unrelated PR that touches these paths.
+  push:
+    branches: [main]
+    paths:
+      - "apps/cua-spaces-macos/**"
+      - "libs/cua/crates/cua-spaces-app-core/**"
+      # The shared keyboard shortcuts the core reads (palette.rs).
+      - "apps/cua-spaces-web/src/lib/keybindings.json"
+      - "libs/cua/crates/cua-spaces-ffi/**"
+      - "libs/cua/crates/cua-spaces-ext/**"
+      - "libs/cua/crates/cua-teleport/**"
+      - "libs/cua/crates/cua-keyvault/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/scripts/generate-app-core-ffi.py"
+      - "libs/cua/swift/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/spaces-notch-swift/**"
+      - "libs/images/sandbox-images.json"
+      - "libs/cua/crates/cua-icon-cache/**"
+      - ".github/workflows/ci-cua-spaces-macos.yml"
   workflow_dispatch:
 
 permissions:
@@ -38,7 +60,7 @@ permissions:
 
 concurrency:
   group: ci-cua-spaces-macos-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -73,6 +95,31 @@ jobs:
         run: |
           cargo fmt -p cua-spaces-app-core -- --check
           cargo clippy --locked -p cua-spaces-app-core --all-targets --features keyvault-client -- -D warnings
+
+  bindings:
+    name: Swift bindings are up to date (fast gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        working-directory: libs/cua
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The generator is platform independent, so this fails in minutes on
+      # Linux instead of after the macOS job's full build.
+      - name: Regenerate the Swift bindings and compare
+        run: |
+          if ! node libs/spaces-app-swift/scripts/generate-bindings.mjs --check; then
+            echo "::error title=Stale Swift binding::The Rust side of cua-spaces-ffi changed but CuaSpacesFFI.swift was not regenerated. Run 'node libs/spaces-app-swift/scripts/generate-bindings.mjs' and commit the result."
+            exit 1
+          fi
 
   swift:
     name: SwiftUI app (swift test, bundle, XCUITest)

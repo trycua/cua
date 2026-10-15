@@ -121,8 +121,8 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     },
     "spaces.fixRuntime": (args) => {
       const action = string(args, "action");
-      if (action !== "install-docker" && action !== "start-docker") throw Failure.badArgs("action: install-docker | start-docker");
-      if (!model.windowsRuntime) throw Failure.unsupported("no runtime fix on this system");
+      if (action !== "install-docker" && action !== "start-docker" && action !== "restart-app") throw Failure.badArgs("action: install-docker | start-docker | restart-app");
+      if (!model.windowsRuntime && !model.linuxRuntime) throw Failure.unsupported("no runtime fix on this system");
       model.fixRuntime(action);
       return null;
     },

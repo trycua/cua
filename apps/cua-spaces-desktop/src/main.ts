@@ -33,6 +33,7 @@ import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
+import { LinuxRuntime, nodeLinuxSystem } from "./model/linux-runtime";
 import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
 import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
@@ -140,7 +141,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   // first launch after taking over its settings is no update unless the build changed.
   const build = appBuild({ platform: process.platform, packaged: app.isPackaged, resourcesPath: process.resourcesPath, read: (f) => readFileSync(f, "utf8") });
   const refresh = recordLaunch(native, core.settings, app.getVersion(), build, readOnboardingCompleted(core.onboarding) ?? false);
-  const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl });
+  const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl, relaunch: relaunchApp });
   const pip = createPipWindows();
   app.on("will-quit", () => {
     pip.closeAll();
@@ -251,6 +252,12 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   return { env, bridge, background };
 }
 
+/** Starts `spec` once this app has exited, and exits (Linux: this app again under `sg docker`, CUA-1763). */
+function relaunchApp(spec: { execPath: string; args: string[] }): void {
+  app.relaunch(spec);
+  app.exit(0);
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -302,6 +309,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", showMain);
 
   app.whenReady().then(async () => {
+    // Docker was installed and the user added to its group after this session began: start again with the group, so no logout or reboot is needed.
+    if (process.platform === "linux" && !E2E_DEMO && (await new LinuxRuntime(nodeLinuxSystem(relaunchApp)).relaunchIfNeeded().catch(() => false))) return;
     migrateSwiftApp();
     initTheme();
     installMenu({ newSpace, settings: openSettings, gettingStarted });

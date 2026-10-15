@@ -20,6 +20,9 @@ export function noLocalRuntimeReason(platform: string, containerDetail?: string)
     }
     return `Cua runs local Spaces in Docker Desktop (WSL 2 alone isn't enough). Install it from ${DOCKER_DESKTOP_URL}, start it, then try again.`;
   }
+  if (/permission denied/.test(detail)) {
+    return "Docker is installed, but your account isn't allowed to use it yet. Run `sudo usermod -aG docker $USER` in a terminal, then reopen Cua Spaces.";
+  }
   if (installedButStopped) return "Docker isn't running. Start it (for example `sudo systemctl start docker`), then try again.";
   return "No local runtime found. Install Docker Engine or Podman and start it, then try again.";
 }

@@ -487,9 +487,10 @@ sends only while `settings.get`'s `telemetry` says on and the notice was
 shown, read before every batch; with the first-run switch off the core
 derives nothing. `sanitizeSignals` drops any signal that isn't a known type
 with exactly its fields as fixed lowercase words, flags or durations, so
-names, emails, paths and URLs can't leave the page. Tauri and the SwiftUI
-app record `app_launched` themselves (`HOST_RECORDS_LAUNCH`); the page
-records it in Electron and demo.
+names, emails, paths and URLs can't leave the page. Tauri, the SwiftUI
+app and Electron record `app_launched` themselves (`HOST_RECORDS_LAUNCH`);
+the page records it only in demo. Electron holds the page's signals until
+the first run leaves Welcome (its usage notice), then sends them in order.
 
 **Space detail.** `useSpaceDetail(space, hostArch)` gives the core's
 `sidebar.detail` (facts, sections, Delete's question) and

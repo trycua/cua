@@ -174,6 +174,9 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         return;
       case "telemetry":
         model.telemetry?.setEnabled(option === "on");
+        // The switch sits beside the usage note (Welcome, Settings): the
+        // notice was seen.
+        model.telemetry?.acknowledgeNotice();
         model.changed("settings");
         return;
       default:

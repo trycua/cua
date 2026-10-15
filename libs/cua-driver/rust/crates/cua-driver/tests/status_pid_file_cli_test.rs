@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! `cua-driver status --pid-file <path>` reports the PID stored in the file it
-//! names, against a real daemon on a private endpoint.
-
 #![cfg(any(unix, target_os = "windows"))]
 
 use cua_driver_testkit::{spawn_in_job, ChildReaper};
@@ -11,12 +8,9 @@ use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-/// Total time the daemon has to become ready, and the bound on one `status` run.
 const BOUND: Duration = Duration::from_secs(10);
-/// Bound on a single readiness probe, so one stalled attempt cannot consume `BOUND`.
 const PROBE_BOUND: Duration = Duration::from_secs(2);
 
-/// A source-built driver command confined to `home` for per-user state.
 fn driver(home: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
     command
@@ -33,17 +27,12 @@ fn driver(home: &Path, args: &[&str]) -> Command {
     command
 }
 
-/// Run a `status` command to completion, or kill it and return `None` once
-/// `limit` passes. `status` blocks on the daemon's answer, and a named-pipe
-/// read has no timeout of its own.
 fn run_status(home: &Path, args: &[&str], limit: Duration) -> Option<Output> {
     let mut command = driver(home, args);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = spawn_in_job(&mut command).expect("spawn cua-driver status");
     let deadline = Instant::now() + limit;
     loop {
-        // `status` prints a few short lines, far below a pipe buffer, so the
-        // child cannot block on a full pipe before it exits.
         if child.try_wait().expect("poll cua-driver status").is_some() {
             return Some(child.wait_with_output().expect("collect status output"));
         }
@@ -56,7 +45,6 @@ fn run_status(home: &Path, args: &[&str], limit: Duration) -> Option<Output> {
     }
 }
 
-/// The `pid:` line of a successful `status` run, without its label.
 fn status_pid(home: &Path, args: &[&str]) -> String {
     let output = run_status(home, args, BOUND)
         .unwrap_or_else(|| panic!("status {args:?} did not finish within {BOUND:?}"));
@@ -73,8 +61,6 @@ fn status_pid(home: &Path, args: &[&str]) -> String {
         .to_owned()
 }
 
-/// Wait until the daemon answers `status` and has written its pid file.
-/// Returns the PID stored in that file.
 fn wait_until_ready(
     daemon: &mut Child,
     home: &Path,
@@ -83,7 +69,6 @@ fn wait_until_ready(
 ) -> Result<String, String> {
     let deadline = Instant::now() + BOUND;
     loop {
-        // A daemon that has already exited will never become ready.
         if let Ok(Some(status)) = daemon.try_wait() {
             return Err(format!(
                 "daemon exited before becoming ready: {status}. \
@@ -109,7 +94,6 @@ fn wait_until_ready(
 #[test]
 fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
     let home = tempfile::tempdir().unwrap();
-    // Unix-domain socket paths are short on macOS, so keep it directly under /tmp.
     #[cfg(unix)]
     let endpoint_dir = tempfile::Builder::new()
         .prefix("cua-status-")
@@ -142,12 +126,9 @@ fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
         } else {
             Stdio::null()
         });
-    // Declared after the temporary directories so the daemon tree is killed
-    // before they are removed.
     let mut reaper = ChildReaper::new();
     let mut daemon = spawn_in_job(&mut serve).expect("spawn source-built daemon");
     let ready = wait_until_ready(&mut daemon, home.path(), &socket, &daemon_pid_file);
-    // The reaper owns the daemon on every path, including a failed start.
     reaper.push(daemon);
     let daemon_pid = ready.unwrap_or_else(|error| panic!("{error}"));
 
@@ -164,7 +145,6 @@ fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
         ),
         daemon_pid,
     );
-    // `--flag=value`, ahead of the subcommand.
     assert_eq!(
         status_pid(
             home.path(),
@@ -178,8 +158,6 @@ fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
         daemon_pid,
     );
 
-    // A file that names a live process other than the daemon: the value can
-    // come only from the named file, not from the socket's owner.
     let this_process = std::process::id().to_string();
     assert_ne!(this_process, daemon_pid);
     std::fs::write(&other_pid_file, &this_process).unwrap();
@@ -191,8 +169,6 @@ fn status_reports_the_pid_stored_in_the_file_named_by_pid_file() {
         this_process,
     );
 
-    // Without the option, status still reads the default pid file, which this
-    // daemon did not write because `serve` was given its own.
     assert_eq!(
         status_pid(home.path(), &["status", "--socket", &socket]),
         "unknown (no pid file)",

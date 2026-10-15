@@ -110,6 +110,10 @@ describe("the Windows installer and uninstaller", () => {
     expect(kill).toContain("$$_.CommandLine -like '*\\host\\bin\\cua-spacesd.exe*'");
     expect(kill).toContain("taskkill.exe /T /F /PID");
     expect(kill).toContain("$$_.ProcessId -ne $$PID");
+    // Stopped and waited for (bounded) until none is left, before the folder goes.
+    expect(kill).toMatch(/for \(\$\$i = 0; \$\$i -lt \d+;/);
+    expect(kill).toContain("if (-not $$h) { break }");
+    expect(kill).toContain("Start-Sleep");
     // Killed after the task is ended and deleted (so it cannot restart), before the folder goes.
     expect(host.indexOf("/Delete /TN")).toBeLessThan(host.indexOf(kill));
     expect(host.indexOf(kill)).toBeLessThan(host.indexOf("!insertmacro removeHostFolder"));

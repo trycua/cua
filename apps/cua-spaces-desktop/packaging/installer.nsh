@@ -116,7 +116,7 @@ Var pid
   ; open (`>> driver.log`), with their children: killing only the driver
   ; left cmd.exe writing the log, so driver.log outlived the folder (CUA-1749).
   ${if} $IsPowerShellAvailable == 0
-    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $$PID -and (($$_.Path -and $$_.Path -like '*\host\bin\cua-spacesd.exe') -or ($$_.CommandLine -and ($$_.CommandLine -like '*\host\bin\cua-spacesd.exe*' -or $$_.CommandLine -like '*\host\driver.log*')))} | % { taskkill.exe /T /F /PID $$_.ProcessId 2>&1 | Out-Null }"`
+    nsExec::Exec /TIMEOUT=30000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "for ($$i = 0; $$i -lt 40; $$i++) { $$h = @(Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $$PID -and (($$_.Path -and $$_.Path -like '*\host\bin\cua-spacesd.exe') -or ($$_.CommandLine -and ($$_.CommandLine -like '*\host\bin\cua-spacesd.exe*' -or $$_.CommandLine -like '*\host\driver.log*')))}); if (-not $$h) { break }; $$h | % { taskkill.exe /T /F /PID $$_.ProcessId 2>&1 | Out-Null }; Start-Sleep -Milliseconds 250 }"`
     Pop $0
   ${endIf}
   !insertmacro removeHostFolder

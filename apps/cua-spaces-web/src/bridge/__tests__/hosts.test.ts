@@ -795,6 +795,27 @@ describe("webkit adapter", () => {
     }
   });
 
+  it("waits for a device approval while the host asks for Touch ID or the password", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (a: Answer) => void;
+      const { win } = webkitHost((req) => (req.method === "devices.approve" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
+      const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("devices.approve", { code: "K7QX-M2RP", deviceId: null });
+      const settled = call.then(
+        (r) => ({ ok: true as const, r }),
+        (e: unknown) => ({ ok: false as const, e }),
+      );
+      // A person typing the login password: longer than the call timeout.
+      await vi.advanceTimersByTimeAsync(60_000);
+      answer({ ok: false, error: { code: "not_found", message: "no device is waiting with the code K7QX-M2RP" } });
+      const r = await settled;
+      expect(r.ok).toBe(false);
+      expect((r as { e: HostError }).e.message).toBe("no device is waiting with the code K7QX-M2RP");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads the host's own settings rows and picks their options with settings.choose", async () => {
     const choice = (id: string, active: string) => ({ id, kind: "choice", label: "", enabled: true, options: ["auto", "builtin", "system"].map((o) => ({ id: o, label: o, active: o === active })) });
     const toggle = (id: string, on: boolean) => ({ id, kind: "toggle", label: "", enabled: true, options: [{ id: "on", label: "On", active: on }, { id: "off", label: "Off", active: !on }] });

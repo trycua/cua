@@ -247,7 +247,13 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),
-    "devices.approve": none("devices.approve"),
+    // The host asks for Touch ID or the login password first: no timeout,
+    // or a slow answer reads as "the app did not answer" while the prompt
+    // is still up, and the relay's own answer is lost.
+    "devices.approve": async (args) => {
+      await request("devices.approve", { ...args }, null);
+      return null;
+    },
     "devices.rename": none("devices.rename"),
     "devices.revoke": none("devices.revoke"),
     "devices.confirmMachine": none("devices.confirmMachine"),

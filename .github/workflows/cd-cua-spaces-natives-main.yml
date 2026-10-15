@@ -1,0 +1,145 @@
+name: "CD: Cua Spaces natives on main"
+
+# Keeps the release's compiled native layers warm, so a cua-spaces-v* tag
+# run (cd-cua-spaces.yml) restores them instead of compiling for an hour.
+#
+# A tag run can restore only its own tag's caches and main's (a cache saved
+# by a dry run on a branch or a PR is invisible to it). This workflow builds,
+# on main, exactly what cd-cua-spaces.yml's native jobs build, under the same
+# cache keys and paths:
+#   - electron-native / electron-native-mac: .github/actions/spaces-native,
+#     same labels, targets and extra paths;
+#   - macos-rust: the SwiftUI app's Rust slices, same key, paths and command.
+# Keep the two in step: a key, path or env difference makes every release a
+# cache miss again. The keys are the git tree hash of the inputs (libs/cua,
+# the cua-spacesd pin, the build script), so a commit with unchanged inputs
+# finds its natives already saved and does nothing but restore-and-exit.
+#
+# Builds only: no secrets, no signing, no artifacts, nothing published.
+# On a pull request (this file only) it checks that the workflow still runs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/**"
+      - "libs/cua-spacesd/VERSION"
+      - "apps/cua-spaces-desktop/scripts/build-native.mjs"
+      - ".github/actions/spaces-native/**"
+      - ".github/workflows/cd-cua-spaces-natives-main.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/cd-cua-spaces-natives-main.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, never cancelled: a newer push waits (and replaces any
+# older waiting run), so the macOS runners are not all taken by warm-ups and
+# every run that starts finishes and saves.
+concurrency:
+  group: cd-cua-spaces-natives-${{ github.ref }}
+  cancel-in-progress: false
+
+# Same as cd-cua-spaces.yml: CUA_RELEASE_REPOSITORY is part of the native
+# cache key, and rust-cache hashes the CARGO_* variables into its own key.
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  electron-native:
+    name: Electron native (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
+          - { label: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { label: darwin-arm64, runner: macos-26, target: aarch64-apple-darwin }
+          - { label: darwin-x64, runner: macos-26, target: x86_64-apple-darwin }
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/spaces-native
+        with:
+          label: ${{ matrix.label }}
+          target: ${{ matrix.target }}
+          # As electron-native-mac: the cache entry's paths are part of its
+          # identity, so darwin-arm64 must list the same extra path.
+          extra-paths: ${{ matrix.label == 'darwin-arm64' && 'libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib' || '' }}
+
+  # As cd-cua-spaces.yml's macos-rust job (key, paths, environment, command).
+  macos-rust:
+    name: SwiftUI Rust (${{ matrix.arch }})
+    runs-on: macos-26
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, triple: aarch64-apple-darwin }
+          - { arch: x86_64, triple: x86_64-apple-darwin }
+    env:
+      CARGO_BUILD_JOBS: 4
+      CUA_DEFAULT_ENV: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache key
+        id: key
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          set -euo pipefail
+          inputs_hash="$(git rev-parse HEAD:libs/cua HEAD:libs/cua-spacesd/VERSION | git hash-object --stdin)"
+          repo="${CUA_RELEASE_REPOSITORY//\//-}"
+          echo "key=swiftui-rust-v1-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+      - name: Restore the compiled slice
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
+            libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+          key: ${{ steps.key.outputs.key }}
+      - name: Report the cache
+        run: echo "SwiftUI Rust ${{ matrix.triple }} cache hit = ${{ steps.cache.outputs.cache-hit || 'false' }}"
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: ${{ matrix.triple }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua -> target
+          shared-key: swiftui-rust-${{ matrix.triple }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build the slice
+        working-directory: libs/cua
+        run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "${{ matrix.triple }}"
+      - name: Check the slice
+        run: |
+          set -euo pipefail
+          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
+            test -f "libs/cua/target/${{ matrix.triple }}/release/$f" || { echo "::error::missing $f"; exit 1; }
+          done

@@ -517,12 +517,11 @@ mod create_step_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod browser_tests {
     /// A real sign-in URL: several `&`-joined parameters (CUA-1701).
     const SIGN_IN: &str = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/auth?response_type=code&client_id=cua-cli&redirect_uri=http%3A%2F%2F127.0.0.1%3A54968%2Fcallback&scope=openid&state=s&code_challenge=c&code_challenge_method=S256";
 
-    #[cfg(not(windows))]
     #[test]
     fn the_url_reaches_the_opener_whole() {
         let (program, args) = super::launch_command(SIGN_IN);

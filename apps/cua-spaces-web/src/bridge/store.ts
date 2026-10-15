@@ -818,7 +818,16 @@ export class BridgeStore {
    * and the page) only after `session.signIn` answered: take them in, so
    * the page shows them. */
   private followHostSignIn(waiting: HostSignIn | null | undefined): void {
-    if (!waiting || (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting")) return;
+    if (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting") return;
+    // A native host signed in, whichever attempt (a retry's, or one before
+    // it) finished: the wait is over.
+    const snap = this.sessionSnap;
+    if (snap && snap.hostSignIn !== undefined && snap.fleet.authMode === "user" && snap.fleet.identity) {
+      this.stopSignInTimer();
+      this.signInPhase = { kind: "idle" };
+      return;
+    }
+    if (!waiting) return;
     if (waiting.url) this.signInUrl = waiting.url;
     if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode) return;
     this.signInPhase = { kind: "waiting", userCode: waiting.userCode };

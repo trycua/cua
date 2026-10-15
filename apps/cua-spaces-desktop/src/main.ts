@@ -120,6 +120,11 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     appRoot: path.join(__dirname, ".."),
     override: process.env.CUA_SPACES_NATIVE_DIR,
   });
+  // The browser sign-in's loopback listener lives as long as the app waits
+  // for it (SignInRuns.timeoutMs), not the CLI's 5 minutes: a browser slow to
+  // start (Edge's first run) must not find the port closed while the app
+  // still offers its link.
+  process.env.CUA_OIDC_LOGIN_TIMEOUT_SECS ??= "600";
   const native = await loadNative(dir);
   // False without a browser here: the sign-in then uses the device flow.
   const openUrl = async (url: string) => {

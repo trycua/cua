@@ -3471,11 +3471,7 @@ fn run_permissions_status(json: bool) {
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some("check_permissions".into()),
-            args: Some(if cfg!(target_os = "macos") {
-                serde_json::json!({ "prompt": false })
-            } else {
-                serde_json::json!({})
-            }),
+            args: Some(serde_json::json!({ "prompt": false })),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
@@ -3484,12 +3480,14 @@ fn run_permissions_status(json: bool) {
             .ok()
             .filter(|r| r.ok)
             .and_then(|r| r.result);
-        if let Some(text) = result
+        if let Some(content) = result
             .as_ref()
-            .filter(|_| !json)
-            .and_then(|res| permission_status_reply_text(res, cfg!(target_os = "macos")))
+            .filter(|res| !json && res["structuredContent"].get("accessibility").is_none())
+            .and_then(|res| res["content"].as_array())
         {
-            println!("{text}");
+            for text in content.iter().filter_map(|item| item["text"].as_str()) {
+                println!("{text}");
+            }
             return;
         }
         result
@@ -3609,30 +3607,6 @@ fn run_permissions_status(json: bool) {
     if !(ax && sr) {
         println!("  → To grant for the driver, run: {cli_name} permissions grant");
     }
-}
-
-fn permission_status_reply_text(result: &serde_json::Value, macos: bool) -> Option<String> {
-    let structured = &result["structuredContent"];
-    let refused = result["isError"] == true
-        || structured["status"] == "refused"
-        || !structured["refusal"].is_null();
-    if macos && !refused {
-        return None;
-    }
-    let content = result["content"].as_array().into_iter().flatten();
-    let text = content
-        .filter_map(|item| item["text"].as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let text = Some(text)
-        .filter(|text| !text.is_empty())
-        .or_else(|| serde_json::to_string_pretty(structured).ok())?;
-    if refused {
-        return Some(format!(
-            "Permission status: ❓ unknown (the daemon refused the check, so nothing was checked)\n  {text}"
-        ));
-    }
-    Some(text)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -6048,91 +6022,6 @@ mod tests {
             args.get("probe_direct_capture"),
             Some(&serde_json::json!(false))
         );
-    }
-
-    #[test]
-    fn permission_status_keeps_a_textless_refusal_detail() {
-        let result = serde_json::json!({
-            "isError": true,
-            "structuredContent": {
-                "refusal": { "code": "invalid_arguments", "message": "unknown argument prompt" },
-                "status": "refused"
-            }
-        });
-        for macos in [false, true] {
-            let text = permission_status_reply_text(&result, macos).expect("refusal text");
-            assert!(text.starts_with("Permission status: ❓ unknown"));
-            assert!(text.contains("invalid_arguments"));
-            assert!(text.contains("unknown argument prompt"));
-        }
-    }
-
-    #[test]
-    fn permission_status_reports_a_refused_check_as_unknown() {
-        let refusal = serde_json::json!({
-            "content": [{ "type": "text", "text": "check_permissions: unknown argument prompt; accepted: " }],
-            "isError": true,
-            "structuredContent": {
-                "refusal": {
-                    "code": "invalid_arguments",
-                    "message": "check_permissions: unknown argument prompt; accepted: "
-                },
-                "status": "refused"
-            }
-        });
-        let tool_error = serde_json::json!({
-            "content": [{ "type": "text", "text": "check_permissions: invalid arguments: boom" }],
-            "isError": true,
-            "structuredContent": { "code": "invalid_arguments", "detail": "boom" }
-        });
-        for (result, message) in [
-            (
-                refusal,
-                "check_permissions: unknown argument prompt; accepted: ",
-            ),
-            (tool_error, "check_permissions: invalid arguments: boom"),
-        ] {
-            for macos in [false, true] {
-                assert_eq!(
-                    permission_status_reply_text(&result, macos).as_deref(),
-                    Some(format!(
-                        "Permission status: ❓ unknown (the daemon refused the check, so nothing was checked)\n  {message}"
-                    ).as_str())
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn permission_status_prints_the_linux_status_lines() {
-        let text = "X11 display: ✅ connected\nWayland: ❌ not a Wayland session\n\
-                    AT-SPI (D-Bus): ✅ org.a11y.Bus reachable\nXSendEvent injection: ✅ available";
-        let result = serde_json::json!({
-            "content": [{ "type": "text", "text": text }],
-            "structuredContent": {
-                "atspi": true,
-                "wayland": false,
-                "wayland_enabled": false,
-                "x11": true,
-                "xsend_event": true
-            }
-        });
-        assert_eq!(
-            permission_status_reply_text(&result, false).as_deref(),
-            Some(text)
-        );
-    }
-
-    #[test]
-    fn permission_status_keeps_macos_grants() {
-        let result = serde_json::json!({
-            "structuredContent": {
-                "accessibility": true,
-                "screen_recording": false,
-                "source": { "attribution": "driver-daemon" }
-            }
-        });
-        assert_eq!(permission_status_reply_text(&result, true), None);
     }
 
     // ── Surface 8: manifest shape ───────────────────────────────────────────

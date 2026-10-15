@@ -243,6 +243,31 @@ fn to_pb(s: &ProvidedSpace) -> pb::HostSpace {
     }
 }
 
+/// How long a create on a host may go without a report to the caller: past
+/// it, "preparing" is said again. The host's create is one call that can
+/// run for the whole download of a 20+ GB macOS image, and the apps'
+/// create stream fails a create that reports nothing for 15 minutes.
+const HOST_PROGRESS_HEARTBEAT: Duration = Duration::from_secs(60);
+
+/// Runs `call` (a `CreateHostSpace`) and meanwhile says "preparing" every
+/// [`HOST_PROGRESS_HEARTBEAT`], so a create on another machine stays alive
+/// while that machine works.
+async fn keeping_alive<T>(call: impl std::future::Future<Output = T>) -> T {
+    use cua_sandbox_core::progress::{Phase, Progress, report};
+    let beat = async {
+        loop {
+            tokio::time::sleep(HOST_PROGRESS_HEARTBEAT).await;
+            report(Progress::phase(Phase::Preparing));
+        }
+    };
+    tokio::pin!(call);
+    tokio::pin!(beat);
+    tokio::select! {
+        out = &mut call => out,
+        () = &mut beat => unreachable!("the heartbeat never ends"),
+    }
+}
+
 #[derive(Default)]
 struct Reserved {
     spaces: u32,
@@ -1923,14 +1948,14 @@ impl Spaces {
                 owner_email: reg.machine.owner.email.clone().unwrap_or_default(),
             }),
         };
-        let created = async {
+        let created = keeping_alive(async {
             space
                 .spacesd()?
                 .host_spaces()
                 .create_host_space(request)
                 .await
                 .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
-        }
+        })
         .await;
         if let Err(e) = created {
             // Nothing runs for it: take the machine off the relay again, or
@@ -1997,10 +2022,8 @@ impl Spaces {
             attach: None,
             direct: true,
         };
-        let made = space
-            .spacesd()?
-            .host_spaces()
-            .create_host_space(request)
+        let spacesd = space.spacesd()?;
+        let made = keeping_alive(spacesd.host_spaces().create_host_space(request))
             .await
             .map(tonic::Response::into_inner)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?
@@ -2241,6 +2264,38 @@ impl Spaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A create that waits on another machine for a long download keeps
+    /// reporting: never silent for more than a minute, so the apps'
+    /// 15 min silent-stream limit does not fail it (CUA-1760).
+    #[tokio::test(start_paused = true)]
+    async fn a_long_create_on_another_machine_keeps_reporting() {
+        let start = tokio::time::Instant::now();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: cua_sandbox_core::progress::Sink = Arc::new(move |p: &crate::CreateProgress| {
+            s.lock()
+                .unwrap()
+                .push((start.elapsed().as_secs() / 60, p.clone()))
+        });
+        cua_sandbox_core::progress::scope(
+            sink,
+            keeping_alive(tokio::time::sleep(Duration::from_secs(40 * 60))),
+        )
+        .await;
+        let seen = seen.lock().unwrap().clone();
+        let minutes: Vec<u64> = seen.iter().map(|(m, _)| *m).collect();
+        assert!(seen.len() >= 39, "{minutes:?}");
+        assert!(
+            seen.iter()
+                .all(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Preparing),
+            "{seen:?}"
+        );
+        assert!(
+            minutes.windows(2).all(|w| w[1] - w[0] <= 1),
+            "never silent for more than a minute: {minutes:?}"
+        );
+    }
 
     #[test]
     fn a_loopback_relay_is_reached_at_the_host_from_a_guest() {

@@ -29,7 +29,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
-    BrowserTypeTool, GetBrowserStateTool,
+    BrowserSelectTool, BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -66,6 +66,7 @@ pub(super) struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    select_outcome: Value,
     /// Extra page targets Chromium reports but cannot map to any browser
     /// window (`Browser.getWindowForTarget` → `-32000 Browser window not
     /// found`): an extension side panel, an offscreen document.
@@ -105,6 +106,7 @@ impl Default for FixtureState {
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
             tab_visible: true,
+            select_outcome: Value::Null,
             calls: Vec::new(),
         }
     }
@@ -694,6 +696,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| declaration.contains("HTMLSelectElement")) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.select_outcome.clone() } }))
+            }
             "Runtime.callFunctionOn" => MockReply::ok(json!({ "result": { "value": true } })),
             other => MockReply::method_not_found(other),
         }
@@ -3035,6 +3044,135 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     }));
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+async fn select_with(f: &Fixture, frame: &str, element: &str, matcher: Value) -> Value {
+    let (target, tab) = bind(f).await;
+    let snap = snapshot(f, &target, &tab).await;
+    let mut args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "ref": ref_of(&snap, frame, element),
+        "session": SESSION
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(matcher.as_object().unwrap().clone());
+    let result = BrowserSelectTool::new(f.engine.clone()).invoke(args).await;
+    result
+        .structured_content
+        .clone()
+        .unwrap_or_else(|| json!({ "error": result.is_error }))
+}
+
+fn select_scripts(f: &Fixture) -> Vec<(Option<String>, Value)> {
+    recorded_calls(f, "Runtime.callFunctionOn")
+        .into_iter()
+        .filter(|(_, params)| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("HTMLSelectElement"))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn select_passes_the_matcher_as_cdp_arguments_and_reports_the_readback() {
+    for (field, wanted) in [("label", "Q3 report"), ("value", "q3-report")] {
+        let f = fixture_with(|st| {
+            st.select_outcome =
+                json!({ "changed": true, "value": "q3-report", "label": "Q3 report" });
+        })
+        .await;
+        let s = select_with(&f, "main", "Shadow Input", json!({ field: wanted })).await;
+        assert_eq!(s["status"], "ok", "{s}");
+        assert_eq!(s["changed"], true);
+        assert_eq!(s["value"], "q3-report");
+        assert_eq!(s["label"], "Q3 report");
+        assert_eq!(s["frame"], "main");
+
+        let scripts = select_scripts(&f);
+        assert_eq!(scripts.len(), 1);
+        let (session, params) = &scripts[0];
+        assert!(session.as_deref().unwrap().starts_with("tab-sess-"));
+        assert_eq!(params["objectId"], "obj-20");
+        assert_eq!(params["returnByValue"], true);
+        assert_eq!(
+            params["arguments"],
+            json!([{ "value": field }, { "value": wanted }])
+        );
+        assert!(!params["functionDeclaration"]
+            .as_str()
+            .unwrap()
+            .contains(wanted));
+        assert!(recorded_calls(&f, "Runtime.evaluate")
+            .iter()
+            .all(|(_, params)| params["expression"] == "document.visibilityState === 'visible'"));
+    }
+}
+
+#[tokio::test]
+async fn select_requires_exactly_one_of_label_or_value_before_touching_the_page() {
+    for matcher in [json!({}), json!({ "label": "Beta", "value": "b" })] {
+        let f = fixture().await;
+        let s = select_with(&f, "main", "Shadow Input", matcher).await;
+        assert_eq!(s, json!({ "error": true }));
+        assert!(select_scripts(&f).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn select_reports_live_refusals_and_script_failures_as_refused() {
+    for (outcome, message) in [
+        (
+            json!({ "refused": "the ref is not a native HTML select element" }),
+            "the ref is not a native HTML select element",
+        ),
+        (
+            json!({ "refused": "2 options match the requested label; exactly one must" }),
+            "2 options match the requested label; exactly one must",
+        ),
+        (
+            json!({ "refused": "the matching option is disabled" }),
+            "the matching option is disabled",
+        ),
+        (
+            Value::Null,
+            "the select script failed before reporting a selection",
+        ),
+    ] {
+        let f = fixture_with(|st| st.select_outcome = outcome).await;
+        let s = select_with(&f, "main", "Shadow Input", json!({ "label": "Beta" })).await;
+        assert_eq!(s["status"], "refused", "{s}");
+        assert_eq!(s["refusal"]["code"], "browser_action_unavailable");
+        assert_eq!(s["refusal"]["message"], message);
+    }
+}
+
+#[tokio::test]
+async fn select_of_the_current_option_reports_no_change() {
+    let f = fixture_with(|st| {
+        st.select_outcome = json!({ "changed": false, "value": "a", "label": "Alpha" });
+    })
+    .await;
+    let s = select_with(&f, "main", "Shadow Input", json!({ "value": "a" })).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["changed"], false);
+    assert_eq!(s["label"], "Alpha");
+}
+
+#[tokio::test]
+async fn select_in_an_oopif_routes_to_the_child_session() {
+    let f = fixture_with(|st| {
+        st.select_outcome = json!({ "changed": true, "value": "b", "label": "Beta" });
+    })
+    .await;
+    let s = select_with(&f, "oopif", "ad-input", json!({ "label": "Beta" })).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["frame"], "oopif");
+    let scripts = select_scripts(&f);
+    assert_eq!(scripts.len(), 1);
+    assert!(scripts[0].0.as_deref().unwrap().starts_with("oopif-sess-"));
 }
 
 // ---- window-less page targets (trycua/cua#3540) ------------------------------------------

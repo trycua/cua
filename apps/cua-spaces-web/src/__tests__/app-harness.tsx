@@ -10,6 +10,7 @@ import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/rea
 import { render } from "@testing-library/react";
 import { beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
+import type { MachinesView } from "@/bridge/contracts/host";
 import type { HostEvent } from "@/bridge/protocol";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } from "@/bridge";
@@ -47,6 +48,8 @@ export interface TestHost {
   answer?: (op: string, out: unknown) => unknown;
   /** Answers `op` itself instead of the demo host (undefined: the demo's). */
   intercept?: (op: string, args: unknown) => unknown;
+  /** The Machines page as the host's core drew it (`machinesView`). */
+  machinesView?: () => MachinesView | null;
 }
 
 export async function mountApp(path: string, host: TestHost = { failsCreates: true, listsGhost: true }) {
@@ -55,6 +58,7 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {
     mode: demo.mode,
+    ...(host.machinesView ? { machinesView: host.machinesView } : {}),
     subscribe: (l) => {
       listeners.add(l);
       const off = demo.subscribe(l);

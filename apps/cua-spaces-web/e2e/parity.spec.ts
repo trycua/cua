@@ -64,7 +64,7 @@ async function open(page: Page, screen: ParityScreen): Promise<void> {
   // Let the host's first answer land, so it can't overwrite a checkpoint.
   if (PATHS[screen] === "/spaces") await page.locator("[data-space-id]").first().waitFor();
   if (screen === "onboarding") await page.locator("[data-step]").first().waitFor();
-  if (screen === "machines") await page.locator("[data-host-panel]").waitFor();
+  if (screen === "machines") await page.locator('[data-machine-detail="this-mac"]').waitFor();
   if (screen === "agents") await page.locator("[data-agent-row]").first().waitFor();
 }
 
@@ -250,26 +250,25 @@ const texts = (page: Page, selector: string) => page.locator(selector).evaluateA
 const attrs = (page: Page, selector: string, name: string) =>
   page.locator(selector).evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
 
+/** This machine on the Machines page for the core's host state: its two
+ * switches (on or off, and whether they change here), the notice over them,
+ * the permissions still to grant and Remove from account, as the core's
+ * `machines.view` draws This machine (the SwiftUI page draws the same). */
 async function checkHostPanel(page: Page, cp: Of<"host-panel">): Promise<void> {
   const p = cp.panel;
+  const m = cp.machine!;
   await page.evaluate((state) => window.__cuaParity!.showHost(state), cp.state);
-  // Relay sharing paused: the notice (and its button) in place of the summary.
-  const notice = p.notice && !p.intro ? p.notice : null;
-  if (notice) await expect(page.locator("[data-host-notice]")).toHaveText(notice);
-  else await expect(page.locator("[data-host-summary]")).toHaveText(p.summary);
-  await expect.poll(() => texts(page, "[data-host-notice-action]")).toEqual(notice && p.noticeAction ? [p.noticeAction.label] : []);
-  await expect.poll(() => attrs(page, "[data-host-fact]", "data-host-fact")).toEqual(p.facts.map((f) => f.label));
-  await expect.poll(() => texts(page, "[data-host-fact] > div:last-child")).toEqual(p.facts.map((f) => f.value));
-  if (p.clientsTitle && p.clientsEmpty) await expect(page.locator("[data-host-clients-empty]")).toHaveText(p.clientsEmpty);
-  await expect.poll(() => texts(page, "[data-host-client]")).toEqual(p.clientsTitle && !p.clientsEmpty ? p.clients : []);
+  const detail = page.locator('[data-machine-detail="this-mac"]');
+  if (m.notice) await expect(detail.locator("[data-machine-notice]")).toContainText(m.notice);
+  else await expect(detail.locator("[data-machine-notice]")).toHaveCount(0);
+  await expect.poll(() => attrs(page, "[data-machine-toggle]", "data-machine-toggle")).toEqual(m.toggles.map((t) => t.id));
+  await expect
+    .poll(() => attrs(page, "[data-machine-toggle] [role=switch]", "aria-checked"))
+    .toEqual(m.toggles.map((t) => String(t.on)));
   await expect
     .poll(() => attrs(page, "[data-host-permission]", "data-host-permission"))
     .toEqual(p.permissionsTitle ? p.permissions.map((x) => x.id) : []);
-  // As the SwiftUI page: setup choices before setup, the buttons after.
-  const choices = p.setupChoices ?? [];
-  await expect.poll(() => attrs(page, "[data-host-choice]", "data-host-choice")).toEqual(choices.map((c) => c.id));
-  const actions = choices.length ? [] : p.actions;
-  await expect.poll(() => texts(page, "[data-host-action]")).toEqual(actions.map((a) => a.label));
+  await expect(detail.locator("[data-machine-remove]")).toHaveCount(m.remove ? 1 : 0);
 }
 
 const readForm = (page: Page) =>

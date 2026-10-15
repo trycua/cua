@@ -87,6 +87,26 @@ pub(crate) fn get_backing_scale(display_id: u32) -> f64 {
     backing_scale_from_widths(mode.width(), mode.pixel_width())
 }
 
+/// Pixels per point of the main display's current mode, exact, 1.0 when the
+/// mode has no more pixels than points or no display is attached. A native
+/// capture of the display is `pixel_width` wide, so this is also the ratio of
+/// a `get_desktop_state` screenshot to the logical screen.
+pub(crate) fn main_display_pixel_ratio() -> f64 {
+    use core_graphics::display::CGDisplay;
+
+    let Some(mode) = CGDisplay::main().display_mode() else {
+        return 1.0;
+    };
+    pixel_ratio_from_widths(mode.width(), mode.pixel_width())
+}
+
+fn pixel_ratio_from_widths(point_width: u64, pixel_width: u64) -> f64 {
+    if point_width == 0 || pixel_width <= point_width {
+        return 1.0;
+    }
+    pixel_width as f64 / point_width as f64
+}
+
 fn backing_scale_from_widths(point_width: u64, pixel_width: u64) -> f64 {
     if point_width == 0 || pixel_width == 0 {
         return 1.0;
@@ -99,6 +119,15 @@ fn backing_scale_from_widths(point_width: u64, pixel_width: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pixel_ratio_is_exact_and_never_below_one() {
+        assert_eq!(pixel_ratio_from_widths(1710, 3420), 2.0);
+        assert_eq!(pixel_ratio_from_widths(1512, 3024), 2.0);
+        assert_eq!(pixel_ratio_from_widths(1920, 1920), 1.0);
+        assert_eq!(pixel_ratio_from_widths(0, 3420), 1.0);
+        assert_eq!(pixel_ratio_from_widths(1920, 0), 1.0);
+    }
     use core_graphics::display::CGDisplay;
 
     #[test]

@@ -155,8 +155,8 @@ impl Tool for DragTool {
                 Err(result) => return result,
             };
             let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
-            let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
-            let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
+            let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y);
+            let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y);
             if let Some(refusal) = super::desktop_pointer_guard::check(
                 "drag",
                 &args,

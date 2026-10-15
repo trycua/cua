@@ -6,6 +6,7 @@
 ### Bug Fixes
 
 * **cua-cli:** `cua host setup --pair <code|link>` and `cua host pair`, so the Cua Spaces app's "Add a machine" command (and cua.ai/add/<code>) works with the released CLI on Windows, macOS and Linux (CUA-1748) ([#5003](https://github.com/trycua/cua/issues/5003))
+* **cua mcp:** act as a named agent, so Spaces draw its cursor (CUA-1750) ([#5290](https://github.com/trycua/cua/issues/5290))
 
 ## [0.4.2](https://github.com/trycua/cua/compare/cua-sdk-v0.4.1...cua-sdk-v0.4.2) (2026-10-15)
 

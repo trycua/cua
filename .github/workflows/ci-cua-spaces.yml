@@ -88,6 +88,10 @@ jobs:
             os: ubuntu-22.04
             bundles: deb,appimage
     runs-on: ${{ matrix.os }}
+    # A cold Windows bundle takes about 1 h 45 min (the sidecar release build
+    # alone is ~50 min). Fail a real hang instead of holding a runner for the
+    # 6 h default.
+    timeout-minutes: 150
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_BUILD_JOBS: 4
@@ -121,15 +125,18 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
             libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
             libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+      # Cache both cargo workspaces: the Tauri app and libs/cua, where the
+      # `cua` sidecar is built in release. The sidecar's target dir was not
+      # cached before, so every Windows run rebuilt it from scratch (~50 min).
+      # rust-cache also prunes workspace crates, which keeps the cache small
+      # enough to survive eviction between pushes.
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/cua-spaces/src-tauri/target
-          key: cua-spaces-bundle-${{ matrix.name }}-${{ hashFiles('apps/cua-spaces/src-tauri/Cargo.lock') }}
-          restore-keys: cua-spaces-bundle-${{ matrix.name }}-
+          key: ${{ matrix.name }}
+          workspaces: |
+            apps/cua-spaces/src-tauri -> target
+            libs/cua -> target
       - run: pnpm install --frozen-lockfile
       - name: Rust command-layer tests (hermetic)
         shell: bash

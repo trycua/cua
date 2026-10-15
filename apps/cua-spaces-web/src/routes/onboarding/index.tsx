@@ -340,7 +340,9 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
   const [started, setStarted] = useState<SandboxImage | null>(null);
   const create = (image: SandboxImage) => {
     setStarted(image);
-    createSpace({ image: image.ref, os: image.os }).catch((e: unknown) => {
+    // The hosts' create needs the kind (Electron and the SwiftUI bridge
+    // reject a config without one), as New Space's plan sends it.
+    createSpace({ image: image.ref, kind: image.variant, os: image.os }).catch((e: unknown) => {
       setStarted(null);
       toast(`Couldn't create ${image.name}`, { description: e instanceof Error ? e.message : String(e) });
     });

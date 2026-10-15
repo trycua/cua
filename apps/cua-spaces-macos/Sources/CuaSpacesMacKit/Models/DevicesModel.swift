@@ -194,7 +194,7 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
         let now = UInt64(Date().timeIntervalSince1970)
         let code = "K7QM-4XPB-\(String(format: "%04d", pairing.count + 1))"
         let made = PairingCode(
-            id: "pc_fixture\(pairing.count + 1)", code: code, url: "https://spaces.cua.ai/add/\(code)",
+            id: "pc_fixture\(pairing.count + 1)", code: code, url: "https://cua.ai/add/\(code)",
             installSh: "curl -fsSL https://cua.ai/install.sh | sh -s -- --pair \(code)",
             installPowershell: "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair \(code)",
             state: "active", team: team, createdAt: now, expiresAt: now + 1800, usedAt: nil, machine: nil)

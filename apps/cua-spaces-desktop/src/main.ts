@@ -10,6 +10,7 @@ import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
+import { applyChromiumKeychainSwitches } from "./chromium-keychain";
 import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
@@ -59,6 +60,8 @@ if (process.platform === "linux") {
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
+// macOS: Chromium's cookie key stays out of the keychain, so its prompt can't freeze the app (chromium-keychain.ts).
+applyChromiumKeychainSwitches(app.commandLine, process.platform);
 const VIDEO_BENCH = videoBenchEnv(process.env);
 // The Spaces' viewer windows ("Open in window"); the bench's own placement is never remembered.
 const viewers = createViewerWindows({ remember: !VIDEO_BENCH.bench });

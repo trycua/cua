@@ -228,6 +228,7 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
     func rename(id: String, name: String) async throws { try await fixture.rename(id: id, name: name) }
     func revoke(id: String) async throws { try await fixture.revoke(id: id) }
     func confirmMachine(id: String) async throws { try await fixture.confirmMachine(id: id) }
+    func renameMachine(id: String, name: String) async throws { try await fixture.renameMachine(id: id, name: name) }
     func createPairingCode(team: String?) async throws -> PairingCode { try await fixture.createPairingCode(team: team) }
     func pairingCodes() async throws -> [PairingCode] { try await fixture.pairingCodes() }
     func revokePairingCode(id: String) async throws { try await fixture.revokePairingCode(id: id) }

@@ -14,7 +14,7 @@ import * as path from "node:path";
 import type { Native } from "../native/load";
 import { appCoreStatePaths, swiftSupportDir } from "../migrate-swift";
 import { nativeFiles } from "../native/location";
-import type { CuaLike } from "../native/generated/index";
+import type { AppMachinesViewAbout, CuaLike } from "../native/generated/index";
 import { PendingAgentSetup, LiveAgentSetup } from "./agents";
 import { AppModel } from "./app-model";
 import { LiveSpacesBackend } from "./backend";
@@ -29,6 +29,7 @@ import { LiveGate, PendingAccount, PendingSpacesBackend, type LiveServices } fro
 import { LiveAccount, LiveTelemetry, hostAccount } from "./services";
 import { BundledCuaKeychain, StartupModel } from "./startup";
 import { withTimeout } from "./time";
+import { osLine } from "./updates";
 
 /** Whether the first run finished (`onboarding.json`'s `completed`); null when unknown. */
 export function readOnboardingCompleted(file: string): boolean | null {
@@ -124,6 +125,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
     checklistPath: path.join(path.dirname(settingsPath), "checklist.json"),
     checklistSeedPath: platform === "darwin" ? path.join(swiftSupportDir(env.HOME || os.homedir()), "checklist.json") : null,
     hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
+    about: thisComputer(o.version, platform),
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.
@@ -296,4 +298,19 @@ export async function installCliSilently(native: Native, cua: string, platform: 
   } catch (error) {
     console.warn(`[cua-spaces] could not install the cua command: ${words(error)}`);
   }
+}
+
+/** This computer as the Machines page's Details names it: its name, the
+ * app's version and its system ("macOS 26.5.2"), read once. */
+export function thisComputer(version: string, platform: NodeJS.Platform = process.platform): () => AppMachinesViewAbout {
+  let about: AppMachinesViewAbout | null = null;
+  return () => {
+    about ??= {
+      computerName: computerName(platform),
+      appVersion: version,
+      // Electron's own read of the system version (`26.5.2`); the Darwin release otherwise.
+      osVersion: osLine(platform, os.release(), process.arch, (process as { getSystemVersion?: () => string }).getSystemVersion?.()).replace(/ \([^)]*\)$/, ""),
+    };
+    return about;
+  };
 }

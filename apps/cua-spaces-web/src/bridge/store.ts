@@ -14,7 +14,7 @@ import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } fr
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
 import { passedSteps } from "./onboarding";
-import type { MachineRow, OnboardingMode, SettingsPage, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
+import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
@@ -29,6 +29,8 @@ import {
   keyvaultPane,
   groupByApp,
   hostPanelFromState,
+  hostState,
+  machinesView,
   keyvaultViews,
   reduceCreates,
   rowsToSpaces,
@@ -260,6 +262,8 @@ export class BridgeStore {
   private hostOverride: { state: object | null } | undefined;
   /** The clock `showMachines` lists its rows at (parity); else now. */
   private machinesNow: number | undefined;
+  /** The Machines page as drawn (`machinesView`). */
+  private machinesViewSnap: MachinesView | null = null;
   private inflight = new Map<ResourceName, Promise<void>>();
   private timelines = new Map<string, TimelineEntry>();
   private unsubscribe: (() => void) | undefined;
@@ -340,6 +344,25 @@ export class BridgeStore {
 
   get<T>(name: ResourceName): Resource<T> {
     return this.resources[name] as Resource<T>;
+  }
+
+  /** The Machines page as every UI draws it (null: no core). */
+  get machinesView(): MachinesView | null {
+    return this.machinesViewSnap;
+  }
+
+  /** Renames a machine (`machines.rename`), then lists the machines again. */
+  async renameMachine(id: string, name: string): Promise<void> {
+    await this.adapter.call("machines.rename", { id, name });
+    await this.refresh("machines");
+  }
+
+  /** Removes a machine from the account (`machines.remove`), then lists
+   * the Spaces and machines again. */
+  async removeMachine(machine: string | null, device: string | null): Promise<void> {
+    await this.adapter.call("machines.remove", { machine, device });
+    await this.refresh("spaces");
+    await this.refresh("machines");
   }
 
   /** Why the listed Spaces may be out of date (null: the host's last read worked). */
@@ -643,6 +666,15 @@ export class BridgeStore {
     if (override) {
       machines = machines.map((m) => (m.current ? { ...m, panel: hostPanelFromState(this.core, override.state) } : m));
     }
+    const here = this.machineRows.find((m) => m.current && !m.device)?.host;
+    this.machinesViewSnap = machinesView(this.core, {
+      // The host's own drawing, unless a parity run drew This machine itself.
+      hostView: override ? null : (this.adapter.machinesView?.() ?? null),
+      machines,
+      spaces,
+      host: override ? override.state : here ? hostState(here) : null,
+      nowSecs: this.machinesNow,
+    });
     this.set("machines", { data: machines, isLoading: false, error: null });
   }
 

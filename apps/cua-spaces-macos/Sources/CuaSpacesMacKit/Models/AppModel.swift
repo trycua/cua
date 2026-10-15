@@ -369,14 +369,74 @@ public final class AppModel {
     /// the web UI lists too): This machine, the machines the Spaces list
     /// shows (one sharing its desktop, one that provides Spaces), then
     /// the account's devices that are none of them; each computer once.
-    public var machinePageRows: [AppMachinePageRow] {
+    public var machinePageRows: [AppMachinePageRow] { appMachinesPageRows(input: machinesPageInput) }
+
+    /// What the Machines page is listed from: the Spaces list, the
+    /// account's devices, the hostnames and who the relay sees connected.
+    var machinesPageInput: AppMachinesPageInput {
         let devices = self.devices.snapshot == nil ? [] : self.devices.input.devices.map {
             AppDeviceIn(id: $0.id, name: $0.name, platform: $0.platform ?? "", lastSeen: $0.lastSeen,
                         current: $0.current, state: $0.state)
         }
-        return appMachinesPageRows(input: AppMachinesPageInput(
+        return AppMachinesPageInput(
             hostOs: .macos, spaces: spaces, devices: devices, hostnames: relayHostnames,
-            presence: self.devices.relayOnline, now: self.devices.nowSecs))
+            presence: self.devices.relayOnline, now: self.devices.nowSecs)
+    }
+
+    /// The Machines page as every UI draws it (the core's
+    /// `machines_view::view`, which the New UI draws too): the list in
+    /// groups with one line each, and each machine's page.
+    public var machinesView: AppMachinesView {
+        let relay = (devices.snapshot?.machines ?? []).map {
+            AppMachinesViewRelay(id: $0.id, role: $0.role, team: $0.team, ownerEmail: $0.ownerEmail,
+                                 providesSpaces: $0.providesSpaces)
+        }
+        return appMachinesView(input: AppMachinesViewInput(
+            page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil))
+    }
+
+    /// This Mac as the Machines page names it: its name, the app's
+    /// version and macOS's.
+    static let machinesAbout: AppMachinesViewAbout = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
+            : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+        return AppMachinesViewAbout(
+            computerName: Foundation.Host.current().localizedName ?? "",
+            appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
+            osVersion: os)
+    }()
+
+    /// Renames a machine from the Machines page: `this-mac` is this Mac's
+    /// own relay registration (its host setup takes the name too).
+    public func renameMachine(id: String, name: String) async throws {
+        guard let clean = appDevicesCleanName(name: name) else {
+            throw CuaError.InvalidArgument(message: "A machine needs a name")
+        }
+        let machine = id == "this-mac" ? host.machineId : id
+        guard let machine, let relay = devices.devices else {
+            throw CuaError.InvalidArgument(message: "Renaming a machine needs a signed-in, enrolled Mac")
+        }
+        try await relay.renameMachine(id: machine, name: clean)
+        await host.refresh()
+        await devices.refresh()
+        await refresh()
+    }
+
+    /// Remove from account: `machine` leaves the relay directory, then
+    /// `device` is revoked. This Mac's own host setup is the host's
+    /// `remove` instead.
+    public func removeMachine(machine: String?, device: String?) async throws {
+        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+        if let device {
+            guard let relay = devices.devices else {
+                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+            }
+            try await relay.revoke(id: device)
+        }
+        await devices.refresh()
+        await refresh()
     }
 
     /// What each machine sharing its desktop (`relay:<machine>`) reported

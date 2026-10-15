@@ -30,7 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow } from "./contracts/host";
+import type { MachinePageRow, MachinesView } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
@@ -149,6 +149,8 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "machines.rename",
+  "machines.remove",
   "checklist.get",
   "checklist.send",
 ] as const;
@@ -281,6 +283,9 @@ export interface WkMachines {
   /** The page's rows as the core lists them (`machines::page_rows`, what
    * the SwiftUI Machines page shows); absent from an older host. */
   rows?: MachinePageRow[] | null;
+  /** The Machines page as the core draws it (`machines_view::view`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  view?: MachinesView | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */

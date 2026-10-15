@@ -1405,6 +1405,22 @@ impl Host {
         RelayClient::new(url)?.machine(&token, id).await
     }
 
+    /// Takes `name` as this machine's display name when `machine_id` is
+    /// this machine's relay registration (after the owner renamed it on
+    /// the relay from an enrolled device). Returns whether it did: another
+    /// machine, or a machine not set up, is left alone.
+    pub fn adopt_name(&self, machine_id: &str, name: &str) -> Result<bool> {
+        let Some(mut config) = self.config()? else {
+            return Ok(false);
+        };
+        if config.machine_id.as_deref() != Some(machine_id) || name.trim().is_empty() {
+            return Ok(false);
+        }
+        config.name = name.trim().to_string();
+        write_json(&self.paths.config(), &config)?;
+        Ok(true)
+    }
+
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
             Error::NotFound("this machine is not set up for access (run `cua host setup`)".into())

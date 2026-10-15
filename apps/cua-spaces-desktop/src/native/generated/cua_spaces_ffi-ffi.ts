@@ -987,6 +987,16 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_machines_view": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_machines_view_input_from_json": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_main_chrome": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2682,6 +2692,16 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_machines_view": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_machines_view_input_from_json": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_main_chrome": {
       args: [],
       ret: FfiType.UInt16,
@@ -4093,6 +4113,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_machine_access_notice(kind: Uint8Array, pendingCode: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_machines_page_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_machines_page_rows(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_machines_view(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_machines_view_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_main_chrome(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_menu(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_menu_bar(spaces: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4432,6 +4454,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_machine_access_notice(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_machines_page_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_machines_page_rows(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_machines_view(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_machines_view_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_main_chrome(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_menu(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_menu_bar(): number;

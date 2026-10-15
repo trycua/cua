@@ -17,6 +17,9 @@ import type {
   AppCloudPricing,
   AppLocalStorage,
   AppMachinePageRow,
+  AppMachinesPageInput,
+  AppMachinesView,
+  AppMachinesViewAbout,
   AppMainChrome,
   AppRosterAction,
   AppRosterState,
@@ -77,6 +80,8 @@ export interface AppModelDeps {
   checklistSeedPath?: string | null;
   /** The system this app runs on (names This machine on the Machines page). */
   hostOs?: AppSpaceOs;
+  /** This computer's name, the app's version and the system's (This machine's Details on the Machines page). */
+  about?: () => AppMachinesViewAbout;
 }
 
 /** The create the daemon never took. */
@@ -109,6 +114,8 @@ export class AppModel {
   readonly checklist: ChecklistModel;
   /** Agent runs seen in any Space (the page's Agents page): "Run an agent". */
   agentRunsSeen = 0;
+  /** This computer, for This machine's Details (`AppModelDeps.about`). */
+  readonly about: (() => AppMachinesViewAbout) | undefined;
   readonly hostOs: AppSpaceOs;
   readonly settingsPath: string;
   settings: AppSettings;
@@ -209,6 +216,7 @@ export class AppModel {
     };
     this.keyvault = d.keyvault ?? new KeyvaultModel(d.native, null);
     this.hostOs = d.hostOs ?? d.native.AppSpaceOs.Macos;
+    this.about = d.about;
     this.checklist = new ChecklistModel(d.native, d.checklistPath ?? null, d.checklistSeedPath ?? null);
     this.checklist.telemetry = d.telemetry;
     this.checklist.onChange = () => this.changed("checklist");
@@ -275,8 +283,8 @@ export class AppModel {
     return out;
   }
 
-  /** The Machines page's rows (the core's `machines::page_rows`, as the SwiftUI app lists them). */
-  get machinePageRows(): AppMachinePageRow[] {
+  /** What the Machines page is listed from (`machines::MachinesPageInput`), the same for its rows and its view. */
+  get machinesPageInput(): AppMachinesPageInput {
     const devices = this.devices.snapshot === null ? [] : this.devices.input.devices.map((d) => ({
       id: d.id,
       name: d.name,
@@ -285,13 +293,42 @@ export class AppModel {
       current: d.current,
       state: d.state,
     }));
-    return this.native.appMachinesPageRows({
+    return {
       hostOs: this.hostOs,
       spaces: this.spaces,
       devices,
       hostnames: new Map(Object.entries(this.relayHostnames)),
       presence: new Map(Object.entries(this.devices.relayOnline)),
       now: BigInt(Math.floor(Date.now() / 1000)),
+    };
+  }
+
+  /** The Machines page's rows (the core's `machines::page_rows`, as the SwiftUI app lists them). */
+  get machinePageRows(): AppMachinePageRow[] {
+    return this.native.appMachinesPageRows(this.machinesPageInput);
+  }
+
+  /**
+   * The Machines page as every UI draws it (the core's `machines_view::view`,
+   * as the SwiftUI page draws it): the rows in groups with one line each,
+   * and each machine's page, from the rows, what the relay says of each
+   * machine (whose it is, its team, whether it provides Spaces), This
+   * machine's host state and this computer.
+   */
+  get machinesView(): AppMachinesView {
+    const relay = (this.devices.snapshot?.machines ?? []).map((m) => ({
+      id: m.id,
+      role: m.role,
+      team: m.team,
+      ownerEmail: m.ownerEmail,
+      providesSpaces: m.providesSpaces,
+    }));
+    return this.native.appMachinesView({
+      page: this.machinesPageInput,
+      relay,
+      host: this.host.state ?? undefined,
+      about: this.about?.() ?? { computerName: "", appVersion: "", osVersion: "" },
+      rows: undefined,
     });
   }
 

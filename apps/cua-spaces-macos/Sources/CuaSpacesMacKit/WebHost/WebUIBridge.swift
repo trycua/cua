@@ -108,6 +108,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // The Machines page's rename and Remove from account (WebUIBridge+Pages.swift).
+        "machines.rename", "machines.remove",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
     ]
@@ -448,6 +450,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page's rows as the core lists them (`machines::page_rows`,
             // what the native Machines page shows).
             "rows": BridgeValue.encode(model.machinePageRows),
+            // The page as the core draws it (`machines_view::view`, what the
+            // native Machines page shows).
+            "view": BridgeValue.encode(model.machinesView),
         ]
     }
 

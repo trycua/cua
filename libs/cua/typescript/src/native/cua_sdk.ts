@@ -4988,7 +4988,17 @@ export type RelayMachine = {
      * check existed. `false` shows the machine as "new" until an enrolled
      * device confirms it ([`Devices::confirm_machine`]) (S5).
      */
-    confirmed: boolean
+    confirmed: boolean,
+    /**
+     * The team you reach it through, for a team machine not shared with
+     * you directly.
+     */
+    team?: string,
+    /**
+     * It creates Spaces for its owner's devices, when it said so at
+     * registration (`None` from a host or relay that predates it).
+     */
+    providesSpaces?: boolean
 }
 
 /**
@@ -5024,7 +5034,9 @@ const FfiConverterTypeRelayMachine = (() => {
                 url: FfiConverterString.read(from),
                 allow: FfiConverterSequenceString.read(from),
                 clients: FfiConverterSequenceTypeRelayClientInfo.read(from),
-                confirmed: FfiConverterBool.read(from)
+                confirmed: FfiConverterBool.read(from),
+                team: FfiConverterOptionalString.read(from),
+                providesSpaces: FfiConverterOptionalBoolean.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5041,6 +5053,8 @@ const FfiConverterTypeRelayMachine = (() => {
             FfiConverterSequenceString.write(value.allow, into);
             FfiConverterSequenceTypeRelayClientInfo.write(value.clients, into);
             FfiConverterBool.write(value.confirmed, into);
+            FfiConverterOptionalString.write(value.team, into);
+            FfiConverterOptionalBoolean.write(value.providesSpaces, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -5055,7 +5069,9 @@ const FfiConverterTypeRelayMachine = (() => {
              FfiConverterString.allocationSize(value.url) +
              FfiConverterSequenceString.allocationSize(value.allow) +
              FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.clients) +
-             FfiConverterBool.allocationSize(value.confirmed);
+             FfiConverterBool.allocationSize(value.confirmed) +
+             FfiConverterOptionalString.allocationSize(value.team) +
+             FfiConverterOptionalBoolean.allocationSize(value.providesSpaces);
 
         }
     };
@@ -21023,6 +21039,12 @@ export interface DevicesLike {
  */
     rename(id: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayDevice>;
 /**
+ * Renames `machine_id`, a machine the account owns, on the relay (from
+ * this enrolled device). When it is this machine's own registration,
+ * its host setup takes the new name too.
+ */
+    renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayMachine>;
+/**
  * Revokes a device (from this enrolled device). Revoking this device
  * also deletes its key.
  */
@@ -21349,6 +21371,43 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeRelayDevice.lift.bind(FfiConverterTypeRelayDevice),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Renames `machine_id`, a machine the account owns, on the relay (from
+ * this enrolled device). When it is this machine's own registration,
+ * its host setup takes the new name too.
+ */
+    async renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<RelayMachine> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_devices_rename_machine(
+                    uniffiTypeDevicesObjectFactory.clonePointer(this),FfiConverterString.lower(machineId, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeRelayMachine.lift.bind(FfiConverterTypeRelayMachine),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -37342,6 +37401,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_rename() !== 59535) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_rename");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_devices_rename_machine() !== 63088) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_rename_machine");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_revoke() !== 27802) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_revoke");

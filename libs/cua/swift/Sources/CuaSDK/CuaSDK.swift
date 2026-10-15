@@ -2649,6 +2649,13 @@ public protocol DevicesProtocol: AnyObject, Sendable {
     func rename(id: String, name: String) async throws  -> RelayDevice
 
     /**
+     * Renames `machine_id`, a machine the account owns, on the relay (from
+     * this enrolled device). When it is this machine's own registration,
+     * its host setup takes the new name too.
+     */
+    func renameMachine(machineId: String, name: String) async throws  -> RelayMachine
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -2895,6 +2902,28 @@ open func rename(id: String, name: String)async throws  -> RelayDevice  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeRelayDevice_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Renames `machine_id`, a machine the account owns, on the relay (from
+     * this enrolled device). When it is this machine's own registration,
+     * its host setup takes the new name too.
+     */
+open func renameMachine(machineId: String, name: String)async throws  -> RelayMachine  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_rename_machine(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(machineId),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRelayMachine_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -26942,6 +26971,16 @@ public struct RelayMachine: Equatable, Hashable {
      * device confirms it ([`Devices::confirm_machine`]) (S5).
      */
     public var confirmed: Bool
+    /**
+     * The team you reach it through, for a team machine not shared with
+     * you directly.
+     */
+    public var team: String?
+    /**
+     * It creates Spaces for its owner's devices, when it said so at
+     * registration (`None` from a host or relay that predates it).
+     */
+    public var providesSpaces: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -26987,7 +27026,15 @@ public struct RelayMachine: Equatable, Hashable {
          * since from one; `true` for anything a relay registered before this
          * check existed. `false` shows the machine as "new" until an enrolled
          * device confirms it ([`Devices::confirm_machine`]) (S5).
-         */confirmed: Bool) {
+         */confirmed: Bool,
+        /**
+         * The team you reach it through, for a team machine not shared with
+         * you directly.
+         */team: String?,
+        /**
+         * It creates Spaces for its owner's devices, when it said so at
+         * registration (`None` from a host or relay that predates it).
+         */providesSpaces: Bool?) {
         self.id = id
         self.spaceId = spaceId
         self.name = name
@@ -27001,6 +27048,8 @@ public struct RelayMachine: Equatable, Hashable {
         self.allow = allow
         self.clients = clients
         self.confirmed = confirmed
+        self.team = team
+        self.providesSpaces = providesSpaces
     }
 
 
@@ -27031,7 +27080,9 @@ public struct FfiConverterTypeRelayMachine: FfiConverterRustBuffer {
                 url: FfiConverterString.read(from: &buf),
                 allow: FfiConverterSequenceString.read(from: &buf),
                 clients: FfiConverterSequenceTypeRelayClientInfo.read(from: &buf),
-                confirmed: FfiConverterBool.read(from: &buf)
+                confirmed: FfiConverterBool.read(from: &buf),
+                team: FfiConverterOptionString.read(from: &buf),
+                providesSpaces: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -27049,6 +27100,8 @@ public struct FfiConverterTypeRelayMachine: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.allow, into: &buf)
         FfiConverterSequenceTypeRelayClientInfo.write(value.clients, into: &buf)
         FfiConverterBool.write(value.confirmed, into: &buf)
+        FfiConverterOptionString.write(value.team, into: &buf)
+        FfiConverterOptionBool.write(value.providesSpaces, into: &buf)
     }
 }
 
@@ -40572,6 +40625,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_rename() != 59535) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_revoke() != 27802) {

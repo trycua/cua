@@ -15,6 +15,7 @@ import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
 import { PRESENCE_ARGS } from "../ops/presence";
 import type { HostWindow } from "../detect";
@@ -123,6 +124,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
   ...PRESENCE_ARGS,
 };

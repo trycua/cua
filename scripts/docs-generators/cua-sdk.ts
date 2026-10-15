@@ -1098,11 +1098,11 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/machines-app-core',
     title: 'Machines page',
-    description: 'The Machines page\'s rows: this machine, your machines and your devices, each computer once.',
+    description: 'The Machines page: this machine, your machines and your devices, each computer once, and each machine\'s page.',
     intro:
-      '`app_machines_page_rows` builds the Machines page from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. Every Spaces UI lists these rows.',
+      '`app_machines_page_rows` builds the Machines page\'s rows from what an app has: the Spaces list (a machine sharing its own desktop, one that provides Spaces), what the relay says of each machine, and the account\'s devices (`AppDeviceIn`). A machine and the device on it are one row; a device that is none of the machines is listed on its own (`device_only`) and is never a Run on choice. `app_machines_view` draws the page from them: the list in groups (your machines, those offline for 30 days or more, team machines) with one line each, and each machine\'s page (its Provide Spaces and Share this desktop switches, editable on this machine only; the Spaces on it, as links to each Space; New Space here; Details; rename; and Remove from account). Every Spaces UI draws this view.',
     items: ['AppDeviceIn'],
-    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'app_machines_'],
+    prefixes: ['AppMachinePageRow', 'AppMachinesPageInput', 'AppMachinesView', 'app_machines_'],
     spaces: true,
   },
   {

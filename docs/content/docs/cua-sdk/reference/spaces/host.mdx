@@ -921,7 +921,7 @@ Somebody connected to a machine through the relay.
 
 A machine of the account's relay directory (`relay:<id>`).
 
-Returned by [`Devices.confirm_machine`](/cua-sdk/reference/spaces/devices#devicesconfirm_machine), [`Relay.machine`](#relaymachine), [`Relay.machines`](#relaymachines), [`Relay.start_sharing`](#relaystart_sharing), [`Relay.stop_sharing`](#relaystop_sharing).
+Returned by [`Devices.confirm_machine`](/cua-sdk/reference/spaces/devices#devicesconfirm_machine), [`Devices.rename_machine`](/cua-sdk/reference/spaces/devices#devicesrename_machine), [`Relay.machine`](#relaymachine), [`Relay.machines`](#relaymachines), [`Relay.start_sharing`](#relaystart_sharing), [`Relay.stop_sharing`](#relaystop_sharing).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -938,3 +938,5 @@ Returned by [`Devices.confirm_machine`](/cua-sdk/reference/spaces/devices#device
 | `allow` | `Vec<String>` |  | Allowlist (owner view only). |
 | `clients` | [`Vec<RelayClientInfo>`](#relayclientinfo-record) |  | Connected clients. |
 | `confirmed` | `bool` |  | Registered with an enrolled device's signature or MFA, or confirmed since from one; `true` for anything a relay registered before this check existed. `false` shows the machine as "new" until an enrolled device confirms it (`Devices.confirm_machine`) (S5). |
+| `team` | `Option<String>` |  | The team you reach it through, for a team machine not shared with you directly. |
+| `provides_spaces` / `providesSpaces` | `Option<bool>` |  | It creates Spaces for its owner's devices, when it said so at registration (`None` from a host or relay that predates it). |

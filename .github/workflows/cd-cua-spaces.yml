@@ -133,9 +133,12 @@ name: "CD: Cua Spaces"
 #  - Native libraries are built per target in parallel and kept in the Actions
 #    cache by the git tree hash of their inputs (.github/actions/spaces-native,
 #    the macos-rust job). A run of the same inputs, such as a test or dry run
-#    of the commit then its release, restores them; a miss builds (with the
-#    Rust dependency cache). Caches are visible to the branch that saved them
-#    and to the default branch's, so run the test build from main.
+#    of the commit then its release, restores them; on a miss the artifacts a
+#    prior run of the same commit uploaded are reused instead (the cache is
+#    evicted under the repository's 10 GB cap before then; #5224), and only a
+#    run with neither builds (with the Rust dependency cache). Caches are
+#    visible to the branch that saved them and to the default branch's, so run
+#    the test build from main.
 #  - The web UI is built once (electron-web); Windows and Linux x64 and arm64
 #    are packaged in parallel and joined into electron-windows / electron-linux.
 #  - A release (tag) run is never cancelled; manual runs cancel their own
@@ -232,13 +235,18 @@ jobs:
   # build-release.sh would build them (same command and environment). The
   # compiled slices are kept in the Actions cache by the content of their
   # inputs: a rerun, or a release of the commit a test build already
-  # compiled, restores them; a miss builds.
+  # compiled, restores them; on a miss the artifacts a prior run of the same
+  # commit uploaded serve the same purpose (#5224); only then does it build.
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
     needs: spacesd-published
     if: github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run
     runs-on: macos-26
     timeout-minutes: 180
+    permissions:
+      contents: read
+      # Finds and downloads the artifact a prior run of this commit uploaded.
+      actions: read
     defaults:
       run:
         working-directory: .
@@ -271,14 +279,50 @@ jobs:
             libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
             libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
           key: ${{ steps.key.outputs.key }}
-      - if: steps.cache.outputs.cache-hit != 'true'
+      # The Actions cache sits over its 10 GB cap, so a save rarely survives
+      # until the release run of the same commit (#5224); the artifacts this
+      # job uploads on every run live outside the cache and still have them.
+      - name: Find a prior run's artifact
+        id: prior
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=macos-rust-${{ matrix.arch }}&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber))] | sort_by(.created_at) | last | .workflow_run.id // empty' \
+            || true)"
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+      # A failed or partial download leaves ok=false and falls back to building.
+      - name: Restore the prior run's artifact
+        id: restored-check
+        if: steps.prior.outputs.run-id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.prior.outputs.run-id }}
+        run: |
+          ok=true
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+            --name "macos-rust-${{ matrix.arch }}" \
+            --dir "libs/cua/target/${{ matrix.triple }}/release" || ok=false
+          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
+            test -f "libs/cua/target/${{ matrix.triple }}/release/$f" || ok=false
+          done
+          # A partial download must not survive into the build's own outputs.
+          if [ "$ok" = false ]; then
+            rm -f "libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib" \
+                  "libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli"
+          fi
+            echo "prior-run artifact restore: ok=$ok"
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: ${{ matrix.triple }}
-      - if: steps.cache.outputs.cache-hit != 'true'
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
         name: Install protoc
         uses: ./.github/actions/setup-protoc
-      - if: steps.cache.outputs.cache-hit != 'true'
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
         uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: libs/cua -> target
@@ -288,7 +332,7 @@ jobs:
           # within the hour. Only the default branch saves it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      - if: steps.cache.outputs.cache-hit != 'true'
+      - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
         name: Build the slice
         working-directory: libs/cua
         run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "${{ matrix.triple }}"
@@ -987,13 +1031,18 @@ jobs:
   # runner of its architecture; the packaging jobs below take them as
   # artifacts. Each is restored from the Actions cache when a run of the same
   # inputs (a test or dry-run build of the commit) built it (see the
-  # spaces-native action); a miss builds.
+  # spaces-native action); on a miss the artifacts a prior run of the same
+  # commit uploaded are reused (#5224); only then does it build.
   electron-native:
     name: Electron native (${{ matrix.label }})
     needs: electron-plan
     if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      # The spaces-native action finds and downloads a prior run's artifacts.
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -1027,6 +1076,10 @@ jobs:
     if: needs.electron-plan.outputs.build == 'true'
     runs-on: macos-26
     timeout-minutes: 180
+    permissions:
+      contents: read
+      # The spaces-native action finds and downloads a prior run's artifacts.
+      actions: read
     strategy:
       fail-fast: false
       matrix:

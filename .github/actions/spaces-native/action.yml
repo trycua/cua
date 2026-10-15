@@ -2,7 +2,8 @@ name: "Cua Spaces native layer"
 description: >-
   Build the Cua Spaces Electron native layer (`pnpm native -- --target T` in
   apps/cua-spaces-desktop) for one target into apps/cua-spaces-desktop/native/<label>,
-  or restore it from the Actions cache. The cache key is the git tree hash of
+  restore it from the Actions cache, or reuse the artifact an earlier run of
+  the same commit uploaded. The cache key is the git tree hash of
   everything the build reads (libs/cua, the cua-spacesd pin, the build script),
   the target, the toolchain and the repository, so any run of a commit with
   the same inputs (a test or dry-run build, then the release) reuses the
@@ -56,19 +57,69 @@ runs:
         HIT: ${{ steps.cache.outputs.cache-hit || 'false' }}
         LABEL: ${{ inputs.label }}
       run: echo "native ${LABEL} cache hit = ${HIT}"
-    - if: steps.cache.outputs.cache-hit != 'true'
+    # The repository's Actions cache sits over its 10 GB cap, so a compiled
+    # slice saved on one run is evicted long before the release run of the
+    # same commit restores it (#5224). Artifacts live outside the cache: a
+    # run of this commit that already uploaded `electron-native-<label>` (the
+    # names cd-cua-spaces.yml's upload-artifact steps use) hands the layer
+    # down instead of rebuilding it. Lookups failing or findings missing fall
+    # through to the normal build.
+    - name: Find a prior run's artifact
+      id: prior
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+        run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=electron-native-$LABEL&per_page=20" \
+          --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == "'"$GITHUB_SHA"'" and .workflow_run.id != ('"$GITHUB_RUN_ID"' | tonumber))] | sort_by(.created_at) | last | .workflow_run.id // empty' \
+          || true)"
+        echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+    # The extra cache paths ship as their own artifact (darwin-arm64's
+    # `electron-native-darwin-arm64-lib`), named after the same label. A
+    # failed or partial download leaves ok=false and falls back to building.
+    - name: Restore the prior run's artifacts
+      id: restored-check
+      if: steps.prior.outputs.run-id != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RUN_ID: ${{ steps.prior.outputs.run-id }}
+        LABEL: ${{ inputs.label }}
+        EXTRA_PATHS: ${{ inputs.extra-paths }}
+      run: |
+        ok=true
+        dir="$GITHUB_WORKSPACE/apps/cua-spaces-desktop/native/$LABEL"
+        gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+          --name "electron-native-$LABEL" --dir "$dir" || ok=false
+        for p in $EXTRA_PATHS; do
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+            --name "electron-native-$LABEL-lib" \
+            --dir "$GITHUB_WORKSPACE/$(dirname "$p")" || ok=false
+          [ -e "$GITHUB_WORKSPACE/$p" ] || ok=false
+        done
+        test -n "$(find "$dir" -mindepth 1 -print -quit 2>/dev/null)" || ok=false
+        if [ "$ok" = false ]; then
+          rm -rf "$dir"
+          for p in $EXTRA_PATHS; do rm -f "$GITHUB_WORKSPACE/$p"; done
+        fi
+        echo "prior-run artifact restore: ok=$ok"
+        echo "ok=$ok" >> "$GITHUB_OUTPUT"
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: dtolnay/rust-toolchain@1.97.1
       with:
         targets: ${{ inputs.target }}
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       name: Install protoc
       uses: ./.github/actions/setup-protoc
-    - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true' && runner.os == 'Linux'
       name: Install Linux build dependencies
       shell: bash
       run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
     # Dependencies and build products of a cold build (a source change).
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
       with:
         workspaces: libs/cua -> target
@@ -78,17 +129,17 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       with:
         package_json_file: apps/cua-spaces-desktop/package.json
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       uses: actions/setup-node@v4
       with:
         node-version: 22
     # The library, its N-API runtime and the bundled cua; Windows links the
     # C runtime statically (build-native.mjs), so no VC++ redistributable.
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: steps.cache.outputs.cache-hit != 'true' && steps.restored-check.outputs.ok != 'true'
       name: Build the native layer
       shell: bash
       working-directory: apps/cua-spaces-desktop

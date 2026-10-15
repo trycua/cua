@@ -32,6 +32,10 @@ on:
       - "libs/cua/crates/cua-icon-cache/**"
       - ".github/workflows/ci-cua-spaces-macos.yml"
   workflow_dispatch:
+  # A daily main run saves the Rust cache PR runs restore (PRs never save
+  # one), and checks main itself.
+  schedule:
+    - cron: "37 6 * * *"
 
 permissions:
   contents: read
@@ -58,6 +62,8 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
@@ -90,6 +96,8 @@ jobs:
       # The app loads the Cua Spaces app export (libcua_spaces_ffi, which
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
       # carries the cua SDK too), staged as libs/cua/swift/lib/libcua_sdk.dylib.
       - name: Build and stage the Cua Spaces app library

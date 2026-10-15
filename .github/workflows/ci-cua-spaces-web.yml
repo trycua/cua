@@ -23,6 +23,10 @@ on:
       - "libs/cua/crates/cua-spaces-app-core/**"
       - ".github/workflows/ci-cua-spaces-web.yml"
   workflow_dispatch:
+  # A daily main run saves the Rust cache PR runs restore (PRs never save
+  # one), and checks main itself.
+  schedule:
+    - cron: "27 6 * * *"
 
 permissions:
   contents: read
@@ -52,6 +56,8 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: apps/cua-spaces/core-wasm
       # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
       # root package.json pins pnpm 9 for the rest of the repo.
@@ -97,6 +103,8 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: apps/cua-spaces/core-wasm
       # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
       # root package.json pins pnpm 9 for the rest of the repo.

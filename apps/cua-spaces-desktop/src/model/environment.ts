@@ -29,6 +29,7 @@ import { LiveGate, PendingAccount, PendingSpacesBackend, type LiveServices } fro
 import { LiveAccount, LiveTelemetry, hostAccount } from "./services";
 import { BundledCuaKeychain, StartupModel } from "./startup";
 import { withTimeout } from "./time";
+import { LinuxRuntime, nodeLinuxSystem, type RelaunchSpec } from "./linux-runtime";
 import { WindowsRuntime, nodeWindowsSystem } from "./windows-runtime";
 
 /** Whether the first run finished (`onboarding.json`'s `completed`); null when unknown. */
@@ -52,6 +53,8 @@ export interface EnvironmentOptions {
   openUrl: (url: string) => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  /** Linux: starts this app again as given and quits (Electron's `app.relaunch` and `app.exit`); without it no restart fix is offered. */
+  relaunch?: (spec: RelaunchSpec) => void;
 }
 
 export interface Environment {
@@ -129,6 +132,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
     checklistSeedPath: platform === "darwin" ? path.join(swiftSupportDir(env.HOME || os.homedir()), "checklist.json") : null,
     hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
     windowsRuntime: platform === "win32" ? new WindowsRuntime(nodeWindowsSystem(), path.join(os.tmpdir(), "cua-spaces")) : null,
+    linuxRuntime: platform === "linux" && o.relaunch ? new LinuxRuntime(nodeLinuxSystem(o.relaunch, env), env) : null,
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.

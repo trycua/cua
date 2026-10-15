@@ -3433,7 +3433,7 @@ fn type_text_in_spare_batches<G>(
     mapping: &GetKeyboardMappingReply,
     mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
     mut send: impl FnMut(u8, bool) -> Result<()>,
-    mut finish: impl FnMut(),
+    mut finish: impl FnMut() -> bool,
 ) -> Result<()> {
     let total = text.chars().count();
     let spares = match mapping.keysyms_per_keycode as usize {
@@ -3477,7 +3477,11 @@ fn type_text_in_spare_batches<G>(
             send(keycode, needs_shift)?;
             typed += 1;
         }
-        finish();
+        if !finish() && rest.peek().is_some() {
+            bail!(
+                "typed {typed} of {total} characters: the client has not confirmed reading the keys on the spare keycodes the next characters need"
+            );
+        }
     }
     Ok(())
 }
@@ -3543,7 +3547,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             }
             Ok(())
         },
-        || *client.borrow_mut() = TextClient::new(&conn, Some(window)),
+        || client.borrow_mut().release(),
     )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
@@ -3588,7 +3592,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
-        || *client.borrow_mut() = TextClient::new(&conn, None),
+        || client.borrow_mut().release(),
     )?;
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
@@ -4221,7 +4225,7 @@ mod key_name_alias_tests {
                 log.borrow_mut().push(("send", keycode));
                 Ok(())
             },
-            || {},
+            || true,
         )
         .unwrap();
         assert_eq!(
@@ -4263,11 +4267,46 @@ mod key_name_alias_tests {
                 events.push(keycode);
                 Ok(())
             },
-            || {},
+            || true,
         )
         .unwrap_err();
         assert_eq!(error.to_string(), "typed 2 of 3 characters: keymap changed");
         assert_eq!(events, [9, 8]);
+    }
+
+    #[test]
+    fn text_batches_stop_before_rebinding_keycodes_the_client_has_not_read() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        for (text, result) in [
+            ("你", Ok(vec![9])),
+            ("你好", Err("typed 1 of 2 characters: the client has not confirmed reading the keys on the spare keycodes the next characters need")),
+        ] {
+            let mut events = Vec::new();
+            let typed = type_text_in_spare_batches(
+                text,
+                &mapping,
+                |ch, mapping| {
+                    reserve_spare_keycode(
+                        mapping,
+                        super::mpx_keyboard::keysym_for_char(ch),
+                        |_, _, _, _| Ok(()),
+                    )
+                    .map(|(keycode, guard)| (keycode, Some(guard)))
+                },
+                |keycode, _| {
+                    events.push(keycode);
+                    Ok(())
+                },
+                || false,
+            )
+            .map(|()| events)
+            .map_err(|error| error.to_string());
+            assert_eq!(typed, result.map_err(String::from), "{text}");
+        }
     }
 
     #[test]
@@ -4491,14 +4530,21 @@ impl<'a> TextClient<'a> {
             self.unanswered.push(window);
         }
     }
+
+    fn release(&mut self) -> bool {
+        let sent = std::mem::take(&mut self.sent);
+        for &window in &sent {
+            self.ping(window);
+        }
+        self.borrowed.clear();
+        let unanswered = std::mem::take(&mut self.unanswered);
+        !sent.iter().any(|window| unanswered.contains(window))
+    }
 }
 
 impl Drop for TextClient<'_> {
     fn drop(&mut self) {
-        for window in std::mem::take(&mut self.sent) {
-            self.ping(window);
-        }
-        self.borrowed.clear();
+        self.release();
     }
 }
 

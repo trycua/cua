@@ -176,8 +176,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; presence: presence-bridge.test.ts.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; presence: presence-bridge.test.ts; the Windows runtime fix: below.)
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -186,7 +186,12 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const info = (await call("app.info")) as { platform: string; host: string; version: string; methods: string[] };
     expect(info).toMatchObject({ platform: "macos", host: "electron", version: "1.2.3" });
     expect(info.methods[0]).toBe("app.info");
-    expect(info.methods.at(-1)).toBe("presence.leave");
+    expect(info.methods.at(-1)).toBe("spaces.fixRuntime");
+  });
+
+  it("checks spaces.fixRuntime's action, and has no runtime fix off Windows", async () => {
+    await expect(call("spaces.fixRuntime", { action: "reboot" })).rejects.toMatchObject({ code: "bad_args" });
+    await expect(call("spaces.fixRuntime", { action: "start-docker" })).rejects.toMatchObject({ code: "unsupported" });
   });
 
   it("answers New Space's options while starting and once ready", () => {
@@ -514,7 +519,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

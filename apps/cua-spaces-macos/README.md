@@ -266,8 +266,8 @@ so the sign-in is never lost.
 ## Which app is primary
 
 Both ship from the same core, so neither owns behaviour. Recommendation:
-make this SwiftUI app the default macOS distribution and keep the Tauri app
-for Windows and Linux.
+make this SwiftUI app the default macOS distribution and keep the Electron
+app for Windows and Linux.
 
 - The Mac surfaces that matter most are native here: the notch panel, the
   menu bar extra, sheets, Liquid Glass, Passwords-style lists and system

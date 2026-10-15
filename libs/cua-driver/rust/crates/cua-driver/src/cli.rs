@@ -3471,7 +3471,11 @@ fn run_permissions_status(json: bool) {
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some("check_permissions".into()),
-            args: Some(permissions_status_args(cfg!(target_os = "macos"))),
+            args: Some(if cfg!(target_os = "macos") {
+                serde_json::json!({ "prompt": false })
+            } else {
+                serde_json::json!({})
+            }),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
@@ -3605,10 +3609,6 @@ fn run_permissions_status(json: bool) {
     if !(ax && sr) {
         println!("  → To grant for the driver, run: {cli_name} permissions grant");
     }
-}
-
-fn permissions_status_args(macos: bool) -> serde_json::Value {
-    serde_json::Map::from_iter(macos.then(|| ("prompt".into(), false.into()))).into()
 }
 
 fn permission_status_reply_text(result: &serde_json::Value, macos: bool) -> Option<String> {
@@ -6048,15 +6048,6 @@ mod tests {
             args.get("probe_direct_capture"),
             Some(&serde_json::json!(false))
         );
-    }
-
-    #[test]
-    fn permission_status_sends_prompt_only_on_macos() {
-        assert_eq!(
-            permissions_status_args(true),
-            serde_json::json!({ "prompt": false })
-        );
-        assert_eq!(permissions_status_args(false), serde_json::json!({}));
     }
 
     #[test]

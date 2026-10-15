@@ -135,6 +135,11 @@ export class FixtureSpacesBackend implements SpacesBackend {
     this.removed.push({ id, removeOnly });
     this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
   }
+  readonly unregistered: string[] = [];
+  async relayUnregister(machineId: string) {
+    this.unregistered.push(machineId);
+    this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
+  }
   async setPower(id: string, on: boolean) {
     this.power.push({ id, on });
     this.rowsNow = this.rowsNow.map((r) => (r.id === id ? { ...r, powerState: on ? "running" : r.power === "stop" ? "stopped" : "suspended", reachable: on } : r));

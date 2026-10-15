@@ -6,8 +6,10 @@
 // machine row and sections, the account's devices, who the relay sees
 // connected, and the host's state with its relay machine id.
 import type { AppModel } from "../model/app-model";
+import { DevicesUnavailable } from "../model/devices";
+import { optionalString, string } from "./args";
 import type { BridgeContext } from "./context";
-import type { Handlers } from "./host";
+import { Failure, type Handlers } from "./host";
 import { encode } from "./value";
 
 /** This machine as a host (the core's flattened `HostStatus`), plus its relay machine id and setup progress; null until it answered. */
@@ -41,7 +43,22 @@ export function machinesState(model: AppModel) {
     // The page's rows as the core lists them (`machines::page_rows`), the
     // same the SwiftUI Machines page shows.
     rows: encode(model.machinePageRows),
+    // The page as the core draws it (`machines_view::view`), the same the
+    // SwiftUI Machines page draws.
+    view: encode(model.machinesView),
   };
+}
+
+/** The relay's calls need the session's `Devices`; its refusals in the bridge's words. */
+async function relayCall<T>(model: AppModel, call: () => Promise<T>): Promise<T> {
+  if (!model.devices.devices()) throw Failure.unsupported("Machines need a signed-in Cua account");
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof DevicesUnavailable) throw Failure.unsupported(error.message);
+    if (error instanceof RangeError) throw Failure.badArgs(error.message);
+    throw error;
+  }
 }
 
 export function machinesMethods({ model }: BridgeContext): Handlers {
@@ -51,6 +68,29 @@ export function machinesMethods({ model }: BridgeContext): Handlers {
       // Who the relay sees connected now, not at the last visit; not before the services are in.
       if (model.servicesIn) await model.devices.refreshIfStale();
       return machinesState(model);
+    },
+    // Renames one of your machines on the relay; `this-mac` is this
+    // machine's own registration (its host setup takes the name too).
+    "machines.rename": async (args) => {
+      const id = string(args, "id");
+      const name = string(args, "name");
+      const machineId = id === "this-mac" ? model.host.machineId : id;
+      if (!machineId) throw Failure.badArgs("this machine is not on the relay");
+      await relayCall(model, () => model.devices.renameMachine(machineId, name));
+      if (id === "this-mac") await model.host.refresh();
+      return null;
+    },
+    // Remove from account: the machine leaves the relay directory, then
+    // the device on it is revoked; the Spaces and machines are read again.
+    "machines.remove": async (args) => {
+      const machine = optionalString(args, "machine");
+      const device = optionalString(args, "device");
+      if (!machine && !device) throw Failure.badArgs("machine or device");
+      if (machine) await relayCall(model, () => model.backend.relayUnregister(machine));
+      if (device) await relayCall(model, () => model.devices.revoke(device));
+      else await model.devices.refresh();
+      await model.refresh();
+      return null;
     },
     "host.status": async () => {
       if (model.host.state === null && model.servicesIn) await model.host.refresh();

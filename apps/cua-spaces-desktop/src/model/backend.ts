@@ -54,6 +54,8 @@ export interface SpacesBackend {
   reportedHostname(id: string): string | null;
   add(url: string, token: string | null, name: string | null): Promise<void>;
   remove(id: string, removeOnly: boolean): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
+  relayUnregister(machineId: string): Promise<void>;
   setPower(id: string, on: boolean): Promise<void>;
   localRuntimes(): Promise<LocalRuntimes | null>;
   lumeSource(): Promise<string | null>;
@@ -328,6 +330,10 @@ export class LiveSpacesBackend implements SpacesBackend {
   async remove(id: string, removeOnly: boolean): Promise<void> {
     if (removeOnly) await this.cua.spaces().remove(id);
     else await this.cua.spaces().delete_(id);
+  }
+
+  async relayUnregister(machineId: string): Promise<void> {
+    await this.cua.spaces().relayUnregister(`relay:${machineId}`);
   }
 
   async setPower(id: string, on: boolean): Promise<void> {

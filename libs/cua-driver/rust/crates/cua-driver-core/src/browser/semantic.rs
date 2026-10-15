@@ -1279,18 +1279,26 @@ mod tests {
                                     "style", "visibility: visible"]},
                     {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 3,
                      "attributes": ["aria-label", "Unrendered"]}
+                 ]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 4,
+                 "attributes": ["style", "opacity: 0"],
+                 "children": [
+                    {"nodeType": 1, "nodeName": "SPAN", "children": [
+                        {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 5,
+                         "attributes": ["aria-label", "Transparent"]}
+                    ]}
                  ]}
             ]
         }));
         let layout = build_layout_index(&json!({
             "strings": ["block", "visible", "1", "auto"],
             "documents": [{
-                "nodes": {"backendNodeId": [2]},
+                "nodes": {"backendNodeId": [2, 5]},
                 "layout": {
-                    "nodeIndex": [0],
-                    "bounds": [[10, 10, 200, 30]],
-                    "styles": [[0, 1, 2, 3, 3, 3, 3]],
-                    "paintOrders": [1]
+                    "nodeIndex": [0, 1],
+                    "bounds": [[10, 10, 200, 30], [10, 50, 200, 30]],
+                    "styles": [[0, 1, 2, 3, 3, 3, 3], [0, 1, 2, 3, 3, 3, 3]],
+                    "paintOrders": [1, 2]
                 }
             }]
         }));

@@ -2572,6 +2572,19 @@ pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePage
     core::machines::page_rows(&input)
 }
 
+/// The Machines page as every UI draws it: the list in groups, one line
+/// per row, and each machine's page.
+#[uniffi::export]
+pub fn app_machines_view(input: AppMachinesViewInput) -> AppMachinesView {
+    core::machines_view::view(&input)
+}
+
+/// Machines view input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_view_input_from_json(json: String) -> Result<AppMachinesViewInput> {
+    from_json("machines view input", &json)
+}
+
 /// Machines page input from JSON (fixtures, parity flows).
 #[uniffi::export]
 pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPageInput> {

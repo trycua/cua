@@ -66,6 +66,7 @@ TYPES = [
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
     ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
+    ("machines_view.rs", "machines_view", ["MachinesViewRelay", "MachinesViewAbout", "MachinesViewInput", "MachinesViewToggle", "MachinesViewSpace", "MachinesViewNewSpace", "MachinesViewRename", "MachinesViewRemove", "MachinesViewFact", "MachinesViewMachine", "MachinesViewRemoveAll", "MachinesViewGroup", "MachinesView"]),
     ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
     ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),

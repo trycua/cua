@@ -90,14 +90,29 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
   }
 }
 
+/** The page's first run moved past Welcome (its usage notice was on
+ * screen): any page left or shown other than Welcome being shown, or
+ * "Set up later". */
+export function leftWelcome(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const s = raw as Record<string, unknown>;
+  if (s.type === "onboarding-page") return !(s.page === "welcome" && s.action === "shown");
+  return s.type === "step" && s.step === "onboarding_skipped";
+}
+
 export function telemetryMethods({ model }: BridgeContext): Handlers {
   return {
     "telemetry.track": (args) => {
       if (!Array.isArray(args.signals)) throw Failure.badArgs("signals: array");
       const telemetry = model.telemetry;
       if (!telemetry || !telemetry.status().enabled) return null;
-      const signals = args.signals.map((raw) => telemetrySignal(model.native, raw)).filter((s): s is AppTelemetrySignal => s !== null);
-      if (signals.length) telemetry.record(signals);
+      const kept = args.signals.flatMap((raw) => {
+        const signal = telemetrySignal(model.native, raw);
+        return signal ? [{ raw, signal }] : [];
+      });
+      // Held until the notice was shown; leaving Welcome sends them in order.
+      if (kept.length) telemetry.record(kept.map((k) => k.signal));
+      if (kept.some((k) => leftWelcome(k.raw))) telemetry.acknowledgeNotice();
       return null;
     },
   };

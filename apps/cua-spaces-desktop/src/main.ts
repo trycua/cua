@@ -145,6 +145,13 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   app.on("will-quit", () => {
     pip.closeAll();
     viewers.closeAll();
+    // Closing the last window quits on Windows and Linux: send the usage
+    // events still queued (at most 1 s; the rest go with the next launch).
+    try {
+      native.telemetryFlush(1000);
+    } catch {
+      // Usage data never holds up quitting.
+    }
   });
   const prompts = await electronKeyvaultPrompts(native);
   // macOS: a real window dragged onto a Space tile in the main window (the

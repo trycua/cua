@@ -100,6 +100,9 @@ export function makeModel(o: EnvironmentOptions): Environment {
   const backend = new PendingSpacesBackend(gate);
   const account = new PendingAccount(gate);
   const telemetry = new LiveTelemetry(native);
+  // A first run that finished here had the notice on its Welcome page;
+  // earlier builds never recorded that, so their machines sent nothing.
+  if (!firstRunDue) telemetry.acknowledgeNotice();
   const host = new HostModel(native, null);
   const devices = new DevicesModel(native, () => gate.current?.devices ?? null);
   const cloud = new CloudModel(native, () => backend.current);

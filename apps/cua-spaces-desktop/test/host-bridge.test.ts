@@ -762,6 +762,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     events.length = 0;
     expect(await call("onboarding.complete", { mode: "host", launchAtLogin: true })).toEqual({ completed: true, mode: "host" });
     expect(asked).toBe(1);
+    // Done is past Welcome's usage notice.
+    expect((model.telemetry as FixtureTelemetry).acknowledged).toBe(1);
     expect(system.loginItem.calls).toEqual(["register"]);
     expect(model.settings.launchAtLogin).toBe(true);
     expect(events.some((e) => e.event === "session.changed")).toBe(true);

@@ -347,6 +347,18 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
   });
 
+  it("records that the usage notice was seen once the first run leaves Welcome", async () => {
+    telemetry.current = { enabled: true, lockedBy: undefined, noticeShown: false };
+    const before = telemetry.acknowledged;
+    await call("telemetry.track", { signals: [{ type: "step", step: "onboarding_shown", ok: true }, { type: "onboarding-page", page: "welcome", action: "shown", choice: "none" }] });
+    expect(telemetry.acknowledged).toBe(before);
+    await call("telemetry.track", { signals: [{ type: "onboarding-page", page: "welcome", action: "completed", choice: "none" }, { type: "onboarding-page", page: "signin", action: "shown", choice: "none" }] });
+    expect(telemetry.acknowledged).toBe(before + 1);
+    // "Set up later" from Welcome counts too.
+    await call("telemetry.track", { signals: [{ type: "step", step: "onboarding_skipped", ok: true }] });
+    expect(telemetry.acknowledged).toBe(before + 2);
+  });
+
   it("sets the calling window's background, and checks the drag regions", async () => {
     await call("window.setBackgroundColor", { color: "16181C", appearance: "dark" });
     expect(backgrounds).toEqual([["win-1", "#16181c", "dark"]]);

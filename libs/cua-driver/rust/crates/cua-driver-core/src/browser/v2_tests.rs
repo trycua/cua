@@ -1484,6 +1484,8 @@ async fn attach_fixture_with_space(
             setup_aborted: Arc::new(AtomicBool::new(false)),
             stall_consent: false,
             focus: focus.clone(),
+            focus_order: Default::default(),
+            no_focus_guard: false,
         }),
         Some(provider.clone()),
     );
@@ -1646,6 +1648,7 @@ async fn unattended_attach_and_dom_work_without_any_focus_guard() {
             stall_consent: false,
             focus_order: order.clone(),
             no_focus_guard: true,
+            focus: Default::default(),
         }),
         Some(provider),
     );
@@ -1739,6 +1742,7 @@ async fn consent_focus_is_captured_before_any_endpoint_contact() {
             stall_consent: false,
             focus_order: order.clone(),
             no_focus_guard: false,
+            focus: Default::default(),
         }),
         Some(provider),
     );
@@ -2306,6 +2310,8 @@ async fn declined_consent_rolls_back_pending_setup_before_refusing() {
             setup_aborted: setup_aborted.clone(),
             stall_consent: false,
             focus: Default::default(),
+            focus_order: Default::default(),
+            no_focus_guard: false,
         }),
         Some(Arc::new(DecliningProtectedProvider)),
     );

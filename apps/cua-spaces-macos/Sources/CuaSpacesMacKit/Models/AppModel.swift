@@ -231,7 +231,7 @@ public final class AppModel {
         onboarding.onLaunchAtLogin = { [weak self] on in self?.setLaunchAtLogin(on) }
         // Settings, Experiments decide the first run's pages (Cua Volume).
         onboarding.currentExperiments = { [weak self] in
-            self?.settings.experiments ?? AppExperiments(cuaVolume: false, yourCloud: false, sharing: false, webUi: false)
+            self?.settings.experiments ?? AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: false)
         }
         // Which experiments are on: the day's `cua_app_active` carries them.
         telemetry?.record(appTelemetryExperimentsOn(experiments: settings.experiments))

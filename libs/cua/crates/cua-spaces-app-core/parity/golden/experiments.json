@@ -5,6 +5,7 @@
       "actions": [
         "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
         "pip: Picture in picture [pip.enter] ?Picture in picture",
+        "share: Share [person.badge.plus] ?Share this Space",
         "delete: Remove [trash] ?Remove from the list (destructive)",
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
@@ -88,7 +89,7 @@
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {On|*Off}",
+        "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
         "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
@@ -114,6 +115,7 @@
       "actions": [
         "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
         "pip: Picture in picture [pip.enter] ?Picture in picture",
+        "share: Share [person.badge.plus] ?Share this Space",
         "delete: Remove [trash] ?Remove from the list (destructive)",
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
@@ -204,7 +206,8 @@
         },
         {
           "experiments": [
-            "cua_volume"
+            "cua_volume",
+            "sharing"
           ],
           "type": "experiments-on"
         }
@@ -217,7 +220,7 @@
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
         "- experiment:your_cloud toggle: Your cloud {On|*Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {On|*Off}",
+        "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
         "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
@@ -243,6 +246,7 @@
       "actions": [
         "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
         "pip: Picture in picture [pip.enter] ?Picture in picture",
+        "share: Share [person.badge.plus] ?Share this Space",
         "delete: Remove [trash] ?Remove from the list (destructive)",
         "open: Open [-] ?Open the desktop in its own window (primary)"
       ],
@@ -334,7 +338,8 @@
         {
           "experiments": [
             "cua_volume",
-            "your_cloud"
+            "your_cloud",
+            "sharing"
           ],
           "type": "experiments-on"
         }
@@ -347,7 +352,7 @@
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
         "- experiment:your_cloud toggle: Your cloud {*On|Off}",
         "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
-        "- experiment:sharing toggle: Sharing {On|*Off}",
+        "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
         "- experiment:classic_ui-note note: Open the previous Spaces window instead of the New UI."
@@ -459,21 +464,7 @@
         "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
         "# AI agents (agents) [Configure all detected agents] (disabled)"
       ],
-      "signals": [
-        {
-          "action": "experiment_on",
-          "experiment": "sharing",
-          "type": "experiment"
-        },
-        {
-          "experiments": [
-            "cua_volume",
-            "your_cloud",
-            "sharing"
-          ],
-          "type": "experiments-on"
-        }
-      ],
+      "signals": [],
       "step": "sharing on",
       "tab": [
         "= Experiments",

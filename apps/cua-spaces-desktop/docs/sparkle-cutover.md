@@ -106,6 +106,10 @@ Those are the rehearsal below.
    that still holds `~/.cua/keyvault.sock` (#4950, fixed in #5191,
    cua-spaces 0.9.1). Before that fix, such a daemon stayed running
    untracked and the new one couldn't serve the Keyvault.
+7. Chromium stays out of the keychain on macOS (`--use-mock-keychain`,
+   `src/chromium-keychain.ts`, #5209, cua-spaces 0.9.1). Before that, every
+   Electron update asked for the login keychain password for "Cua Spaces
+   Safe Storage", and the app froze until it was answered.
 
 ## Rehearsal (a staging repository)
 

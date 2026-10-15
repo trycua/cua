@@ -420,18 +420,22 @@ chmod +x "$seed/cua-spaces"
 inst PATH="$seed:$PATH" -- --pair K7QM-4XPB-2RHD
 check "--pair with Cua installed: uses it, no download" sh -c "[ $status = 0 ] && grep -q 'already installed at $seed/cua' '$work/out' && grep -qx 'host setup --pair K7QM-4XPB-2RHD' '$home/cua.log' && ! grep -q 'manifest' '$work/out' && [ ! -e '$home/.local/bin/cua' ]"
 check "--pair with the app installed: keeps it, no AppImage" sh -c "grep -q 'Cua Spaces is already installed' '$work/out' && [ ! -e '$home/.local/bin/cua-spaces' ]"
-inst PATH="$seed:$PATH" CUA_INSTALL_REINSTALL=1 -- --pair K7QM-4XPB-2RHD
-check "--pair with CUA_INSTALL_REINSTALL=1: installs again" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ] && '$home/.local/bin/cua' --version | grep -q $version"
-inst PATH="$seed:$PATH" -- --pair K7QM-4XPB-2RHD --version "$version"
-check "--pair --version: installs that release" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ]"
-inst PATH="$seed:$PATH" -- --yes --cli-only --prefix "$work/rp1"
-check "without --pair an installed cua is not reused" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$work/rp1/bin/cua' ]"
-if [ ! -x /usr/local/bin/cua ]; then
-    old="$work/seed-old/bin"
-    make_cua "$old" linux-x64
-    sed -i.bak 's/--pair <CODE>  add this machine with a code/--no-such-flag/' "$old/cua" && rm -f "$old/cua.bak"
-    inst PATH="$old:$PATH" -- --pair K7QM-4XPB-2RHD
-    check "--pair with an old cua (no --pair): installs the current one" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ]"
+# Installing anyway writes the default bin dir (/usr/local/bin as root): only as a user.
+if [ "$(id -u)" != 0 ]; then
+    inst PATH="$seed:$PATH" CUA_INSTALL_REINSTALL=1 -- --pair K7QM-4XPB-2RHD
+    check "--pair with CUA_INSTALL_REINSTALL=1: installs again" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ] && '$home/.local/bin/cua' --version | grep -q $version"
+    inst PATH="$seed:$PATH" -- --pair K7QM-4XPB-2RHD --version "$version"
+    check "--pair --version: installs that release" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ]"
+    inst PATH="$seed:$PATH" -- --yes --cli-only --prefix "$work/rp1"
+    check "without --pair an installed cua is not reused" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$work/rp1/bin/cua' ]"
+    # (A real cua at one of the fixed places would be reused: skip there.)
+    if [ ! -x /usr/local/bin/cua ] && [ ! -x "/Applications/Cua Spaces.app/Contents/MacOS/cua" ] && [ ! -x "$HOME/Applications/Cua Spaces.app/Contents/MacOS/cua" ]; then
+        old="$work/seed-old/bin"
+        make_cua "$old" linux-x64
+        sed -i.bak 's/--pair <CODE>  add this machine with a code/--no-such-flag/' "$old/cua" && rm -f "$old/cua.bak"
+        inst PATH="$old:$PATH" -- --pair K7QM-4XPB-2RHD
+        check "--pair with an old cua (no --pair): installs the current one" sh -c "[ $status = 0 ] && ! grep -q 'already installed' '$work/out' && [ -x '$home/.local/bin/cua' ]"
+    fi
 fi
 
 # One quiet info line when signatures cannot be checked (neither minisign nor cosign).

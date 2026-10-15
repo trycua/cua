@@ -31,6 +31,13 @@ pub const MANAGE_TEAM: &str = "Manage team";
 /// The button that opens the account app's billing page.
 pub const MANAGE_BILLING: &str = "Billing and plans";
 
+/// The button that opens the account app's billing page from the
+/// failed-payment notice.
+pub const UPDATE_PAYMENT: &str = "Update payment method";
+
+/// The settings row of the failed-payment notice.
+pub const PAYMENT_FAILED_ROW: &str = "payment-failed";
+
 /// The line when the account is in no team.
 pub const NO_TEAMS: &str =
     "You're not in a team yet. Create one or accept an invite in the account app.";
@@ -62,6 +69,12 @@ pub struct TeamInput {
     pub members: Vec<TeamPersonInput>,
     /// Pending invites' emails (only owners and admins can read them).
     pub invites: Vec<String>,
+    /// The team's last payment failed and it is in its grace period.
+    #[serde(default)]
+    pub payment_failed: bool,
+    /// The end of the grace period (RFC 3339), when known.
+    #[serde(default)]
+    pub payment_failed_until: Option<String>,
 }
 
 /// Where Teams stand.
@@ -144,6 +157,48 @@ fn plan_label(plan: &str) -> &'static str {
     }
 }
 
+/// `2026-11-03T10:00:00Z` as `Nov 3, 2026` (the UTC date); `None` when
+/// the text is not an RFC 3339 date.
+fn grace_date(rfc3339: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let date = rfc3339.trim().get(..10)?;
+    let mut parts = date.split('-');
+    let year: u32 = parts.next()?.parse().ok()?;
+    let month: usize = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some(format!("{} {day}, {year}", MONTHS[month - 1]))
+}
+
+/// The notice above a team in grace: owners are told to act (and get the
+/// billing button), everyone else who to ask.
+fn payment_notice(t: &TeamInput, app: &str) -> SettingsRow {
+    let by = t
+        .payment_failed_until
+        .as_deref()
+        .and_then(grace_date)
+        .map(|d| format!(" by {d}"))
+        .unwrap_or_default();
+    let mut r = row(PAYMENT_FAILED_ROW, Text, "Payment failed");
+    if t.role == "owner" {
+        r.value = Some(format!(
+            "Your last payment failed. Update your payment method{by} to keep Teams."
+        ));
+        r.button = Some(UPDATE_PAYMENT.into());
+        r.link_url = Some(format!("{app}/billing"));
+    } else {
+        r.value = Some(format!(
+            "The last payment for {} failed. The owner needs to update the payment method{by} to keep Teams.",
+            t.display_name()
+        ));
+    }
+    r
+}
+
 fn base(input: &TeamsInput) -> String {
     let url = input.account_app_url.trim().trim_end_matches('/');
     if url.starts_with("https://") {
@@ -207,6 +262,9 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
                     1 => " \u{b7} 1 seat".into(),
                     n => format!(" \u{b7} {n} seats"),
                 };
+                if t.payment_failed {
+                    out.push(payment_notice(t, &app));
+                }
                 let mut head = row(&format!("team:{}", t.id), Text, t.display_name());
                 head.value = Some(format!(
                     "{} \u{b7} {}{seats}",
@@ -262,6 +320,8 @@ mod tests {
                 },
             ],
             invites: vec!["cy@example.com".into()],
+            payment_failed: false,
+            payment_failed_until: None,
         }
     }
 
@@ -290,6 +350,58 @@ mod tests {
         assert_eq!(flat[1], ("ada@example.com".into(), Some("Owner".into())));
         assert_eq!(flat[2], ("bob@example.com".into(), Some("Member".into())));
         assert_eq!(flat[3], ("cy@example.com".into(), Some("(Invited)".into())));
+    }
+
+    #[test]
+    fn an_owner_in_grace_is_told_to_update_the_payment_method() {
+        let mut t = team("Acme Inc", "acme");
+        t.payment_failed = true;
+        t.payment_failed_until = Some("2026-11-03T10:00:00Z".into());
+        let rows = rows(&input(vec![t]));
+        assert_eq!(rows[0].id, "payment-failed");
+        assert_eq!(
+            rows[0].value.as_deref(),
+            Some(
+                "Your last payment failed. Update your payment method by Nov 3, 2026 to keep Teams."
+            )
+        );
+        assert_eq!(rows[0].button.as_deref(), Some("Update payment method"));
+        assert_eq!(
+            rows[0].link_url.as_deref(),
+            Some("https://app.cua.ai/billing")
+        );
+        assert_eq!(rows[1].id, "team:o1");
+    }
+
+    #[test]
+    fn a_member_in_grace_is_told_who_acts_and_gets_no_button() {
+        let mut t = team("Acme Inc", "acme");
+        t.role = "member".into();
+        t.payment_failed = true;
+        let rows = rows(&input(vec![t]));
+        assert_eq!(
+            rows[0].value.as_deref(),
+            Some(
+                "The last payment for Acme Inc failed. The owner needs to update the payment method to keep Teams."
+            )
+        );
+        assert_eq!(rows[0].button, None);
+        assert_eq!(rows[0].link_url, None);
+    }
+
+    #[test]
+    fn a_team_in_good_standing_has_no_notice() {
+        let rows = rows(&input(vec![team("Acme Inc", "acme")]));
+        assert!(rows.iter().all(|r| r.id != "payment-failed"));
+    }
+
+    #[test]
+    fn the_grace_date_reads_rfc3339() {
+        assert_eq!(
+            grace_date("2026-01-09T00:00:00+00:00").as_deref(),
+            Some("Jan 9, 2026")
+        );
+        assert_eq!(grace_date("soon"), None);
     }
 
     #[test]
@@ -373,6 +485,8 @@ mod tests {
             seats: 0,
             members: vec![],
             invites: vec![],
+            payment_failed: false,
+            payment_failed_until: None,
         }
     }
 

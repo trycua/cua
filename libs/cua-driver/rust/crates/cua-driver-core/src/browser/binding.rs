@@ -230,9 +230,10 @@ const SCALED_SIZE_SCALE_RANGE: (f64, f64) = (0.5, 4.0);
 /// window sizes in its own scaled units, so bounds never match the
 /// compositor's rect. The pairing is exact when every native window of the
 /// process pairs one-to-one with every CDP window under one common scale, and
-/// no other one-to-one pairing does. A finite set of sizes maps onto itself
-/// under a common scale only by identity, so a second valid pairing exists
-/// only for windows of (nearly) the same size; that case refuses.
+/// every such pairing gives this window the same CDP window. A finite set of
+/// sizes maps onto itself under a common scale only by identity, so pairings
+/// differ only between windows of (nearly) the same size; when this window is
+/// one of them, the bind refuses.
 pub fn scaled_size_bijection_candidate(
     native_title: &str,
     native_window_id: u64,
@@ -269,45 +270,48 @@ pub fn scaled_size_bijection_candidate(
         .iter()
         .map(|size| (size.width, size.height))
         .collect::<Vec<_>>();
-    let pairing = unique_scaled_pairing(&native, &cdp_sizes, tolerance)?;
     let native_index = native_sizes
         .iter()
         .position(|size| size.window_id == native_window_id)?;
-    Some(representatives[pairing[native_index]].clone())
+    let partner = unique_scaled_partner(&native, &cdp_sizes, native_index, tolerance)?;
+    Some(representatives[partner].clone())
 }
 
-/// The one-to-one pairing of `native` sizes (window-system units) with
-/// `scaled` sizes (an application's own scaled units) under a single common
-/// scale, when exactly one such pairing exists. Lists of different lengths,
-/// more than [`SCALED_SIZE_MAX_WINDOWS`] entries, non-positive sizes, or two or
-/// more valid pairings (equal or near-equal sizes) yield `None`.
-/// `pairing[i]` is the index in `scaled` paired with `native[i]`.
-pub fn unique_scaled_pairing(
+/// The entry of `scaled` (an application's own scaled units) that pairs with
+/// `native[target]` (window-system units) when every native size pairs
+/// one-to-one with every scaled size under a single common scale. Other
+/// windows may be interchangeable (equal sizes); the result is `Some` only when
+/// every valid pairing gives `native[target]` the same partner. Lists of
+/// different lengths, more than [`SCALED_SIZE_MAX_WINDOWS`] entries, or
+/// non-positive sizes yield `None`.
+pub fn unique_scaled_partner(
     native: &[(f64, f64)],
     scaled: &[(f64, f64)],
+    target: usize,
     tolerance: f64,
-) -> Option<Vec<usize>> {
+) -> Option<usize> {
     let count = native.len();
     let positive = |sizes: &[(f64, f64)]| sizes.iter().all(|&(w, h)| w > 0.0 && h > 0.0);
     if count == 0
         || count > SCALED_SIZE_MAX_WINDOWS
         || scaled.len() != count
+        || target >= count
         || !positive(native)
         || !positive(scaled)
     {
         return None;
     }
     let mut pairing: Vec<usize> = (0..count).collect();
-    let mut valid: Option<Vec<usize>> = None;
+    let mut partner: Option<usize> = None;
     loop {
         if scaled_pairing_holds(native, scaled, &pairing, tolerance) {
-            if valid.is_some() {
-                return None;
+            match partner {
+                Some(previous) if previous != pairing[target] => return None,
+                _ => partner = Some(pairing[target]),
             }
-            valid = Some(pairing.clone());
         }
         if !next_permutation(&mut pairing) {
-            return valid;
+            return partner;
         }
     }
 }
@@ -702,6 +706,26 @@ mod tests {
         let app = scaled_size_bijection_candidate("app", 9, &natives, &cands, 8.0)
             .expect("app window pairs");
         assert_eq!(app.cdp_window_id, Some(2));
+    }
+
+    #[test]
+    fn scaled_sizes_bind_a_unique_window_beside_interchangeable_ones() {
+        // An installed web app and a PDF window share one size; the tiled
+        // browser window still has exactly one partner.
+        let natives = [
+            native_size(7, 1913.0, 1041.0),
+            native_size(8, 3832.0, 2087.0),
+            native_size(9, 3832.0, 2087.0),
+        ];
+        let cands = [
+            sized("app", 2, 2819.0, 1536.0),
+            sized("main", 1, 1408.0, 766.0),
+            sized("pdf", 3, 2819.0, 1536.0),
+        ];
+        let main = scaled_size_bijection_candidate("main", 7, &natives, &cands, 8.0)
+            .expect("main window pairs");
+        assert_eq!(main.cdp_window_id, Some(1));
+        assert!(scaled_size_bijection_candidate("app", 8, &natives, &cands, 8.0).is_none());
     }
 
     #[test]

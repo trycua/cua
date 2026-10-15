@@ -1083,8 +1083,8 @@ fn correlate_hyprland_frame(
 /// titles cannot (Chromium's accessible title adds tab-group and profile text
 /// the compositor title lacks). Chromium reports frame extents in its own
 /// scaled units, so every owned client must pair one-to-one with every
-/// `BrowserRootView` frame under one common scale, and only one such pairing
-/// may exist. Any other owned client or frame kind leaves the counts unequal
+/// `BrowserRootView` frame under one common scale, and every such pairing must
+/// give the target client the same frame. Any other owned client or frame kind leaves the counts unequal
 /// and refuses.
 fn scaled_hyprland_frame(
     frames: &[HyprlandFrame],
@@ -1104,12 +1104,13 @@ fn scaled_hyprland_frame(
         .map(|&(_, width, height)| (f64::from(width), f64::from(height)))
         .collect::<Vec<_>>();
     let scaled = roots.iter().map(|(_, size)| *size).collect::<Vec<_>>();
-    let pairing = cua_driver_core::browser::binding::unique_scaled_pairing(
+    let partner = cua_driver_core::browser::binding::unique_scaled_partner(
         &native,
         &scaled,
+        target,
         HYPRLAND_FRAME_SCALED_TOLERANCE,
     )?;
-    Some(roots[*pairing.get(target)?].0)
+    Some(roots[partner].0)
 }
 
 /// Per-edge tolerance, in Chromium's scaled units, for [`scaled_hyprland_frame`].
@@ -1239,6 +1240,22 @@ mod hyprland_frame_tests {
         assert_eq!(scaled_hyprland_frame(&twins, &clients, 0), None);
         let one = [sized_root(0, "a", 1408, 766)];
         assert_eq!(scaled_hyprland_frame(&one, &clients, 0), None);
+    }
+
+    #[test]
+    fn scaled_frames_bind_a_unique_window_beside_equal_sized_ones() {
+        let frames = [
+            sized_root(0, "Calendar - Outlook", 2819, 1536),
+            sized_root(1, "Sign in - Part of group SSO - Google Chrome", 1408, 766),
+            sized_root(4, "DDF.PDF - Google Chrome", 2819, 1536),
+        ];
+        let clients = [
+            ("Calendar - Outlook", 3832, 2087),
+            ("DDF.PDF - Google Chrome", 3832, 2087),
+            ("Sign in - Google Chrome", 1913, 1041),
+        ];
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 2), Some(1));
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 0), None);
     }
 }
 

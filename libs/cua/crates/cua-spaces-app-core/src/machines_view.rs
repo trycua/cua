@@ -77,6 +77,10 @@ pub struct MachinesViewInput {
     /// This computer.
     #[serde(default)]
     pub about: MachinesViewAbout,
+    /// The rows when the shell already listed them (an older host's rows,
+    /// merged by the web UI); `None`: [`machines::page_rows`] of `page`.
+    #[serde(default)]
+    pub rows: Option<Vec<MachinePageRow>>,
 }
 
 /// One of the two switches on a machine's page.
@@ -526,7 +530,10 @@ fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
 
 /// The Machines page.
 pub fn view(input: &MachinesViewInput) -> MachinesView {
-    let rows = machines::page_rows(&input.page);
+    let rows = input
+        .rows
+        .clone()
+        .unwrap_or_else(|| machines::page_rows(&input.page));
     let now = input.page.now;
     let spaces = &input.page.spaces;
     let host = input.host.as_ref();
@@ -1055,7 +1062,20 @@ mod tests {
                 app_version: "0.9.1".into(),
                 os_version: "macOS 26.5.2".into(),
             },
+            rows: None,
         }
+    }
+
+    /// Rows an older host listed (merged by the web UI) draw the same page.
+    #[test]
+    fn rows_the_shell_listed_draw_the_same_page() {
+        let input = mockup();
+        let rows = machines::page_rows(&input.page);
+        let given = view(&MachinesViewInput {
+            rows: Some(rows),
+            ..input.clone()
+        });
+        assert_eq!(given, view(&input));
     }
 
     fn by_id<'a>(v: &'a MachinesView, id: &str) -> &'a MachinesViewMachine {

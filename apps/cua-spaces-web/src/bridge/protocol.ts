@@ -45,6 +45,7 @@ import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import type { TelemetryOps } from "./ops/telemetry";
@@ -185,6 +186,7 @@ export interface HostOperations
     StartupOps,
     StreamOps,
     RelayUsageOps,
+    MachinesOps,
     ChecklistOps,
     PresenceOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
@@ -288,6 +290,7 @@ export const OPERATIONS = [
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...SETTINGS_OPERATIONS,

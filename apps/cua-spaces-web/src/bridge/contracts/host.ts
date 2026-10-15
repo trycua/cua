@@ -185,6 +185,117 @@ export interface MachinePageRow {
   spacesLabel?: string;
 }
 
+/** A confirmation (`host::HostConfirm`). */
+export interface HostConfirm {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+}
+
+/** One of a machine's two switches (`machines_view::MachinesViewToggle`). */
+export interface MachinesViewToggle {
+  /** `spaces` or `desktop`. */
+  id: string;
+  label: string;
+  help: string;
+  on: boolean;
+  /** Changed here (This machine); another machine's are read-only. */
+  editable: boolean;
+  enabled: boolean;
+  /** What flipping it runs, in order (`host.action` ids). */
+  actions: HostActionId[];
+  /** Before setup: flipping it opens the setup form with this profile. */
+  setup?: string | null;
+}
+
+/** A Space on a machine: a link to its page (`machines_view::MachinesViewSpace`). */
+export interface MachinesViewSpace {
+  id: string;
+  name: string;
+  os: string;
+  status: string;
+  running: boolean;
+}
+
+/** New Space here (`machines_view::MachinesViewNewSpace`). */
+export interface MachinesViewNewSpace {
+  label: string;
+  /** The wizard's placement (`local`, `host:<id>`). */
+  on: string;
+  enabled: boolean;
+  help?: string | null;
+}
+
+/** Rename (`machines_view::MachinesViewRename`). */
+export interface MachinesViewRename {
+  /** `host`, `machine` or `device`. */
+  target: string;
+  id: string;
+  title: string;
+  confirmLabel: string;
+}
+
+/** Remove from account (`machines_view::MachinesViewRemove`). */
+export interface MachinesViewRemove {
+  label: string;
+  enabled: boolean;
+  help?: string | null;
+  /** This machine: its host setup is removed (`host.action` `remove`). */
+  host: boolean;
+  /** Another machine: it leaves the relay directory. */
+  machine?: string | null;
+  /** The device on it, revoked too. */
+  device?: string | null;
+  confirm: HostConfirm;
+}
+
+/** One machine's row and page (`machines_view::MachinesViewMachine`). */
+export interface MachinesViewMachine {
+  id: string;
+  name: string;
+  badge?: string | null;
+  /** The row's one muted line. */
+  line: string;
+  /** Usable now (the green dot). */
+  online: boolean;
+  os: string;
+  current: boolean;
+  team: boolean;
+  /** The page's status line. */
+  status: string;
+  sharedBy?: string | null;
+  rename?: MachinesViewRename | null;
+  notice?: string | null;
+  noticeAction?: HostAction | null;
+  toggles: MachinesViewToggle[];
+  togglesNote?: string | null;
+  spacesTitle: string;
+  spaces: MachinesViewSpace[];
+  spacesEmpty?: string | null;
+  newSpace: MachinesViewNewSpace;
+  detailsTitle: string;
+  details: { label: string; value: string }[];
+  remove?: MachinesViewRemove | null;
+}
+
+/** A group of the list (`machines_view::MachinesViewGroup`). */
+export interface MachinesViewGroup {
+  /** `yours`, `old` or `team`. */
+  id: string;
+  title: string;
+  collapsed: boolean;
+  ids: string[];
+  removeAll?: { label: string; confirm: HostConfirm; removes: MachinesViewRemove[] } | null;
+}
+
+/** The Machines page as every UI draws it (`machines_view::MachinesView`). */
+export interface MachinesView {
+  summary: string;
+  groups: MachinesViewGroup[];
+  machines: MachinesViewMachine[];
+}
+
 export interface ServiceState {
   installed: boolean;
   running: boolean;

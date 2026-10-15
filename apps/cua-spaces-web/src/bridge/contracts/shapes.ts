@@ -652,6 +652,76 @@ const MachinePageRowShape = ref(
   }),
 );
 
+const HostConfirmShape = object({ title: str, message: str, confirmLabel: str, cancelLabel: str });
+
+/** A machine's remove (`machines_view::MachinesViewRemove`). */
+const MachinesViewRemoveShape = ref(
+  "MachinesViewRemove",
+  object({
+    label: str,
+    enabled: bool,
+    help: optNull(str),
+    host: bool,
+    machine: optNull(str),
+    device: optNull(str),
+    confirm: HostConfirmShape,
+  }),
+);
+
+/** The Machines page as the core draws it (`machines_view::MachinesView`). */
+const MachinesViewShape = ref(
+  "MachinesView",
+  object({
+    summary: str,
+    groups: list(
+      object({
+        id: str,
+        title: str,
+        collapsed: bool,
+        ids: strings,
+        removeAll: optNull(object({ label: str, confirm: HostConfirmShape, removes: list(MachinesViewRemoveShape) })),
+      }),
+    ),
+    machines: list(
+      object({
+        id: str,
+        name: str,
+        badge: optNull(str),
+        line: str,
+        online: bool,
+        os: str,
+        current: bool,
+        team: bool,
+        status: str,
+        sharedBy: optNull(str),
+        rename: optNull(object({ target: str, id: str, title: str, confirmLabel: str })),
+        notice: optNull(str),
+        noticeAction: optNull(object({ id: str, label: str, destructive: bool })),
+        toggles: list(
+          object({
+            id: str,
+            label: str,
+            help: str,
+            on: bool,
+            editable: bool,
+            enabled: bool,
+            actions: strings,
+            setup: optNull(str),
+          }),
+        ),
+        togglesNote: optNull(str),
+        spacesTitle: str,
+        spaces: list(object({ id: str, name: str, os: str, status: str, running: bool })),
+        spacesEmpty: optNull(str),
+        newSpace: object({ label: str, on: str, enabled: bool, help: optNull(str) }),
+        detailsTitle: str,
+        details: list(object({ label: str, value: str })),
+        remove: optNull(MachinesViewRemoveShape),
+      }),
+    ),
+  }),
+);
+
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
   "spaces.create": SpaceRowShape,
@@ -802,6 +872,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "volume.reveal": nul,
   "agents.setupDriver": list(obj<AgentSetupOutcome>()({ agents: strings, target: str, item: str, change: str, detail: str })),
 
+  "machines.rename": nul,
+  "machines.remove": nul,
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "relay.usage": nullable(
     obj<RelayUsage>()({
@@ -1008,6 +1080,7 @@ const WkMachinesShape = ref(
     deviceStates: optNull(dict(str)),
     accessNotice: optNull(MachineAccessNoticeShape),
     rows: opt(list(MachinePageRowShape)),
+    view: optNull(MachinesViewShape),
   }),
 );
 
@@ -1194,6 +1267,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "startup.get": StartupShape,
   "startup.act": StartupShape,
   "relay.usage": OP_SHAPES["relay.usage"],
+  "machines.rename": nul,
+  "machines.remove": nul,
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
 };

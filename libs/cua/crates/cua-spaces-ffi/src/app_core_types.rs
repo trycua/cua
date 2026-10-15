@@ -9343,6 +9343,9 @@ pub struct AppMachinesViewInput {
     pub host: Option<AppHostState>,
     /// This computer.
     pub about: AppMachinesViewAbout,
+    /// The rows when the shell already listed them (an older host's rows,
+    /// merged by the web UI); `None`: [`machines::page_rows`] of `page`.
+    pub rows: Option<Vec<AppMachinePageRow>>,
 }
 
 /// One of the two switches on a machine's page.

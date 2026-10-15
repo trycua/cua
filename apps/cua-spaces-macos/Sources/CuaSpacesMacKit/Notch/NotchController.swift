@@ -323,6 +323,16 @@ public final class NotchController {
         pollPermission()
     }
 
+    /// The monitor stopped on its own: drop it so a check starts a new one.
+    private func dragsStopped() {
+        guard dragsRunning else { return }
+        NSLog("Cua Spaces: window-drag detection stopped; starting it again")
+        dragMonitor?.stop()
+        dragMonitor = nil
+        dragsRunning = false
+        pollPermission()
+    }
+
     /// Starts the SDK's drag monitor without waiting for it (set by
     /// `followWindowDrags`; tests inject their own).
     @ObservationIgnored var startDrags: (() throws -> Void)?
@@ -371,6 +381,9 @@ public final class NotchController {
     }
 
     func handle(_ event: TeleportWindowDragEvent) {
+        // The SDK's monitor died on its own (its event tap ended): start a
+        // new one on the next check and within 2 s.
+        if event.phase == "stopped" { return dragsStopped() }
         // Hidden: window drags are not followed (the monitor is stopped; a
         // late event is dropped).
         guard isShown else { return }

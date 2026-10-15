@@ -9,13 +9,16 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::number::CFNumber;
-use core_foundation::runloop::CFRunLoop;
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
 use core_foundation::string::{CFString, CFStringRef};
 use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
@@ -32,8 +35,8 @@ use core_graphics::window::{
 
 use super::UxError;
 use super::window::{
-    MouseEvent, Rect, WindowDragEvent, WindowDragTracker, WindowInfo, WindowSource, encode_png,
-    thumbnail_rgba,
+    MonitorLife, MouseEvent, Rect, TapDisabled, TapHealth, WindowDragEvent, WindowDragTracker,
+    WindowInfo, WindowSource, deliver, encode_png, thumbnail_rgba,
 };
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -41,6 +44,12 @@ unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -274,21 +283,80 @@ impl WindowSource for OnScreen {
     }
 }
 
+/// What the tap's callback does with one event type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TapInput {
+    Mouse(MouseEvent),
+    /// The system turned the tap off (its callback was too slow, or user
+    /// input was disabled): it delivers nothing more until re-enabled.
+    Disabled,
+    Ignore,
+}
+
+fn tap_input(etype: CGEventType) -> TapInput {
+    match etype {
+        CGEventType::LeftMouseDown => TapInput::Mouse(MouseEvent::Down),
+        CGEventType::LeftMouseDragged => TapInput::Mouse(MouseEvent::Dragged),
+        CGEventType::LeftMouseUp => TapInput::Mouse(MouseEvent::Up),
+        CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+            TapInput::Disabled
+        }
+        _ => TapInput::Ignore,
+    }
+}
+
+/// One line in the app's log (stderr): the tap's start, failures and
+/// recoveries, which are rare.
+fn log(message: &str) {
+    eprintln!("[cua] window drag: {message}");
+}
+
 /// A running event tap.
+///
+/// The tap's callback only runs the drag state machine and queues what it
+/// emits: a delivery thread hands that to the listener, so a slow listener
+/// (the Electron app's waits for its JS thread) never makes macOS disable
+/// the tap. When macOS disables it anyway, it is re-enabled; when that
+/// keeps happening, or the tap's run loop ends on its own, the monitor ends,
+/// the listener gets `stopped`, and [`Self::is_running`] turns `false`.
 pub struct Monitor {
     run_loop: Mutex<Option<usize>>,
+    life: Arc<MonitorLife>,
 }
 
 impl Monitor {
     pub fn start(on_event: Box<dyn Fn(WindowDragEvent) + Send + 'static>) -> Result<Self, UxError> {
         let (tx, rx) = std::sync::mpsc::channel::<Result<usize, String>>();
+        let (events, queue) = std::sync::mpsc::channel::<WindowDragEvent>();
+        let life = Arc::new(MonitorLife::default());
+        std::thread::Builder::new()
+            .name("cua-window-drag-events".into())
+            .spawn(move || {
+                // The bundle is looked up once per drag, off the tap.
+                deliver(queue, |mut ev| {
+                    if let Some(w) = ev.window.as_mut().filter(|w| w.bundle_path.is_none()) {
+                        w.bundle_path = bundle_path(w.pid, &mut HashMap::new());
+                    }
+                    on_event(ev);
+                })
+            })
+            .map_err(|e| UxError::Io(e.to_string()))?;
+        let thread_life = life.clone();
+        // `CUA_SPACES_NOTCH_DEBUG=1`: each click's candidate windows too.
+        let debug = ["CUA_SPACES_NOTCH_DEBUG", "CUA_WINDOW_DRAG_DEBUG"]
+            .iter()
+            .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
         std::thread::Builder::new()
             .name("cua-window-drag".into())
             .spawn(move || {
                 let tracker =
                     Mutex::new(WindowDragTracker::new(OnScreen, std::process::id() as i64));
-                let tx2 = tx.clone();
-                let result = CGEventTap::with_enabled(
+                let health = Mutex::new(TapHealth::default());
+                // The tap's mach port, for re-enabling it from its callback.
+                let port = Arc::new(AtomicUsize::new(0));
+                let callback_port = port.clone();
+                let tap_events = events.clone();
+                let tap = CGEventTap::new(
                     CGEventTapLocation::Session,
                     CGEventTapPlacement::HeadInsertEventTap,
                     CGEventTapOptions::ListenOnly,
@@ -297,56 +365,112 @@ impl Monitor {
                         CGEventType::LeftMouseDragged,
                         CGEventType::LeftMouseUp,
                     ],
-                    |_proxy, etype, event| {
-                        let p = event.location();
-                        let m = match etype {
-                            CGEventType::LeftMouseDown => Some(MouseEvent::Down),
-                            CGEventType::LeftMouseDragged => Some(MouseEvent::Dragged),
-                            CGEventType::LeftMouseUp => Some(MouseEvent::Up),
-                            _ => None,
-                        };
-                        if let Some(m) = m {
-                            let out = tracker
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .handle(m, p.x, p.y);
-                            if let Some(mut ev) = out {
-                                // The bundle is looked up once, when the drag starts.
-                                if let Some(w) =
-                                    ev.window.as_mut().filter(|w| w.bundle_path.is_none())
-                                {
-                                    w.bundle_path = bundle_path(w.pid, &mut HashMap::new());
+                    move |_proxy, etype, event| {
+                        match tap_input(etype) {
+                            TapInput::Mouse(m) => {
+                                let p = event.location();
+                                let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
+                                let dragging = t.is_dragging();
+                                let out = t.handle(m, p.x, p.y);
+                                if debug && m == MouseEvent::Down {
+                                    log(&format!(
+                                        "mouse down at ({:.0}, {:.0}); windows there: {}",
+                                        p.x,
+                                        p.y,
+                                        t.candidates()
+                                    ));
                                 }
-                                on_event(ev);
+                                if debug && m == MouseEvent::Up && !dragging {
+                                    log("mouse up: no window moved");
+                                }
+                                drop(t);
+                                if let Some(ev) = out {
+                                    let _ = tap_events.send(ev);
+                                }
                             }
+                            TapInput::Disabled => {
+                                let verdict = health
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .disabled(Instant::now());
+                                let tap = callback_port.load(Ordering::SeqCst) as CFMachPortRef;
+                                let back_on = verdict == TapDisabled::Reenable
+                                    && !tap.is_null()
+                                    && unsafe {
+                                        CGEventTapEnable(tap, true);
+                                        CGEventTapIsEnabled(tap)
+                                    };
+                                let why = if matches!(etype, CGEventType::TapDisabledByTimeout) {
+                                    "a slow callback"
+                                } else {
+                                    "user input"
+                                };
+                                if back_on {
+                                    log(&format!("the event tap was disabled ({why}); re-enabled"));
+                                } else {
+                                    log(&format!(
+                                        "the event tap was disabled ({why}) and stays off; stopping"
+                                    ));
+                                    // Ends the run loop: the monitor reports it died.
+                                    unsafe { CFRunLoopStop(CFRunLoopGetCurrent()) };
+                                }
+                            }
+                            TapInput::Ignore => {}
                         }
                         CallbackResult::Keep
                     },
-                    || {
-                        let rl = unsafe { CFRunLoopGetCurrent() } as usize;
-                        let _ = tx2.send(Ok(rl));
-                        CFRunLoop::run_current();
-                    },
                 );
-                if result.is_err() {
+                let Ok(tap) = tap else {
+                    log("the event tap could not be created");
+                    thread_life.ended();
                     let _ = tx.send(Err(
                         "the event tap could not be created (Accessibility or Input \
                          Monitoring withheld)"
                             .into(),
                     ));
+                    return;
+                };
+                let Ok(source) = tap.mach_port().create_runloop_source(0) else {
+                    thread_life.ended();
+                    let _ = tx.send(Err("the event tap's run loop source failed".into()));
+                    return;
+                };
+                port.store(
+                    tap.mach_port().as_concrete_TypeRef() as usize,
+                    Ordering::SeqCst,
+                );
+                CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
+                tap.enable();
+                let rl = unsafe { CFRunLoopGetCurrent() } as usize;
+                log("the event tap is up");
+                let _ = tx.send(Ok(rl));
+                CFRunLoop::run_current();
+                // Removes the tap (its callback runs no more).
+                drop(tap);
+                if thread_life.ended() {
+                    log("the event tap ended on its own; the app starts a new one");
+                    let _ = events.send(WindowDragEvent::stopped());
                 }
+                // `events` drops here: the delivery thread ends once drained.
             })
             .map_err(|e| UxError::Io(e.to_string()))?;
         match rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok(Ok(rl)) => Ok(Self {
                 run_loop: Mutex::new(Some(rl)),
+                life,
             }),
             Ok(Err(e)) => Err(UxError::PermissionDenied(e)),
             Err(_) => Err(UxError::Io("the event tap did not start".into())),
         }
     }
 
+    /// Whether the tap is still up (see the type's docs).
+    pub fn is_running(&self) -> bool {
+        self.life.is_running()
+    }
+
     pub fn stop(&self) {
+        self.life.request_stop();
         if let Some(rl) = self
             .run_loop
             .lock()
@@ -427,4 +551,34 @@ pub fn icon_png(path: &str, size: f64) -> Option<Vec<u8>> {
     let png =
         unsafe { canvas.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }?;
     Some(png.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_disabled_tap_is_told_apart_from_mouse_events() {
+        assert_eq!(
+            tap_input(CGEventType::TapDisabledByTimeout),
+            TapInput::Disabled
+        );
+        assert_eq!(
+            tap_input(CGEventType::TapDisabledByUserInput),
+            TapInput::Disabled
+        );
+        assert_eq!(
+            tap_input(CGEventType::LeftMouseDown),
+            TapInput::Mouse(MouseEvent::Down)
+        );
+        assert_eq!(
+            tap_input(CGEventType::LeftMouseDragged),
+            TapInput::Mouse(MouseEvent::Dragged)
+        );
+        assert_eq!(
+            tap_input(CGEventType::LeftMouseUp),
+            TapInput::Mouse(MouseEvent::Up)
+        );
+        assert_eq!(tap_input(CGEventType::MouseMoved), TapInput::Ignore);
+    }
 }

@@ -341,6 +341,24 @@ struct NotchTests {
         c.hide()
     }
 
+    @Test func aMonitorThatStoppedOnItsOwnStartsAgainOnTheNextCheck() async {
+        let notch = NotchModel(scheduler: ManualScheduler())
+        notch.spaces = await spaces()
+        let c = NotchController(model: notch)
+        var started = 0
+        c.permitted = { true }
+        c.startDrags = { started += 1 }
+        c.recheckPermission()
+        #expect(started == 1)
+        c.recheckPermission()
+        #expect(started == 1, "a running monitor is kept")
+        // Its event tap died (CUA-1670): the SDK says so.
+        c.handle(TeleportWindowDragEvent(phase: "stopped", x: 0, y: 0, window: nil, app: nil))
+        c.recheckPermission()
+        #expect(started == 2)
+        c.hide()
+    }
+
     /// A controller on the fallback 14-inch screen (the primary too), on a
     /// manual clock. Its trigger displays: the notch at (660, 0, 192, 32)
     /// in global top-left points, so the line is at y = 27; the "Teleport

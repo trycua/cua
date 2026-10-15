@@ -1245,6 +1245,82 @@ mod tests {
     }
 
     #[test]
+    fn inline_style_hides_only_on_exact_hiding_declarations() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "children": [
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 1,
+                 "attributes": ["style", "opacity: 0.98; transition: opacity 0.2s"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 2,
+                 "attributes": ["style", "--overlay-display:none;opacity:0.5"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 3,
+                 "attributes": ["style", "color: red; display: none !important"]},
+                {"nodeType": 1, "nodeName": "DIV", "backendNodeId": 4,
+                 "attributes": ["style", "OPACITY:0"]}
+            ]
+        }));
+        let hidden = |backend| dom.nodes[&backend].css_hidden;
+        assert!(!hidden(1));
+        assert!(!hidden(2));
+        assert!(hidden(3));
+        assert!(hidden(4));
+        assert_eq!(dom.css_hidden_count, 2);
+    }
+
+    #[test]
+    fn rendered_layout_overrides_inherited_static_hiding() {
+        let dom = build_dom_index(&json!({
+            "nodeType": 9,
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "FORM", "backendNodeId": 1,
+                 "attributes": ["style", "visibility: hidden"],
+                 "children": [
+                    {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 2,
+                     "attributes": ["aria-label", "Business name",
+                                    "style", "visibility: visible"]},
+                    {"nodeType": 1, "nodeName": "INPUT", "backendNodeId": 3,
+                     "attributes": ["aria-label", "Unrendered"]}
+                 ]}
+            ]
+        }));
+        let layout = build_layout_index(&json!({
+            "strings": ["block", "visible", "1", "auto"],
+            "documents": [{
+                "nodes": {"backendNodeId": [2]},
+                "layout": {
+                    "nodeIndex": [0],
+                    "bounds": [[10, 10, 200, 30]],
+                    "styles": [[0, 1, 2, 3, 3, 3, 3]],
+                    "paintOrders": [1]
+                }
+            }]
+        }));
+        let viewport = parse_viewport(&json!({
+            "cssVisualViewport": {"pageX": 0.0, "pageY": 0.0,
+                                  "clientWidth": 800.0, "clientHeight": 600.0}
+        }));
+        let document = compose_accessibility_tree(
+            &json!({"nodes": [{"nodeId": "root", "ignored": false,
+                "role": {"value": "RootWebArea"}, "childIds": []}]}),
+            &dom,
+            &layout,
+            &viewport,
+            frame(),
+        );
+        let page = document.page(0, 300, None, None);
+        let names = page
+            .selected
+            .iter()
+            .filter_map(|node| Some((node.name.as_deref()?, node.visibility)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![("Business name", BrowserVisibility::InViewport)]
+        );
+    }
+
+    #[test]
     fn dom_supplement_adds_only_explicit_visible_custom_actions() {
         let dom = build_dom_index(&json!({
             "nodeType": 9,

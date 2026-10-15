@@ -3195,6 +3195,36 @@ mod tests {
     }
 
     #[test]
+    fn collector_refs_a_closed_select_without_its_options() {
+        let option = |backend: i64| {
+            json!({"nodeType": 1, "nodeName": "OPTION", "backendNodeId": backend,
+                   "attributes": ["value", format!("c{backend}")]})
+        };
+        let doc = json!({
+            "nodeType": 9,
+            "nodeName": "#document",
+            "frameId": "F_MAIN",
+            "children": [
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 1,
+                 "attributes": ["name", "country"],
+                 "children": (100..250).map(option).collect::<Vec<_>>()},
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 2,
+                 "attributes": ["name", "tags", "multiple", ""],
+                 "children": [option(300), option(301)]},
+                {"nodeType": 1, "nodeName": "SELECT", "backendNodeId": 3,
+                 "attributes": ["name", "list", "size", "4"],
+                 "children": [option(400)]},
+                {"nodeType": 1, "nodeName": "BUTTON", "backendNodeId": 4,
+                 "attributes": ["type", "submit"]}
+            ]
+        });
+        let mut out = Vec::new();
+        collect_interactive(&doc, Some("F_MAIN"), true, &mut out);
+        let backends: Vec<i64> = out.iter().map(|e| e.backend_node_id).collect();
+        assert_eq!(backends, vec![1, 2, 300, 301, 3, 400, 4]);
+    }
+
+    #[test]
     fn parse_frame_tree_maps_frames_and_omits_malformed_children() {
         let tree = parse_frame_tree(&json!({
             "frameTree": {

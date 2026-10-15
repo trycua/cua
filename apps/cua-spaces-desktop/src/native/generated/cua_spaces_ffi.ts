@@ -44384,7 +44384,7 @@ const FfiConverterTypeTeleportWindow = (() => {
  */
 export type TeleportWindowDragEvent = {
     /**
-     * `start`, `move` or `end`.
+     * `start`, `move`, `end`, or `stopped` (the monitor died: start a new one).
      */
     phase: string,
     x: number,

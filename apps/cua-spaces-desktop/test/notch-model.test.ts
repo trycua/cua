@@ -283,6 +283,55 @@ describe("notch window drags", () => {
     await vi.waitFor(() => expect(teleport.started).toBe(2));
   });
 
+  it("starts a monitor that stopped on its own again on the next check, and within 2 s without one", async () => {
+    const teleport = fakeTeleport({ permitted: true });
+    const { model, clock, fake } = setup({ teleport });
+    model.recheckPermission();
+    await vi.waitFor(() => expect(teleport.started).toBe(1));
+    // Running: a check leaves it as it is.
+    model.recheckPermission();
+    expect(teleport.started).toBe(1);
+    // Its event tap died (CUA-1670): the SDK says so.
+    teleport.listener!.onEvent({ phase: "stopped", x: 0, y: 0 });
+    expect(teleport.stopped).toBe(1);
+    // Not a drag: the trigger never hears it.
+    expect(fake.triggerEvents).toEqual([]);
+    // The readiness check (or the app becoming active) starts a new one.
+    model.recheckPermission();
+    await vi.waitFor(() => expect(teleport.started).toBe(2));
+    expect(clock.pending).toBe(0);
+    // Without a check, the 2 s poll does.
+    teleport.listener!.onEvent({ phase: "stopped", x: 0, y: 0 });
+    expect(teleport.started).toBe(2);
+    clock.advance(2000);
+    await vi.waitFor(() => expect(teleport.started).toBe(3));
+    expect(clock.pending).toBe(0);
+    // And the permission line never showed: it is still granted.
+    expect(fake.events.filter((e) => e.tag === "DragPermission").map((e) => e.inner)).toEqual([
+      { granted: true },
+      { granted: true },
+      { granted: true },
+    ]);
+  });
+
+  it("starts a stopped monitor again when the notch setting is turned off and on, and ignores an old monitor's stop", async () => {
+    const teleport = fakeTeleport({ permitted: true });
+    const { model } = setup({ teleport });
+    model.recheckPermission();
+    await vi.waitFor(() => expect(teleport.started).toBe(1));
+    const first = teleport.listener!;
+    first.onEvent({ phase: "stopped", x: 0, y: 0 });
+    model.setShown(false);
+    model.setShown(true);
+    await vi.waitFor(() => expect(teleport.started).toBe(2));
+    const stopped = teleport.stopped;
+    // A late stop from the first monitor leaves the new one running.
+    first.onEvent({ phase: "stopped", x: 0, y: 0 });
+    expect(teleport.stopped).toBe(stopped);
+    model.recheckPermission();
+    expect(teleport.started).toBe(2);
+  });
+
   it("does nothing without window-drag support", () => {
     const teleport = fakeTeleport({ permitted: true, supported: false });
     const { model, fake } = setup({ teleport });

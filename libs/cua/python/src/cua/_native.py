@@ -709,6 +709,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_rename() != 59535:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143:
@@ -2603,6 +2605,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4707,6 +4715,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_devices_relay_url.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename_machine.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename_machine.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.restype = ctypes.c_uint16
@@ -9792,7 +9803,7 @@ class RelayMachine:
     """
     A machine of the account's relay directory (`relay:<id>`).
 """
-    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool):
+    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool, team:typing.Optional[str], provides_spaces:typing.Optional[bool]):
         self.id = id
         self.space_id = space_id
         self.name = name
@@ -9806,12 +9817,14 @@ class RelayMachine:
         self.allow = allow
         self.clients = clients
         self.confirmed = confirmed
+        self.team = team
+        self.provides_spaces = provides_spaces
 
 
 
 
     def __str__(self):
-        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed)
+        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={}, team={}, provides_spaces={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed, self.team, self.provides_spaces)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -9839,6 +9852,10 @@ class RelayMachine:
             return False
         if self.confirmed != other.confirmed:
             return False
+        if self.team != other.team:
+            return False
+        if self.provides_spaces != other.provides_spaces:
+            return False
         return True
 
 class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
@@ -9858,6 +9875,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
             allow=_UniffiFfiConverterSequenceString.read(buf),
             clients=_UniffiFfiConverterSequenceTypeRelayClientInfo.read(buf),
             confirmed=_UniffiFfiConverterBoolean.read(buf),
+            team=_UniffiFfiConverterOptionalString.read(buf),
+            provides_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -9875,6 +9894,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.check_lower(value.allow)
         _UniffiFfiConverterSequenceTypeRelayClientInfo.check_lower(value.clients)
         _UniffiFfiConverterBoolean.check_lower(value.confirmed)
+        _UniffiFfiConverterOptionalString.check_lower(value.team)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.provides_spaces)
 
     @staticmethod
     def write(value, buf):
@@ -9891,6 +9912,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.allow, buf)
         _UniffiFfiConverterSequenceTypeRelayClientInfo.write(value.clients, buf)
         _UniffiFfiConverterBoolean.write(value.confirmed, buf)
+        _UniffiFfiConverterOptionalString.write(value.team, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.provides_spaces, buf)
 
 class _UniffiFfiConverterSequenceTypeRelayMachine(_UniffiConverterRustBuffer):
     @classmethod
@@ -24397,6 +24420,13 @@ class DevicesProtocol(typing.Protocol):
         Renames a device (from this enrolled device).
 """
         raise NotImplementedError
+    async def rename_machine(self, machine_id: str,name: str) -> RelayMachine:
+        """
+        Renames `machine_id`, a machine the account owns, on the relay (from
+        this enrolled device). When it is this machine's own registration,
+        its host setup takes the new name too.
+"""
+        raise NotImplementedError
     async def revoke(self, id: str) -> RelayDevice:
         """
         Revokes a device (from this enrolled device). Revoking this device
@@ -24627,6 +24657,31 @@ class Devices(DevicesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def rename_machine(self, machine_id: str,name: str) -> RelayMachine:
+        """
+        Renames `machine_id`, a machine the account owns, on the relay (from
+        this enrolled device). When it is this machine's own registration,
+        its host setup takes the new name too.
+"""
+
+        _UniffiFfiConverterString.check_lower(machine_id)
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(machine_id),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeRelayMachine.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,

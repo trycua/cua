@@ -911,6 +911,11 @@ RustBuffer uniffi_cua_sdk_fn_method_devices_relay_url(uint64_t ptr, RustCallStat
 uint64_t uniffi_cua_sdk_fn_method_devices_rename(uint64_t ptr, RustBuffer id, RustBuffer name
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+uint64_t uniffi_cua_sdk_fn_method_devices_rename_machine(uint64_t ptr, RustBuffer machine_id, RustBuffer name
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
@@ -4036,6 +4041,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_relay_url(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME
 uint16_t uniffi_cua_sdk_checksum_method_devices_rename(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+uint16_t uniffi_cua_sdk_checksum_method_devices_rename_machine(void
 
 );
 #endif

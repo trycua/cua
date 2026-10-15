@@ -1033,6 +1033,8 @@ external fun uniffi_cua_sdk_checksum_method_devices_relay_url(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_rename(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_rename_machine(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(
@@ -1886,6 +1888,8 @@ external fun uniffi_cua_sdk_fn_method_devices_pairing_codes(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_devices_relay_url(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_devices_rename(`ptr`: Long,`id`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_devices_rename_machine(`ptr`: Long,`machineId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
@@ -3232,6 +3236,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_rename() != 59535.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802.toShort()) {
@@ -7857,6 +7864,13 @@ public interface DevicesInterface {
     suspend fun `rename`(`id`: kotlin.String, `name`: kotlin.String): RelayDevice
 
     /**
+     * Renames `machine_id`, a machine the account owns, on the relay (from
+     * this enrolled device). When it is this machine's own registration,
+     * its host setup takes the new name too.
+     */
+    suspend fun `renameMachine`(`machineId`: kotlin.String, `name`: kotlin.String): RelayMachine
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -8184,6 +8198,32 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeRelayDevice.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Renames `machine_id`, a machine the account owns, on the relay (from
+     * this enrolled device). When it is this machine's own registration,
+     * its host setup takes the new name too.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `renameMachine`(`machineId`: kotlin.String, `name`: kotlin.String) : RelayMachine {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine(
+                uniffiHandle,
+                FfiConverterString.lower(`machineId`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRelayMachine.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -33234,6 +33274,18 @@ data class RelayMachine (
      * device confirms it ([`Devices::confirm_machine`]) (S5).
      */
     var `confirmed`: kotlin.Boolean
+    ,
+    /**
+     * The team you reach it through, for a team machine not shared with
+     * you directly.
+     */
+    var `team`: kotlin.String?
+    ,
+    /**
+     * It creates Spaces for its owner's devices, when it said so at
+     * registration (`None` from a host or relay that predates it).
+     */
+    var `providesSpaces`: kotlin.Boolean?
 
 ){
 
@@ -33263,6 +33315,8 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterSequenceString.read(buf),
             FfiConverterSequenceTypeRelayClientInfo.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
         )
     }
 
@@ -33279,7 +33333,9 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterString.allocationSize(value.`url`) +
             FfiConverterSequenceString.allocationSize(value.`allow`) +
             FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.`clients`) +
-            FfiConverterBoolean.allocationSize(value.`confirmed`)
+            FfiConverterBoolean.allocationSize(value.`confirmed`) +
+            FfiConverterOptionalString.allocationSize(value.`team`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`providesSpaces`)
     )
 
     override fun write(value: RelayMachine, buf: ByteBuffer) {
@@ -33296,6 +33352,8 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterSequenceString.write(value.`allow`, buf)
             FfiConverterSequenceTypeRelayClientInfo.write(value.`clients`, buf)
             FfiConverterBoolean.write(value.`confirmed`, buf)
+            FfiConverterOptionalString.write(value.`team`, buf)
+            FfiConverterOptionalBoolean.write(value.`providesSpaces`, buf)
     }
 }
 

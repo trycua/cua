@@ -59,6 +59,14 @@ pub enum VmmError {
         detail: String,
     },
 
+    /// An image download ended before it finished: Lume's pull failed, was
+    /// cancelled outside the SDK, or `lume serve` stopped under it. Lume
+    /// keeps the layers it finished, so another try picks up from there.
+    #[error(
+        "The image download stopped before it finished ({reason}). Try again; it picks up where it stopped."
+    )]
+    PullStopped { name: String, reason: String },
+
     /// A spawned host command failed.
     #[error("`{cmd}` failed (exit {code:?}): {stderr}")]
     Command {
@@ -108,6 +116,7 @@ pub fn failure_kind(message: &str) -> Option<&'static str> {
         || m.contains("manifest unknown")
         || m.contains("pull access denied")
         || m.contains("toomanyrequests")
+        || m.contains("the image download stopped before it finished")
     {
         Some("image_pull")
     } else if m.contains("permission denied") {
@@ -165,6 +174,11 @@ mod tests {
         assert_eq!(failure_kind(&wrap(pull)), Some("image_pull"));
         let denied_pull = VmmError::Engine("pull x: pull access denied for x".into());
         assert_eq!(failure_kind(&denied_pull.to_string()), Some("image_pull"));
+        let stopped = VmmError::PullStopped {
+            name: "cua-base-x".into(),
+            reason: "Lume stopped running".into(),
+        };
+        assert_eq!(failure_kind(&wrap(stopped)), Some("image_pull"));
         assert_eq!(failure_kind(&VmmError::other("boom").to_string()), None);
         let lan = VmmError::missing("Local Network access", "click Allow");
         assert_eq!(failure_kind(&lan.to_string()), None);

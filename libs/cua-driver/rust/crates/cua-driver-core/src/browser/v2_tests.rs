@@ -2678,11 +2678,12 @@ async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() 
         "foreground"
     );
 
+    let foreground_args = json!({
+        "target_id": target, "tab_id": tab, "ref": main_ref,
+        "delivery_mode": "foreground", "session": SESSION
+    });
     let foreground = BrowserClickTool::new(f.engine.clone())
-        .invoke(json!({
-            "target_id": target, "tab_id": tab, "ref": main_ref,
-            "delivery_mode": "foreground", "session": SESSION
-        }))
+        .invoke(foreground_args.clone())
         .await;
     let s = structured(&foreground);
     assert_eq!(s["status"], "ok", "{s}");
@@ -2690,6 +2691,29 @@ async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() 
     assert_eq!(s["delivery_mode"], "foreground");
     let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
     assert_eq!(mouse.len(), 2, "press and release: {mouse:?}");
+    let public = ActionExecutionRecord::from_legacy("browser_click", &foreground_args, s)
+        .expect("browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
+
+    let pointer_args = json!({
+        "target_id": target, "tab_id": tab, "action": "hover", "x": 10, "y": 10,
+        "delivery_mode": "foreground", "session": SESSION
+    });
+    let pointer = BrowserPointerTool::new(f.engine.clone())
+        .invoke(pointer_args.clone())
+        .await;
+    let p = structured(&pointer);
+    assert_eq!(p["status"], "ok", "{p}");
+    assert_eq!(p["delivery_mode"], "foreground", "{p}");
+    let public = ActionExecutionRecord::from_legacy("browser_pointer", &pointer_args, p)
+        .expect("browser pointer action record")
+        .public_result()
+        .expect("public browser pointer result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
 }
 
 #[tokio::test]

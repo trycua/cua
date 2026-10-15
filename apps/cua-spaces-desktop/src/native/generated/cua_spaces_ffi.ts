@@ -12411,7 +12411,8 @@ export type AppExperiments = {
      */
     yourCloud: boolean,
     /**
-     * Sharing a Space with other accounts.
+     * Sharing a Space with other accounts. On unless turned off: a missing
+     * key reads as on (the plans on cua.ai/pricing list sharing).
      */
     sharing: boolean,
     /**

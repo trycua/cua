@@ -384,10 +384,11 @@ fn vm_cpus() -> u32 {
 pub const OVERHEAD_MIB: u64 = 1024;
 /// The smallest VM (the size it always had).
 pub const MIN_GIB: u32 = 4;
-/// Room the VM keeps for one more Space at the default 2 GiB, so a second
-/// Space starts without a restart. The host gives the VM memory only as
-/// the guest touches it, so unused room costs little.
-pub const HEADROOM_MIB: u64 = 2048;
+/// Room the VM keeps for two more Spaces at the default 2 GiB beyond the
+/// ones it knows, so new Spaces start without a restart (a VM booted for an
+/// image pull does not know the Space being created yet). The host gives
+/// the VM memory only as the guest touches it, so unused room costs little.
+pub const HEADROOM_MIB: u64 = 4096;
 
 /// This Mac's memory in MiB.
 pub fn host_memory_mib() -> Option<u64> {
@@ -463,11 +464,11 @@ pub fn room(gib: u32) -> u64 {
 /// Whether a Space asking for `new` MiB fits a VM of `vm_gib` where the
 /// running (or paused) Spaces reserve `running` MiB; `all` is what every
 /// Space it holds reserves, `new` included (the size of a restart). With
-/// nothing running, a VM smaller than its Spaces need is restarted then
+/// nothing running, a VM too small for all its Spaces is restarted then
 /// (nothing is lost), not later, when the next Space would be refused.
 pub fn fit(new: u64, running: u64, all: u64, vm_gib: u32, cap: u32) -> Fit {
     if running == 0 {
-        let want = boot_gib(all.max(new), cap);
+        let all = all.max(new);
         return if new > room(cap) {
             Fit::Refuse(format!(
                 "This Linux Space asks for {} GB of memory, but Linux Spaces can use at most {} GB \
@@ -475,8 +476,8 @@ pub fn fit(new: u64, running: u64, all: u64, vm_gib: u32, cap: u32) -> Fit {
                 gb(new),
                 gb(room(cap))
             ))
-        } else if vm_gib < want {
-            Fit::Restart(want)
+        } else if room(vm_gib) < all.min(room(cap)) {
+            Fit::Restart(boot_gib(all, cap))
         } else {
             Fit::Fits
         };
@@ -1554,13 +1555,16 @@ mod tests {
         assert_eq!(cap_gib(Some(96 << 10)), 48);
         assert_eq!(cap_gib(Some(4 << 10)), MIN_GIB);
         assert_eq!(cap_gib(None), MIN_GIB);
-        // Nothing yet, or one small Space: today's 4 GiB.
-        assert_eq!(boot_gib(0, mac16), 4);
-        // One 2 GiB Space: room for a second one.
-        assert_eq!(boot_gib(2048, mac16), 5);
+        // Nothing known yet (a VM booted for the first image pull): room
+        // for two default Spaces.
+        assert_eq!(boot_gib(0, mac16), 5);
+        assert_eq!(boot_gib(2048, mac16), 7);
+        // Three 2 GiB Spaces: 6 + 1 + 4 = 11 GiB, capped at half the Mac.
         assert_eq!(boot_gib(3 * 2048, mac16), 8);
-        assert_eq!(boot_gib(3 * 2048, 48), 9);
-        assert_eq!(boot_gib(1500, 48), 5);
+        assert_eq!(boot_gib(3 * 2048, 48), 11);
+        assert_eq!(boot_gib(1500, 48), 7);
+        // Never below the old size, on a small Mac too.
+        assert_eq!(boot_gib(0, cap_gib(Some(8 << 10))), 4);
         // The running VM's size is read back from the profile it booted from.
         assert_eq!(memory_gib_of(&profile_yaml("aarch64", 4, 8)), Some(8));
         #[cfg(target_os = "macos")]
@@ -1594,6 +1598,13 @@ mod tests {
         assert_eq!(fit(2048, 0, 3 * 2048, 8, 8), Fit::Fits);
         // A VM bigger than needed is kept.
         assert_eq!(fit(2048, 0, 2048, 8, 8), Fit::Fits);
+        // A VM booted for the image pull of the first Space (5 GiB): that
+        // Space and a second one fit without a restart.
+        assert_eq!(fit(2048, 0, 2048, 5, 8), Fit::Fits);
+        assert_eq!(fit(2048, 2048, 2 * 2048, 5, 8), Fit::Fits);
+        // The old 4 GiB VM after an update, three Spaces known, none
+        // running: it grows before the first one starts.
+        assert_eq!(fit(2048, 0, 3 * 2048, 4, 8), Fit::Restart(8));
         // One Space bigger than half the Mac, nothing running.
         let Fit::Refuse(why) = fit(8192, 0, 8192, 4, 8) else {
             panic!("an 8 GB Space cannot run on a 16 GB Mac");

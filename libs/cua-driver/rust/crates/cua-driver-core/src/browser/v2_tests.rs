@@ -1519,6 +1519,13 @@ async fn background_existing_profile_attach_refuses_before_any_visible_effect() 
     let refused = structured(&result);
     assert_eq!(refused["code"], "background_unavailable", "{refused}");
     assert_eq!(refused["escalation"]["recommended"], "foreground");
+    let suggestion = refused["suggestion"].as_str().unwrap();
+    assert!(
+        suggestion.starts_with("Not blocked: use get_window_state"),
+        "the refusal must lead with the working route: {suggestion}"
+    );
+    let message = refused["refusal"]["message"].as_str().unwrap();
+    assert!(message.contains("use get_window_state"), "{message}");
     assert_eq!(refused["status"], "refused");
     assert_eq!(refused["refusal"]["code"], "background_unavailable");
     assert_eq!(refused["refusal"]["detail"]["frontmost_pid"], 99);

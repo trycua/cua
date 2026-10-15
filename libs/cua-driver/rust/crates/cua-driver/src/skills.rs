@@ -47,12 +47,9 @@
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
-//! - Antigravity IDE: `~/.gemini/config/skills/` (global skills directory;
-//!   Antigravity also accepts the legacy `~/.gemini/antigravity/skills/`)
+//! - Antigravity IDE: `~/.gemini/config/skills/`
 //! - Antigravity CLI (`agy`): `~/.gemini/antigravity-cli/skills/`
-//! - Gemini CLI (legacy): `~/.gemini/skills/` — the pre-Antigravity location.
-//!   Antigravity does not scan it; it stays a target so existing installs keep
-//!   their link.
+//! - Gemini CLI (legacy): `~/.gemini/skills/`
 //! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
 //!   macOS/Linux or `%LOCALAPPDATA%\hermes\skills\` on Windows. This is the
 //!   user-level skill space Hermes resolves at agent load time (separate from
@@ -250,10 +247,6 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".config/opencode/skills"),
         install_marker: None,
     },
-    // Antigravity discovers global skills in its own directories, not in
-    // the Gemini CLI's `.gemini/skills/`: the IDE (and the `agy` CLI in
-    // current releases) scans `.gemini/config/skills/`, and the CLI docs
-    // name `.gemini/antigravity-cli/skills/`. Link into each one that exists.
     Agent {
         label: "Antigravity IDE",
         parent: AgentParent::Home(".gemini/config/skills"),
@@ -264,8 +257,6 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".gemini/antigravity-cli/skills"),
         install_marker: None,
     },
-    // Pre-Antigravity Gemini CLI location. Kept so existing installs that
-    // linked here are still managed (status, update and uninstall).
     Agent {
         label: "Gemini CLI (legacy)",
         parent: AgentParent::Home(".gemini/skills"),
@@ -1141,9 +1132,6 @@ mod tests {
 
     #[test]
     fn legacy_gemini_skill_directory_stays_a_separate_target() {
-        // `~/.gemini/skills/` is the pre-Antigravity Gemini CLI location.
-        // Antigravity does not scan it, so it must not be the only
-        // Antigravity target, but existing installs keep their link.
         let legacy: Vec<_> = AGENTS
             .iter()
             .filter(|agent| matches!(agent.parent, AgentParent::Home(".gemini/skills")))

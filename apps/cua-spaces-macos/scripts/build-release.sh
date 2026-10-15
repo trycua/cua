@@ -151,7 +151,7 @@ done
 # Inside out: nested code first, the bundle last (its signature seals the
 # nested signatures). No --deep: each piece gets its own identifier and
 # entitlements.
-sign=(codesign --force --options runtime --sign "$identity")
+sign=("$here/scripts/retry-apple.sh" -- codesign --force --options runtime --sign "$identity")
 [ "$identity" = "-" ] || sign+=(--timestamp)
 # Sparkle, inside out, as its documentation orders it for a Developer ID
 # app outside the App Sandbox: the XPC services (the Downloader keeps its

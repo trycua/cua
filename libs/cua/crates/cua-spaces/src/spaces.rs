@@ -541,6 +541,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         } else {
             String::new()
         },
+        stop_reason: String::new(),
     }
 }
 
@@ -755,6 +756,7 @@ impl Spaces {
             .map(|r| {
                 let mut info = SpaceInfo::from_record(r)?;
                 (info.power, info.power_state) = self.power_of(&info.id);
+                info.stop_reason = self.stop_reason_of(&info.id);
                 Ok(info)
             })
             .collect::<Result<_>>()?;
@@ -1196,6 +1198,7 @@ impl Spaces {
             cloud_place: String::new(),
             cloud_delete: String::new(),
             status: String::new(),
+            stop_reason: String::new(),
         }))
     }
 
@@ -2896,6 +2899,20 @@ impl Spaces {
             return Default::default();
         };
         self.sandbox_power(&name)
+    }
+
+    /// [`SpaceInfo::stop_reason`] of the Space `id`: why its local sandbox
+    /// stopped without being asked to, in plain words, from its state file
+    /// (empty when it did not, or is not local).
+    pub fn stop_reason_of(&self, id: &str) -> String {
+        let Ok(SpaceId::Local { name }) = SpaceId::parse(id) else {
+            return String::new();
+        };
+        self.inner
+            .sandboxes
+            .stop_reason(&name)
+            .map(|r| r.words())
+            .unwrap_or_default()
     }
 
     /// [`Self::power_of`] for the sandbox `name` (a local Space's, or the

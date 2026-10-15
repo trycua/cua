@@ -2479,6 +2479,9 @@
         "powerState": {
           "type": "string"
         },
+        "stopReason": {
+          "type": "string"
+        },
         "cloud": {
           "type": "string"
         },
@@ -3927,6 +3930,12 @@
               ]
             },
             "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stopReason": {
               "type": [
                 "string",
                 "null"

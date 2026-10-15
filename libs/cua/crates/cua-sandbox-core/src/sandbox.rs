@@ -108,6 +108,10 @@ pub enum Probe {
     },
 }
 
+/// How often [`Sandboxes::spawn_stop_watch`] looks for local sandboxes
+/// that stopped on their own.
+pub const STOP_WATCH_EVERY: Duration = Duration::from_secs(15);
+
 /// How long a local resume waits for the probes its create waited for.
 pub const RESUME_READY_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -715,6 +719,9 @@ pub struct SandboxInfo {
     pub runtime_type: String,
     /// Status.
     pub status: Status,
+    /// Why a local sandbox stopped without being asked to (out of memory,
+    /// killed, exited), until it is started again.
+    pub stop_reason: Option<crate::StopReason>,
 }
 
 // One per sandbox handle; size does not matter here.
@@ -2144,10 +2151,17 @@ impl Sandboxes {
                     provider,
                     runtime_type: s.runtime_type().into(),
                     status: status_word(s.status()),
+                    stop_reason: s.stop_reason(),
                 },
             );
         }
         if let Some(rt) = &self.inner.local {
+            // Those that stopped on their own since: recorded with why.
+            for (name, reason) in self.note_unasked_stops().await {
+                if let Some(row) = out.get_mut(&format!("local:{name}")) {
+                    row.stop_reason = Some(reason);
+                }
+            }
             let listed = rt.list().await?;
             // Local state files the backend listing leaves out (a Lume VM,
             // or a VM or container that is gone) get their live status: the
@@ -2180,6 +2194,12 @@ impl Sandboxes {
                     Some(known) if !known.runtime_type.is_empty() => known.runtime_type.clone(),
                     _ => i.backend,
                 };
+                let status: Status = i.status.into();
+                // A reason holds only while it is still stopped.
+                let stop_reason = out
+                    .get(&id)
+                    .and_then(|known| known.stop_reason)
+                    .filter(|_| status == Status::Stopped);
                 out.insert(
                     id.clone(),
                     SandboxInfo {
@@ -2187,7 +2207,8 @@ impl Sandboxes {
                         name: i.name,
                         provider: ProviderKind::Local,
                         runtime_type,
-                        status: i.status.into(),
+                        status,
+                        stop_reason,
                     },
                 );
             }
@@ -2212,13 +2233,20 @@ impl Sandboxes {
                     provider: ProviderKind::Contrib,
                     runtime_type: s.runtime_type().into(),
                     status,
+                    stop_reason: None,
                 })
             }
             Some(SandboxState::Local(l)) if l.runtime_type != "direct" => {
-                let status = match self.local()?.status_on(name, &l.runtime_type).await {
+                let status: Status = match self.local()?.status_on(name, &l.runtime_type).await {
                     Ok(s) => s.into(),
                     Err(crate::RuntimeError::NotFound(_)) => Status::Unknown(MISSING.into()),
                     Err(e) => return Err(e.into()),
+                };
+                let stop_reason = match (&status, l.status.as_str()) {
+                    // Recorded as running but stopped: it stopped on its own.
+                    (Status::Stopped, "running") => self.note_stop(name, &l.runtime_type).await,
+                    (Status::Stopped, _) => state.as_ref().and_then(SandboxState::stop_reason),
+                    _ => None,
                 };
                 Ok(SandboxInfo {
                     id: format!("local:{name}"),
@@ -2226,6 +2254,7 @@ impl Sandboxes {
                     provider: ProviderKind::Local,
                     runtime_type: l.runtime_type.clone(),
                     status,
+                    stop_reason,
                 })
             }
             Some(s) => Ok(SandboxInfo {
@@ -2238,6 +2267,7 @@ impl Sandboxes {
                 },
                 runtime_type: s.runtime_type().into(),
                 status: status_word(s.status()),
+                stop_reason: None,
             }),
             None => {
                 if let Some(rt) = &self.inner.local
@@ -2249,11 +2279,73 @@ impl Sandboxes {
                         provider: ProviderKind::Local,
                         runtime_type: i.backend,
                         status: i.status.into(),
+                        stop_reason: None,
                     });
                 }
                 Err(Error::NotFound(name.into()))
             }
         }
+    }
+
+    /// Why the local sandbox `name` stopped without being asked to, as
+    /// recorded ([`Self::note_unasked_stops`]); `None` once it is started
+    /// again. Reads only the state file.
+    pub fn stop_reason(&self, name: &str) -> Option<crate::StopReason> {
+        self.inner.state.load(name)?.stop_reason()
+    }
+
+    /// Finds the local sandboxes recorded as running whose engine says they
+    /// stopped (out of memory, a crash: nobody asked), records each as
+    /// stopped with why, and logs it once. Returns those it recorded. Never
+    /// boots an engine: one that is down answers nothing.
+    pub async fn note_unasked_stops(&self) -> Vec<(String, crate::StopReason)> {
+        let mut out = Vec::new();
+        if self.inner.local.is_none() {
+            return out;
+        }
+        for s in self.inner.state.list_all() {
+            if provider_of(&s) != ProviderKind::Local
+                || s.status() != "running"
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            if let Some(reason) = self.note_stop(s.name(), s.runtime_type()).await {
+                out.push((s.name().to_string(), reason));
+            }
+        }
+        out
+    }
+
+    /// [`Self::note_unasked_stops`] for one sandbox.
+    async fn note_stop(&self, name: &str, runtime_type: &str) -> Option<crate::StopReason> {
+        let rt = self.inner.local.as_ref()?;
+        let reason = rt.stop_reason(name, runtime_type).await.ok()??;
+        tracing::warn!(
+            sandbox = %name,
+            exit_code = reason.exit_code,
+            out_of_memory = reason.out_of_memory,
+            "{name} stopped without being asked to: {}",
+            reason.words()
+        );
+        if let Err(e) = self.inner.state.record_stop(name, &reason) {
+            tracing::warn!(sandbox = %name, "recording why it stopped: {e}");
+        }
+        Some(reason)
+    }
+
+    /// Runs [`Self::note_unasked_stops`] every [`STOP_WATCH_EVERY`] until
+    /// every handle is dropped (the daemon starts it once), so a Space that
+    /// stops on its own shows as stopped, and why, without anyone listing.
+    pub fn spawn_stop_watch(&self) -> tokio::task::JoinHandle<()> {
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STOP_WATCH_EVERY).await;
+                let Some(inner) = weak.upgrade() else { return };
+                Sandboxes { inner }.note_unasked_stops().await;
+            }
+        })
     }
 
     fn kind_of(&self, name: &str) -> Result<(ProviderKind, SandboxState)> {

@@ -139,13 +139,13 @@ fn provider_label(p: SpaceProvider) -> &'static str {
 fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
     if status == SpaceStatus::Suspended {
         // Turned off on purpose: said so, not "Unreachable".
-        if let Some(control) = row.power.as_deref().and_then(PowerControl::parse)
-            && matches!(
+        if let Some(power) = power_of_row(row).filter(|p| {
+            matches!(
                 row.power_state.as_deref(),
                 Some("suspended") | Some("stopped")
-            )
-        {
-            return off_label(control).into();
+            ) && p.off
+        }) {
+            return off_text(&power);
         }
         return match &row.error {
             Some(e) if !e.is_empty() => format!("Unreachable \u{b7} {e}"),
@@ -277,12 +277,17 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
 fn power_of_row(row: &SpaceRow) -> Option<SpacePower> {
     let control = row.power.as_deref().and_then(PowerControl::parse)?;
     let state = row.power_state.as_deref().filter(|s| !s.trim().is_empty());
+    let off =
+        matches!(state, Some("suspended") | Some("stopped")) || (state.is_none() && !row.reachable);
     Some(SpacePower {
         control,
-        off: matches!(state, Some("suspended") | Some("stopped"))
-            || (state.is_none() && !row.reachable),
+        off,
         turning_on: None,
         error: None,
+        stop_reason: row
+            .stop_reason
+            .clone()
+            .filter(|r| off && !r.trim().is_empty()),
     })
 }
 
@@ -291,6 +296,19 @@ fn power_of_row(row: &SpaceRow) -> Option<SpacePower> {
 /// (suspended in memory, or shut down) is [`off_hint`].
 pub fn off_label(_control: PowerControl) -> &'static str {
     "Stopped"
+}
+
+/// [`off_label`], and why when it stopped without being asked to:
+/// "Stopped: out of memory".
+pub fn off_text(power: &SpacePower) -> String {
+    match power
+        .stop_reason
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+    {
+        Some(why) => format!("{}: {why}", off_label(power.control)),
+        None => off_label(power.control).into(),
+    }
 }
 
 /// How a stopped Space is off, for the Status fact's tooltip.
@@ -466,6 +484,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         }
     }
 

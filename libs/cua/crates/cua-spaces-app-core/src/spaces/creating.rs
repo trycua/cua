@@ -2673,6 +2673,7 @@ mod tests {
                 cloud: None,
                 cloud_place: None,
                 cloud_delete: None,
+                stop_reason: None,
             },
             SKEW_BASE,
         );

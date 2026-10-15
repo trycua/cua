@@ -232,7 +232,7 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
-  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null } | null;
+  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;

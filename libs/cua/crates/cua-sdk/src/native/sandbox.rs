@@ -132,6 +132,10 @@ pub struct SandboxInfo {
     /// a registry, and the daemon topology.
     #[uniffi(default = None)]
     pub image_info: Option<ImageInfo>,
+    /// Why a local sandbox stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); `None` otherwise.
+    #[uniffi(default = None)]
+    pub stop_reason: Option<String>,
 }
 
 impl From<SandboxRecord> for SandboxInfo {
@@ -164,6 +168,7 @@ impl From<SandboxRecord> for SandboxInfo {
             endpoints: r.endpoints.into_iter().collect(),
             image: r.image,
             image_info: r.image_info.map(Into::into),
+            stop_reason: r.stop_reason,
         }
     }
 }

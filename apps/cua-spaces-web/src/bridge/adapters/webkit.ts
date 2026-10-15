@@ -122,6 +122,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     hostName: opt(s.hostName),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
+    stopReason: off ? opt(s.power?.stopReason) : undefined,
     cloud: opt(s.cloud),
     cloudPlace: opt(s.cloudPlace),
     cloudDelete: opt(s.cloudDelete),

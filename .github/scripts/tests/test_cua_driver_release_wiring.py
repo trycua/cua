@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -584,53 +585,67 @@ fi
         self.assertIn('$CursorThemeRequiredFrom = [version]"0.12.7"', powershell)
         self.assertIn("[version]$version -ge $CursorThemeRequiredFrom", powershell)
 
-    def test_release_installer_always_prints_an_actionable_path_hint(self) -> None:
+    def run_release_installer_path_block(
+        self, user_shell: str, *, no_modify_path: str = "0"
+    ) -> tuple[str, str | None, str]:
         shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
-        path_block = shell.split(
-            "# Auto-extend PATH for supported shells", maxsplit=1
-        )[1].split('\necho ""\necho "cua-driver-rs $VERSION installed."', maxsplit=1)[0]
+        snippets = [
+            re.search(r"^log\(\) .*$", shell, re.M),
+            re.search(r"^print_path_hint\(\) \{$.*?^\}$", shell, re.M | re.S),
+            re.search(r'^if \[\[ ":\$PATH:" .*?^fi$', shell, re.M | re.S),
+        ]
+        self.assertTrue(all(snippets))
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home dir"
+            home.mkdir()
+            bin_dir = str(home / "cua bin")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'BIN_DIR="{bin_dir}"\nBIN_LINK="$BIN_DIR/cua-driver"\n'
+                    + "\n".join(snippet.group(0) for snippet in snippets),
+                ],
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "SHELL": user_shell,
+                    "NO_MODIFY_PATH": no_modify_path,
+                },
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            bashrc = home / ".bashrc"
+            bashrc_text = bashrc.read_text() if bashrc.exists() else None
+            return result.stdout, bashrc_text, bin_dir
 
-        self.assertIn('if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then', path_block)
-        self.assertIn(
-            'if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then',
-            path_block,
-        )
-        self.assertIn("print_path_hint", path_block)
-        self.assertTrue(path_block.rstrip().endswith("print_path_hint\nfi"))
-
-        hint = shell.split("print_path_hint() {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
-        self.assertIn("fish_add_path", hint)
-        self.assertIn("$env.PATH", hint)
-        self.assertIn('export PATH="%s:$PATH"', hint)
-        self.assertIn("$BIN_LINK", hint)
-
-        function = "log() { printf '==> %s\\n' \"$*\"; }\nprint_path_hint() {" + hint + "\n}"
-        expected_commands = {
-            "/bin/bash": 'export PATH="/opt/cua bin:$PATH"',
-            "/bin/zsh": 'export PATH="/opt/cua bin:$PATH"',
-            "/opt/homebrew/bin/fish": 'fish_add_path "/opt/cua bin"',
-            "/usr/local/bin/nu": '$env.PATH = ($env.PATH | prepend "/opt/cua bin")',
-            "/usr/local/bin/nushell": '$env.PATH = ($env.PATH | prepend "/opt/cua bin")',
-            "/bin/ksh": 'export PATH="/opt/cua bin:$PATH"',
+    def test_release_installer_always_prints_an_actionable_path_hint(self) -> None:
+        posix_export = 'export PATH="{bin_dir}:$PATH"'
+        quoted_run = '"{bin_dir}/cua-driver" --version'
+        cases = {
+            "/bin/bash": (posix_export, "  " + quoted_run),
+            "/opt/homebrew/bin/fish": ('fish_add_path "{bin_dir}"', "  " + quoted_run),
+            "/usr/local/bin/nu": (
+                '$env.PATH = ($env.PATH | prepend "{bin_dir}")',
+                "  ^" + quoted_run,
+            ),
+            "": (posix_export, "  " + quoted_run),
         }
-        for user_shell, expected in expected_commands.items():
-            with self.subTest(shell=user_shell):
-                result = subprocess.run(
-                    [
-                        "bash",
-                        "-c",
-                        function
-                        + '\nBIN_DIR="/opt/cua bin"\n'
-                        + 'BIN_LINK="$BIN_DIR/cua-driver"\n'
-                        + "print_path_hint",
-                    ],
-                    env={**os.environ, "SHELL": user_shell},
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                self.assertIn(expected, result.stdout)
-                self.assertIn('/opt/cua bin/cua-driver --version', result.stdout)
+        for user_shell, expected_lines in cases.items():
+            for no_modify_path in ("0", "1"):
+                with self.subTest(shell=user_shell, no_modify_path=no_modify_path):
+                    stdout, bashrc, bin_dir = self.run_release_installer_path_block(
+                        user_shell, no_modify_path=no_modify_path
+                    )
+                    for expected in expected_lines:
+                        self.assertIn(expected.format(bin_dir=bin_dir) + "\n", stdout)
+                    if user_shell == "":
+                        self.assertIn("POSIX-compatible shells:", stdout)
+                    if user_shell == "/bin/bash" and no_modify_path == "0":
+                        self.assertIn(f'export PATH="{bin_dir}:$PATH"', bashrc)
+                    else:
+                        self.assertIsNone(bashrc)
 
     def test_windows_installer_elevates_autostart_binary_without_command_string(
         self,

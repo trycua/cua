@@ -192,19 +192,22 @@ err() { printf 'error: %s\n' "$*" >&2; }
 print_path_hint() {
     log "WARNING: $BIN_DIR is not on PATH."
     echo "Add it for your shell with:"
+    local run_prefix=""
     case "${SHELL:-}" in
         */fish)
             printf '  fish_add_path "%s"\n' "$BIN_DIR"
             ;;
         */nu|*/nushell)
             printf '  $env.PATH = ($env.PATH | prepend "%s")\n' "$BIN_DIR"
+            run_prefix="^"
             ;;
         *)
+            echo "POSIX-compatible shells:"
             printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
             ;;
     esac
     echo "Or run the installed binary directly:"
-    printf '  %s --version\n' "$BIN_LINK"
+    printf '  %s"%s" --version\n' "$run_prefix" "$BIN_LINK"
 }
 
 # The integer "version" of a GNOME helper metadata.json, or nothing.
@@ -1560,8 +1563,7 @@ CUA_DRIVER_RELEASE_VERSION="$VERSION" \
     "$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
 disown 2>/dev/null || true
 
-# Auto-extend PATH for supported shells, but always print a copyable command
-# when the install directory is not visible in the current environment.
+# Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""
     case "${SHELL:-}" in

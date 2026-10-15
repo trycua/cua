@@ -13930,7 +13930,8 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var yourCloud: Bool
     /**
-     * Sharing a Space with other accounts.
+     * Sharing a Space with other accounts. On unless turned off: a missing
+     * key reads as on (the plans on cua.ai/pricing list sharing).
      */
     public var sharing: Bool
     /**
@@ -13949,7 +13950,8 @@ public struct AppExperiments: Equatable, Hashable {
          * Your own clouds in the New Space wizard.
          */yourCloud: Bool,
         /**
-         * Sharing a Space with other accounts.
+         * Sharing a Space with other accounts. On unless turned off: a missing
+         * key reads as on (the plans on cua.ai/pricing list sharing).
          */sharing: Bool,
         /**
          * The New UI (the shared web UI) is the main window: the user's choice

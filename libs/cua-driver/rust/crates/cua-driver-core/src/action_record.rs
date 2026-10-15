@@ -969,7 +969,13 @@ fn actual_delivery_from_legacy(
         tool_name,
         "browser_click" | "browser_pointer" | "browser_type"
     ) {
-        return Some(ActualDelivery::Background);
+        return match structured
+            .get("delivery_mode")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("foreground") => Some(ActualDelivery::Foreground),
+            _ => Some(ActualDelivery::Background),
+        };
     }
     if transport == ActionTransport::AgentCursorOverlay
         || args.get("scope").and_then(serde_json::Value::as_str) == Some("desktop")

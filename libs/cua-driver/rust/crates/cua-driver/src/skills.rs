@@ -1127,6 +1127,21 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_ide_legacy_skill_directory_is_also_a_target() {
+        // Antigravity still accepts `~/.gemini/antigravity/skills/`, so an
+        // install that only has that directory must still be linked.
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Antigravity IDE (legacy dir)")
+            .expect("the legacy Antigravity IDE directory must be a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".gemini/antigravity/skills")
+        ));
+    }
+
+    #[test]
     fn antigravity_cli_target_matches_its_global_skill_directory() {
         let target = AGENTS
             .iter()

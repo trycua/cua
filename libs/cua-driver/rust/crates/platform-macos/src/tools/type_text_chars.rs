@@ -118,9 +118,8 @@ impl Tool for TypeTextCharsTool {
 
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
-            super::post_keys_to_window(pid, window_id, || {
-                crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
-            })
+            let _scope = super::key_scope(pid, window_id).map_err(|e| anyhow::anyhow!(e))?;
+            crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
         })
         .await;
 

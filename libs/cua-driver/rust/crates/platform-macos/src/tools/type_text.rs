@@ -1248,12 +1248,7 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
-    // Background rungs (`settle_ms == 0`) address a window: make it the app's
-    // key window for the post so the keys reach it, not a sibling.
-    let key_window = if settle_ms == 0 { window_id } else { None };
-    super::post_keys_to_window(pid, key_window, || {
-        crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
-    })?;
+    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
     // particular, Chromium can acknowledge the posting process while a long
@@ -1317,6 +1312,46 @@ struct KeyboardRoute {
 /// read-back positively confirmed the text; `false` means the agent must
 /// confirm via screenshot (and, for background, can escalate to foreground).
 fn type_text_blocking(
+    pid: i32,
+    text: &str,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    delay_ms: u64,
+    is_terminal_target: bool,
+    route: KeyboardRoute,
+) -> anyhow::Result<TypeTextDelivery> {
+    // A window-addressed background insert first makes that window the app's
+    // key window, proven by re-reading the app's focused window, BEFORE the
+    // focused element is read or any key is posted. Unconfirmed: refuse
+    // (CUA-1767: with Find & Replace open the keys went into its Find field).
+    let _scope = if !route.delivery_mode.is_foreground()
+        && matches!(route.keyboard_policy, BackgroundKeyboardPolicy::Allowed)
+    {
+        match super::key_scope(pid, route.window_id) {
+            Ok(scope) => scope,
+            Err(reason) => {
+                return Ok(TypeTextDelivery::Refused(BackgroundRefusal {
+                    code: WINDOW_NOT_KEY,
+                    reason,
+                    advice: Some("foreground"),
+                }))
+            }
+        }
+    } else {
+        None
+    };
+    type_text_in_key_window(
+        pid,
+        text,
+        element_ptr_and_idx,
+        delay_ms,
+        is_terminal_target,
+        route,
+    )
+}
+
+const WINDOW_NOT_KEY: &str = "window_not_key";
+
+fn type_text_in_key_window(
     pid: i32,
     text: &str,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,

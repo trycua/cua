@@ -447,9 +447,9 @@ impl Tool for PressKeyTool {
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        super::post_keys_to_window(pid, window_id, || {
-                            crate::input::keyboard::press_key(pid, &key, &m)
-                        })
+                        let _scope =
+                            super::key_scope(pid, window_id).map_err(|e| anyhow::anyhow!(e))?;
+                        crate::input::keyboard::press_key(pid, &key, &m)
                     })
                 })
                 .await

@@ -53,32 +53,129 @@ type CopyManagedDisplayForWindowFn = unsafe extern "C" fn(u32, u32) -> *mut c_vo
 /// `uint64_t SLSManagedDisplayGetCurrentSpace(uint32_t cid, CFStringRef display)`
 type ManagedDisplayGetCurrentSpaceFn = unsafe extern "C" fn(u32, *const c_void) -> u64;
 
-/// Run `f` (a pid-routed key post) with `target_wid` as the app's key window.
+/// How the exact window became the app's key window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyPrime {
+    AlreadyKey,
+    FocusRecord,
+    AxFocusedWindow,
+}
+
+/// Make `target` the app's key window and PROVE it before any key is posted.
 ///
-/// Key events posted to a pid reach that app's key window. With several
-/// windows open (a Find & Replace dialog beside a sheet) that may not be the
-/// requested one. This sends the exact window a focus record (no activation,
-/// no raise, no real pointer; the user's front window keeps key status),
-/// runs `f`, then hands key back to the window that had it. It is a no-op
-/// when the target already has key, or when the SPIs are unavailable (the
-/// keys then go where they would have gone anyway).
-pub fn with_exact_window_key<T>(pid: pid_t, target_wid: u32, f: impl FnOnce() -> T) -> T {
-    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
-    if previous == Some(target_wid) {
-        return f();
+/// `focused` re-reads the app's `AXFocusedWindow`; `focus_record` sends the
+/// SkyLight focus record; `ax_focus` writes `AXFocusedWindow` on the app. Each
+/// step is followed by a re-read; keys may only be posted when the re-read
+/// names `target`. Returns `Err` otherwise: refusing is safe, a key that lands
+/// in a sibling window (a Find & Replace field) is not.
+pub fn prime_exact_window_key(
+    target: u32,
+    mut focused: impl FnMut() -> Option<u32>,
+    mut focus_record: impl FnMut() -> bool,
+    mut ax_focus: impl FnMut() -> bool,
+) -> Result<KeyPrime, String> {
+    if focused() == Some(target) {
+        return Ok(KeyPrime::AlreadyKey);
     }
-    let switched = activate_without_raise_with(pid, target_wid, false);
-    if switched {
-        // Let AppKit install the window as key before the first event.
-        std::thread::sleep(std::time::Duration::from_millis(120));
+    if focus_record() && focused() == Some(target) {
+        return Ok(KeyPrime::FocusRecord);
     }
-    let out = f();
-    if switched {
-        if let Some(previous) = previous {
-            activate_without_raise_with(pid, previous, false);
+    if ax_focus() && focused() == Some(target) {
+        return Ok(KeyPrime::AxFocusedWindow);
+    }
+    Err(format!(
+        "window {target} could not be confirmed as the app's key window (the app's focused \
+         window is {:?}), so no keys were sent: they could have gone to another window of \
+         the same app. Close the other window, or use delivery_mode:\"foreground\"",
+        focused()
+    ))
+}
+
+/// Holds an exact window as the app's key window; hands key back on drop.
+pub struct WindowKeyScope {
+    pid: pid_t,
+    previous: Option<u32>,
+    primed: KeyPrime,
+}
+
+impl Drop for WindowKeyScope {
+    fn drop(&mut self) {
+        if self.primed == KeyPrime::AlreadyKey {
+            return;
+        }
+        if let Some(previous) = self.previous {
+            match self.primed {
+                KeyPrime::FocusRecord => {
+                    activate_without_raise_with(self.pid, previous, false);
+                }
+                _ => {
+                    set_app_focused_window(self.pid, previous);
+                }
+            }
         }
     }
-    out
+}
+
+fn set_app_focused_window(pid: pid_t, wid: u32) -> bool {
+    use crate::ax::bindings::{
+        ax_get_window_id, copy_ax_windows, AXUIElementCreateApplication,
+        AXUIElementSetAttributeValue,
+    };
+    use core_foundation::{
+        base::{CFRelease, TCFType},
+        string::CFString,
+    };
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let attr = CFString::new("AXFocusedWindow");
+        let mut ok = false;
+        for window in copy_ax_windows(app) {
+            if !ok && ax_get_window_id(window) == Some(wid) {
+                ok = AXUIElementSetAttributeValue(
+                    app,
+                    attr.as_concrete_TypeRef(),
+                    window as core_foundation::base::CFTypeRef,
+                ) == 0;
+            }
+            CFRelease(window as _);
+        }
+        CFRelease(app as _);
+        ok
+    }
+}
+
+/// Make `target_wid` the app's key window (no activation, no raise, no
+/// pointer), confirmed by re-reading the app's focused window, and return a
+/// guard that hands key back. `Err` when it cannot be confirmed.
+pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeyScope, String> {
+    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
+    let settle = || std::thread::sleep(std::time::Duration::from_millis(120));
+    let primed = prime_exact_window_key(
+        target_wid,
+        || crate::ax::bindings::focused_window_id_of_pid(pid),
+        || {
+            let ok = activate_without_raise_with(pid, target_wid, false);
+            if ok {
+                settle();
+            }
+            ok
+        },
+        || {
+            let ok = set_app_focused_window(pid, target_wid);
+            if ok {
+                settle();
+            }
+            ok
+        },
+    )?;
+    Ok(WindowKeyScope {
+        pid,
+        previous,
+        primed,
+    })
 }
 
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
@@ -1385,5 +1482,57 @@ mod tests {
         assert!(!preserves_exact_existing_focus(
             true, target, target, None, 42
         ));
+    }
+}
+
+#[cfg(test)]
+mod key_prime_tests {
+    use super::{prime_exact_window_key, KeyPrime};
+    use std::cell::Cell;
+
+    #[test]
+    fn already_key_sends_nothing() {
+        let r = prime_exact_window_key(7, || Some(7), || panic!("record"), || panic!("ax"));
+        assert_eq!(r, Ok(KeyPrime::AlreadyKey));
+    }
+
+    #[test]
+    fn focus_record_is_accepted_only_after_the_reread_names_the_target() {
+        let focus = Cell::new(Some(9));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                focus.set(Some(7));
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::FocusRecord));
+    }
+
+    #[test]
+    fn ignored_focus_record_falls_back_to_ax_then_confirms() {
+        let focus = Cell::new(Some(9));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || true, // record posted but the app ignored it
+            || {
+                focus.set(Some(7));
+                true
+            },
+        );
+        assert_eq!(r, Ok(KeyPrime::AxFocusedWindow));
+    }
+
+    /// The Find & Replace leak: the dialog keeps key, nothing redirects. Must
+    /// refuse, never post.
+    #[test]
+    fn unconfirmed_key_window_refuses_instead_of_leaking() {
+        for focused in [Some(9), None] {
+            let r = prime_exact_window_key(7, || focused, || true, || true);
+            assert!(r.unwrap_err().contains("no keys were sent"));
+        }
     }
 }

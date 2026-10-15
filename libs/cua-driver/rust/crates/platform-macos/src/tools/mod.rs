@@ -404,15 +404,19 @@ pub(crate) fn window_keyboard_action(
     }
 }
 
-/// Post pid-routed keys so they reach `window_id`: the window is made key
-/// inside the app for the post and key is handed back after. No activation,
-/// no raise, no pointer. Without a window or the SPIs it just runs `f`.
-pub(crate) fn post_keys_to_window<T>(pid: i32, window_id: Option<u32>, f: impl FnOnce() -> T) -> T {
+/// Make `window_id` the app's key window, confirmed, for pid-routed keys.
+/// `Ok(None)` when no window is addressed or the SPIs are missing (keys go
+/// where they always did). `Err` carries the refusal text: no key may be
+/// posted, it could reach a sibling window.
+pub(crate) fn key_scope(
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<Option<crate::input::skylight::WindowKeyScope>, String> {
     match window_id {
         Some(wid) if crate::input::skylight::is_focus_without_raise_available() => {
-            crate::input::skylight::with_exact_window_key(pid as libc::pid_t, wid, f)
+            crate::input::skylight::enter_exact_window_key(pid as libc::pid_t, wid).map(Some)
         }
-        _ => f(),
+        _ => Ok(None),
     }
 }
 

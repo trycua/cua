@@ -584,14 +584,16 @@ impl Tool for HotkeyTool {
                         // background (default): auth-envelope post to the pid, no
                         // raise — even when window_id was supplied for targeting.
                         (false, false, _, Some(ptr)) => {
-                            super::post_keys_to_window(pid, window_id, || {
-                                focus_hotkey_element(pid, ptr)?;
-                                crate::input::keyboard::hotkey(pid, &key, &m)
-                            })
-                        }
-                        _ => super::post_keys_to_window(pid, window_id, || {
+                            let _scope =
+                                super::key_scope(pid, window_id).map_err(|e| anyhow::anyhow!(e))?;
+                            focus_hotkey_element(pid, ptr)?;
                             crate::input::keyboard::hotkey(pid, &key, &m)
-                        }),
+                        }
+                        _ => {
+                            let _scope =
+                                super::key_scope(pid, window_id).map_err(|e| anyhow::anyhow!(e))?;
+                            crate::input::keyboard::hotkey(pid, &key, &m)
+                        }
                     }
                 })
                 .await

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/trycua/cua/compare/cua-sdk-v0.4.3...cua-sdk-v0.4.4) (2026-10-15)
+
+
+### Bug Fixes
+
+* **cua-spaces:** a Space created on another machine no longer fails with a timeout while that machine downloads a large image (a first macOS create); the client keeps the create alive by reporting "preparing" every minute (CUA-1760) ([#5295](https://github.com/trycua/cua/issues/5295))
+
 ## [0.4.3](https://github.com/trycua/cua/compare/cua-sdk-v0.4.2...cua-sdk-v0.4.3) (2026-10-15)
 
 

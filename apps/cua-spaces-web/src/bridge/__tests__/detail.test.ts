@@ -180,10 +180,10 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (wasm core)
     expect(spaceDetail(core, local!, null, null, { sharing: true }, NOTICE).access).toBeUndefined();
   });
 
-  it("hides Share while Settings, Experiments, Sharing is off", async () => {
+  it("hides Share only while Settings, Experiments, Sharing is turned off", async () => {
     const core = await testCore();
     const [studio] = rowsToSpaces(core, [row({})], 0);
-    expect(spaceDetail(core, studio!, null, null, {}).actions.some((a) => a.id === "share")).toBe(false);
+    expect(spaceDetail(core, studio!, null, null, { sharing: false }).actions.some((a) => a.id === "share")).toBe(false);
     expect(spaceDetail(core, studio!, null, null, { sharing: true }).actions.some((a) => a.id === "share")).toBe(true);
   });
 

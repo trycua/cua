@@ -863,7 +863,8 @@ impl AgentSetup {
             let via_cli = m
                 .owner_cli
                 .filter(|_| self.env.run_agent_clis)
-                .and_then(|c| self.env.which(c.bin()).map(|bin| (c, bin)));
+                .and_then(|c| self.env.which(c.bin()).map(|bin| (c, bin)))
+                .map(|(c, bin)| (c, cmd_shim_target(&bin).unwrap_or(bin)));
             if let Some((cli, bin)) = via_cli {
                 return run_cli(&bin, &cli.remove_args(LEGACY_SPACES_MCP_NAME));
             }
@@ -1255,8 +1256,51 @@ fn read_text(file: &Path) -> Result<String> {
     }
 }
 
+/// The program an npm `.cmd` shim runs, when it is a native executable
+/// next to the shim (`"%dp0%\node_modules\...\claude.exe" %*`, as the
+/// Claude Code npm package installs).
+///
+/// Windows runs a `.cmd` through cmd.exe, so Rust escapes each `"` of an
+/// argument as `""`; Claude Code's native `claude.exe` does not read that
+/// back, and `claude mcp add-json` got mangled JSON ("Invalid configuration:
+/// : Invalid input", CUA-1703). Running the executable directly uses the
+/// normal `\"` escaping, which it parses.
+fn cmd_shim_target(shim: &Path) -> Option<PathBuf> {
+    let ext = shim.extension()?.to_str()?.to_ascii_lowercase();
+    if ext != "cmd" && ext != "bat" {
+        return None;
+    }
+    let text = std::fs::read_to_string(shim).ok()?;
+    let dir = shim.parent()?;
+    text.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix('"')?;
+        let rest = rest
+            .strip_prefix("%dp0%\\")
+            .or_else(|| rest.strip_prefix("%~dp0\\"))
+            .or_else(|| rest.strip_prefix("%~dp0"))?;
+        let (rel, tail) = rest.split_once('"')?;
+        if tail.trim() != "%*" || !rel.to_ascii_lowercase().ends_with(".exe") {
+            return None;
+        }
+        let exe = rel
+            .split('\\')
+            .filter(|p| !p.is_empty())
+            .fold(dir.to_path_buf(), |p, c| p.join(c));
+        exe.is_file().then_some(exe)
+    })
+}
+
 fn run_cli(bin: &Path, args: &[String]) -> Result<()> {
-    let o = std::process::Command::new(bin)
+    let program = cmd_shim_target(bin).unwrap_or_else(|| bin.to_path_buf());
+    let mut cmd = std::process::Command::new(&program);
+    // The app runs this from a GUI process: no console window.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let o = cmd
         .args(args)
         .stdin(std::process::Stdio::null())
         .output()
@@ -1274,5 +1318,48 @@ fn run_cli(bin: &Path, args: &[String]) -> Result<()> {
             bin.display(),
             args.first().map(String::as_str).unwrap_or_default()
         )))
+    }
+}
+
+#[cfg(test)]
+mod cmd_shim_tests {
+    use super::cmd_shim_target;
+
+    /// What `npm i -g @anthropic-ai/claude-code` writes (cmd-shim).
+    const NATIVE_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
+    /// A shim that runs a script through node.
+    const NODE_SHIM: &str = "@ECHO off\r\nSETLOCAL\r\nCALL :find_dp0\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n)\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\x\\cli.js\" %*\r\n";
+
+    fn npm_dir(shim: &str, exe: bool) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("claude.cmd"), shim).unwrap();
+        if exe {
+            let bin = d.path().join("node_modules/@anthropic-ai/claude-code/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join("claude.exe"), b"MZ").unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn an_npm_shim_resolves_to_the_native_claude() {
+        let d = npm_dir(NATIVE_SHIM, true);
+        let exe = cmd_shim_target(&d.path().join("claude.cmd")).unwrap();
+        assert!(exe.ends_with("node_modules/@anthropic-ai/claude-code/bin/claude.exe"));
+        assert!(exe.is_file());
+    }
+
+    #[test]
+    fn other_shims_and_programs_are_left_alone() {
+        // The executable the shim names is missing.
+        let d = npm_dir(NATIVE_SHIM, false);
+        assert_eq!(cmd_shim_target(&d.path().join("claude.cmd")), None);
+        // A node script, not an executable.
+        let d = npm_dir(NODE_SHIM, false);
+        assert_eq!(cmd_shim_target(&d.path().join("claude.cmd")), None);
+        // Not a batch file.
+        let d = npm_dir(NATIVE_SHIM, true);
+        std::fs::write(d.path().join("claude.exe"), b"MZ").unwrap();
+        assert_eq!(cmd_shim_target(&d.path().join("claude.exe")), None);
     }
 }

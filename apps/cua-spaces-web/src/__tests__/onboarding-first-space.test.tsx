@@ -6,7 +6,7 @@
 // and Linux every macOS Create was enabled, and on a Windows box with no
 // runtime every Create was.
 
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NewSpaceOptions } from "@/bridge/contracts/new-space";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -24,12 +24,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 /** The demo host with `local` changed as `edit` says. */
-async function mountDone(edit: (local: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]) {
+async function mountDone(edit: (local: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"], intercept?: (op: string, args: unknown) => unknown) {
   const core = await testCore();
   writeSavedOnboarding({ state: { ...onboardingInitial(core, null), step: "done" }, skipped: false });
   return mountApp("/onboarding", {
     failsCreates: false,
     listsGhost: false,
+    intercept,
     answer: (op, out) => {
       if (op !== "spaces.createOptions") return out;
       const o = out as NewSpaceOptions;
@@ -56,5 +57,24 @@ describe.skipIf(!wasmBuilt)("the first Space on the last onboarding page (real r
     await screen.findByText("Create your first Space");
     await waitFor(() => expect(card("linux")?.querySelector("[data-first-space-blocked]")).toBeTruthy());
     for (const os of ["macos", "linux", "windows"]) expect(createOf(os).disabled, os).toBe(true);
+  });
+
+  // CUA-1712: Create sent no `kind`, and the Electron host (Linux, Windows)
+  // refused it with "config.kind: container | vm".
+  it("Create sends the image's kind, as the hosts' create needs", async () => {
+    const creates: { config: Record<string, unknown> }[] = [];
+    await mountDone(
+      (local) => ({ ...local, backends: ["docker"], macosImage: null, hostArch: "amd64" }),
+      (op, args) => {
+        if (op === "spaces.create") creates.push(args as { config: Record<string, unknown> });
+        return undefined;
+      },
+    );
+    await screen.findByText("Create your first Space");
+    await waitFor(() => expect(createOf("linux").disabled).toBe(false));
+    fireEvent.click(createOf("linux"));
+    await waitFor(() => expect(creates).toHaveLength(1));
+    expect(creates[0]!.config.kind).toBe("container");
+    expect(creates[0]!.config.image).toBeTruthy();
   });
 });

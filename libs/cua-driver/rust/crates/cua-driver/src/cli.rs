@@ -3467,59 +3467,47 @@ fn run_permissions_status(json: bool) {
     // response (e.g. daemon still inside its first-launch permission gate) is
     // treated the same as "no daemon" → unknown.
     let is_listening = crate::serve::is_daemon_listening(&socket);
-    let reply = if is_listening {
+    let daemon_status: Option<serde_json::Value> = if is_listening {
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some("check_permissions".into()),
-            args: Some(permission_status_args(cfg!(target_os = "macos"))),
+            args: Some(if cfg!(target_os = "macos") {
+                serde_json::json!({ "prompt": false })
+            } else {
+                serde_json::json!({})
+            }),
             session_id: None,
             observation_origin: Some(crate::serve::ToolObservationOrigin::Direct),
             client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
         };
-        crate::serve::send_request(&socket, &req)
+        let result = crate::serve::send_request(&socket, &req)
             .ok()
             .filter(|r| r.ok)
-            .and_then(|r| r.result)
-            .map(|res| classify_permission_status_reply(&res, cfg!(target_os = "macos")))
-    } else {
-        None
-    };
-    let daemon_status: Option<serde_json::Value> = match reply {
-        // A refusal or a non-macOS status is never a set of TCC grants: print
-        // it as it is instead of reading absent booleans as "not granted".
-        Some(PermissionStatusReply::Refused {
-            message,
-            structured,
-        }) => {
-            if json {
-                print_permission_status_json(&structured);
-            } else {
-                println!("Permission status: ❓ unknown (the daemon refused the check, so nothing was checked)");
-                println!("  {message}");
-            }
+            .and_then(|r| r.result);
+        if let Some(text) = result
+            .as_ref()
+            .filter(|_| !json)
+            .and_then(|res| permission_status_reply_text(res, cfg!(target_os = "macos")))
+        {
+            println!("{text}");
             return;
         }
-        Some(PermissionStatusReply::Platform { text, structured }) => {
-            if json {
-                print_permission_status_json(&structured);
-            } else {
-                println!("{text}");
-            }
-            return;
-        }
-        Some(PermissionStatusReply::MacGrants(structured)) => Some(structured)
+        result
+            .and_then(|res| res.get("structuredContent").cloned())
             // Trust the booleans ONLY when the answering daemon is its own
             // responsible process (`driver-daemon`). Otherwise those grants
             // belong to the launching app, so we discard them and fall through
-            // to `unknown`. A missing `source` is trusted as-is.
+            // to `unknown`. A missing `source` (non-macOS, no TCC) is trusted
+            // as-is.
             .filter(|s| {
                 s.get("source")
                     .and_then(|src| src.get("attribution"))
                     .and_then(|v| v.as_str())
                     .map(|a| a == "driver-daemon")
                     .unwrap_or(true)
-            }),
-        None => None,
+            })
+    } else {
+        None
     };
 
     let Some(structured) = daemon_status else {
@@ -3557,7 +3545,10 @@ fn run_permissions_status(json: bool) {
     };
 
     if json {
-        print_permission_status_json(&structured);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string())
+        );
         return;
     }
 
@@ -3620,92 +3611,27 @@ fn run_permissions_status(json: bool) {
     }
 }
 
-/// Arguments for the read-only `check_permissions` call behind
-/// `permissions status`. `prompt` exists only in the macOS schema; the Linux
-/// and Windows tools declare no arguments and refuse unknown ones (#5024).
-fn permission_status_args(macos: bool) -> serde_json::Value {
-    if macos {
-        serde_json::json!({ "prompt": false })
-    } else {
-        serde_json::json!({})
+fn permission_status_reply_text(result: &serde_json::Value, macos: bool) -> Option<String> {
+    let structured = &result["structuredContent"];
+    let refused = result["isError"] == true
+        || structured["status"] == "refused"
+        || !structured["refusal"].is_null();
+    if macos && !refused {
+        return None;
     }
-}
-
-/// What a daemon's `check_permissions` result means to `permissions status`.
-#[derive(Debug, PartialEq)]
-enum PermissionStatusReply {
-    /// The daemon refused or failed the call: nothing was checked.
-    Refused {
-        message: String,
-        structured: serde_json::Value,
-    },
-    /// Linux or Windows: the tool's own status lines (display server,
-    /// accessibility bus, input route). There are no TCC grants to report.
-    Platform {
-        text: String,
-        structured: serde_json::Value,
-    },
-    /// macOS TCC grants, rendered as Accessibility / Screen Recording lines.
-    MacGrants(serde_json::Value),
-}
-
-fn classify_permission_status_reply(
-    result: &serde_json::Value,
-    macos: bool,
-) -> PermissionStatusReply {
-    let structured = result
-        .get("structuredContent")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let text = result
-        .get("content")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+    let content = result["content"].as_array().into_iter().flatten();
+    let text = content
+        .filter_map(|item| item["text"].as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let refused = result.get("isError").and_then(serde_json::Value::as_bool) == Some(true)
-        || structured.get("status").and_then(serde_json::Value::as_str) == Some("refused")
-        || structured.get("refusal").is_some();
     if refused {
-        let code = structured
-            .pointer("/refusal/code")
-            .or_else(|| structured.get("code"))
-            .and_then(serde_json::Value::as_str);
-        let detail = structured
-            .pointer("/refusal/message")
-            .or_else(|| structured.get("detail"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or(text);
-        let message = match code {
-            Some(code) => format!("{code}: {detail}"),
-            None => detail,
-        };
-        return PermissionStatusReply::Refused {
-            message,
-            structured,
-        };
+        return Some(format!(
+            "Permission status: ❓ unknown (the daemon refused the check, so nothing was checked)\n  {text}"
+        ));
     }
-    if macos {
-        PermissionStatusReply::MacGrants(structured)
-    } else {
-        // A status with no text lines still has to say something: show its JSON.
-        let text = if text.trim().is_empty() {
-            serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string())
-        } else {
-            text
-        };
-        PermissionStatusReply::Platform { text, structured }
-    }
-}
-
-fn print_permission_status_json(structured: &serde_json::Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string())
-    );
+    Some(text)
+        .filter(|text| !text.is_empty())
+        .or_else(|| serde_json::to_string_pretty(structured).ok())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -6124,19 +6050,10 @@ mod tests {
     }
 
     #[test]
-    fn permission_status_sends_prompt_only_to_macos() {
-        assert_eq!(
-            permission_status_args(true),
-            serde_json::json!({ "prompt": false })
-        );
-        // Linux and Windows check_permissions declare no arguments (#5024).
-        assert_eq!(permission_status_args(false), serde_json::json!({}));
-    }
-
-    #[test]
     fn permission_status_reports_a_refused_check_as_unknown() {
-        // The reply a Linux daemon gave the old `{"prompt": false}` request.
-        let result = serde_json::json!({
+        let refusal = serde_json::json!({
+            "content": [{ "type": "text", "text": "check_permissions: unknown argument prompt; accepted: " }],
+            "isError": true,
             "structuredContent": {
                 "refusal": {
                     "code": "invalid_arguments",
@@ -6145,35 +6062,27 @@ mod tests {
                 "status": "refused"
             }
         });
-        for macos in [false, true] {
-            match classify_permission_status_reply(&result, macos) {
-                PermissionStatusReply::Refused { message, .. } => assert_eq!(
-                    message,
-                    "invalid_arguments: check_permissions: unknown argument prompt; accepted: "
-                ),
-                other => panic!("refusal must not render as a status (macos={macos}): {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn permission_status_reports_a_tool_error_as_unknown() {
-        let result = serde_json::json!({
+        let tool_error = serde_json::json!({
             "content": [{ "type": "text", "text": "check_permissions: invalid arguments: boom" }],
             "isError": true,
-            "structuredContent": {
-                "code": "invalid_arguments",
-                "tool": "check_permissions",
-                "detail": "boom"
-            }
+            "structuredContent": { "code": "invalid_arguments", "detail": "boom" }
         });
-        assert_eq!(
-            classify_permission_status_reply(&result, true),
-            PermissionStatusReply::Refused {
-                message: "invalid_arguments: boom".into(),
-                structured: result["structuredContent"].clone(),
+        for (result, message) in [
+            (
+                refusal,
+                "check_permissions: unknown argument prompt; accepted: ",
+            ),
+            (tool_error, "check_permissions: invalid arguments: boom"),
+        ] {
+            for macos in [false, true] {
+                assert_eq!(
+                    permission_status_reply_text(&result, macos).as_deref(),
+                    Some(format!(
+                        "Permission status: ❓ unknown (the daemon refused the check, so nothing was checked)\n  {message}"
+                    ).as_str())
+                );
             }
-        );
+        }
     }
 
     #[test]
@@ -6190,42 +6099,22 @@ mod tests {
                 "xsend_event": true
             }
         });
-        match classify_permission_status_reply(&result, false) {
-            PermissionStatusReply::Platform { text: printed, .. } => {
-                assert_eq!(printed, text);
-                assert!(!printed.contains("not granted"));
-            }
-            other => panic!("Linux status must print its own lines: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn permission_status_shows_json_when_a_platform_status_has_no_text() {
-        let result = serde_json::json!({
-            "content": [],
-            "structuredContent": { "x11": true, "atspi": false }
-        });
-        match classify_permission_status_reply(&result, false) {
-            PermissionStatusReply::Platform { text, .. } => {
-                assert!(text.contains("\"x11\": true"), "{text}");
-                assert!(text.contains("\"atspi\": false"), "{text}");
-            }
-            other => panic!("text-less status must still print: {other:?}"),
-        }
+        assert_eq!(
+            permission_status_reply_text(&result, false).as_deref(),
+            Some(text)
+        );
     }
 
     #[test]
     fn permission_status_keeps_macos_grants() {
-        let structured = serde_json::json!({
-            "accessibility": true,
-            "screen_recording": false,
-            "source": { "attribution": "driver-daemon" }
+        let result = serde_json::json!({
+            "structuredContent": {
+                "accessibility": true,
+                "screen_recording": false,
+                "source": { "attribution": "driver-daemon" }
+            }
         });
-        let result = serde_json::json!({ "structuredContent": structured });
-        assert_eq!(
-            classify_permission_status_reply(&result, true),
-            PermissionStatusReply::MacGrants(structured)
-        );
+        assert_eq!(permission_status_reply_text(&result, true), None);
     }
 
     // ── Surface 8: manifest shape ───────────────────────────────────────────

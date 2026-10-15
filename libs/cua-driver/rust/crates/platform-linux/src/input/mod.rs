@@ -2861,8 +2861,14 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         // ours has landed — so don't stop at first success: require the
         // active window to hold stable for consecutive checks, re-sending on
         // every regression, within a bounded budget.
-        let own_dialog = |now: Option<x11::xlib::Window>| {
-            now.is_some_and(|now| now != prev && is_own_dialog(prev, now))
+        let conn = RustConnection::connect(None).ok().map(|(conn, _)| conn);
+        let prev_pid = conn
+            .as_ref()
+            .zip(u32::try_from(prev).ok())
+            .and_then(|(conn, prev)| crate::x11::get_window_pid(conn, prev).ok().flatten());
+        let own_dialog = |now: Option<x11::xlib::Window>| match (&conn, prev_pid, now) {
+            (Some(conn), Some(pid), Some(now)) => now != prev && is_own_dialog(conn, pid, now),
+            _ => false,
         };
         if own_dialog(ewmh_active_window(display)) {
             return;
@@ -2939,20 +2945,11 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
     }
 }
 
-/// Whether `active` is a dialog that `previous`'s application opened: a window
-/// with the same `_NET_WM_PID` that is transient for another window or typed
-/// as a dialog. The click that opened it moved focus there on purpose, and a
-/// WM refuses to re-activate the parent of a modal dialog.
-fn is_own_dialog(previous: x11::xlib::Window, active: x11::xlib::Window) -> bool {
-    let Ok((conn, _)) = RustConnection::connect(None) else {
+fn is_own_dialog(conn: &RustConnection, previous_pid: u32, active: x11::xlib::Window) -> bool {
+    let Ok(active) = u32::try_from(active) else {
         return false;
     };
-    let (Ok(previous), Ok(active)) = (u32::try_from(previous), u32::try_from(active)) else {
-        return false;
-    };
-    let pid = |window| crate::x11::get_window_pid(&conn, window).ok().flatten();
-    let owner = pid(active);
-    if owner.is_none() || owner != pid(previous) {
+    if crate::x11::get_window_pid(conn, active).ok().flatten() != Some(previous_pid) {
         return false;
     }
     let windows = |property: Atom, kind: Atom| -> Vec<u32> {
@@ -4235,7 +4232,7 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 
 #[cfg(test)]
 mod own_dialog_tests {
-    use super::{is_own_dialog, open_display, restore_focus_state, SavedFocus};
+    use super::{is_own_dialog, open_display, restore_focus_state, RustConnection, SavedFocus};
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
     use x11rb::wrapper::ConnectionExt as _;
@@ -4243,7 +4240,7 @@ mod own_dialog_tests {
     fn window(
         conn: &impl Connection,
         root: Window,
-        pid: u32,
+        pid: Option<u32>,
         transient_for: Option<Window>,
     ) -> Window {
         let window = conn.generate_id().unwrap();
@@ -4261,20 +4258,22 @@ mod own_dialog_tests {
             &CreateWindowAux::new(),
         )
         .unwrap();
-        let pid_atom = conn
-            .intern_atom(false, b"_NET_WM_PID")
-            .unwrap()
-            .reply()
-            .unwrap()
-            .atom;
-        conn.change_property32(
-            PropMode::REPLACE,
-            window,
-            pid_atom,
-            AtomEnum::CARDINAL,
-            &[pid],
-        )
-        .unwrap();
+        if let Some(pid) = pid {
+            let pid_atom = conn
+                .intern_atom(false, b"_NET_WM_PID")
+                .unwrap()
+                .reply()
+                .unwrap()
+                .atom;
+            conn.change_property32(
+                PropMode::REPLACE,
+                window,
+                pid_atom,
+                AtomEnum::CARDINAL,
+                &[pid],
+            )
+            .unwrap();
+        }
         if let Some(parent) = transient_for {
             conn.change_property32(
                 PropMode::REPLACE,
@@ -4288,17 +4287,32 @@ mod own_dialog_tests {
         window
     }
 
-    /// Run on a disposable display without a WM; `_NET_ACTIVE_WINDOW` is set
-    /// by hand to stand for the WM's bookkeeping.
     #[test]
     #[ignore = "requires an isolated X11 display"]
     fn focus_restore_leaves_focus_on_a_dialog_the_app_opened() {
-        let (conn, screen) = x11rb::connect(None).unwrap();
+        let (conn, screen) = RustConnection::connect(None).unwrap();
         let root = conn.setup().roots[screen].root;
-        let main = window(&conn, root, 4242, None);
-        let dialog = window(&conn, root, 4242, Some(main));
-        let sibling = window(&conn, root, 4242, None);
-        let foreign = window(&conn, root, 4343, Some(main));
+        let main = window(&conn, root, Some(4242), None);
+        let dialog = window(&conn, root, Some(4242), Some(main));
+        let sibling = window(&conn, root, Some(4242), None);
+        let foreign = window(&conn, root, Some(4343), Some(main));
+        let typed_dialog = window(&conn, root, Some(4242), None);
+        let pidless = window(&conn, root, None, Some(main));
+        let atom = |name: &str| {
+            conn.intern_atom(false, name.as_bytes())
+                .unwrap()
+                .reply()
+                .unwrap()
+                .atom
+        };
+        conn.change_property32(
+            PropMode::REPLACE,
+            typed_dialog,
+            atom("_NET_WM_WINDOW_TYPE"),
+            AtomEnum::ATOM,
+            &[atom("_NET_WM_WINDOW_TYPE_DIALOG")],
+        )
+        .unwrap();
         let active = conn
             .intern_atom(false, b"_NET_ACTIVE_WINDOW")
             .unwrap()
@@ -4309,9 +4323,11 @@ mod own_dialog_tests {
             .unwrap();
         conn.get_input_focus().unwrap().reply().unwrap();
 
-        assert!(is_own_dialog(main.into(), dialog.into()));
-        assert!(!is_own_dialog(main.into(), sibling.into()));
-        assert!(!is_own_dialog(main.into(), foreign.into()));
+        assert!(is_own_dialog(&conn, 4242, dialog.into()));
+        assert!(!is_own_dialog(&conn, 4242, sibling.into()));
+        assert!(!is_own_dialog(&conn, 4242, foreign.into()));
+        assert!(is_own_dialog(&conn, 4242, typed_dialog.into()));
+        assert!(!is_own_dialog(&conn, 4242, pidless.into()));
 
         let display = open_display().unwrap();
         let saved = SavedFocus {

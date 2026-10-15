@@ -761,6 +761,9 @@ pub enum FailureCause {
     ServiceTimeout,
     /// The image download did not finish in time.
     PullTimeout,
+    /// The image download stopped partway: Lume's pull failed or was
+    /// cancelled, or Lume stopped. Another try resumes it.
+    PullStopped,
 }
 
 impl FailureCause {
@@ -775,9 +778,14 @@ impl FailureCause {
             Self::Gpu => "Unsupported",
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
+            Self::PullStopped => "ImagePull",
         }
     }
 }
+
+/// The SDK's words for an image download that stopped partway
+/// (`VmmError::PullStopped`), lowercased.
+const PULL_STOPPED: &str = "the image download stopped before it finished";
 
 /// Which known cause the SDK's `raw` error is, if any. `phase` is where it
 /// failed and `gpu` whether GPU acceleration was asked for, when known.
@@ -815,6 +823,9 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     }
     if l.contains("unauthenticated") {
         return Some(FailureCause::Unauthenticated);
+    }
+    if l.contains(PULL_STOPPED) {
+        return Some(FailureCause::PullStopped);
     }
     let timed_out =
         l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
@@ -905,6 +916,29 @@ pub fn failure_text_on(
                          is downloaded now, so trying again usually works."
                     .into(),
             }
+        }
+        Some(FailureCause::PullStopped) => {
+            // The SDK's "The image download stopped before it finished
+            // (<cause>). Try again; ..." with its cause.
+            let at = l.find(PULL_STOPPED).unwrap_or(0) + PULL_STOPPED.len();
+            let cause = plain[at..]
+                .trim_start()
+                .strip_prefix('(')
+                .and_then(|r| r.rsplit_once(')'))
+                .map(|(c, _)| c.trim())
+                .filter(|c| !c.is_empty());
+            let cause = cause.map(|c| format!(" ({c})")).unwrap_or_default();
+            let place = match host_name.map(str::trim).filter(|n| !n.is_empty()) {
+                Some(name) => format!(" on {name}"),
+                None if matches!(provider, Some(SpaceProvider::Relay | SpaceProvider::Direct)) => {
+                    " on the Mac running this Space".into()
+                }
+                None => String::new(),
+            };
+            format!(
+                "The image download{place} stopped before it finished{cause}. Try again; it \
+                 picks up where it stopped."
+            )
         }
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
@@ -2409,6 +2443,30 @@ mod tests {
             ),
             "The image download did not finish in the time allowed. Check your internet \
              connection, then try again."
+        );
+        // A download that stopped partway says why, also on another Mac.
+        let stopped = "local runtime: [local] The image download stopped before it finished \
+                       (The network connection was lost). Try again; it picks up where it stopped.";
+        assert_eq!(
+            failure_text(stopped, Some("pulling"), Some(SpaceProvider::Local), false),
+            "The image download stopped before it finished (The network connection was lost). \
+             Try again; it picks up where it stopped."
+        );
+        assert_eq!(
+            failure_text_on(
+                "host: create failed: The image download stopped before it finished (Lume \
+                 stopped running). Try again; it picks up where it stopped.",
+                Some("pulling"),
+                Some(SpaceProvider::Relay),
+                Some("Studio"),
+                false
+            ),
+            "The image download on Studio stopped before it finished (Lume stopped running). \
+             Try again; it picks up where it stopped."
+        );
+        assert_eq!(
+            failure_variant(stopped, Some("pulling"), false, "Runtime"),
+            "ImagePull"
         );
         // Local Network privacy on the Mac that runs the VM.
         let sdk = "Local Network access is not available: cua cannot reach the VM at \

@@ -122,7 +122,7 @@ is safe even for apps that normally foreground on media-load
 | Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Loop, branch or retry over app actions | `run_script({script})` (sandboxed JavaScript over the `cua` API, one call); `run_steps` for a fixed list | an AppleScript or shell loop around `osascript` or `cua-driver` calls |
-| Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
+| Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y})` in the background (pixel-only: macOS AX has no semantic drag). Verify with a screenshot; `delivery_mode:"foreground"` only if nothing changed. A bound browser tab: `browser_pointer` `action:"drag"` | `cliclick dd:`, `osascript drag`, refusing a drag-only step as "needs the window in front" |
 | Hover (reveal a hover-only control)   | Window-targeted `move_cursor`; its result says whether it hovered (AX alternate UI or an Electron page). A web page in Chrome, Edge or Brave: `browser_pointer` hover after `get_browser_state`. If not, look for the same command elsewhere (menu item, context menu, shortcut, help text in `get_window_state`); only `move_cursor({scope:"desktop", delivery_mode:"foreground"})` (moves the user's pointer) or `bring_to_front` reveals it, and only if the user allows it | assuming a window-targeted `move_cursor` hovered when its result says the app sees no hover; a desktop `move_cursor` over a background browser page |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
@@ -383,12 +383,31 @@ surface that only accepts events while frontmost (the canvas/viewport/game
 case below). Unmodified `element_token` (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
 
-`drag` is the exception: macOS has no background drag. A window-scoped
-`drag` needs `delivery_mode:"foreground"` and `window_id`; without them it
-refuses with `background_unavailable` and sends nothing. The foreground drag
-fronts the exact window, moves the physical pointer along the path, and then
-restores the prior frontmost app. Use it only when a drag is the task, and
-expect the hardware pointer to move.
+`drag` runs in the background too. A window-scoped `drag` (`pid` and
+`window_id`) makes the window key without raising it, posts the press, the
+interpolated drags and the release to that window's process, and hands focus
+back to the user's window. The real pointer does not move. It reaches
+controls that follow the drag events: native sliders and canvases, and
+pointer-event sliders, canvases and boards on web pages in Chrome. The
+result is not driver-verified: check the outcome with a screenshot or the
+tree. Only if nothing changed, retry with `delivery_mode:"foreground"`,
+which fronts the window, moves the physical pointer along the path, and
+restores the prior frontmost app.
+
+A native `<input type="range">` in Chrome does not follow a background drag
+(pointer-event widgets do). Use `set_value` on its slider element, or
+`browser_pointer` `action:"drag"` on a bound tab, which sends the drag
+through CDP `Input.dispatchMouseEvent` with the button held.
+
+A drag that starts a macOS drag-and-drop session (reordering a list by drag
+and drop, moving a file, HTML5 `draggable` content) cannot drop in the
+background: macOS tracks those sessions with the real pointer. The driver
+sees the session start, releases at once, and returns
+`background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
+non-drag route first (Move Up/Down, a menu or context-menu command, a
+shortcut, cut and paste), then foreground if the user allows it. Toolkits that read the hardware pointer (Tk) or drop routed
+mouse events (LibreOffice) refuse the background drag with
+`background_unavailable` before anything is sent.
 
 A foreground window-scoped **pixel** `click`, `double_click`, or
 `right_click` (`x`/`y` with `window_id`) is delivered like a desktop-scope click, not through the per-pid path: Cua Driver

@@ -903,12 +903,16 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
             "$HOME/.agents/skills/$SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
             "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/config/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity-cli/skills/$SKILL_PACK_NAME" \
             "$HOME/.gemini/skills/$SKILL_PACK_NAME" \
             "$HOME/.hermes/skills/$SKILL_PACK_NAME" \
             "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/config/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/antigravity-cli/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.gemini/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.hermes/skills/$LEGACY_SKILL_PACK_NAME"; do
             if [[ -L "$SKILL_LINK" ]]; then
@@ -1047,6 +1051,8 @@ for SKILL_LINK in \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/config/skills/cua-driver" \
+    "$HOME/.gemini/antigravity-cli/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
     "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$SKILL_LINK" ]] && [[ "$(readlink "$SKILL_LINK")" == "$SKILL_TARGET_EXPECTED" ]]; then

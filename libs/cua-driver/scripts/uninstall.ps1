@@ -189,12 +189,16 @@ $SkillJunctions = @(
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
     (Join-Path $env:APPDATA      "opencode\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".claude\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver-rs"),
     (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
 )

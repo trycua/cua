@@ -3,7 +3,8 @@
 //! Chromium-family apps (Arc, VS Code, Electron shells) ship their web-content
 //! AX tree OFF and only build it once an assistive client asks for it. The
 //! walker flips `AXManualAccessibility` (falling back to
-//! `AXEnhancedUserInterface` only when the modern attribute is unsupported —
+//! `AXEnhancedUserInterface` only when the modern attribute is unsupported and
+//! the app is Chromium or Electron —
 //! see [`super::bindings::enable_chromium_accessibility`]) and waits for the
 //! asynchronously-built tree to appear before it is read.
 //!
@@ -60,6 +61,15 @@ struct ProcessEnablement {
 enum Attempt {
     Skip,
     Run { prior_timeouts: u32 },
+}
+
+/// Chromium or Electron: a Chromium-family name or bundle id, or an app bundle
+/// that carries `Electron Framework.framework`.
+fn is_chromium_family(pid: i32) -> bool {
+    crate::browser::platform::is_chromium(
+        &crate::apps::get_app_name_for_pid(pid).unwrap_or_default(),
+        &crate::apps::bundle_id_for_pid(pid).unwrap_or_default(),
+    ) || crate::apps::bundles_electron(pid)
 }
 
 /// Kernel start time of a process: `(pbi_start_tvsec, pbi_start_tvusec)`.
@@ -126,7 +136,9 @@ fn wait_outcome(
 ) -> Option<Wait> {
     match opt_in {
         AccessibilityOptIn::NotAccepted => None,
-        AccessibilityOptIn::EnhancedUserInterface => Some(Wait::Complete),
+        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::NotNeeded => {
+            Some(Wait::Complete)
+        }
         AccessibilityOptIn::ManualAccessibility => Some(if await_tree() {
             Wait::Complete
         } else {
@@ -224,15 +236,16 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
         Attempt::Skip => return,
         Attempt::Run { prior_timeouts } => prior_timeouts,
     };
+    let chromium_family = || is_chromium_family(pid);
     let outcome = wait_outcome(
-        enable_chromium_accessibility(app_element),
+        enable_chromium_accessibility(app_element, chromium_family),
         prior_timeouts,
         attempted_at,
         || {
             await_web_content(
                 || probe_web_content(app_element),
                 || {
-                    enable_chromium_accessibility(app_element);
+                    enable_chromium_accessibility(app_element, chromium_family);
                 },
                 pump_for,
             )
@@ -349,6 +362,11 @@ mod tests {
             wait_outcome(AccessibilityOptIn::EnhancedUserInterface, 0, now, probe),
             Some(Wait::Complete),
             "an app that only accepts AXEnhancedUserInterface has no web area to wait for"
+        );
+        assert_eq!(
+            wait_outcome(AccessibilityOptIn::NotNeeded, 0, now, probe),
+            Some(Wait::Complete),
+            "a native app needs no enablement, so later walks skip it"
         );
         assert_eq!(
             wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, probe),

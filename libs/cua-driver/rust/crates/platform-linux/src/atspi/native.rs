@@ -1079,6 +1079,42 @@ fn correlate_hyprland_frame(
     Some(frame.ordinal)
 }
 
+/// Pair Chromium browser windows with Hyprland clients by size alone when
+/// titles cannot (Chromium's accessible title adds tab-group and profile text
+/// the compositor title lacks). Chromium reports frame extents in its own
+/// scaled units, so every owned client must pair one-to-one with every
+/// `BrowserRootView` frame under one common scale, and only one such pairing
+/// may exist. Any other owned client or frame kind leaves the counts unequal
+/// and refuses.
+fn scaled_hyprland_frame(
+    frames: &[HyprlandFrame],
+    clients: &[(&str, u32, u32)],
+    target: usize,
+) -> Option<usize> {
+    let roots = frames
+        .iter()
+        .filter(|frame| frame.browser_root)
+        .map(|frame| {
+            let (width, height) = frame.size?;
+            Some((frame.ordinal, (f64::from(width), f64::from(height))))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let native = clients
+        .iter()
+        .map(|&(_, width, height)| (f64::from(width), f64::from(height)))
+        .collect::<Vec<_>>();
+    let scaled = roots.iter().map(|(_, size)| *size).collect::<Vec<_>>();
+    let pairing = cua_driver_core::browser::binding::unique_scaled_pairing(
+        &native,
+        &scaled,
+        HYPRLAND_FRAME_SCALED_TOLERANCE,
+    )?;
+    Some(roots[*pairing.get(target)?].0)
+}
+
+/// Per-edge tolerance, in Chromium's scaled units, for [`scaled_hyprland_frame`].
+const HYPRLAND_FRAME_SCALED_TOLERANCE: f64 = 8.0;
+
 #[cfg(test)]
 mod hyprland_frame_tests {
     use super::*;
@@ -1164,6 +1200,46 @@ mod hyprland_frame_tests {
             None
         );
     }
+
+    fn sized_root(ordinal: usize, title: &str, width: i32, height: i32) -> HyprlandFrame {
+        HyprlandFrame {
+            ordinal,
+            title: title.into(),
+            browser_root: true,
+            size: Some((width, height)),
+        }
+    }
+
+    #[test]
+    fn grouped_tab_titles_bind_by_scaled_size() {
+        // Measured on Hyprland at a 1.3636 GTK scale: the grouped tab adds
+        // "Part of group ..." to the accessible title only.
+        let frames = [
+            sized_root(0, "Calendar - Outlook", 2819, 1536),
+            sized_root(1, "Sign in - Part of group SSO - Google Chrome", 1408, 766),
+            HyprlandFrame {
+                ordinal: 2,
+                title: String::new(),
+                browser_root: false,
+                size: None,
+            },
+        ];
+        let clients = [
+            ("Calendar - Outlook", 3832, 2087),
+            ("Sign in - Google Chrome", 1913, 1041),
+        ];
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 1), Some(1));
+        assert_eq!(scaled_hyprland_frame(&frames, &clients, 0), Some(0));
+    }
+
+    #[test]
+    fn scaled_frames_refuse_equal_sizes_and_unequal_counts() {
+        let twins = [sized_root(0, "a", 1408, 766), sized_root(1, "b", 1408, 766)];
+        let clients = [("a", 1913, 1041), ("b", 1913, 1041)];
+        assert_eq!(scaled_hyprland_frame(&twins, &clients, 0), None);
+        let one = [sized_root(0, "a", 1408, 766)];
+        assert_eq!(scaled_hyprland_frame(&one, &clients, 0), None);
+    }
 }
 
 /// Resolve native window `xid` to the ordinal of the application top-level that
@@ -1227,7 +1303,8 @@ async fn resolve_window_frame(
             .iter()
             .map(|window| (window.title.as_str(), window.width, window.height))
             .collect::<Vec<_>>();
-        return correlate_hyprland_frame(&frames, &clients, target);
+        return correlate_hyprland_frame(&frames, &clients, target)
+            .or_else(|| scaled_hyprland_frame(&frames, &clients, target));
     }
     if seeds.len() == 1 {
         // One top-level: the caller's window is the only thing this

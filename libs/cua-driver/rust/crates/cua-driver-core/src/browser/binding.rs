@@ -265,50 +265,70 @@ pub fn scaled_size_bijection_candidate(
         })
         .collect::<Option<Vec<_>>>()?;
 
-    let mut pairing: Vec<usize> = (0..count).collect();
-    let mut valid: Option<Vec<usize>> = None;
-    loop {
-        if scaled_pairing_holds(native_sizes, &cdp_sizes, &pairing, tolerance) {
-            if valid.is_some() {
-                return None;
-            }
-            valid = Some(pairing.clone());
-        }
-        if !next_permutation(&mut pairing) {
-            break;
-        }
-    }
-    let pairing = valid?;
+    let native = native_sizes
+        .iter()
+        .map(|size| (size.width, size.height))
+        .collect::<Vec<_>>();
+    let pairing = unique_scaled_pairing(&native, &cdp_sizes, tolerance)?;
     let native_index = native_sizes
         .iter()
         .position(|size| size.window_id == native_window_id)?;
     Some(representatives[pairing[native_index]].clone())
 }
 
-/// Whether native window `i` pairs with CDP window `pairing[i]` for every
-/// `i` under one common scale, within `tolerance` browser units per edge.
+/// The one-to-one pairing of `native` sizes (window-system units) with
+/// `scaled` sizes (an application's own scaled units) under a single common
+/// scale, when exactly one such pairing exists. Lists of different lengths,
+/// more than [`SCALED_SIZE_MAX_WINDOWS`] entries, non-positive sizes, or two or
+/// more valid pairings (equal or near-equal sizes) yield `None`.
+/// `pairing[i]` is the index in `scaled` paired with `native[i]`.
+pub fn unique_scaled_pairing(
+    native: &[(f64, f64)],
+    scaled: &[(f64, f64)],
+    tolerance: f64,
+) -> Option<Vec<usize>> {
+    let count = native.len();
+    let positive = |sizes: &[(f64, f64)]| sizes.iter().all(|&(w, h)| w > 0.0 && h > 0.0);
+    if count == 0
+        || count > SCALED_SIZE_MAX_WINDOWS
+        || scaled.len() != count
+        || !positive(native)
+        || !positive(scaled)
+    {
+        return None;
+    }
+    let mut pairing: Vec<usize> = (0..count).collect();
+    let mut valid: Option<Vec<usize>> = None;
+    loop {
+        if scaled_pairing_holds(native, scaled, &pairing, tolerance) {
+            if valid.is_some() {
+                return None;
+            }
+            valid = Some(pairing.clone());
+        }
+        if !next_permutation(&mut pairing) {
+            return valid;
+        }
+    }
+}
+
+/// Whether `native[i]` pairs with `scaled[pairing[i]]` for every `i` under
+/// one common scale, within `tolerance` scaled units per edge.
 fn scaled_pairing_holds(
-    native_sizes: &[NativeWindowSize],
-    cdp_sizes: &[(f64, f64)],
+    native: &[(f64, f64)],
+    scaled: &[(f64, f64)],
     pairing: &[usize],
     tolerance: f64,
 ) -> bool {
-    let native_total: f64 = native_sizes
-        .iter()
-        .map(|size| size.width + size.height)
-        .sum();
-    let cdp_total: f64 = pairing
-        .iter()
-        .map(|&index| cdp_sizes[index].0 + cdp_sizes[index].1)
-        .sum();
-    let scale = native_total / cdp_total;
+    let native_total: f64 = native.iter().map(|(w, h)| w + h).sum();
+    let scaled_total: f64 = pairing.iter().map(|&i| scaled[i].0 + scaled[i].1).sum();
+    let scale = native_total / scaled_total;
     if !(SCALED_SIZE_SCALE_RANGE.0..=SCALED_SIZE_SCALE_RANGE.1).contains(&scale) {
         return false;
     }
-    native_sizes.iter().zip(pairing).all(|(native, &index)| {
-        let (width, height) = cdp_sizes[index];
-        (native.width / scale - width).abs() <= tolerance
-            && (native.height / scale - height).abs() <= tolerance
+    native.iter().zip(pairing).all(|(&(width, height), &i)| {
+        (width / scale - scaled[i].0).abs() <= tolerance
+            && (height / scale - scaled[i].1).abs() <= tolerance
     })
 }
 

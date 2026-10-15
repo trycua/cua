@@ -448,6 +448,7 @@ const WizardEnvShape = ref(
     hosts: opt(list(object({ id: str, name: str, via: str, online: bool, os: str, limits }))),
     experiments: opt(ExperimentsShape),
     gpus: optNull(list(GpuShape)),
+    nameSeed: optNull(num),
   }),
 );
 const createOptions = (strict: boolean) =>

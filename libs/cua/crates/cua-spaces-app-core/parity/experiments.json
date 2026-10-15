@@ -61,6 +61,7 @@
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker"],
+    "nameSeed": 42,
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": null,

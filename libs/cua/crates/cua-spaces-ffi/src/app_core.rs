@@ -1069,6 +1069,12 @@ pub fn app_wizard_action_from_json(json: String) -> Result<AppWizardAction> {
     from_json("wizard action", &json)
 }
 
+/// A teleport picker event from JSON (fixtures, parity).
+#[uniffi::export]
+pub fn app_picker_event_from_json(json: String) -> Result<AppPickerEvent> {
+    from_json("picker event", &json)
+}
+
 /// One of your machines that provides Spaces (the SDK's `Spaces.hosts()`)
 /// as the wizard reads it.
 #[uniffi::export]

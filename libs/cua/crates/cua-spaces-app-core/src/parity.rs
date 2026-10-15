@@ -334,7 +334,7 @@ pub mod frame {
                 },
             })
         };
-        json!({
+        let mut out = json!({
             "step": view["step"],
             "canContinue": view["canContinue"],
             "primaryLabel": view["primaryLabel"],
@@ -380,7 +380,21 @@ pub mod frame {
             "fields": view["fields"].as_array().map(|a| a.iter().map(field).collect::<Vec<_>>()).unwrap_or_default(),
             "imageField": image_field,
             "address": address,
-        })
+        });
+        // A slider's value being typed: `cpus: 9 !Choose 1 to 8 cores.`
+        // (only while one is).
+        if let Some(e) = view["resourceEdit"].as_object() {
+            out["resourceEdit"] = Value::String(format!(
+                "{}: {}{}",
+                e["field"].as_str().unwrap_or(""),
+                e["text"].as_str().unwrap_or(""),
+                e["error"]
+                    .as_str()
+                    .map(|m| format!(" !{m}"))
+                    .unwrap_or_default()
+            ));
+        }
+        out
     }
 
     fn str_of(v: &Value) -> &str {
@@ -1186,7 +1200,7 @@ pub mod frame {
         sensitive: &Value,
         plan_sensitive: &Value,
     ) -> Value {
-        json!({
+        let mut out = json!({
             "step": state["step"],
             "selectedId": state["selectedId"],
             "entry": state["entry"]["id"],
@@ -1213,7 +1227,20 @@ pub mod frame {
                 o["group"].as_str().unwrap_or(""), o["label"].as_str().unwrap_or(""),
                 o["detail"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "planSensitive": plan_sensitive,
-        })
+        });
+        // Saved passwords, while the review offers them: the box's label
+        // and, ticked, `site user (counts) [x]` per choice.
+        if review["offersPasswords"] == true {
+            out["passwords"] = json!({
+                "label": review["passwordsLabel"],
+                "on": review["includePasswords"],
+                "summary": review["passwordSummary"],
+                "rows": review["passwords"].as_array().map(|a| a.iter().map(|p| Value::String(format!("{} {} ({}) [{}]",
+                    p["site"].as_str().unwrap_or(""), p["username"].as_str().unwrap_or(""),
+                    p["counts"].as_str().unwrap_or(""), if p["selected"] == true { "x" } else { " " }))).collect::<Vec<_>>()).unwrap_or_default(),
+            });
+        }
+        out
     }
 
     /// After each notch event.

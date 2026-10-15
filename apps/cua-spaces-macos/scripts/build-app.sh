@@ -13,9 +13,18 @@
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
 # third-party notices (Settings, About, Acknowledgements), then signs it
-# ad hoc as com.trycua.spaces.macos.
+# ad hoc.
 #
 #   scripts/build-app.sh [debug|release] [out-dir]
+#
+# The default is a DEV build, which cannot touch an installed Cua Spaces:
+# "Cua Spaces Dev <instance>.app", com.trycua.spaces.macos.dev.<instance>, no
+# Sparkle feed or key (it never updates itself into the production app),
+# staging (CuaEnv), its own home (~/.cua-dev/<instance>, which holds the
+# sockets) and its own host service label. The instance is CUA_INSTANCE or
+# the worktree's directory name, so several dev builds run at once. The production
+# identity is for the release path only: CUA_APP_FLAVOR=prod (set by
+# build-release.sh and CI). See README "Developing alongside the prod app".
 #
 # CUA_APP_ARCHS="arm64 x86_64" builds each architecture and joins them with
 # lipo (a universal app; the SDK dylib and the `cua` CLI must then be
@@ -26,6 +35,23 @@
 # development and CI builds.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+flavor="${CUA_APP_FLAVOR:-dev}"
+case "$flavor" in
+  dev)
+    # One identity per instance, so several dev builds (one per worktree)
+    # run side by side: CUA_INSTANCE, else the worktree's directory name.
+    instance="${CUA_INSTANCE:-$(basename "$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || echo "$here")")}"
+    instance="$(printf '%s' "$instance" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n-' '-' | sed -e 's/^-*//' -e 's/-*$//' | cut -c1-32)"
+    [ -n "$instance" ] || { echo "CUA_INSTANCE is empty after cleaning (use letters, digits, -)" >&2; exit 2; }
+    app_name="Cua Spaces Dev $instance"
+    bundle_id="com.trycua.spaces.macos.dev.$instance"
+    ;;
+  prod)
+    app_name="Cua Spaces"
+    bundle_id="com.trycua.spaces.macos"
+    ;;
+  *) echo "CUA_APP_FLAVOR must be dev or prod (got $flavor)" >&2; exit 2 ;;
+esac
 config="${1:-debug}"
 out="${2:-$here/.build/app}"
 icons="$here/../cua-spaces/src-tauri/icons"
@@ -57,10 +83,26 @@ fi
 # Resource bundles are the same for every architecture.
 bin="${bins[0]}"
 
-app="$out/Cua Spaces.app"
+app="$out/$app_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$here/Support/Info.plist" "$app/Contents/Info.plist"
+if [ "$flavor" = dev ]; then
+  # Another identity, no updater, staging, its own home and service label.
+  # Nothing here may reach the production install: see scripts/check-dev-bundle.sh.
+  plist="$app/Contents/Info.plist"
+  pb=/usr/libexec/PlistBuddy
+  $pb -c "Set :CFBundleIdentifier $bundle_id" "$plist"
+  $pb -c "Set :CFBundleName $app_name" "$plist"
+  $pb -c "Set :CFBundleDisplayName $app_name" "$plist"
+  for key in SUFeedURL SUPublicEDKey SUEnableAutomaticChecks SUVerifyUpdateBeforeExtraction; do
+    $pb -c "Delete :$key" "$plist"
+  done
+  for kv in "CuaEnv:staging" "CuaChannel:dev" "CuaInstance:$instance" "CuaHome:~/.cua-dev/$instance" "CuaServiceSuffix:dev-$instance"; do
+    $pb -c "Delete :${kv%%:*}" "$plist" 2>/dev/null || true
+    $pb -c "Add :${kv%%:*} string ${kv#*:}" "$plist"
+  done
+fi
 if [ ${#bins[@]} -gt 1 ]; then
   slices=()
   for b in "${bins[@]}"; do slices+=("$b/CuaSpacesMac"); done
@@ -115,10 +157,10 @@ if [ -x "$cli" ]; then
 else
   echo "note: no cua CLI at $cli (cargo build --release -p cua-spaces-cli); the app will not install one" >&2
 fi
-codesign -s - -f -i com.trycua.spaces.macos "$app/Contents/Frameworks/libcua_sdk.dylib"
+codesign -s - -f -i "$bundle_id" "$app/Contents/Frameworks/libcua_sdk.dylib"
 # Sparkle keeps its upstream ad hoc signatures here (build-release.sh signs
 # each piece with the release identity).
-codesign -s - -f -i com.trycua.spaces.macos "$app"
+codesign -s - -f -i "$bundle_id" "$app"
 codesign --verify --deep --strict "$app"
 
 # The app must run on a Mac without this build directory: the resource
@@ -153,4 +195,7 @@ fi
 # It launches (scripts/check-launch.sh: libraries resolve and load; the app
 # starts and exits before any window).
 "$here/scripts/check-launch.sh" "$app" >&2
+if [ "$flavor" = dev ]; then
+  "$here/scripts/check-dev-bundle.sh" "$app" >&2
+fi
 echo "$app"

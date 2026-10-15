@@ -28,6 +28,30 @@ use std::sync::Mutex;
 pub const SERVICE_NAME: &str = "cua-spacesd-host";
 /// launchd label.
 pub const LAUNCHD_LABEL: &str = "com.trycua.spacesd.host";
+/// Environment variable that gives a development install its own launchd
+/// label (`com.trycua.spacesd.host.<suffix>`), so it never replaces the
+/// production service. The macOS app sets it for a dev flavour build.
+pub const LABEL_SUFFIX_ENV: &str = "CUA_SERVICE_SUFFIX";
+
+/// The launchd label in effect: [`LAUNCHD_LABEL`], plus `.<suffix>` when
+/// `CUA_SERVICE_SUFFIX` holds a plain suffix (letters, digits, `-`, `_`).
+pub fn launchd_label() -> String {
+    label_with_suffix(std::env::var(LABEL_SUFFIX_ENV).ok().as_deref())
+}
+
+fn label_with_suffix(suffix: Option<&str>) -> String {
+    match suffix.map(str::trim) {
+        Some(s)
+            if !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
+        {
+            format!("{LAUNCHD_LABEL}.{s}")
+        }
+        _ => LAUNCHD_LABEL.to_string(),
+    }
+}
+
 /// Windows task name.
 pub const WINDOWS_TASK_NAME: &str = "Cua\\SpacesdHost";
 
@@ -287,7 +311,7 @@ pub fn launchd_plist(spec: &ServiceSpec) -> String {
 </dict>
 </plist>
 "#,
-        label = LAUNCHD_LABEL,
+        label = launchd_label(),
         wd = xml_escape(&spec.working_dir.to_string_lossy()),
     )
 }
@@ -585,11 +609,11 @@ impl Launchd {
     }
 
     fn plist_path(&self) -> PathBuf {
-        self.agents_dir.join(format!("{LAUNCHD_LABEL}.plist"))
+        self.agents_dir.join(format!("{}.plist", launchd_label()))
     }
 
     fn target(&self) -> String {
-        format!("gui/{}/{LAUNCHD_LABEL}", self.uid)
+        format!("gui/{}/{}", self.uid, launchd_label())
     }
 
     fn remove_legacy(&self) {
@@ -1371,6 +1395,16 @@ mod tests {
         assert_eq!(systemd_quote("a b"), "\"a b\"");
         assert_eq!(systemd_quote("100%"), "\"100%%\"");
         assert_eq!(systemd_quote(""), "\"\"");
+    }
+
+    #[test]
+    fn launchd_label_takes_a_plain_suffix_only() {
+        assert_eq!(label_with_suffix(None), "com.trycua.spacesd.host");
+        assert_eq!(label_with_suffix(Some("")), "com.trycua.spacesd.host");
+        assert_eq!(label_with_suffix(Some("dev")), "com.trycua.spacesd.host.dev");
+        assert_eq!(label_with_suffix(Some(" dev ")), "com.trycua.spacesd.host.dev");
+        assert_eq!(label_with_suffix(Some("../x")), "com.trycua.spacesd.host");
+        assert_eq!(label_with_suffix(Some("a b")), "com.trycua.spacesd.host");
     }
 
     #[test]

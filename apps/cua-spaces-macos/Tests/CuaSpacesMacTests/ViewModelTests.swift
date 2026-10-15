@@ -1065,10 +1065,11 @@ struct ViewModelTests {
         #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help == "Suspend")
-        // No Share without the Sharing experiment; with it, before power.
+        // Share before power (Sharing is on by default); none with Sharing turned off.
+        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
+        model.chooseExperiment(row: "experiment:sharing", option: "off")
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .power, .delete, .open])
         model.chooseExperiment(row: "experiment:sharing", option: "on")
-        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
 
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.

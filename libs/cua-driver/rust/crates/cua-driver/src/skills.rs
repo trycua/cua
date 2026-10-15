@@ -47,7 +47,8 @@
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
 //!   `%APPDATA%\opencode\skills\` (Windows)
-//! - Antigravity IDE: `~/.gemini/config/skills/`
+//! - Antigravity IDE: `~/.gemini/config/skills/` (global skills directory),
+//!   plus the legacy `~/.gemini/antigravity/skills/` it still accepts
 //! - Antigravity CLI (`agy`): `~/.gemini/antigravity-cli/skills/`
 //! - Gemini CLI (legacy): `~/.gemini/skills/`
 //! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
@@ -250,6 +251,14 @@ const AGENTS: &[Agent] = &[
     Agent {
         label: "Antigravity IDE",
         parent: AgentParent::Home(".gemini/config/skills"),
+        install_marker: None,
+    },
+    // Antigravity still accepts its earlier global directory; installs that
+    // only have that one are linked there. Where it aliases
+    // `.gemini/config/skills`, the link above is reported as existing.
+    Agent {
+        label: "Antigravity IDE (legacy dir)",
+        parent: AgentParent::Home(".gemini/antigravity/skills"),
         install_marker: None,
     },
     Agent {

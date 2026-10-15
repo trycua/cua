@@ -185,6 +185,7 @@ $SkillLinks = @(
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
     (Join-Path $env:APPDATA "opencode\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".gemini\antigravity-cli\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver")

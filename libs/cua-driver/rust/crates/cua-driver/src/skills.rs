@@ -253,9 +253,6 @@ const AGENTS: &[Agent] = &[
         parent: AgentParent::Home(".gemini/config/skills"),
         install_marker: None,
     },
-    // Antigravity still accepts its earlier global directory; installs that
-    // only have that one are linked there. Where it aliases
-    // `.gemini/config/skills`, the link above is reported as existing.
     Agent {
         label: "Antigravity IDE (legacy dir)",
         parent: AgentParent::Home(".gemini/antigravity/skills"),
@@ -1128,8 +1125,6 @@ mod tests {
 
     #[test]
     fn antigravity_ide_legacy_skill_directory_is_also_a_target() {
-        // Antigravity still accepts `~/.gemini/antigravity/skills/`, so an
-        // install that only has that directory must still be linked.
         let target = AGENTS
             .iter()
             .find(|agent| agent.label == "Antigravity IDE (legacy dir)")

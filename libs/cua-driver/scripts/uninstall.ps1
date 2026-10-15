@@ -199,8 +199,6 @@ $SkillJunctions = @(
     (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
 )
 
-# Antigravity's skill directories are commonly hand-managed, so a junction
-# there is removed only when it points into this driver's own home.
 $OwnedSkillJunctions = @(
     (Join-Path $env:USERPROFILE ".gemini\config\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".gemini\antigravity\skills\cua-driver"),

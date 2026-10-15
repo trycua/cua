@@ -920,9 +920,6 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 log "no skill symlink at $SKILL_LINK (skipping)"
             fi
         done
-        # Antigravity's skill directories are commonly hand-managed, so a
-        # link there is removed only when it points into this driver's own
-        # home (where `skills install` keeps the pack).
         for SKILL_LINK in \
             "$HOME/.gemini/config/skills/$SKILL_PACK_NAME" \
             "$HOME/.gemini/antigravity/skills/$SKILL_PACK_NAME" \

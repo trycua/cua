@@ -55,7 +55,7 @@ pub use process::{
 };
 pub use transport::{
     BearerProvider, ChannelError, ExtraHeaders, GatewayAuth, GrpcChannel, Keepalive, StaticBearer,
-    Transport, TransportPreference,
+    Transport, TransportPreference, set_process_principal,
 };
 pub use tunnel::{ForwardOptions, ForwardStats, TUNNEL_FORWARD_FEATURE, TcpForward};
 

@@ -109,14 +109,22 @@ fn is_container_hostname(name: &str) -> bool {
 }
 
 /// The name to show. A container's spacesd reports its hostname (12 hex
-/// digits), so the id's name (`local:<name>`, `cloud:<name>`) wins then.
+/// digits), and a host that knows no name yet (a create that just finished)
+/// sends the id itself, so the id's name (`local:<name>`, `cloud:<name>`,
+/// `relay:<machine>/<name>`) wins then: "space-51e8a1e198", never
+/// "local:space-51e8a1e198".
 pub fn name_of(id: &str, name: &str) -> String {
     let from_id = id
         .strip_prefix("local:")
         .or_else(|| id.strip_prefix("cloud:"))
+        .or_else(|| {
+            id.strip_prefix("relay:")
+                .and_then(|rest| rest.split_once('/'))
+                .map(|(_, name)| name)
+        })
         .filter(|rest| !rest.is_empty());
     if let Some(from_id) = from_id
-        && (name.is_empty() || is_container_hostname(name))
+        && (name.is_empty() || name == id || is_container_hostname(name))
     {
         return from_id.to_string();
     }
@@ -584,6 +592,41 @@ mod tests {
         );
         assert_eq!(hex.name, "demo-box");
         assert_eq!(hex.detail, "This Mac");
+    }
+
+    #[test]
+    fn a_name_that_is_the_id_shows_the_ids_name() {
+        // A host answers a create it can't list yet with the id as its name
+        // (CUA-1672: "local:space-51e8a1e198 is ready").
+        assert_eq!(
+            name_of("local:space-51e8a1e198", "local:space-51e8a1e198"),
+            "space-51e8a1e198"
+        );
+        assert_eq!(
+            name_of("cloud:brave-otter", "cloud:brave-otter"),
+            "brave-otter"
+        );
+        assert_eq!(
+            name_of("relay:m-mini/space-1", "relay:m-mini/space-1"),
+            "space-1"
+        );
+        assert_eq!(name_of("relay:m-mini/space-1", ""), "space-1");
+        // A typed name, and ids with no name in them, stay as they are.
+        assert_eq!(name_of("local:space-1", "Aurora"), "Aurora");
+        assert_eq!(name_of("relay:b695", ""), "relay:b695");
+        assert_eq!(name_of("relay:b695", "relay:b695"), "relay:b695");
+        assert_eq!(name_of("space://relay/abc", ""), "space://relay/abc");
+        let space = row_to_space(
+            &SpaceRow {
+                id: "local:space-51e8a1e198".into(),
+                name: "local:space-51e8a1e198".into(),
+                provider: "local".into(),
+                ..row()
+            },
+            0,
+        );
+        assert_eq!(space.name, "space-51e8a1e198");
+        assert_eq!(space.id, "local:space-51e8a1e198");
     }
 
     #[test]

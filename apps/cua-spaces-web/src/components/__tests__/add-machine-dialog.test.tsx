@@ -60,7 +60,7 @@ describe("Add a machine by link or QR code", () => {
     await waitFor(() => expect(phase()).toBe("ready"));
     expect(calls[0]).toBe("devices.createPairingCode");
     expect(document.querySelector("[data-pairing-qr] path")?.getAttribute("d")).toMatch(/^M\d/);
-    expect(screen.getByText(/^https:\/\/spaces\.cua\.ai\/add\/K7QM-4XPB-/)).toBeTruthy();
+    expect(screen.getByText(/^https:\/\/cua\.ai\/add\/K7QM-4XPB-/)).toBeTruthy();
     expect(screen.getByText(/sh -s -- --pair K7QM-4XPB-/)).toBeTruthy();
     expect(screen.getByText("Waiting for the computer…")).toBeTruthy();
     expect(document.querySelector("[data-pairing-expires]")?.textContent).toBe("Works once. Expires in 30 min");

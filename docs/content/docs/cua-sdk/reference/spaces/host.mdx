@@ -895,7 +895,7 @@ Returned by [`Devices.create_pairing_code`](/cua-sdk/reference/spaces/devices#de
 | --- | --- | --- | --- |
 | `id` | `String` |  | `pc_…` (to revoke it). |
 | `code` | `Option<String>` |  | `XXXX-XXXX-XXXX`: only when just made. |
-| `url` | `Option<String>` |  | `https://spaces.cua.ai/add/<code>` (the link and the QR code): only when just made. |
+| `url` | `Option<String>` |  | `https://cua.ai/add/<code>` (the link and the QR code): only when just made. |
 | `install_sh` / `installSh` | `Option<String>` |  | `curl … \| sh -s -- --pair <code>` (macOS, Linux): only when just made. |
 | `install_powershell` / `installPowershell` | `Option<String>` |  | The PowerShell one-liner (Windows): only when just made. |
 | `state` | `String` |  | `active`, `used`, `revoked` or `expired`. |

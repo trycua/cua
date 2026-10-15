@@ -4,8 +4,8 @@ import { fileURLToPath, URL } from "node:url"
 
 // Backend-owned routes such as /api/k8s are served by cyclops-cs behind
 // Keycloak SSO + OPA and aren't reachable from a laptop. In dev, route them
-// through the deployed cyclops-cs Tailscale ingress (set ORCH_API to its URL).
-const ORCH_API = process.env.ORCH_API ?? "https://cyclops-cs.<your-tailnet>.ts.net"
+// through the deployed cyclops-cs Tailscale ingress.
+const ORCH_API = process.env.ORCH_API ?? "https://cyclops-cs.tail204509.ts.net"
 
 export default defineConfig({
   plugins: [react()],

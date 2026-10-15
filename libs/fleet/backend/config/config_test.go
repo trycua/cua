@@ -290,11 +290,11 @@ func TestLoadConfig_UsageConfiguration(t *testing.T) {
 		},
 		{name: "libpq database DSN is rejected", env: map[string]string{"USAGE_DATABASE_URL": "user=cyclops_usage_reader host=db.example dbname=cyclops", "USAGE_QUERY_HMAC_SECRET": "secret"}, wantError: "invalid usage database URL"},
 		{name: "database reader role is required", env: map[string]string{"USAGE_DATABASE_URL": "postgres://application@db.example/cyclops", "USAGE_QUERY_HMAC_SECRET": "secret"}, wantError: "usage database URL must use cyclops_usage_reader"},
-		{name: "external webhook remains allowed", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret", "USAGE_QUERY_WEBHOOK_URL": testExternalUsageQueryWebhookURL}, want: func() UsageConfiguration {
+		{name: "external webhook remains allowed", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret", "USAGE_QUERY_WEBHOOK_URL": externalUsageQueryWebhookURL}, want: func() UsageConfiguration {
 			value := defaults
 			value.DatabaseURL = validDatabaseURL
 			value.QueryHMACSecret = "secret"
-			value.QueryWebhookURL = testExternalUsageQueryWebhookURL
+			value.QueryWebhookURL = externalUsageQueryWebhookURL
 			return value
 		}()},
 		{name: "webhook is allow-listed", env: map[string]string{"USAGE_DATABASE_URL": validDatabaseURL, "USAGE_QUERY_HMAC_SECRET": "secret", "USAGE_QUERY_WEBHOOK_URL": "https://example.test/hooks/opencost-query"}, wantError: "invalid allocation query webhook URL"},
@@ -504,5 +504,3 @@ func TestLoadConfig_ImageUploadValues(t *testing.T) {
 		t.Fatalf("MaxFilesPerRequest = %d, want %d", got, want)
 	}
 }
-
-const testExternalUsageQueryWebhookURL = "https://cua-temporal-webhook.example-tailnet.ts.net/hooks/opencost-query"

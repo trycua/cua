@@ -116,7 +116,7 @@ test("dashboard activates the shared theme through supported boundaries", async 
   )
   assert.match(
     previewEnvironment,
-    /\^cyclops-cs-pr-\\d\+\\\.\[a-z0-9-\]\+\\\.ts\\\.net\$/,
+    /\^cyclops-cs-pr-\\d\+\\\.tail204509\\\.ts\\\.net\$/,
   )
 })
 

@@ -41,7 +41,8 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 | `--mode host\|client` | `-Mode host\|client` | Preselect the app's first-run choice (implies `spaces`) |
 | `--version 1.2.3` | `-Version 1.2.3` | Pin the CLI release (default: latest) |
 | `--prefix DIR` | `-Prefix DIR` | Install under `DIR/bin` (and `DIR/Applications` on macOS) |
-| `--modify-path` | `-ModifyPath` | Add the bin dir to your shell profile or user PATH |
+| `--modify-path` | `-ModifyPath` | Add the bin dir to your shell profile or user PATH without asking |
+| `--no-modify-path` | `-NoModifyPath` | Never edit the profile or user PATH; print the command instead |
 | `--no-onboarding` | `-NoOnboarding` | Skip `cua auth login` |
 | `--require-signature` | `-RequireSignature` | Fail unless minisign or cosign verifies |
 | `--dry-run` | `-DryRun` | Print the plan, change nothing |
@@ -60,7 +61,7 @@ Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsS
 
 cua-driver lands where its own installer puts it: `~/.local/bin/cua-driver` (or `DIR/bin` with `--prefix`), `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` on Windows.
 
-The scripts never edit shell profiles unless you pass `--modify-path`. `--mode` writes `~/.cua/spaces-install-mode`, which the app reads on first launch.
+On Linux and macOS, when the bin dir is not on PATH, install.sh in a terminal asks once ("Add ... to PATH in ~/.zshrc? [Y/n]", Enter = yes). Without a terminal, or with `--yes`, it prints the exact one-line command for your shell instead and never edits a profile unless you pass `--modify-path`; `--no-modify-path` never edits it. `--pair` runs the CLI by its absolute path, so it works before PATH changes. install.ps1 adds the user PATH by default (`-NoModifyPath` opts out). `--mode` writes `~/.cua/spaces-install-mode`, which the app reads on first launch.
 
 MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows Electron app (`apps/cua-spaces-desktop`) bundles it itself, and the Tauri bundles (disabled) carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
 
@@ -68,7 +69,7 @@ MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed wit
 
 Both scripts read `release-artifacts.json`:
 
-- latest: `https://github.com/trycua/cua/releases/download/cua-install-latest/release-artifacts.json` (a rolling release the CD workflows update)
+- latest: `https://github.com/trycua/cua/releases/download/cua-install-latest/release-artifacts.json` (a rolling release the CD workflows update: `cd-cua-sdk.yml` moves the `cli` version after a cua SDK publish, `cd-cua-spaces.yml` the `app` version, and `release-installers-feed.yml` republishes install.sh / install.ps1 when they change on main)
 - pinned: `https://github.com/trycua/cua/releases/download/cua-sdk-v<version>/release-artifacts.json`
 
 The copies of `install.sh` / `install.ps1` on a repository's `cua-install-latest` release default to that repository: the release workflows publish them through `stamp_installers.py --repo "$GITHUB_REPOSITORY"`, so the trycua/cua-staging feed downloads, and verifies Sigstore identities against, trycua/cua-staging's own releases. The files in this directory keep `trycua/cua`.
@@ -82,7 +83,7 @@ The copies of `install.sh` / `install.ps1` on a repository's `cua-install-latest
 
 `<platform>` is `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `windows-x64` or `windows-arm64`. Each entry carries `url`, `sha256` and, when present next to the file, `minisig` and `cosign_bundle` URLs. Every artifact sits on one line so install.sh can read it without jq.
 
-Downloads always check sha256. Signatures are checked when the entry lists one and `minisign` (with `CUA_INSTALL_MINISIGN_PUBKEY` or the key baked into the script) or `cosign` is installed.
+Downloads always check sha256. Signatures are checked when the entry lists one and `minisign` (with `CUA_INSTALL_MINISIGN_PUBKEY` or the key baked into the script) or `cosign` is installed. If neither is installed the installer prints one info line (sha256 was checked) and goes on; `--require-signature` turns that into an error.
 
 ## Tests
 

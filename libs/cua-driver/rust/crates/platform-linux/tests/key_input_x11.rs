@@ -678,9 +678,6 @@ fn xtest_text_restores_the_keycode_of_a_client_that_never_answers() -> Result<()
     Ok(())
 }
 
-/// With every spare keycode but one held, a text typed in batches rebinds that
-/// keycode for its next batch only after the client confirms it has read the
-/// keys of the first; a client that does not answer gets an error instead.
 #[test]
 #[ignore = "requires an isolated X11 display with XTEST"]
 fn xtest_text_rebinds_a_spare_keycode_only_after_the_client_confirms() -> Result<()> {

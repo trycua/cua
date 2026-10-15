@@ -3547,13 +3547,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             }
             Ok(())
         },
-        || {
-            std::mem::replace(
-                &mut *client.borrow_mut(),
-                TextClient::new(&conn, Some(window)),
-            )
-            .release()
-        },
+        || client.borrow_mut().release(),
     )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
@@ -3598,7 +3592,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
-        || std::mem::replace(&mut *client.borrow_mut(), TextClient::new(&conn, None)).release(),
+        || client.borrow_mut().release(),
     )?;
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
@@ -4536,19 +4530,15 @@ impl<'a> TextClient<'a> {
             self.unanswered.push(window);
         }
     }
-}
 
-impl TextClient<'_> {
-    /// Pings each window that got a borrowed key, restores the borrowed
-    /// keycodes, and says whether every such window read its keys or does not
-    /// take `_NET_WM_PING`.
     fn release(&mut self) -> bool {
         let sent = std::mem::take(&mut self.sent);
         for &window in &sent {
             self.ping(window);
         }
         self.borrowed.clear();
-        !sent.iter().any(|window| self.unanswered.contains(window))
+        let unanswered = std::mem::take(&mut self.unanswered);
+        !sent.iter().any(|window| unanswered.contains(window))
     }
 }
 

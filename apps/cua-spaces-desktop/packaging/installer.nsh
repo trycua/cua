@@ -113,7 +113,9 @@ Var pid
   Pop $0
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${CUA_HOST_RUN_NAME}"
   ${if} $IsPowerShellAvailable == 0
-    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path -like '*\host\bin\cua-spacesd.exe'} | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+    ; Stop the host, then wait (at most ~10 s) until it has really exited: a
+    ; process still running keeps logging and re-creates ~/.cua/host (CUA-1749).
+    nsExec::Exec /TIMEOUT=30000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "for ($$i = 0; $$i -lt 40; $$i++) { $$h = @(Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path -like '*\host\bin\cua-spacesd.exe'}); if (-not $$h) { break }; $$h | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 250 }"`
     Pop $0
   ${endIf}
   Sleep 500

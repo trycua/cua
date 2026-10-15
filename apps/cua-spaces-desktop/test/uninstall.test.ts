@@ -96,6 +96,9 @@ describe("the Windows installer and uninstaller", () => {
     expect(host).toContain('/Delete /TN "${CUA_HOST_TASK}" /F');
     expect(host).toContain('DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "${CUA_HOST_RUN_NAME}"');
     expect(host).toContain("\\host\\bin\\cua-spacesd.exe");
+    // The host is stopped and waited for (bounded) before ~/.cua/host goes, or it re-creates driver.log (CUA-1749).
+    expect(host).toMatch(/for \(\$\$i = 0; \$\$i -lt \d+;/);
+    expect(host.indexOf("Start-Sleep")).toBeLessThan(host.indexOf('RMDir /r "$PROFILE'));
     expect(host.trim().split("\n").at(-1)!.trim()).toBe('RMDir /r "$PROFILE\\.cua\\host"');
   });
 

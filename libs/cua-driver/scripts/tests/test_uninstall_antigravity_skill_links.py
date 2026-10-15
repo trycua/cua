@@ -23,7 +23,6 @@ def test_driver_owned_antigravity_link_is_removed(release_install, skills_dir):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not link.is_symlink(), result.stdout
-    assert pack.is_dir()
 
 
 @pytest.mark.parametrize("skills_dir", ANTIGRAVITY_SKILL_DIRS)

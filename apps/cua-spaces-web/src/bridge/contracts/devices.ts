@@ -63,7 +63,7 @@ export interface PairingCode {
   id: string;
   /** `XXXX-XXXX-XXXX`. */
   code: string | null;
-  /** `https://spaces.cua.ai/add/<code>`: the link and the QR code. */
+  /** `https://cua.ai/add/<code>`: the link and the QR code. */
   url: string | null;
   /** The macOS and Linux one-liner. */
   installSh: string | null;

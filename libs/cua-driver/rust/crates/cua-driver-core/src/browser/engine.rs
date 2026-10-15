@@ -34,8 +34,8 @@ use uuid::Uuid;
 use crate::session::register_scoped_fallible_session_end_hook;
 
 use super::binding::{
-    cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
-    CdpWindowCandidate,
+    cardinality_exact_candidate, correlate, scaled_size_bijection_candidate,
+    selected_tab_target_id, BindingOutcome, CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
@@ -1135,6 +1135,37 @@ impl BrowserEngine {
         Ok(endpoint)
     }
 
+    /// Upgrade a bind without matching bounds to exact from a platform
+    /// proof: the native window is the pid's only window, or every owned
+    /// window pairs one-to-one with a CDP window under one common scale.
+    async fn platform_exact_candidate(
+        &self,
+        pid: i64,
+        window_id: u64,
+        native_title: &str,
+        candidates: &[CdpWindowCandidate],
+    ) -> Result<Option<CdpWindowCandidate>, BrowserRefusal> {
+        let only_native_window = self
+            .platform
+            .is_only_exact_native_window(pid, window_id)
+            .await?;
+        if let Some(exact) =
+            cardinality_exact_candidate(native_title, candidates, only_native_window)
+        {
+            return Ok(Some(exact));
+        }
+        let Some(sizes) = self.platform.owned_native_window_sizes(pid).await? else {
+            return Ok(None);
+        };
+        Ok(scaled_size_bijection_candidate(
+            native_title,
+            window_id,
+            &sizes,
+            candidates,
+            BOUNDS_TOLERANCE_PX,
+        ))
+    }
+
     /// List page-type CDP targets with their window geometry.
     async fn window_candidates(
         &self,
@@ -1368,11 +1399,10 @@ impl BrowserEngine {
                 candidate,
                 quality: BindingQuality::Heuristic,
             } => {
-                let only_native_window = self
-                    .platform
-                    .is_only_exact_native_window(pid, window_id)
-                    .await?;
-                match cardinality_exact_candidate(&native.title, &candidates, only_native_window) {
+                match self
+                    .platform_exact_candidate(pid, window_id, &native.title, &candidates)
+                    .await?
+                {
                     Some(exact) => (exact, BindingQuality::Exact),
                     None => (candidate, BindingQuality::Heuristic),
                 }
@@ -1386,11 +1416,10 @@ impl BrowserEngine {
                 .with_detail(json!({ "candidate_count": candidate_count })));
             }
             BindingOutcome::None => {
-                let only_native_window = self
-                    .platform
-                    .is_only_exact_native_window(pid, window_id)
-                    .await?;
-                match cardinality_exact_candidate(&native.title, &candidates, only_native_window) {
+                match self
+                    .platform_exact_candidate(pid, window_id, &native.title, &candidates)
+                    .await?
+                {
                     Some(exact) => (exact, BindingQuality::Exact),
                     None => {
                         return Err(refuse(
@@ -1636,18 +1665,20 @@ impl BrowserEngine {
             let correlation_still_exact = if geometry_matches {
                 true
             } else {
-                let only_native_window = self
-                    .platform
-                    .is_only_exact_native_window(record.pid, record.window_id)
-                    .await?;
-                cardinality_exact_candidate(&native.title, &candidates, only_native_window)
-                    .is_some_and(|candidate| candidate.cdp_window_id == Some(bound_window_id))
+                self.platform_exact_candidate(
+                    record.pid,
+                    record.window_id,
+                    &native.title,
+                    &candidates,
+                )
+                .await?
+                .is_some_and(|candidate| candidate.cdp_window_id == Some(bound_window_id))
             };
             if !correlation_still_exact {
                 return Err(refuse(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "CDP window no longer has an exact geometry or singleton-cardinality \
-                     correlation with the native window — refusing to mutate it",
+                    "CDP window no longer has an exact geometry, singleton-cardinality, or \
+                     scaled-size correlation with the native window — refusing to mutate it",
                 ));
             }
         } else if candidates.len() != 1

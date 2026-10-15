@@ -21,6 +21,9 @@ pub const ROW_LABEL: &str = "Relay usage";
 /// The notice's button.
 pub const UPGRADE: &str = "Upgrade";
 
+/// The notice's button on the Free plan: Pro is what raises the limits.
+pub const UPGRADE_PRO: &str = "Upgrade to Pro";
+
 /// The notice's close button (accessibility label).
 pub const DISMISS: &str = "Dismiss";
 
@@ -69,7 +72,7 @@ pub struct RelayUsage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayAllowanceNotice {
-    /// "You've used your free relay allowance for this month. ..."
+    /// On Free: "You're using 2 of 2 live sessions on Free. Pro raises this to ..."
     pub text: String,
     /// [`UPGRADE`].
     pub upgrade: String,
@@ -150,8 +153,54 @@ pub fn dismiss_key(u: &RelayUsage) -> String {
     format!("{}:{}", u.period, reasons.join(","))
 }
 
-/// The notice's sentence.
+/// Folds the relay's Free-limit `warnings` (at or over an allowance) into
+/// the "reached" flag and `reasons` the apps already draw from, so a Free
+/// person sees the prompt at 2 of 2 live sessions, not only past it.
+pub fn with_warnings(
+    reached: bool,
+    mut reasons: Vec<String>,
+    warnings: &[String],
+) -> (bool, Vec<String>) {
+    let mut reached = reached;
+    for (warning, reason) in [
+        ("free_limit_sessions", "sessions"),
+        ("free_limit_relay_hours", "hours"),
+    ] {
+        if warnings.iter().any(|w| w == warning) {
+            reached = true;
+            if !reasons.iter().any(|r| r == reason) {
+                reasons.push(reason.to_owned());
+            }
+        }
+    }
+    (reached, reasons)
+}
+
+/// The notice's sentence. On Free it says what is used and what Pro gives
+/// (the numbers on cua.ai/pricing); nothing is blocked.
 pub fn notice_text(u: &RelayUsage) -> String {
+    if u.plan == "free" {
+        let mut parts = Vec::new();
+        if let (true, Some(limit)) = (
+            u.reasons.iter().any(|r| r == "sessions"),
+            u.live_sessions_limit,
+        ) {
+            parts.push(format!("{} of {limit} live sessions", u.live_sessions));
+        }
+        if let (true, Some(limit)) = (u.reasons.iter().any(|r| r == "hours"), u.hours_limit) {
+            parts.push(format!(
+                "{} of {} relay hours",
+                hours(u.hours_used),
+                hours(limit)
+            ));
+        }
+        if !parts.is_empty() {
+            return format!(
+                "You're using {} on Free. Pro raises this to 5 live sessions and 200 relay hours.",
+                parts.join(" and ")
+            );
+        }
+    }
     let free = if u.plan == "free" { "free " } else { "" };
     format!(
         "You've used your {free}relay allowance for this month. Your Spaces keep working. Upgrade for more."
@@ -187,10 +236,20 @@ pub fn view_for(u: &RelayUsage, account_app: &str) -> Option<RelayUsageView> {
         plan: plan_text(&u.plan),
         notice: u.soft_limit_reached.then(|| RelayAllowanceNotice {
             text: notice_text(u),
-            upgrade: UPGRADE.into(),
-            upgrade_url: checked(u.clone())
-                .upgrade_url
-                .or_else(|| Some(format!("{}/billing", account_app.trim_end_matches('/')))),
+            upgrade: if u.plan == "free" {
+                UPGRADE_PRO
+            } else {
+                UPGRADE
+            }
+            .into(),
+            upgrade_url: if u.plan == "free" {
+                // Free: straight to buying Pro (app.cua.ai/buy/pro).
+                Some(format!("{}/buy/pro", account_app.trim_end_matches('/')))
+            } else {
+                checked(u.clone())
+                    .upgrade_url
+                    .or_else(|| Some(format!("{}/billing", account_app.trim_end_matches('/'))))
+            },
             dismiss: DISMISS.into(),
             dismiss_key: dismiss_key(u),
         }),
@@ -250,10 +309,10 @@ mod tests {
         let n = v.notice.unwrap();
         assert_eq!(
             n.text,
-            "You've used your free relay allowance for this month. Your Spaces keep working. Upgrade for more."
+            "You're using 1 of 2 live sessions and 20.2 of 20 relay hours on Free. Pro raises this to 5 live sessions and 200 relay hours."
         );
-        assert_eq!(n.upgrade, "Upgrade");
-        assert_eq!(n.upgrade_url.as_deref(), Some("https://cua.ai/pricing"));
+        assert_eq!(n.upgrade, "Upgrade to Pro");
+        assert_eq!(n.upgrade_url.as_deref(), Some("https://app.cua.ai/buy/pro"));
         assert_eq!(n.dismiss_key, "2026-10:hours,sessions");
 
         let pro = RelayUsage {
@@ -268,6 +327,35 @@ mod tests {
         assert!(v.line.ends_with("Team pool, 1 seat"), "{}", v.line);
         assert_eq!(v.plan, "Pro plan");
         assert!(v.notice.unwrap().text.starts_with("You've used your relay"));
+    }
+
+    #[test]
+    fn a_free_user_at_the_limit_is_asked_before_going_over() {
+        // The relay's warnings fire at 2 of 2 live sessions, before anything is over.
+        let (reached, reasons) = with_warnings(false, vec![], &["free_limit_sessions".into()]);
+        assert!(reached);
+        let u = RelayUsage {
+            live_sessions: 2,
+            soft_limit_reached: reached,
+            reasons,
+            ..free()
+        };
+        let n = view_for(&u, "https://app.cua.ai").unwrap().notice.unwrap();
+        assert_eq!(
+            n.text,
+            "You're using 2 of 2 live sessions on Free. Pro raises this to 5 live sessions and 200 relay hours."
+        );
+        assert_eq!(n.upgrade, "Upgrade to Pro");
+        // Nothing to say without a warning or an overage; known reasons are not doubled.
+        assert_eq!(with_warnings(false, vec![], &[]), (false, vec![]));
+        assert_eq!(
+            with_warnings(
+                true,
+                vec!["hours".into()],
+                &["free_limit_relay_hours".into()]
+            ),
+            (true, vec!["hours".to_owned()])
+        );
     }
 
     #[test]
@@ -293,7 +381,10 @@ mod tests {
 
     #[test]
     fn upgrade_falls_back_to_the_account_app_billing_page() {
-        let mut u = free();
+        let mut u = RelayUsage {
+            plan: "pro".into(),
+            ..free()
+        };
         u.soft_limit_reached = true;
         u.reasons = vec!["hours".into()];
         // The relay's page wins.
@@ -318,6 +409,7 @@ mod tests {
     fn only_https_upgrade_links_are_kept() {
         for bad in ["http://cua.ai/pricing", "javascript:alert(1)", ""] {
             let u = RelayUsage {
+                plan: "pro".into(),
                 upgrade_url: Some(bad.into()),
                 soft_limit_reached: true,
                 ..free()

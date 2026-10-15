@@ -2004,6 +2004,8 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                         })
                         .collect(),
                     invites: t.invites.into_iter().map(|i| i.email).collect(),
+                    payment_failed: t.org.status == "grace",
+                    payment_failed_until: t.org.grace_until,
                 })
                 .collect(),
         },
@@ -2980,7 +2982,8 @@ mod teams_tests {
                     role: "admin".into(),
                     plan: "teams".into(),
                     plan_ends_at: None,
-                    status: "active".into(),
+                    status: "grace".into(),
+                    grace_until: Some("2026-11-03T10:00:00Z".into()),
                     seats: 3,
                     features: vec!["team_machines".into()],
                 },
@@ -2997,9 +3000,12 @@ mod teams_tests {
         };
         let input = teams_input(snapshot, "https://app.cua.ai".into());
         let rows = core::teams::rows(&input);
-        assert_eq!(rows[0].label, "acme");
-        assert_eq!(rows[2].label, "cy@example.com");
-        assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
+        // The grace notice (this account is an admin, not the owner) comes first.
+        assert_eq!(rows[0].id, "payment-failed");
+        assert!(rows[0].value.as_deref().unwrap().contains("by 3 Nov 2026"));
+        assert_eq!(rows[1].label, "acme");
+        assert_eq!(rows[3].label, "cy@example.com");
+        assert_eq!(rows[3].value.as_deref(), Some("(Invited)"));
     }
 }
 

@@ -1381,7 +1381,7 @@ struct ViewModelTests {
             AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
                          members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
                                    AppTeamPersonInput(email: "grace@example.com", role: "member")],
-                         invites: ["linus@example.com"]),
+                         invites: ["linus@example.com"], paymentFailed: false, paymentFailedUntil: nil),
         ])
         await model.loadSettings()
         let rows = model.settingsPage.sections.flatMap(\.rows)

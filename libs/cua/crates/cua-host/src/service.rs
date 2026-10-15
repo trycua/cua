@@ -318,12 +318,13 @@ fn windows_quote(arg: &str) -> String {
     out
 }
 
-/// The Task Scheduler XML: at logon of `user` (DOMAIN\\name, or empty for
-/// any user), interactive token, restart on failure, no time limit.
-/// Environment variables are passed as `--env`-free arguments: the task
-/// runs `cmd.exe /d /c set K=V&& … && driver args` only when `env` is
-/// non-empty, since tasks have no environment block.
-pub fn windows_task_xml(spec: &ServiceSpec, user: &str) -> String {
+/// The program and arguments that run the driver in the user's session:
+/// `conhost.exe --headless cmd.exe /d /c [set K=V&& ...] driver args >> log`.
+/// `--headless` keeps the console out of sight; a visible one was an empty
+/// window that stopped the host when closed. `system_root` is
+/// `%SystemRoot%` in the task (which expands it) and the real directory in
+/// the logon entry.
+pub fn windows_action(spec: &ServiceSpec, system_root: &str) -> (String, String) {
     let driver = std::iter::once(windows_quote(&spec.program.to_string_lossy()))
         .chain(spec.args.iter().map(|a| windows_quote(a)))
         .collect::<Vec<_>>()
@@ -333,10 +334,22 @@ pub fn windows_task_xml(spec: &ServiceSpec, user: &str) -> String {
     for (k, v) in &spec.env {
         chain.push_str(&format!("set \"{k}={v}\"&& "));
     }
-    let (command, arguments) = (
-        "%SystemRoot%\\System32\\cmd.exe".to_string(),
-        format!("/d /c {chain}{driver} >> {log} 2>&1"),
-    );
+    (
+        format!("{system_root}\\System32\\conhost.exe"),
+        format!(
+            "--headless {} /d /c {chain}{driver} >> {log} 2>&1",
+            windows_quote(&format!("{system_root}\\System32\\cmd.exe"))
+        ),
+    )
+}
+
+/// The Task Scheduler XML: at logon of `user` (DOMAIN\\name, or empty for
+/// any user), interactive token, restart on failure, no time limit.
+/// Environment variables are passed as `--env`-free arguments: the task
+/// runs `cmd.exe /d /c set K=V&& … && driver args` only when `env` is
+/// non-empty, since tasks have no environment block.
+pub fn windows_task_xml(spec: &ServiceSpec, user: &str) -> String {
+    let (command, arguments) = windows_action(spec, "%SystemRoot%");
     let user_id = if user.is_empty() {
         String::new()
     } else {
@@ -403,7 +416,20 @@ pub fn windows_task_xml(spec: &ServiceSpec, user: &str) -> String {
 
 // ---------------------------------------------------------------- runners
 
+/// Windows: start console helpers (schtasks, reg) without a console window;
+/// the Spaces app calls them from a GUI process.
+fn no_window(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn run(cmd: &mut Command) -> Result<String> {
+    no_window(cmd);
     let shown = format!("{cmd:?}");
     let out = cmd
         .output()
@@ -712,7 +738,21 @@ fn remove_legacy_task() {
     }
 }
 
-/// Windows scheduled task at logon.
+/// HKCU `Run` value of the logon entry.
+pub const WINDOWS_RUN_VALUE: &str = "CuaSpacesdHost";
+const WINDOWS_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// The logon-entry command line: the task's action with real paths.
+pub fn windows_run_value(spec: &ServiceSpec, system_root: &str) -> String {
+    let (command, arguments) = windows_action(spec, system_root);
+    format!("{} {arguments}", windows_quote(&command))
+}
+
+/// Windows: a scheduled task at logon, or, where Task Scheduler refuses this
+/// user (CUA-1702: `schtasks /Create` said "Access is denied" from a normal,
+/// non-elevated desktop session), a per-user logon entry (HKCU `Run`) plus a
+/// hidden process started now. Both run the driver in the user's own
+/// session with no administrator rights; the task adds restart on failure.
 pub struct WindowsTask {
     /// Where the task XML is written before `schtasks /Create /XML`.
     pub xml_path: PathBuf,
@@ -733,6 +773,65 @@ impl WindowsTask {
             user,
         }
     }
+
+    /// The spec the logon entry runs (`service.json` next to the XML).
+    fn spec_path(&self) -> PathBuf {
+        self.xml_path.with_file_name("service.json")
+    }
+
+    fn run_entry_installed(&self) -> bool {
+        no_window(Command::new("reg").args(["query", WINDOWS_RUN_KEY, "/v", WINDOWS_RUN_VALUE]))
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    fn remove_run_entry(&self) {
+        if self.run_entry_installed() {
+            let _ = run(Command::new("reg").args([
+                "delete",
+                WINDOWS_RUN_KEY,
+                "/v",
+                WINDOWS_RUN_VALUE,
+                "/f",
+            ]));
+        }
+        let _ = std::fs::remove_file(self.spec_path());
+    }
+
+    fn install_run_entry(&self, spec: &ServiceSpec) -> Result<()> {
+        std::fs::write(
+            self.spec_path(),
+            serde_json::to_vec_pretty(spec).map_err(|e| Error::Internal(e.to_string()))?,
+        )?;
+        run(Command::new("reg").args([
+            "add",
+            WINDOWS_RUN_KEY,
+            "/v",
+            WINDOWS_RUN_VALUE,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &windows_run_value(spec, &system_root()),
+            "/f",
+        ]))
+        .map(drop)
+    }
+
+    fn spec(&self) -> Result<ServiceSpec> {
+        serde_json::from_slice(&std::fs::read(self.spec_path())?)
+            .map_err(|e| Error::Service(format!("service.json: {e}")))
+    }
+}
+
+fn system_root() -> String {
+    std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())
+}
+
+/// Whether a `schtasks` failure is Task Scheduler refusing this user.
+fn access_denied(e: &Error) -> bool {
+    let s = e.to_string().to_ascii_lowercase();
+    // English text, and the HRESULT localized Windows prints.
+    s.contains("access is denied") || s.contains("0x80070005")
 }
 
 impl ServiceManager for WindowsTask {
@@ -752,24 +851,72 @@ impl ServiceManager for WindowsTask {
         }
         std::fs::write(&self.xml_path, bytes)?;
         remove_legacy_task();
-        run(Command::new("schtasks").args([
+        let created = run(Command::new("schtasks").args([
             "/Create",
             "/TN",
             WINDOWS_TASK_NAME,
             "/XML",
             &self.xml_path.to_string_lossy(),
             "/F",
-        ]))
-        .map(drop)
+        ]));
+        match created {
+            Ok(_) => {
+                self.remove_run_entry();
+                Ok(())
+            }
+            Err(e) if access_denied(&e) => {
+                tracing::info!("scheduled task refused ({e}); using the logon entry");
+                self.install_run_entry(spec)
+            }
+            Err(e) => Err(e),
+        }
     }
     fn start(&self) -> Result<()> {
-        let _ = run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]));
-        run(Command::new("schtasks").args(["/Run", "/TN", WINDOWS_TASK_NAME])).map(drop)
+        if !self.run_entry_installed() {
+            let _ = run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]));
+            return run(Command::new("schtasks").args(["/Run", "/TN", WINDOWS_TASK_NAME]))
+                .map(drop);
+        }
+        let _ = self.stop();
+        let spec = self.spec()?;
+        let (command, arguments) = windows_action(&spec, &system_root());
+        let mut cmd = Command::new(&command);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // The arguments are a cmd.exe line, passed as is.
+            cmd.raw_arg(&arguments);
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+            const DETACHED_PROCESS: u32 = 0x0000_0008;
+            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+        }
+        #[cfg(not(windows))]
+        cmd.arg(&arguments);
+        cmd.current_dir(&spec.working_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(drop)
+            .map_err(|e| Error::Service(format!("start {command}: {e}")))
     }
     fn stop(&self) -> Result<()> {
-        run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME])).map(drop)
+        if !self.run_entry_installed() {
+            return run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]))
+                .map(drop);
+        }
+        if let Ok(spec) = self.spec() {
+            for pid in windows_procs::pids_of(&spec.program) {
+                let _ = run(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]));
+            }
+        }
+        Ok(())
     }
     fn uninstall(&self) -> Result<()> {
+        if self.run_entry_installed() {
+            let _ = self.stop();
+        }
+        self.remove_run_entry();
         let _ = run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]));
         let _ = run(Command::new("schtasks").args(["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]));
         let _ = std::fs::remove_file(&self.xml_path);
@@ -777,9 +924,29 @@ impl ServiceManager for WindowsTask {
         Ok(())
     }
     fn state(&self) -> ServiceState {
-        let out = Command::new("schtasks")
-            .args(["/Query", "/TN", WINDOWS_TASK_NAME, "/FO", "CSV", "/NH"])
-            .output();
+        if self.run_entry_installed() {
+            let pids = self
+                .spec()
+                .map(|s| windows_procs::pids_of(&s.program))
+                .unwrap_or_default();
+            return ServiceState {
+                installed: true,
+                running: !pids.is_empty(),
+                kind: "windows-task".into(),
+                detail: format!(
+                    "logon entry {WINDOWS_RUN_KEY}\\{WINDOWS_RUN_VALUE}; pids {pids:?}"
+                ),
+            };
+        }
+        let out = no_window(Command::new("schtasks").args([
+            "/Query",
+            "/TN",
+            WINDOWS_TASK_NAME,
+            "/FO",
+            "CSV",
+            "/NH",
+        ]))
+        .output();
         let (installed, text) = match out {
             Ok(o) if o.status.success() => (true, String::from_utf8_lossy(&o.stdout).to_string()),
             _ => (false, String::new()),
@@ -790,6 +957,70 @@ impl ServiceManager for WindowsTask {
             kind: "windows-task".into(),
             detail: text.trim().to_string(),
         }
+    }
+}
+
+/// Running processes by executable path (the logon entry has no pidfile:
+/// the driver it starts at logon is not our child).
+mod windows_procs {
+    use std::path::Path;
+
+    #[cfg(windows)]
+    pub fn pids_of(program: &Path) -> Vec<u32> {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+        };
+        let want = program.to_string_lossy().to_lowercase();
+        let want_name = program
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let mut out = vec![];
+        // SAFETY: plain Win32 calls on handles we own and close; buffers
+        // are sized and their lengths passed.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE {
+                return out;
+            }
+            let mut e: PROCESSENTRY32W = std::mem::zeroed();
+            e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut ok = Process32FirstW(snap, &mut e) != 0;
+            while ok {
+                let len = e
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(e.szExeFile.len());
+                let name = String::from_utf16_lossy(&e.szExeFile[..len]).to_lowercase();
+                if name == want_name {
+                    let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, e.th32ProcessID);
+                    if !h.is_null() {
+                        let mut buf = [0u16; 1024];
+                        let mut n = buf.len() as u32;
+                        if QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut n) != 0
+                            && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase() == want
+                        {
+                            out.push(e.th32ProcessID);
+                        }
+                        CloseHandle(h);
+                    }
+                }
+                ok = Process32NextW(snap, &mut e) != 0;
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+
+    #[cfg(not(windows))]
+    pub fn pids_of(_program: &Path) -> Vec<u32> {
+        vec![]
     }
 }
 
@@ -1176,6 +1407,40 @@ mod tests {
         assert!(x.contains(r"&gt;&gt; C:\Users\Ada\.cua\host\driver.log 2&gt;&amp;1"));
         let any = windows_task_xml(&s, "");
         assert!(!any.contains("<UserId>"));
+    }
+
+    #[test]
+    fn windows_driver_runs_in_a_headless_console() {
+        let mut s = spec();
+        s.program = r"C:\Users\Ada\.cua\host\bin\cua-spacesd.exe".into();
+        s.log_path = r"C:\Users\Ada\.cua\host\driver.log".into();
+        let x = windows_task_xml(&s, r"PC\Ada");
+        assert!(x.contains(r"<Command>%SystemRoot%\System32\conhost.exe</Command>"));
+        assert!(x.contains(r"<Arguments>--headless %SystemRoot%\System32\cmd.exe /d /c set "));
+        // The logon entry runs the same line with real paths.
+        let v = windows_run_value(&s, r"C:\Windows");
+        assert!(v.starts_with(
+            r"C:\Windows\System32\conhost.exe --headless C:\Windows\System32\cmd.exe /d /c set "
+        ));
+        assert!(v.contains(r"C:\Users\Ada\.cua\host\bin\cua-spacesd.exe"));
+        assert!(v.ends_with(r">> C:\Users\Ada\.cua\host\driver.log 2>&1"));
+        let v = windows_run_value(&s, r"C:\Program Files\Win");
+        assert!(v.starts_with(r#""C:\Program Files\Win\System32\conhost.exe" --headless "#));
+    }
+
+    #[test]
+    fn a_refused_scheduled_task_is_recognized() {
+        // What schtasks printed on a normal Windows 11 desktop (CUA-1702).
+        let e = Error::Service(
+            r#""schtasks" "/Create" "/TN" "Cua\SpacesdHost" "/XML" "C:\Users\a\.cua\host\task.xml" "/F" failed: ERROR: Access is denied."#.into(),
+        );
+        assert!(access_denied(&e));
+        assert!(access_denied(&Error::Service(
+            "FEHLER: (0x80070005)".into()
+        )));
+        assert!(!access_denied(&Error::Service(
+            "ERROR: The task XML is malformed.".into()
+        )));
     }
 
     #[test]

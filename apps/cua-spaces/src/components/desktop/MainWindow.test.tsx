@@ -62,7 +62,8 @@ describe("MainWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     // No Cua Volume page without its experiment (Settings, Experiments).
     expect(screen.queryByRole("heading", { name: "Cua Volume" })).toBeNull();
-    fireEvent.click(await screen.findByText("Access other machines"));
+    await screen.findByText("Access other machines");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
     expect(await screen.findByRole("listbox", { name: "Cua Cloud" })).toBeInTheDocument();
     expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });

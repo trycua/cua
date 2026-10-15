@@ -26,6 +26,9 @@ public struct OnboardingView: View {
     var onCancelSignIn: (() -> Void)?
     /// The page a waiting sign-in finishes on, to open it again.
     var signInURL: URL?
+    /// The This machine page's selection (nil: the core's preselected one).
+    /// Choosing only selects; Continue moves on.
+    @State private var selectedMode: AppOnboardingMode?
 
     public init(onboarding: OnboardingModel, onSignIn: (() async -> String?)? = nil,
                 signInPhase: AppSignInPhase = .idle, onCancelSignIn: (() -> Void)? = nil, signInURL: URL? = nil) {
@@ -257,7 +260,7 @@ public struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(v.choices, id: \.label) { choice in
                         Button {
-                            if choice.mode == .host { onboarding.host.openForm() } else { onboarding.send(.modeChosen(mode: .client)) }
+                            selectedMode = choice.mode
                         } label: {
                             Text(choice.label)
                                 .fontWeight(.semibold)
@@ -269,11 +272,10 @@ public struct OnboardingView: View {
                         .buttonStyle(.plain)
                         .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(choice.preselected ? Color.primary : Color(nsColor: .separatorColor),
-                                          lineWidth: choice.preselected ? 2 : 1))
+                            .strokeBorder(choice.mode == currentMode(v) ? Color.primary : Color(nsColor: .separatorColor),
+                                          lineWidth: choice.mode == currentMode(v) ? 2 : 1))
+                        .accessibilityAddTraits(choice.mode == currentMode(v) ? .isSelected : [])
                         .accessibilityIdentifier(choice.mode == .host ? "onboarding-host" : "onboarding-client")
-                        // Return picks the preselected choice (the page has no other primary).
-                        .keyboardShortcut(choice.preselected ? .defaultAction : nil)
                     }
                 }
             }
@@ -505,7 +507,11 @@ public struct OnboardingView: View {
                 .accessibilityIdentifier("agents-setup")
             }
         case .mode:
-            EmptyView()
+            Button(v.primaryLabel) { continueMode(v) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("onboarding-continue")
         case .drive:
             Button(v.primaryLabel) { Task { await onboarding.continueDrive() } }
                 .buttonStyle(.borderedProminent)
@@ -520,6 +526,15 @@ public struct OnboardingView: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(onboarding.state.cliInstalling)
         }
+    }
+
+    private func currentMode(_ v: AppOnboardingView) -> AppOnboardingMode {
+        selectedMode ?? v.preselectedMode
+    }
+
+    /// Continue on This machine: the selected mode (host opens its form).
+    private func continueMode(_ v: AppOnboardingView) {
+        if currentMode(v) == .host { onboarding.host.openForm() } else { onboarding.send(.modeChosen(mode: .client)) }
     }
 
     private func skipShows(_ v: AppOnboardingView) -> Bool {
@@ -546,7 +561,7 @@ public struct OnboardingView: View {
         case .agents: onboarding.finishAgents(skipped: true)
         case .presentation: onboarding.send(.presentationDone)
         case .drive: Task { await onboarding.continueDrive() }
-        case .mode: onboarding.send(.modeChosen(mode: .client))
+        case .mode: continueMode(onboarding.view)
         case .done: onboarding.finish()
         }
     }
@@ -598,67 +613,40 @@ struct PresentationCardView: View {
     }
 }
 
-/// Done's example prompts (the core's), one quoted line each, scrolling
-/// up slowly and continuously to suggest what to ask a coding agent. Not
-/// interactive: it pauses under the pointer, and with Reduce Motion it is a
-/// static list of the first rows.
+/// Done's example prompts (the core's): "Try asking your agent:" and a few
+/// static lines. Each copies to the clipboard on click and says "Copied".
 struct PromptTicker: View {
     let prompts: [String]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.onboardingMotionStill) private var motionStill
-    @State private var origin = Date()
-    @State private var pausedAt: Date?
-
-    static let rowHeight: CGFloat = 22
-    static let visibleRows = 3
-    /// Points per second: a row every 4 seconds (the Tauri app's too).
-    static let speed: CGFloat = rowHeight / 4
+    @State private var copied: String?
 
     var body: some View {
-        let height = Self.rowHeight * CGFloat(Self.visibleRows + 1)
-        Group {
-            if reduceMotion || motionStill {
-                rows(Array(prompts.prefix(Self.visibleRows)))
-            } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: pausedAt != nil)) { context in
-                    let cycle = Self.rowHeight * CGFloat(prompts.count)
-                    let elapsed = (pausedAt ?? context.date).timeIntervalSince(origin)
-                    let offset = (CGFloat(elapsed) * Self.speed).truncatingRemainder(dividingBy: max(cycle, 1))
-                    rows(prompts + prompts)
-                        .offset(y: -offset)
-                        .frame(height: height, alignment: .top)
-                        .clipped()
-                        .mask(LinearGradient(stops: [
-                            .init(color: .clear, location: 0), .init(color: .black, location: 0.125),
-                            .init(color: .black, location: 0.875), .init(color: .clear, location: 1),
-                        ], startPoint: .top, endPoint: .bottom))
-                }
-                .onHover { inside in
-                    if inside {
-                        pausedAt = Date()
-                    } else if let at = pausedAt {
-                        origin += Date().timeIntervalSince(at)
-                        pausedAt = nil
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Try asking your agent:")
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 2)
+            ForEach(prompts, id: \.self) { text in
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    copied = text
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        if copied == text { copied = nil }
                     }
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("\u{201C}\(text)\u{201D}")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if copied == text { Text("Copied") }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(.rect)
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Example prompts")
-                .accessibilityValue(prompts.joined(separator: ", "))
+                .buttonStyle(.plain)
+                .accessibilityHint("Copies this prompt")
             }
         }
-        .frame(height: height, alignment: .top)
-    }
-
-    private func rows(_ items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, text in
-                Text("\u{201C}\(text)\u{201D}")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(height: Self.rowHeight, alignment: .leading)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

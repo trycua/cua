@@ -32,6 +32,8 @@ struct TeleportReview: View {
                     Text("Off by default. Passwords are re-encrypted for the browser in the Space and need " +
                          "that browser to have been opened once.")
                         .font(.caption).foregroundStyle(.secondary)
+                    // The picker only where the Keyvault keeps the choice.
+                    if review.includePasswords && !review.passwordSummary.isEmpty { passwords }
                 }
             }
             // What happens, when there is nothing to choose (the core's).
@@ -146,6 +148,52 @@ struct TeleportReview: View {
             .listStyle(.inset)
             .frame(height: min(CGFloat(max(review.domains.count, 1)) * 26 + CGFloat(review.domains.filter { $0.unavailable > 0 }.count) * 14 + 8, 190))
             .accessibilityIdentifier("review-sites")
+        }
+    }
+
+    /// The saved passwords to pick, as the sites are: a site with how many
+    /// it holds (reading the app), or each saved password's site and
+    /// username (from the Keyvault). Never a value.
+    @ViewBuilder private var passwords: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search saved passwords", text: Binding(get: { review.passwordQuery },
+                                                              set: { teleport.send(.passwordQuery(text: $0)) }))
+                .textFieldStyle(.plain)
+            Text(review.passwordSummary).font(.caption).foregroundStyle(.secondary)
+            Button("All") { teleport.send(.selectShownPasswords(value: true)) }.buttonStyle(.link)
+            Button("None") { teleport.send(.selectShownPasswords(value: false)) }.buttonStyle(.link)
+        }
+        .accessibilityIdentifier("review-passwords-search")
+        if review.passwords.isEmpty {
+            Text("No saved passwords match.").font(.callout).foregroundStyle(.secondary)
+        } else {
+            List {
+                ForEach(review.passwords, id: \.key) { p in
+                    HStack(spacing: 8) {
+                        TriCheckbox(state: p.selected ? .on : .off,
+                                    label: "Send \([p.site, p.username].filter { !$0.isEmpty }.joined(separator: " "))") {
+                            teleport.send(.togglePassword(key: p.key))
+                        }
+                        Image(systemName: "key").foregroundStyle(.secondary).frame(width: 18)
+                        Text(p.site).lineLimit(1)
+                        if !p.username.isEmpty {
+                            Text(p.username).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        if !p.counts.isEmpty {
+                            Text(p.counts).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { teleport.send(.togglePassword(key: p.key)) }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("review-password-\(p.key)")
+                }
+            }
+            .listStyle(.inset)
+            .frame(height: min(CGFloat(max(review.passwords.count, 1)) * 26 + 8, 190))
+            .accessibilityIdentifier("review-passwords-list")
         }
     }
 

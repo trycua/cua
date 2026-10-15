@@ -272,6 +272,639 @@
         "entry": "com.google.Chrome",
         "error": null,
         "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": false,
+          "rows": [],
+          "summary": ""
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "domains-loaded"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": false,
+          "rows": [],
+          "summary": ""
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "vault-items"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [],
+          "summary": ""
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "toggle-passwords"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [],
+          "summary": ""
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "toggle-password"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [ ]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "1 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "vault-items"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [ ]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "1 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "toggle-passwords"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "2 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "toggle-password"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]"
+          ],
+          "summary": "2 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "password-query"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [ ]"
+          ],
+          "summary": "1 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "select-shown-passwords"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [ ]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "1 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "password-query"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [ ]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "1 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "vault-items"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "github.com octocat () [x]",
+            "google.com ada@example.test () [x]"
+          ],
+          "summary": "2 of 2 passwords"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "1 saved item from the Keyvault",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "send-from"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 1 saved password",
+          "on": true,
+          "rows": [
+            "github.com octocat () [x]",
+            "google.com ada@example.test () [ ]"
+          ],
+          "summary": "1 of 2 passwords"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "1 saved item from the Keyvault",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "toggle-password"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 2 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [ ]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "1 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "send-from"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "2 of 3 sites"
+        },
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "toggle-password"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "2 of 3 sites"
+        },
         "permille": 0,
         "planSensitive": [
           "sign_ins"
@@ -305,6 +938,16 @@
         "entry": "com.google.Chrome",
         "error": null,
         "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "2 of 3 sites"
+        },
         "permille": 0,
         "planSensitive": [
           "sign_ins"
@@ -338,6 +981,16 @@
         "entry": "com.google.Chrome",
         "error": null,
         "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "2 of 3 sites"
+        },
         "permille": 0,
         "planSensitive": [
           "sign_ins"
@@ -371,6 +1024,16 @@
         "entry": "com.google.Chrome",
         "error": null,
         "move": "app_with_state",
+        "passwords": {
+          "label": "Also send 3 saved passwords",
+          "on": true,
+          "rows": [
+            "bank.example  (1 password) [x]",
+            "github.com  (2 passwords) [x]",
+            "google.com  (1 password) [ ]"
+          ],
+          "summary": "2 of 3 sites"
+        },
         "permille": 0,
         "planSensitive": [
           "sign_ins"
@@ -403,6 +1066,14 @@
         "acknowledgeRelayPlaintext": false,
         "acknowledgeSensitive": true,
         "approved": true,
+        "cookieDomains": [
+          "github.com"
+        ],
+        "includePasswords": true,
+        "passwordDomains": [
+          "bank.example",
+          "github.com"
+        ],
         "saveToKeyvault": false
       }
     }

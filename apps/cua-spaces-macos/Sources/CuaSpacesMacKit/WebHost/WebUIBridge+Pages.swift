@@ -667,7 +667,8 @@ extension WebUIBridge {
             cookieDomains: c["cookieDomains"] as? [String],
             exclude: c["exclude"] as? [String] ?? [],
             fromVault: c["fromVault"] as? [String],
-            includePasswords: c["includePasswords"] as? Bool ?? false))
+            includePasswords: c["includePasswords"] as? Bool ?? false,
+            passwordDomains: c["passwordDomains"] as? [String]))
     }
 
     /// A run's report, as the page reads it (`RunReport`).

@@ -2895,6 +2895,12 @@
           "items": {
             "$ref": "#/$defs/GpuChoice"
           }
+        },
+        "nameSeed": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [

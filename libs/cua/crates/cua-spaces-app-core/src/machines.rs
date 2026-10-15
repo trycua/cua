@@ -974,6 +974,7 @@ mod tests {
             clouds: vec![],
             experiments: crate::experiments::Experiments::default(),
             gpus: None,
+            name_seed: None,
         };
         let state = wizard::initial(&env);
         let offered: Vec<String> = wizard::placement_options(&state, &env)

@@ -115,6 +115,9 @@ export interface WizardEnv {
   hosts?: WizardHost[];
   experiments?: Experiments;
   gpus?: GpuChoice[] | null;
+  /** Picks the name an unnamed Space gets (`wizard::generated_space_name`):
+   * the wasm core has no randomness of its own, so the page gives one. */
+  nameSeed?: number | null;
 }
 
 /** `spaces.createOptions`: what New Space needs from the host beyond Spaces,
@@ -151,6 +154,16 @@ export type WizardState = Record<string, unknown> & {
 };
 
 export type WizardAction = { type: string } & Record<string, unknown>;
+
+/** A Resources slider whose value can be typed (`wizard::ResourceField`). */
+export type ResourceField = "cpus" | "memory" | "disk";
+
+/** A slider's value being typed (`wizard::ResourceEditView`). */
+export interface ResourceEdit {
+  field: ResourceField;
+  text: string;
+  error: string | null;
+}
 
 export interface WizardTile {
   id: string;
@@ -294,7 +307,12 @@ export interface WizardView {
   resourceFacts: WizardFact[];
   resourcesError: string | null;
   gpu: GpuRow | null;
+  /** A slider's value being typed (its number was clicked), with why it
+   * cannot be used (the slider's limits). */
+  resourceEdit?: ResourceEdit | null;
   name: string;
+  /** The name the Space gets: the one typed, else the generated one. */
+  spaceName?: string;
   nameInvalid: boolean;
   nameError: string | null;
   openWhenReady: boolean;

@@ -179,6 +179,7 @@ The user's answer to the consent screen.
 | `exclude` | `Vec<String>` | `[]` | Consent items (their keys) the user turned off. |
 | `from_vault` / `fromVault` | `Option<Vec<String>>` | `None` | Send these saved Keyvault items (ids) instead of reading the live app: nothing is captured from the host. |
 | `include_passwords` / `includePasswords` | `bool` | `false` | Also send the saved passwords: only when ticked in the review. |
+| `password_domains` / `passwordDomains` | `Option<Vec<String>>` | `None` | The sites whose saved passwords to send (the review's own choice; `None`: those of `cookie_domains`). |
 
 ## `TeleportConsentItem` record
 

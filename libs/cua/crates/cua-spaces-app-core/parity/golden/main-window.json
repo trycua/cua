@@ -325,7 +325,7 @@
           "allow: Also allow [Emails, optional] = "
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=- allow=-",
+        "request": "mode=relay relay=- direct=- name=- allow=-",
         "title": "Set up this machine"
       },
       "hostForm": "initial"
@@ -343,7 +343,7 @@
           "allow: Also allow [Emails, optional] = "
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=-",
+        "request": "mode=relay relay=- direct=- name=Studio allow=-",
         "title": "Set up this machine"
       },
       "hostForm": "set-name"
@@ -361,7 +361,7 @@
           "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "request": "mode=relay relay=- direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this machine"
       },
       "hostForm": "set-allow"
@@ -378,10 +378,10 @@
           "profile: Use for [-] = desktop",
           "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = https://relay.cua.ai (advanced)"
+          "relay: Relay [Default relay] =  (advanced)"
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "request": "mode=relay relay=- direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this machine"
       },
       "hostForm": "toggle-advanced"
@@ -398,7 +398,7 @@
           "profile: Use for [-] = desktop",
           "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = ftp://relay !invalid (advanced)"
+          "relay: Relay [Default relay] = ftp://relay !invalid (advanced)"
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
         "request": null,
@@ -418,7 +418,7 @@
           "profile: Use for [-] = desktop",
           "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = https://relay.example/ (advanced)"
+          "relay: Relay [Default relay] = https://relay.example/ (advanced)"
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
@@ -528,7 +528,7 @@
           "profile: Use for [-] = desktop",
           "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay [https://relay.cua.ai] = https://relay.example/ (advanced)"
+          "relay: Relay [Default relay] = https://relay.example/ (advanced)"
         ],
         "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
         "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",

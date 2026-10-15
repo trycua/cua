@@ -323,6 +323,10 @@ pub fn default_relay_url() -> String {
     cua_home::env::relay_url()
 }
 
+/// The relay field's hint while empty. Not a URL: the page's core cannot
+/// know the host's environment, and an empty field defers to the host.
+pub const RELAY_PLACEHOLDER: &str = "Default relay";
+
 /// The direct mode's default listen address.
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:3211";
 
@@ -1476,7 +1480,11 @@ impl Default for HostFormState {
             advanced: false,
             direct: false,
             listen: DEFAULT_LISTEN.into(),
-            relay_url: default_relay_url(),
+            // Empty: the form leaves the relay to the host, which resolves it
+            // from its own `CUA_ENV` / `CUA_RELAY_URL`. This core also runs
+            // in the page (wasm), which has no environment and would name
+            // the production relay under `CUA_ENV=staging` (CUA-1610).
+            relay_url: String::new(),
             busy: false,
             error: None,
             spare: false,
@@ -1616,13 +1624,6 @@ fn form_request(s: &HostFormState) -> Result<HostSetupRequest, String> {
         share_desktop: None,
         provide_spaces: None,
     })
-    .and_then(|r| {
-        if r.mode == "relay" && r.relay_url.is_none() {
-            Err("relay URL needed".into())
-        } else {
-            Ok(r)
-        }
-    })
 }
 
 /// Advances the form.
@@ -1739,7 +1740,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "relay",
                 "Relay",
-                &default_relay_url(),
+                RELAY_PLACEHOLDER,
                 &s.relay_url,
                 bad,
                 true,
@@ -2223,6 +2224,25 @@ mod tests {
         let mut other = me.clone();
         other.id = "local:x".into();
         assert_eq!(connected_now(&other), 0);
+    }
+
+    #[test]
+    fn the_form_leaves_the_relay_to_the_host_unless_named() {
+        // CUA-1610: the page's core has no `CUA_ENV`; a prefilled prod relay
+        // was sent with the staging token. Empty means "the host decides".
+        let s = form_initial();
+        assert_eq!(s.relay_url, "");
+        let r = form_view(&s, None).request.expect("valid");
+        assert_eq!(r.mode, "relay");
+        assert_eq!(r.relay_url, None);
+        let named = form_reduce(
+            &s,
+            &HostFormAction::SetRelayUrl {
+                url: " https://relay.example/ ".into(),
+            },
+        );
+        let r = form_view(&named, None).request.expect("valid");
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example"));
     }
 
     #[test]

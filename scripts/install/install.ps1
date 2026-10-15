@@ -307,7 +307,11 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
         Stop-Install "no verifiable signature for $(Split-Path -Leaf $File) (install minisign or cosign)"
     }
     if (-not $ok -and ($Entry.PSObject.Properties['minisig'] -or $Entry.PSObject.Properties['cosign_bundle'])) {
-        Write-Warning "$(Split-Path -Leaf $File) is signed, but neither minisign nor cosign is installed; verified its sha256 only (install cosign, or pass -RequireSignature to insist)"
+        # One quiet line per run: sha256 is checked either way.
+        if (-not $script:SigNoted) {
+            $script:SigNoted = $true
+            Write-Info 'checked sha256 (cosign is not installed, so release signatures were not checked; -RequireSignature makes that an error)'
+        }
     }
 }
 

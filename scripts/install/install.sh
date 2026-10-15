@@ -24,7 +24,8 @@
 #   --relay URL         relay for --pair (default https://relay.cua.ai)
 #   --version VERSION   install this CLI release (default: latest)
 #   --prefix DIR        install under DIR (DIR/bin, DIR/Applications)
-#   --modify-path       add the bin dir to your shell profile
+#   --modify-path       add the bin dir to your shell profile without asking
+#   --no-modify-path    never edit your shell profile (print the one-line command)
 #   --no-onboarding     do not run `cua auth login` afterwards
 #   --require-signature fail unless a signature (minisign/cosign) verifies
 #   --dry-run           print what would happen, change nothing
@@ -70,6 +71,8 @@ relay_url=""
 version=""
 prefix=""
 modify_path=0
+no_modify_path=0
+sig_noted=0
 onboarding=1
 require_sig=0
 dry_run=0
@@ -158,6 +161,7 @@ parse_args() {
             ;;
         --prefix=*) prefix="${1#--prefix=}" ;;
         --modify-path) modify_path=1 ;;
+        --no-modify-path) no_modify_path=1 ;;
         --no-onboarding) onboarding=0 ;;
         --require-signature) require_sig=1 ;;
         --dry-run) dry_run=1 ;;
@@ -581,7 +585,11 @@ verify_signature() { # file entry
         die "no verifiable signature for ${1##*/} (install minisign or cosign)"
     fi
     if [ "$sig_ok" = 0 ] && { [ -n "$minisig" ] || [ -n "$bundle" ]; }; then
-        warn "${1##*/} is signed, but neither minisign nor cosign is installed; verified its sha256 only (install cosign, or pass --require-signature to insist)"
+        # One quiet line per run: sha256 is checked either way.
+        if [ "$sig_noted" = 0 ]; then
+            sig_noted=1
+            info "checked sha256 (cosign is not installed, so release signatures were not checked; --require-signature makes that an error)"
+        fi
     fi
 }
 
@@ -657,7 +665,17 @@ ensure_path() { # dir
     fi
     profile="$(profile_file)"
     line="$(path_line "$1" "$profile")"
-    if [ "$modify_path" = 1 ]; then
+    if [ "$modify_path" = 0 ] && [ "$no_modify_path" = 0 ] && [ "$assume_yes" = 0 ] && [ "$dry_run" = 0 ] && [ "${CUA_INSTALL_NONINTERACTIVE:-0}" != 1 ] && tty_ok; then
+        # Interactive default: offer to add it (Enter = yes).
+        printf 'Add %s to PATH in %s so cua works in new terminals? [Y/n] ' "$1" "$profile" >/dev/tty
+        answer=""
+        read -r answer </dev/tty || answer=""
+        case "$answer" in
+        [nN] | [nN][oO]) ;;
+        *) modify_path=1 ;;
+        esac
+    fi
+    if [ "$modify_path" = 1 ] && [ "$no_modify_path" = 0 ]; then
         if [ -f "$profile" ] && grep -qF "$line" "$profile"; then
             return
         fi
@@ -667,10 +685,10 @@ ensure_path() { # dir
         fi
         mkdir -p "$(dirname "$profile")"
         printf '\n# Added by the cua installer\n%s\n' "$line" >>"$profile"
-        info "added $1 to PATH in $profile (open a new shell to pick it up)"
+        info "added $1 to PATH in $profile (open a new terminal to pick it up)"
     else
         say ""
-        say "$1 is not on your PATH. Add it with:"
+        say "$1 is not on your PATH. Add it with this one line, then open a new terminal:"
         say "  echo '$line' >> $profile"
         say "(or rerun the installer with --modify-path)"
     fi

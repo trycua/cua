@@ -399,6 +399,29 @@ if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then
     check "root + apt: the app is the .deb" sh -c "[ $status = 0 ] && grep -q 'apt-get install' '$work/out' && grep -q 'cua-spaces-$version-linux-x64.deb' '$work/out'"
 fi
 
+# PATH: not on PATH prints one exact line for the detected shell; never edits
+# the profile without consent; --no-modify-path stays silent about editing.
+inst SHELL=/bin/zsh -- --yes --cli-only --prefix "$work/pp1"
+check "PATH hint: exact one-liner for the user's shell (.zshrc)" sh -c "grep -qF \"echo 'export PATH=\\\"$work/pp1/bin:\\\$PATH\\\"' >> $home/.zshrc\" '$work/out' && [ ! -e '$home/.zshrc' ]"
+inst -- --yes --cli-only --no-modify-path --prefix "$work/pp2"
+check "--no-modify-path: profile untouched, hint printed" sh -c "[ $status = 0 ] && grep -q 'is not on your PATH' '$work/out' && [ ! -e '$home/.profile' ]"
+inst -- --yes --cli-only --modify-path --no-modify-path --prefix "$work/pp3"
+check "--no-modify-path wins over --modify-path" absent "$home/.profile"
+inst -- --pair K7QM-4XPB-2RHD --prefix "$work/pp4"
+check "--pair runs the CLI by absolute path even when it is not on PATH" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD' '$home/cua.log' && grep -q 'This machine is added' '$work/out'"
+
+# One quiet info line when signatures cannot be checked (neither minisign nor cosign).
+sig2="$release/sig2"
+mkdir -p "$sig2"
+cp "$tag_dir"/cua-cli-* "$tag_dir"/cua-spaces-"$version"-linux-x64.AppImage "$sig2/"
+for f in "$sig2"/cua-cli-*.tar.gz "$sig2"/*.AppImage; do printf 'sig\n' >"$f.minisig"; done
+python3 "$manifest_tool" --component cli --version "$version" --dir "$sig2" --out "$sig2/cli.json"
+python3 "$manifest_tool" --component app --version "$version" --dir "$sig2" --merge "$sig2/cli.json" --out "$sig2/release-artifacts.json"
+inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg1"
+check "unverifiable signatures: one info line, no warning" sh -c "[ $status = 0 ] && [ \"\$(grep -c 'release signatures were not checked' '$work/out')\" = 1 ] && ! grep -qi 'warning.*minisign' '$work/out'"
+inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
+check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
+
 inst -- --help
 check "--help prints usage" sh -c "[ $status = 0 ] && grep -q -- '--cli-only' '$work/out'"
 
@@ -414,6 +437,27 @@ if script --version 2>/dev/null | grep -q util-linux; then
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
     check "interactive + --no-onboarding: no login" absent "$home/cua2.log"
+
+    # PATH prompt on a terminal: Enter adds it to the profile, n leaves it.
+    if command -v timeout >/dev/null 2>&1; then
+        pty_path() { # KEYS PREFIX
+            home="$work/home.pty.$RANDOM_SEQ"
+            RANDOM_SEQ=$((RANDOM_SEQ + 1))
+            mkdir -p "$home"
+            (
+                sleep 2
+                printf '%b' "$1"
+                sleep 2
+            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/zsh CUA_HOME="$home/.cua" \
+                CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
+                timeout 60 script -qec "$sh_bin '$installer' --cli-only --no-onboarding --prefix '$2'" /dev/null >"$work/out" 2>&1
+            status=$?
+        }
+        pty_path '\r' "$work/pt1"
+        check "PATH prompt: Enter adds the bin dir to .zshrc" sh -c "[ $status = 0 ] && grep -q '$work/pt1/bin' '$home/.zshrc' && grep -q 'Add .* to PATH' '$work/out'"
+        pty_path 'n\r' "$work/pt2"
+        check "PATH prompt: n leaves the profile alone and prints the one-liner" sh -c "[ $status = 0 ] && [ ! -e '$home/.zshrc' ] && grep -q 'is not on your PATH' '$work/out'"
+    fi
 
     # The checklist, driven through a pty. Keys arrive after the prompt shows.
     # tty_inst KEYS ARGS...: run install.sh in a pty with a fresh HOME.

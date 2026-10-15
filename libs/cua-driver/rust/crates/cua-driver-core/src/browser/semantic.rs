@@ -1188,6 +1188,19 @@ mod tests {
     }
 
     #[test]
+    fn not_rendered_count_propagates_through_extend_and_page() {
+        let mut document = SemanticDocument {
+            not_rendered_count: 1,
+            ..Default::default()
+        };
+        document.extend(SemanticDocument {
+            complete: true,
+            ..Default::default()
+        });
+        assert_eq!(document.page(0, 300, None, None).omissions.not_rendered, 1);
+    }
+
+    #[test]
     fn hidden_dom_nodes_do_not_enter_the_visible_working_set() {
         let dom = build_dom_index(&json!({
             "nodeType": 9,

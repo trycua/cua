@@ -1952,6 +1952,97 @@ async fn semantic_snapshot_can_capture_an_inactive_tab_without_activation_calls(
 }
 
 #[tokio::test]
+async fn semantic_background_tab_without_layout_reports_not_rendered() {
+    let visible = fixture_with(|st| st.oopif_present = false).await;
+    let (target, tab) = bind(&visible).await;
+    let visible_snap = semantic_snapshot(&visible, &target, &tab).await;
+
+    let f = fixture_with(|st| {
+        st.oopif_present = false;
+        st.tab_visible = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 1, "{snap}");
+    assert!(snap["snapshot"]["hint"].is_string(), "{snap}");
+    assert_eq!(snap["outline"], visible_snap["outline"]);
+    let without_ref_ids = |refs: &Value| {
+        let mut refs = refs.clone();
+        for entry in refs.as_array_mut().unwrap() {
+            entry.as_object_mut().unwrap().remove("ref");
+        }
+        refs
+    };
+    assert_eq!(
+        without_ref_ids(&snap["refs"]),
+        without_ref_ids(&visible_snap["refs"])
+    );
+    assert_eq!(
+        without_ref_ids(&snap["content_refs"]),
+        without_ref_ids(&visible_snap["content_refs"])
+    );
+    for method in [
+        "Page.bringToFront",
+        "Target.activateTarget",
+        "Page.setWebLifecycleState",
+        "Emulation.setFocusEmulationEnabled",
+    ] {
+        assert!(recorded_calls(&f, method).is_empty(), "{method} was called");
+    }
+}
+
+#[tokio::test]
+async fn semantic_background_tab_with_layout_is_not_flagged() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.tab_visible = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["hint"], Value::Null, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+    assert!(recorded_calls(&f, "Runtime.evaluate").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_background_tab_with_rendered_oopif_is_not_flagged() {
+    let f = fixture_with(|st| st.tab_visible = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["oopif"]["frames"], 1, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["hint"], Value::Null, "{snap}");
+}
+
+#[tokio::test]
+async fn semantic_visible_tab_without_layout_is_not_flagged() {
+    let f = fixture_with(|st| st.oopif_present = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], true, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["hint"], Value::Null, "{snap}");
+    let probes = recorded_calls(&f, "Runtime.evaluate");
+    assert_eq!(probes.len(), 1, "{probes:?}");
+    assert_eq!(
+        probes[0].1["expression"],
+        "document.visibilityState === 'visible'"
+    );
+}
+
+#[tokio::test]
 async fn semantic_snapshot_does_not_capture_unless_requested() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;

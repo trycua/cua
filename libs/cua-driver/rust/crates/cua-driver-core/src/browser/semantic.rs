@@ -730,32 +730,29 @@ fn statically_hidden(attrs: &HashMap<String, String>) -> bool {
     if attrs.contains_key("hidden") || attrs.get("aria-hidden").is_some_and(|v| v == "true") {
         return true;
     }
-    let style = attrs
+    attrs
         .get("style")
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_default();
-    style.contains("display:none")
-        || style.contains("display: none")
-        || style.contains("visibility:hidden")
-        || style.contains("visibility: hidden")
-        || style.contains("opacity:0")
-        || style.contains("opacity: 0")
+        .into_iter()
+        .flat_map(|style| style.split(';'))
+        .filter_map(|declaration| declaration.split_once(':'))
+        .any(|(property, value)| hiding_style(property, value))
+}
+
+fn hiding_style(property: &str, value: &str) -> bool {
+    let value = value.trim().trim_end_matches("!important").trim_end();
+    match property.trim().to_ascii_lowercase().as_str() {
+        "display" => value.eq_ignore_ascii_case("none"),
+        "visibility" => value.eq_ignore_ascii_case("hidden"),
+        "opacity" => value.parse::<f64>().is_ok_and(|opacity| opacity <= 0.0),
+        _ => false,
+    }
 }
 
 fn layout_hidden(layout: &LayoutMeta) -> bool {
     layout
         .styles
-        .get("display")
-        .is_some_and(|value| value.eq_ignore_ascii_case("none"))
-        || layout
-            .styles
-            .get("visibility")
-            .is_some_and(|value| value.eq_ignore_ascii_case("hidden"))
-        || layout
-            .styles
-            .get("opacity")
-            .and_then(|value| value.parse::<f64>().ok())
-            .is_some_and(|opacity| opacity <= 0.0)
+        .iter()
+        .any(|(property, value)| hiding_style(property, value))
 }
 
 fn classify_visibility(
@@ -763,7 +760,8 @@ fn classify_visibility(
     layout: Option<&LayoutMeta>,
     viewport: &Viewport,
 ) -> BrowserVisibility {
-    if dom.is_some_and(|meta| meta.css_hidden) || layout.is_some_and(layout_hidden) {
+    let rendered = layout.is_some_and(|layout| layout.bounds.is_some_and(Rect::has_area));
+    if (dom.is_some_and(|meta| meta.css_hidden) && !rendered) || layout.is_some_and(layout_hidden) {
         return BrowserVisibility::CssHidden;
     }
     let Some(layout) = layout else {

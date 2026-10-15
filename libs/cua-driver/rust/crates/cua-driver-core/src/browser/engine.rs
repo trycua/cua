@@ -2940,6 +2940,9 @@ fn collect_interactive(
                 .find(|kv| kv[0].eq_ignore_ascii_case(key))
                 .map(|kv| kv[1].as_str())
         };
+        let closed_select = name == "select"
+            && attr("multiple").is_none()
+            && attr("size").and_then(|size| size.trim().parse::<u32>().ok()) <= Some(1);
         let interactive = INTERACTIVE_TAGS.contains(&name.as_str())
             || INTERACTIVE_ATTRS.iter().any(|a| attr(a).is_some());
         if interactive {
@@ -2957,6 +2960,9 @@ fn collect_interactive(
                     in_root_frame,
                 });
             }
+        }
+        if closed_select {
+            return;
         }
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {

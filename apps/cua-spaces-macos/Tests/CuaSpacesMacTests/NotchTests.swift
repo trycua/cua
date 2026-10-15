@@ -188,6 +188,35 @@ struct NotchTests {
         #expect(notch.view.phase == .closed)
     }
 
+    /// Hovering the notch lists the Spaces, never a machine that only
+    /// provides them (CUA-1619): This machine and your other Mac on the
+    /// relay stay off the tiles, the Space that Mac provides is listed, and
+    /// the tab counts what the tiles list.
+    @Test func hoverListsOnlySpacesNeverTheMachinesThatProvideThem() async {
+        var machine = FixtureSpacesBackend.sample[0]
+        machine.id = "relay:studio"
+        machine.name = "Studio"
+        machine.provider = "relay"
+        var provided = FixtureSpacesBackend.sample[0]
+        provided.id = "relay:studio/dev"
+        provided.name = "Dev"
+        provided.provider = "relay"
+        provided.host = "studio"
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend(rows: [machine, provided]))
+        await m.refresh()
+        #expect(m.notch.spaces.contains { $0.id == "relay:studio" }, "the roster still has the machine")
+
+        let clock = ManualScheduler()
+        let notch = NotchModel(scheduler: clock)
+        notch.spaces = m.notch.spaces
+        notch.send(.hoverEnter)
+        clock.advance(motion.hoverDwellMs)
+        #expect(notch.view.phase == .tiles)
+        #expect(notch.view.tiles.map(\.id) == ["relay:studio/dev"])
+        #expect(notch.view.tab.count == "1")
+        #expect(notch.view.tiles.count == Int(appOpenableCount(spaces: notch.spaces)))
+    }
+
     // MARK: - The presentation state machine
 
     @Test func openingSpringsTheShapeThenFadesTheContentIn() {

@@ -200,6 +200,13 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
             <div className="mb-1 text-xs font-medium text-muted-foreground">Link</div>
             {code.url ? <CopyField text={code.url} label="Copy link" /> : null}
           </div>
+          {code.code ? (
+            <div data-pairing-code>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">Code</div>
+              <CopyField text={code.code} label="Copy code" mono />
+              <p className="mt-1.5 text-xs text-muted-foreground">Already have Cua Spaces there? Open Machines, choose Join with a code and enter it.</p>
+            </div>
+          ) : null}
           <div>
             <Segmented aria-label="The other computer's system" value={shell} options={SHELLS} onValueChange={setShell} />
             {command ? <CopyField text={command} label="Copy command" mono /> : null}

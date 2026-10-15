@@ -19054,7 +19054,7 @@ public func FfiConverterTypeAppMachinesView_lower(_ value: AppMachinesView) -> R
 
 public struct AppMachinesViewAbout: Equatable, Hashable {
     /**
-     * Its name ("Dillon's MacBook Pro").
+     * Its name ("Ada's MacBook Pro").
      */
     public var computerName: String
     /**
@@ -19070,7 +19070,7 @@ public struct AppMachinesViewAbout: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Its name ("Dillon's MacBook Pro").
+         * Its name ("Ada's MacBook Pro").
          */computerName: String,
         /**
          * The app's version ("0.9.1").

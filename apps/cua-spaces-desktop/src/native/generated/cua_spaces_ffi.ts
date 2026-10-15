@@ -25188,7 +25188,7 @@ const FfiConverterTypeAppMachinesView = (() => {
 
 export type AppMachinesViewAbout = {
     /**
-     * Its name ("Dillon's MacBook Pro").
+     * Its name ("Ada's MacBook Pro").
      */
     computerName: string,
     /**

@@ -194,7 +194,7 @@
               "provider": "relay"
             },
             {
-              "name": "Dillons-MacBook-Pro-2.local",
+              "name": "Adas-MacBook-Pro-2.local",
               "os": "macos",
               "status": "suspended",
               "detail": "",
@@ -206,7 +206,7 @@
                 "features": [],
                 "spacesdVersion": "",
                 "reachable": false,
-                "error": "unauthenticated: Dillons-MacBook-Pro-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+                "error": "unauthenticated: Adas-MacBook-Pro-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
               }
             }
           ],
@@ -267,7 +267,7 @@
         "host": {
           "configured": true,
           "mode": "relay",
-          "name": "Dillon's MacBook Pro",
+          "name": "Ada's MacBook Pro",
           "sharing": true,
           "serviceInstalled": true,
           "serviceRunning": true,
@@ -276,7 +276,7 @@
           "provideSpaces": false
         },
         "about": {
-          "computerName": "Dillon's MacBook Pro",
+          "computerName": "Ada's MacBook Pro",
           "appVersion": "0.9.1",
           "osVersion": "macOS 26.5.2"
         }
@@ -350,7 +350,7 @@
         "host": {
           "configured": true,
           "mode": "relay",
-          "name": "Dillon's MacBook Pro",
+          "name": "Ada's MacBook Pro",
           "sharing": false,
           "serviceInstalled": true,
           "serviceRunning": true,
@@ -359,7 +359,7 @@
           "provideSpaces": true
         },
         "about": {
-          "computerName": "Dillon's MacBook Pro",
+          "computerName": "Ada's MacBook Pro",
           "appVersion": "0.9.1",
           "osVersion": "macOS 26.5.2"
         }
@@ -395,7 +395,7 @@
           "serviceKind": "launchd"
         },
         "about": {
-          "computerName": "Dillon's MacBook Pro",
+          "computerName": "Ada's MacBook Pro",
           "appVersion": "0.9.1",
           "osVersion": "macOS 26.5.2"
         }

@@ -66,10 +66,10 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Dillon's MacBook Pro [This Mac] — 1 Space running",
+            "● Ada's MacBook Pro [This Mac] — 1 Space running",
             "● cua's Mac Studio — 1 Space running · Provides Spaces",
             "○ Cua BYOC tests — Offline · last seen 9 days ago",
-            "○ Dillons-MacBook-Pro-2.local — Not sharing · No Spaces",
+            "○ Adas-MacBook-Pro-2.local — Not sharing · No Spaces",
             "● Ana's laptop — Online"
           ]
         },
@@ -88,7 +88,7 @@
       ],
       "pages": [
         [
-          "Dillon's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online (rename: host)",
           "Provide Spaces: off (runs: provide-spaces)",
           "Share this desktop: on (runs: hide-desktop)",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
@@ -118,7 +118,7 @@
           "Remove from account -> byoc + dev_byoc"
         ],
         [
-          "Dillons-MacBook-Pro-2.local — Not sharing (rename: machine)",
+          "Adas-MacBook-Pro-2.local — Not sharing (rename: machine)",
           "notice: Sharing is off on that Mac. Turn it on there to use it.",
           "Provide Spaces: off (read-only)",
           "Share this desktop: on (read-only)",
@@ -164,7 +164,7 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Dillon's MacBook Pro [This Mac] — 1 Space running",
+            "● Ada's MacBook Pro [This Mac] — 1 Space running",
             "○ Cua BYOC tests — Offline · last seen 9 days ago",
             "● Ana's laptop — Online"
           ]
@@ -178,7 +178,7 @@
       ],
       "pages": [
         [
-          "Dillon's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online (rename: host)",
           "Provide Spaces: off (runs: hide-desktop, resume-sharing)",
           "Share this desktop: off (runs: stop-providing-spaces, resume-sharing)",
           "space space-cdf71481c4 · macOS 26.5.2 · Running -> local:space-cdf71481c4",
@@ -226,13 +226,13 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Dillon's MacBook Pro [This Mac] — No Spaces"
+            "● Ada's MacBook Pro [This Mac] — No Spaces"
           ]
         }
       ],
       "pages": [
         [
-          "Dillon's MacBook Pro — Online",
+          "Ada's MacBook Pro — Online",
           "Provide Spaces: off (sets up: spare)",
           "Share this desktop: off (sets up: desktop)",
           "spaces: No Spaces yet.",

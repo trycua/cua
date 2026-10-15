@@ -50,7 +50,7 @@ pub struct MachinesViewRelay {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MachinesViewAbout {
-    /// Its name ("Dillon's MacBook Pro").
+    /// Its name ("Ada's MacBook Pro").
     #[serde(default)]
     pub computer_name: String,
     /// The app's version ("0.9.1").
@@ -978,7 +978,7 @@ mod tests {
         HostState {
             configured: true,
             mode: Some("relay".into()),
-            name: Some("Dillon's MacBook Pro".into()),
+            name: Some("Ada's MacBook Pro".into()),
             sharing: true,
             service_installed: true,
             service_running: true,
@@ -1061,7 +1061,7 @@ mod tests {
             ],
             host: Some(host(false, true)),
             about: MachinesViewAbout {
-                computer_name: "Dillon's MacBook Pro".into(),
+                computer_name: "Ada's MacBook Pro".into(),
                 app_version: "0.9.1".into(),
                 os_version: "macOS 26.5.2".into(),
             },
@@ -1121,7 +1121,7 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ("Dillon's MacBook Pro", "2 Spaces running", Some("This Mac")),
+                ("Ada's MacBook Pro", "2 Spaces running", Some("This Mac")),
                 (
                     "cua's Mac Studio",
                     "1 Space running \u{b7} Provides Spaces",
@@ -1227,7 +1227,7 @@ mod tests {
             [Some("spare"), Some("desktop")]
         );
         assert!(me.remove.is_none() && me.rename.is_none());
-        assert_eq!(me.name, "Dillon's MacBook Pro");
+        assert_eq!(me.name, "Ada's MacBook Pro");
     }
 
     #[test]
@@ -1293,7 +1293,7 @@ mod tests {
         assert_eq!(me.label, "Remove from account");
         assert_eq!(
             me.confirm.title,
-            "Remove \u{201c}Dillon's MacBook Pro\u{201d} from your account?"
+            "Remove \u{201c}Ada's MacBook Pro\u{201d} from your account?"
         );
         // Another machine leaves the relay while it is offline; online, it
         // says where to remove it.
@@ -1327,10 +1327,10 @@ mod tests {
         let input = MachinesViewInput {
             page: MachinesPageInput {
                 spaces: vec![space(serde_json::json!({
-                    "id": "relay:b695", "name": "Dillons-MacBook-Pro-2.local", "os": "macos",
+                    "id": "relay:b695", "name": "Adas-MacBook-Pro-2.local", "os": "macos",
                     "status": "suspended", "provider": "relay",
                     "sdk": {"features": [], "spacesdVersion": "", "reachable": false,
-                            "error": "unauthenticated: Dillons-MacBook-Pro-2.local stopped sharing: ask its owner"}
+                            "error": "unauthenticated: Adas-MacBook-Pro-2.local stopped sharing: ask its owner"}
                 }))],
                 now: NOW,
                 ..Default::default()

@@ -9323,7 +9323,7 @@ pub struct AppMachinesViewRelay {
 pub type AppMachinesViewAbout = core::machines_view::MachinesViewAbout;
 #[uniffi::remote(Record)]
 pub struct AppMachinesViewAbout {
-    /// Its name ("Dillon's MacBook Pro").
+    /// Its name ("Ada's MacBook Pro").
     pub computer_name: String,
     /// The app's version ("0.9.1").
     pub app_version: String,

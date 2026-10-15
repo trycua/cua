@@ -114,7 +114,7 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     expect(document.querySelector('[data-machine-id="this-mac"]')?.textContent).toContain("This Mac");
 
     // This Mac: its switches change here.
-    let detail = await detailOf("Dillon's MacBook Pro");
+    let detail = await detailOf("Ada's MacBook Pro");
     const switches = () => [...detail.querySelectorAll<HTMLElement>("[data-machine-toggle] [role=switch]")];
     expect(switches().map((s) => s.getAttribute("aria-disabled") === "true" || s.hasAttribute("data-disabled"))).toEqual([false, false]);
 

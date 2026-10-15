@@ -202,6 +202,22 @@ extension WebUIBridge {
                     : HostSetupFailure.presenting(LiveSpacesBackend.words(error)))
             }
             return hostStatus()
+        case "host.joinWithCode":
+            let relay = args["relay"] as? String
+            guard let code = args["code"] as? String,
+                  let cliArgs = JoinWithCode.arguments(code: code, relay: relay) else {
+                throw Failure.badArgs("code: string")
+            }
+            guard let cua = AppEnvironment.bundledCuaPath else {
+                throw Failure.unsupported("This build has no bundled cua to join with")
+            }
+            do {
+                try await JoinWithCode.run(cua: cua, args: cliArgs)
+            } catch let failed as JoinWithCode.FailedRun {
+                throw Failure(code: "failed", message: failed.message)
+            }
+            await model.host.refresh()
+            return hostStatus()
         case "host.action":
             guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
             let id = try hostAction(try string(args, "action"))

@@ -304,6 +304,7 @@ export const OPERATIONS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   ...STARTUP_OPERATIONS,

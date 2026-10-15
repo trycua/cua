@@ -209,7 +209,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every method of this area has its case (the Electron-only ones are checked below).
-    const electronOnly = new Set(["onboarding.get", "onboarding.complete"]);
+    // (host.joinWithCode runs the bundled cua: join-with-code.test.ts.)
+    const electronOnly = new Set(["onboarding.get", "onboarding.complete", "host.joinWithCode"]);
     expect(HOST_METHODS.filter((m) => !electronOnly.has(m) && !cases.some(([c]) => c === m))).toEqual([]);
     expect(HOST_METHODS.filter((m) => NOT_YET.includes(m))).toEqual([]);
   });
@@ -249,7 +250,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     });
     expect(mine.filter((op) => !HOST_OPS.includes(op))).toEqual([]);
     const problems: string[] = [];
-    for (const op of HOST_OPS as OpName[]) {
+    for (const op of (HOST_OPS as OpName[]).filter((o) => o !== "host.joinWithCode")) {
       try {
         const result = await adapter.call(op, (args[op] ?? {}) as never);
         problems.push(...validate(OP_SHAPES[op], result, SHAPE_DEFS).map((e) => `${op} ${e}`));

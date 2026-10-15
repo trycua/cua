@@ -131,6 +131,7 @@ export const WEBKIT_METHODS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   "settings.get",

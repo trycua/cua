@@ -19,6 +19,7 @@ import { devicesMethods } from "./devices";
 import { filesMethods } from "./files";
 import { BridgeEvents, BridgeRegistry } from "./host";
 import { hostSetupMethods } from "./host-setup";
+import { joinMethods } from "./join-with-code";
 import { keyvaultMethods } from "./keyvault";
 import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
@@ -59,6 +60,7 @@ export const AREAS = [
   spaceDetailMethods,
   filesMethods,
   hostSetupMethods,
+  joinMethods,
   settingsMethods,
   keyvaultMethods,
   windowMethods,

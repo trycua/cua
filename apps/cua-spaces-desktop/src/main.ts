@@ -28,6 +28,7 @@ import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
 import { readSettings, writeSettings } from "./settings";
+import { DEEP_LINK_SCHEME, deepLinkInArgv, routeForDeepLink } from "./deep-link";
 import { makeSystem } from "./system";
 import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
@@ -306,7 +307,33 @@ if (!app.requestSingleInstanceLock()) {
   const openSettings = () => tellMain("settings.openRequested");
   const gettingStarted = () => tellMain("checklist.openRequested");
 
-  app.on("second-instance", showMain);
+  // A `cua://add/<code>` link: the app on Machines, Join with a code filled in. Links that
+  // arrive before the app is ready wait for it.
+  let ready = false;
+  const pendingLinks: string[] = [];
+  const openLink = (link: string) => {
+    if (!ready) {
+      pendingLinks.push(link);
+      return;
+    }
+    const route = routeForDeepLink(link);
+    if (route) {
+      app.focus({ steal: true });
+      showRoute(route);
+    }
+  };
+  // Windows and Linux start a second copy with the link as an argument; macOS sends open-url.
+  app.on("second-instance", (_event, argv) => {
+    const link = deepLinkInArgv(argv);
+    if (link) openLink(link);
+    else showMain();
+  });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    openLink(url);
+  });
+  const firstLink = deepLinkInArgv(process.argv);
+  if (firstLink) pendingLinks.push(firstLink);
 
   app.whenReady().then(async () => {
     // Docker was installed and the user added to its group after this session began: start again with the group, so no logout or reboot is needed.
@@ -382,6 +409,12 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     app.on("activate", showMain);
+
+    // Make this app the one `cua://` links open (the installer registers it on macOS and in the Linux
+    // package; Windows only learns it here). A development run is not an installed app: leave links alone.
+    if (app.isPackaged) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+    ready = true;
+    for (const link of pendingLinks.splice(0)) openLink(link);
   });
 
   app.on("window-all-closed", () => {

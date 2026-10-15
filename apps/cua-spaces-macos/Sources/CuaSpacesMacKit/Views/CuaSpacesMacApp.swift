@@ -284,6 +284,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    /// `cua://add/<CODE>` links: the page's Machines at the code, which it
+    /// confirms before joining. Never joins by itself.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let route = urls.lazy.compactMap(JoinWithCode.route(for:)).first else { return }
+        NSApp.activate()
+        WebUIWindowController.show(model: Self.model, at: .path(route))
+    }
+
     func start(_ model: AppModel) {
         guard !started else { return }
         started = true

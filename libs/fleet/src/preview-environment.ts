@@ -1,4 +1,4 @@
-const REVIEW_PREVIEW_HOSTNAME = /^cyclops-cs-pr-\d+\.tail204509\.ts\.net$/
+const REVIEW_PREVIEW_HOSTNAME = /^cyclops-cs-pr-\d+\.[a-z0-9-]+\.ts\.net$/
 
 export function isReviewPreviewHostname(hostname: string): boolean {
   return REVIEW_PREVIEW_HOSTNAME.test(hostname)

@@ -144,12 +144,13 @@ type UsageConfiguration struct {
 var usageQueryPartitionValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const (
-	clusterUsageQueryWebhookURL  = "http://cua-temporal-webhook.temporal.svc.cluster.local/hooks/opencost-query"
-	externalUsageQueryWebhookURL = "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query"
-	minUsageQueryTimeout         = time.Second
-	maxUsageQueryTimeout         = 2 * time.Minute
-	minUsageResponseSize         = 64 * 1024
-	maxUsageResponseSize         = 32 * 1024 * 1024
+	clusterUsageQueryWebhookURL   = "http://cua-temporal-webhook.temporal.svc.cluster.local/hooks/opencost-query"
+	externalUsageQueryWebhookHost = "cua-temporal-webhook"
+	usageQueryWebhookPath         = "/hooks/opencost-query"
+	minUsageQueryTimeout          = time.Second
+	maxUsageQueryTimeout          = 2 * time.Minute
+	minUsageResponseSize          = 64 * 1024
+	maxUsageResponseSize          = 32 * 1024 * 1024
 )
 
 type MetricsConfiguration struct {
@@ -479,7 +480,7 @@ func validateUsageConfiguration(cfg UsageConfiguration) error {
 	if postgresConfig.ConnConfig.User != "cyclops_usage_reader" {
 		return fmt.Errorf("usage database URL must use cyclops_usage_reader")
 	}
-	if cfg.QueryWebhookURL != clusterUsageQueryWebhookURL && cfg.QueryWebhookURL != externalUsageQueryWebhookURL {
+	if cfg.QueryWebhookURL != clusterUsageQueryWebhookURL && !isExternalUsageQueryWebhookURL(cfg.QueryWebhookURL) {
 		return fmt.Errorf("invalid allocation query webhook URL")
 	}
 	if cfg.QueryResultBucket != "nanoclaw-telemetry-files" {
@@ -518,4 +519,17 @@ func parseUsageMaxResponseBytes(raw string) (int64, error) {
 		return 0, fmt.Errorf("invalid USAGE_MAX_RESPONSE_BYTES: %w", err)
 	}
 	return value, nil
+}
+
+// isExternalUsageQueryWebhookURL reports whether raw is the tailnet-exposed
+// allocation query webhook: https, a "<externalUsageQueryWebhookHost>.<tailnet>.ts.net"
+// host and the fixed query path, with no credentials, port, query or fragment.
+func isExternalUsageQueryWebhookURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != usageQueryWebhookPath {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return strings.HasPrefix(host, externalUsageQueryWebhookHost+".") && strings.HasSuffix(host, ".ts.net")
 }

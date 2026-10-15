@@ -1447,7 +1447,7 @@ func TestRetryDatabaseFeaturesStopsOnceReady(t *testing.T) {
 func TestInitializeUsageProviderDoesNotGateReadiness(t *testing.T) {
 	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
 		DatabaseURL:       "postgres://cyclops_usage_reader:secret@127.0.0.1:1/cyclops?sslmode=disable",
-		QueryWebhookURL:   "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query",
+		QueryWebhookURL:   "https://cua-temporal-webhook.example-tailnet.ts.net/hooks/opencost-query",
 		QueryHMACSecret:   "secret",
 		QueryResultBucket: "nanoclaw-telemetry-files",
 		QueryResultPrefix: "cyclops/usage-query",
@@ -1480,7 +1480,7 @@ func TestInitializeUsageProviderDoesNotGateReadiness(t *testing.T) {
 
 func TestInitializeUsageProviderQueryTransportOnlyIsDisabled(t *testing.T) {
 	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
-		QueryWebhookURL:   "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query",
+		QueryWebhookURL:   "https://cua-temporal-webhook.example-tailnet.ts.net/hooks/opencost-query",
 		QueryHMACSecret:   "secret",
 		QueryResultBucket: "nanoclaw-telemetry-files",
 		QueryResultPrefix: "cyclops/usage-query",

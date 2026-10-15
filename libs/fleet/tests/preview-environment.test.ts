@@ -4,7 +4,7 @@ import { isReviewPreviewHostname } from "../src/preview-environment"
 
 test("recognizes Cyclops CS pull request preview hostnames", () => {
   assert.equal(
-    isReviewPreviewHostname("cyclops-cs-pr-123.tail204509.ts.net"),
+    isReviewPreviewHostname("cyclops-cs-pr-123.example-tailnet.ts.net"),
     true,
   )
 })
@@ -16,7 +16,7 @@ test("rejects production and lookalike hostnames", () => {
     false,
   )
   assert.equal(
-    isReviewPreviewHostname("evil-cyclops-cs-pr-123.tail204509.ts.net"),
+    isReviewPreviewHostname("evil-cyclops-cs-pr-123.example-tailnet.ts.net"),
     false,
   )
 })

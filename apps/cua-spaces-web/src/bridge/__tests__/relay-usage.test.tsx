@@ -68,7 +68,7 @@ describe("relay.usage", () => {
     expect(relayUsageView(noCore, demoRelayUsage())).toBeNull();
   });
 
-  it("reads once for every screen, again every 5 minutes, and drops it when signed out", async () => {
+  it("reads once for every screen, again every minute, and drops it when signed out", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const demo = createDemoAdapter({ latencyMs: 0 });
     const call = vi.fn(demo.call);

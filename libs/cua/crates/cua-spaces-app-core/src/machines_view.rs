@@ -835,12 +835,15 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             yours.push(row.id.clone());
         }
 
+        // "This Mac" beside its own name; not twice when that is its name.
+        let badge = row
+            .current
+            .then(|| input.page.host_os.this_machine().to_string())
+            .filter(|b| *b != name);
         list.push(MachinesViewMachine {
             id: row.id.clone(),
             name,
-            badge: row
-                .current
-                .then(|| input.page.host_os.this_machine().to_string()),
+            badge,
             line,
             online: live,
             os: row.os.clone(),

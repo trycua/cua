@@ -1699,3 +1699,25 @@ async fn a_space_that_cannot_join_the_relay_is_not_published() {
     assert!(f.server.publish_own().await.unwrap().is_empty());
     assert!(provided_machines(&f).await.is_empty());
 }
+
+/// A relay machine the owner named keeps its name: only one still named
+/// after the system's host name (an older setup's default) is renamed for
+/// its computer name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_machine_the_owner_named_keeps_its_name() {
+    let f = fixture(HostProfile::Spare).await;
+    // Not signed in: nothing to do.
+    assert_eq!(f.server.label_own_machine().await.unwrap(), None);
+    f.spaces.set_relay(Some(cua_spaces::RelayAccount::new(
+        &f.relay.url,
+        Arc::new(StaticToken("ada-token".into())),
+    )));
+    assert_eq!(f.server.label_own_machine().await.unwrap(), None);
+    let host = f.spaces.this_relay_machine_id().unwrap();
+    let m = cua_host::RelayClient::new(&f.relay.url)
+        .unwrap()
+        .machine("ada-token", &host)
+        .await
+        .unwrap();
+    assert_eq!(m.name, "Mac mini (spare)");
+}

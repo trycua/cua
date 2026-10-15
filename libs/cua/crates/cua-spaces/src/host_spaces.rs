@@ -527,6 +527,8 @@ pub struct HostSpacesServer {
     publishing: tokio::sync::Mutex<()>,
     /// The Spaces being turned on here now (listed as starting).
     powering: Mutex<std::collections::HashSet<String>>,
+    /// [`Self::label_own_machine`] has nothing (more) to do.
+    labelled: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for HostSpacesServer {
@@ -553,6 +555,7 @@ impl HostSpacesServer {
             reattached: Mutex::default(),
             publishing: tokio::sync::Mutex::default(),
             powering: Mutex::default(),
+            labelled: Default::default(),
         })
     }
 
@@ -898,6 +901,56 @@ impl HostSpacesServer {
     fn provided_count(&self, provided: &[ProvidedSpace]) -> u32 {
         let host = self.spaces.this_relay_machine_id().unwrap_or_default();
         provided.iter().filter(|p| !is_published(p, &host)).count() as u32
+    }
+
+    /// Names this machine's relay machine after its computer name
+    /// ([`cua_host::device_name`], "cua's Mac Studio") when it still
+    /// carries the host name an older setup gave it ("Mac.localdomain"),
+    /// so the owner's other devices list it under the name its app's
+    /// device has, as one computer. A name the owner chose is kept. Once
+    /// done (or with nothing to do) it does nothing more. Returns the new
+    /// name.
+    pub async fn label_own_machine(&self) -> Result<Option<String>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.labelled.load(SeqCst) {
+            return Ok(None);
+        }
+        let (Some(host_id), Some(relay)) = (
+            self.spaces.this_relay_machine_id(),
+            self.spaces.relay_account(),
+        ) else {
+            return Ok(None);
+        };
+        let token = relay.tokens.access_token().await?;
+        let client = relay.client().await?;
+        let m = client.machine(&token, &host_id).await?;
+        let name = cua_host::device_name();
+        let hostname = cua_host::system_hostname();
+        let auto_named = |n: &str| {
+            let n = n.trim();
+            n.eq_ignore_ascii_case(hostname.trim())
+                || hostname
+                    .trim()
+                    .split('.')
+                    .next()
+                    .is_some_and(|short| n.eq_ignore_ascii_case(short))
+        };
+        if m.role != "owner" || name.trim().is_empty() || m.name == name || !auto_named(&m.name) {
+            self.labelled.store(true, SeqCst);
+            return Ok(None);
+        }
+        client
+            .patch(
+                &token,
+                &host_id,
+                &cua_host::relay::MachinePatch {
+                    name: Some(name.clone()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        self.labelled.store(true, SeqCst);
+        Ok(Some(name))
     }
 
     /// Publishes this machine's own Spaces while it provides Spaces: each

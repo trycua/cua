@@ -136,6 +136,13 @@ async fn publish_loop(
             _ = shutdown.changed() => return,
             _ = tokio::time::sleep_until(next) => {}
         }
+        // Its relay machine under its computer name (once), so other
+        // devices list this computer once.
+        match host_spaces.label_own_machine().await {
+            Ok(Some(name)) => tracing::info!(name, "named this machine on the relay"),
+            Ok(None) => {}
+            Err(e) => tracing::debug!("naming this machine on the relay: {e}"),
+        }
         match host_spaces.publish_own().await {
             Ok(published) if !published.is_empty() => {
                 tracing::info!(?published, "published this machine's Spaces on the relay");

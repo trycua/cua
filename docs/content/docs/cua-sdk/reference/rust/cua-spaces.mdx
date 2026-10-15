@@ -518,6 +518,7 @@ impl HostSpacesServer {
   fn new(spaces: Spaces) -> Arc<Self>;
   async fn restore_direct_forwards(&self);
   async fn get(&self, caller: &HostCaller) -> Result<GetHostSpacesResponse>;
+  async fn label_own_machine(&self) -> Result<Option<String>>;
   async fn publish_own(&self) -> Result<Vec<String>>;
   async fn create(&self, caller: &HostCaller, req: CreateHostSpaceRequest) -> Result<HostSpace>;
   async fn cancel(&self, caller: &HostCaller, space: &str) -> Result<String>;

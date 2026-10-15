@@ -49,8 +49,7 @@
         "This Mac [this-mac] local macos online (this machine) + dev_me desktop this-mac \"Online\" \"1 Space\"",
         "studio-2.local [b6953d14ff94b10fcbb38bdd13c47824] relay macos online + dev_s desktop relay:b6953d14ff94b10fcbb38bdd13c47824 (stopped sharing) \"Not sharing\" \"No Spaces\"",
         "BYOC tests [dev_byoc] relay macos offline (a device) \"Offline\"",
-        "Ana's MacBook Pro [dev_l1] relay macos online (a device) \"Online\"",
-        "Ana's MacBook Pro [dev_l2] relay macos offline (a device) \"Offline\""
+        "Ana's MacBook Pro [dev_l1] relay macos online (a device) \"Online\""
       ]
     },
     {

@@ -141,7 +141,10 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     # Each build runs the native and notch interfaces before electron-builder.
     mac = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-mac"))
     assert "pnpm native -- --target aarch64-apple-darwin" in mac
-    assert "pnpm native -- --target x86_64-apple-darwin" in mac
+    # The x86_64 native build runs in the electron-native-mac matrix job.
+    native = workflow("cd-cua-spaces.yml")["jobs"]["electron-native-mac"]["strategy"]["matrix"]["include"]
+    assert {"label": "darwin-x64", "target": "x86_64-apple-darwin"} in native
+    assert jobs["electron-mac"]["needs"].count("electron-native-mac") == 1
     assert "pnpm notch" in mac
     assert mac.index("pnpm notch") < mac.index("pnpm dist:mac")
     # Signed with the Developer ID identity of a keychain the job imports
@@ -152,14 +155,15 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     assert mac.index("security import") < mac.index("pnpm dist:mac") < mac.index("security delete-keychain")
     # The disk images are signed, notarized and stapled after electron-builder,
     # their feed entries made again, and then checked like the SwiftUI app's.
-    assert mac.index("pnpm dist:mac") < mac.index("scripts/notarize.sh") < mac.index("xcrun stapler staple")
-    assert mac.index("xcrun stapler staple") < mac.index("refresh-update-info.mjs") < mac.index('spctl -a -vv -t install "$dmg"')
+    assert mac.index("pnpm dist:mac") < mac.index("/notarize.sh") < mac.index("xcrun stapler staple")
+    assert mac.index("xcrun stapler staple") < mac.index("refresh-update-info.mjs") < mac.index("spctl -a -vv -t install")
     assert "com.trycua.spaces.macos" in mac
-    windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows"))
-    assert "pnpm native -- --target x86_64-pc-windows-msvc" in windows
+    windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows-pkg"))
+    targets = {m["target"] for m in jobs["electron-native"]["strategy"]["matrix"]["include"]}
+    assert {"x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"} <= targets
     assert 'AZURE_SIGNING_ENDPOINT="$ENDPOINT"' in windows
-    assert jobs["electron-windows"]["environment"] == "cua-driver-release-signing"
-    for name in ("electron-mac", "electron-windows"):
+    assert jobs["electron-windows-pkg"]["environment"] == "cua-driver-release-signing"
+    for name in ("electron-mac", "electron-windows-pkg"):
         sign = step("cd-cua-spaces.yml", name, "Signing configuration")["run"]
         assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in sign, name
     # The release waits for the Electron installers; the feed goes up after it is published.

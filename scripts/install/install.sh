@@ -907,6 +907,11 @@ host_pair() {
         say "[dry-run] $*"
         return
     fi
+    # A CLI released before pairing exists would fail with a bare
+    # "unexpected argument '--pair'"; say what to do instead.
+    if ! "$cua_bin" host setup --help 2>&1 </dev/null | grep -q -e '--pair'; then
+        die "the installed cua CLI ($("$cua_bin" --version 2>/dev/null || echo unknown)) cannot add a machine with a code (no 'cua host setup --pair'); update the CLI (cua update, or install a newer release: --version) or sign in instead: cua auth login && cua host setup"
+    fi
     info "adding this machine to your account (cua host setup --pair)"
     if "$@" </dev/null; then
         say ""

@@ -471,6 +471,13 @@ function Invoke-HostPair([string]$Cua) {
     $pairArgs = @('host', 'setup', '--pair', $Pair)
     if ($Relay) { $pairArgs += @('--relay', $Relay) }
     if ($DryRun) { Write-Host "[dry-run] $Cua $($pairArgs -join ' ')"; return }
+    # A CLI released before pairing exists would fail with a bare
+    # "unexpected argument '--pair'"; say what to do instead.
+    $setupHelp = (& $Cua host setup --help 2>&1 | Out-String)
+    if ($setupHelp -notmatch '--pair') {
+        $have = (& $Cua --version 2>&1 | Out-String).Trim()
+        Stop-Install "the installed cua CLI ($have) cannot add a machine with a code (no 'cua host setup --pair'); install a newer release (-Version) or sign in instead: cua auth login; cua host setup"
+    }
     Write-Info 'adding this machine to your account (cua host setup --pair)'
     $null | & $Cua @pairArgs
     if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>' }

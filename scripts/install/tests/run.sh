@@ -54,6 +54,11 @@ make_cua() { # dir platform
     cat >"$1/cua" <<EOF
 #!/bin/sh
 if [ "\${1:-}" = --version ]; then echo "cua $version ($2)"; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "host setup --help" ]; then
+    echo "Usage: cua host setup [OPTIONS]"
+    [ -n "\${CUA_FAKE_NO_PAIR:-}" ] || echo "      --pair <CODE>  add this machine with a code"
+    exit 0
+fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
 EOF
     chmod +x "$1/cua"
@@ -212,6 +217,9 @@ check "--only host: runs 'cua host setup', no app" sh -c "[ $status = 0 ] && gre
 
 inst -- --pair k7qm-4xpb-2rhd --prefix "$work/pr1"
 check "--pair: runs 'cua host setup --pair', no sign-in, no checklist" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair k7qm-4xpb-2rhd' '$home/cua.log' && ! grep -q 'auth login' '$home/cua.log' && grep -q 'This machine is added' '$work/out'"
+
+inst CUA_FAKE_NO_PAIR=1 -- --pair K7QM-4XPB-2RHD --prefix "$work/pr0"
+check "--pair: a CLI without 'host setup --pair' fails early with a clear message" sh -c "[ $status != 0 ] && grep -q \"no 'cua host setup --pair'\" '$work/out' && ! grep -q 'host setup --pair' '$home/cua.log' 2>/dev/null"
 
 inst -- --pair K7QM-4XPB-2RHD --relay https://relay.example.com --cli-only --prefix "$work/pr2"
 check "--pair --relay --cli-only: passes the relay on" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com' '$home/cua.log'"

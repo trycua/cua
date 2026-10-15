@@ -453,8 +453,10 @@ impl Tool for GetBrowserStateTool {
                                     "unknown": outcome.omissions.unknown,
                                     "budget": outcome.omissions.budget,
                                     "unprovable_frame": outcome.omissions.unprovable_frame,
+                                    "not_rendered": outcome.omissions.not_rendered,
                                 },
                                 "continuation": outcome.continuation,
+                                "hint": (outcome.omissions.not_rendered > 0).then_some("Chrome has not rendered this background tab, so this tree is partial. Bring the tab to the front in the browser, then re-run get_browser_state; observation never activates tabs."),
                             },
                             "page": {
                                 "url": outcome.url,

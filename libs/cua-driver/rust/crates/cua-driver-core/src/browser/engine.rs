@@ -53,8 +53,8 @@ use super::semantic::{
     SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
-    format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
-    SnapshotRecord, TabRecord, TargetRecord,
+    format_ref, BrowserStore, BrowserVisibility, FrameIdentity, FrameKind, FrameRef, RefEntry,
+    SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -1743,21 +1743,7 @@ impl BrowserEngine {
         // focusing its native window or invoking any CDP activation command.
         // Treat an unavailable or malformed proof as inactive: omitting
         // feedback is safer than drawing a cursor over another tab.
-        let tab_is_active = validated
-            .conn
-            .call(
-                Some(&validated.cdp_session),
-                "Runtime.evaluate",
-                json!({
-                    "expression": "document.visibilityState === 'visible'",
-                    "returnByValue": true,
-                    "awaitPromise": false,
-                }),
-            )
-            .await
-            .ok()
-            .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
-            .unwrap_or(false);
+        let tab_is_active = tab_visibility_proven(&validated.conn, &validated.cdp_session).await;
 
         let screen_point = if cdp_session == validated.cdp_session {
             validated
@@ -2787,6 +2773,24 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
+        if !semantic.nodes.iter().any(|node| {
+            matches!(
+                node.visibility,
+                BrowserVisibility::InViewport
+                    | BrowserVisibility::NearViewport
+                    | BrowserVisibility::Offscreen
+            )
+        }) && !tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tab_visibility_proven(&conn, &cdp_session),
+        )
+        .await
+        .unwrap_or(false)
+        {
+            semantic.not_rendered_count = 1;
+            semantic.complete = false;
+        }
+
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2848,6 +2852,22 @@ impl BrowserEngine {
             });
         Ok(outcome)
     }
+}
+
+async fn tab_visibility_proven(conn: &CdpConnection, cdp_session: &str) -> bool {
+    conn.call(
+        Some(cdp_session),
+        "Runtime.evaluate",
+        json!({
+            "expression": "document.visibilityState === 'visible'",
+            "returnByValue": true,
+            "awaitPromise": false,
+        }),
+    )
+    .await
+    .ok()
+    .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
+    .unwrap_or(false)
 }
 
 /// Attribute names that make an element interactive-enough to ref.

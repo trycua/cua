@@ -149,6 +149,7 @@ pub(crate) struct OmissionCounts {
     pub(crate) unknown: usize,
     pub(crate) budget: usize,
     pub(crate) unprovable_frame: usize,
+    pub(crate) not_rendered: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +167,7 @@ pub(crate) struct SemanticDocument {
     pub(crate) nodes: Vec<SemanticNode>,
     pub(crate) css_hidden_dom_count: usize,
     pub(crate) unprovable_frame_count: usize,
+    pub(crate) not_rendered_count: usize,
     pub(crate) complete: bool,
 }
 
@@ -186,6 +188,7 @@ impl SemanticDocument {
         self.nodes.extend(other.nodes);
         self.css_hidden_dom_count += other.css_hidden_dom_count;
         self.unprovable_frame_count += other.unprovable_frame_count;
+        self.not_rendered_count += other.not_rendered_count;
         self.complete = if was_empty {
             other.complete
         } else {
@@ -232,6 +235,7 @@ impl SemanticDocument {
         let mut omissions = OmissionCounts {
             css_hidden: self.css_hidden_dom_count.max(semantic_css_hidden),
             unprovable_frame: self.unprovable_frame_count,
+            not_rendered: self.not_rendered_count,
             ..Default::default()
         };
         for node in &self.nodes {
@@ -568,6 +572,7 @@ pub(crate) fn compose_accessibility_tree(
         nodes,
         css_hidden_dom_count: dom.css_hidden_count,
         unprovable_frame_count: 0,
+        not_rendered_count: 0,
         complete: true,
     }
 }

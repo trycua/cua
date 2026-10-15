@@ -10,7 +10,7 @@ Cua installer for Windows: the `cua` CLI, the Cua Spaces app and agent extras.
 
 At a console it first shows a numbered checklist of what to install. Items:
     cli         the cua CLI (always installed, except with -AppOnly)
-    spaces      the Cua Spaces app (the Electron app's setup.exe; off by default here, pick it or use -Select spaces)
+    spaces      the Cua Spaces app (the Electron app's setup.exe; on by default)
     cua-driver  cua-driver MCP and skill for your agents (off by default)
     host        host this machine: `cua host setup` (off by default)
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
@@ -18,7 +18,9 @@ Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
 Reads release-artifacts.json (see scripts/install/README.md), downloads the
 artifacts for this machine, verifies their sha256 (and a minisign or cosign
 signature when available), installs `cua` to %LOCALAPPDATA%\Programs\cua\bin
-(or -Prefix\bin), then runs `cua auth login` when a user is at the console.
+(or -Prefix\bin) and adds that directory to your user PATH (-NoModifyPath
+skips it), then runs `cua auth login` when a user is at the console (not
+with -CliOnly, -Pair or -NoOnboarding).
 -AppOnly, -Mode and the `spaces` item install the Cua Spaces app: its signed
 setup.exe for this machine's architecture, run silently (/S) after the sha256
 (and cosign, when available) check.
@@ -28,7 +30,7 @@ Preselect items (comma list: spaces, cua-driver, host); the checklist still show
 .PARAMETER Only
 Install exactly these items plus the CLI, without the checklist.
 .PARAMETER CliOnly
-Install only the `cua` CLI (same as -Only cli).
+Install only the `cua` CLI (same as -Only cli), without prompts or sign-in.
 .PARAMETER AppOnly
 Install only the Cua Spaces app (no CLI).
 .PARAMETER Mode
@@ -44,7 +46,9 @@ Install this CLI release (default: latest).
 .PARAMETER Prefix
 Install the CLI under Prefix\bin.
 .PARAMETER ModifyPath
-Add the CLI directory to the user PATH.
+Kept for older commands: the CLI directory is added to the user PATH by default.
+.PARAMETER NoModifyPath
+Do not add the CLI directory to the user PATH.
 .PARAMETER NoOnboarding
 Do not run `cua auth login` afterwards.
 .PARAMETER RequireSignature
@@ -68,6 +72,7 @@ param(
     [string]$Version = '',
     [string]$Prefix = '',
     [switch]$ModifyPath,
+    [switch]$NoModifyPath,
     [switch]$NoOnboarding,
     [switch]$RequireSignature,
     [ValidateSet('msi', 'nsis')][string]$Installer = 'nsis',
@@ -161,6 +166,9 @@ function Get-CuaSelection {
     if ($App -and ($extra -contains 'cua-driver' -or $extra -contains 'host')) { Stop-Install '-AppOnly skips the CLI, which cua-driver and host need' }
     $sel = [ordered]@{ cli = -not $App; spaces = $false; 'cua-driver' = $false; host = $false }
     $list = if ($OnlyList -or $Cli) { $OnlyList } else { $SelectList }
+    # The app is a default, as on macOS and Linux (not with -Only, -CliOnly
+    # or a pairing code, which adds a host machine).
+    if (-not ($OnlyList -or $Cli -or $Pair)) { $sel.spaces = $true }
     foreach ($item in @(ConvertTo-CuaItems $list)) { $sel[$item] = $true }
     # A pairing code adds this machine: the CLI and host setup.
     if ($Pair) {
@@ -177,11 +185,10 @@ function Test-WantsChecklist {
         $env:CUA_INSTALL_NONINTERACTIVE -ne '1' -and (Test-Interactive))
 }
 
-# Numbered checklist: toggle numbers, Enter to install. The CLI row is locked;
-# Spaces shows only when preselected (-Select spaces, -Mode).
+# Numbered checklist: toggle numbers, Enter to install. The CLI row is locked.
 function Read-CuaSelection($Sel, [scriptblock]$Reader = { Read-Host 'Toggle numbers (e.g. 2 3), Enter to install' }) {
     $rows = @('cli')
-    if ($Sel.spaces) { $rows += 'spaces' }
+    if ($script:SpacesSupported) { $rows += 'spaces' }
     $rows += 'cua-driver', 'host'
     $labels = @{ cli = 'cua CLI (required)'; spaces = 'Cua Spaces app'; 'cua-driver' = 'cua-driver MCP and skill for your agents'; host = 'Host this machine' }
     Write-Host ''
@@ -333,17 +340,19 @@ function Get-CliBinDir {
 function Add-UserPath([string]$Dir) {
     $current = [Environment]::GetEnvironmentVariable('Path', 'User')
     $parts = @(if ($current) { $current -split ';' | Where-Object { $_ } })
-    if ($parts -contains $Dir) { return }
     if ($DryRun) { Write-Host "[dry-run] add $Dir to the user PATH"; return }
+    # This terminal too, so `cua` works right away.
+    if (@($env:Path -split ';') -notcontains $Dir) { $env:Path = "$env:Path;$Dir" }
+    if ($parts -contains $Dir) { return }
     [Environment]::SetEnvironmentVariable('Path', (($parts + $Dir) -join ';'), 'User')
-    $env:Path = "$env:Path;$Dir"
     Write-Info "added $Dir to your user PATH (new terminals pick it up)"
 }
 
 function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string]$Tmp) {
     $bin = Get-CliBinDir
     $target = Join-Path $bin 'cua.exe'
-    if (-not (Confirm-Step "Install the cua CLI to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
+    # -CliOnly / -Only already said what to install.
+    if (-not ($CliOnly -or $Only) -and -not (Confirm-Step "Install the cua CLI to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
     $zip = Get-Artifact $Manifest $ManifestUrl 'cli' $Platform 'zip' $Tmp
     if ($DryRun) {
         Write-Host "[dry-run] install cua.exe -> $target"
@@ -358,12 +367,11 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
     }
     $onPath = @($env:Path -split ';') -contains $bin
     if (-not $onPath) {
-        if ($ModifyPath) { Add-UserPath $bin }
+        if (-not $NoModifyPath) { Add-UserPath $bin }
         else {
             Write-Host ""
             Write-Host "$bin is not on your PATH. Add it with:"
             Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$bin`", 'User')"
-            Write-Host "(or rerun the installer with -ModifyPath)"
         }
     }
     return $target
@@ -408,7 +416,7 @@ function Get-DriverBinDir {
 function Get-DriverInstallArgs {
     $a = @()
     if ($RequireSignature) { $a += '-RequireSignature' }
-    if (-not $ModifyPath) { $a += '-NoPathUpdate' }
+    if ($NoModifyPath) { $a += '-NoPathUpdate' }
     return $a
 }
 
@@ -531,7 +539,7 @@ function Invoke-CuaInstall {
         $env:CUA_INSTALL_CHANNEL = 'install_script'
         if ($sel['cua-driver']) { Install-CuaDriver $cua $tmp $manifestUrl }
         Write-Info 'done'
-        if ($cua -and -not $Pair -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
+        if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
             Write-Info 'signing in (cua auth login)'
             & $cua auth login
             if ($LASTEXITCODE -ne 0) { Write-Warning "sign-in did not finish; run 'cua auth login' later" }

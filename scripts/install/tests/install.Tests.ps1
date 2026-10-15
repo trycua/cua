@@ -87,7 +87,8 @@ Describe 'functions' {
 
     It 'selects defaults, -Select, -Only and the legacy switches' {
         $d = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
-        @($d.cli, $d.spaces, $d['cua-driver'], $d.host) | Should -Be @($true, $false, $false, $false)
+        @($d.cli, $d.spaces, $d['cua-driver'], $d.host) | Should -Be @($true, $true, $false, $false)
+        (Get-CuaSelection -SelectList '' -OnlyList '' -Cli $true -App $false -InstallMode '').spaces | Should -BeFalse
         (Get-CuaSelection -SelectList 'cua-driver' -OnlyList '' -Cli $false -App $false -InstallMode '')['cua-driver'] | Should -BeTrue
         $o = Get-CuaSelection -SelectList '' -OnlyList 'host' -Cli $false -App $false -InstallMode ''
         @($o.cli, $o.spaces, $o.host) | Should -Be @($true, $false, $true)
@@ -106,15 +107,15 @@ Describe 'functions' {
     }
 
     It 'toggles items in the numbered checklist; the CLI row is locked' {
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1 2', '3', ''))
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1 3', '4', ''))
         $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
-        @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $false, $true, $true)
+        @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $true, $true, $true)
         $script:Picked | Should -BeTrue
         $script:Picked = $false
     }
 
-    It 'shows Spaces in the checklist only when preselected' {
+    It 'shows Spaces in the checklist, where it can be unticked' {
         $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('2', ''))
         $sel = Get-CuaSelection -SelectList 'spaces' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
@@ -123,9 +124,9 @@ Describe 'functions' {
     }
 
     It 'forwards -RequireSignature and -NoPathUpdate to the cua-driver installer' {
-        $RequireSignature = $false; $ModifyPath = $false
+        $RequireSignature = $false; $NoModifyPath = $true
         Get-DriverInstallArgs | Should -Be @('-NoPathUpdate')
-        $RequireSignature = $true; $ModifyPath = $true
+        $RequireSignature = $true; $NoModifyPath = $false
         Get-DriverInstallArgs | Should -Be @('-RequireSignature')
     }
 
@@ -146,7 +147,7 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
         Set-Content -LiteralPath $fakeCua -Value "#!/bin/sh`necho `"`$*`" >>'$cuaLog'"
         chmod +x $fakeCua
         $env:CUA_INSTALL_DRIVER_URL = ConvertTo-FileUrl $fakeDriver
-        $Prefix = $prefix; $DryRun = $false; $RequireSignature = $true; $ModifyPath = $false
+        $Prefix = $prefix; $DryRun = $false; $RequireSignature = $true; $NoModifyPath = $true
         try {
             Install-CuaDriver $fakeCua (New-Item -ItemType Directory -Force -Path (Join-Path $root 'tmp')).FullName 'file:///r.json' 6>$null
         } finally { $env:CUA_INSTALL_DRIVER_URL = $null }
@@ -172,10 +173,20 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
 Describe 'install.ps1' {
     It 'installs the CLI into -Prefix\bin and verifies the checksum' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p1'
-        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; Prefix = $prefix }
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
         $out | Should -Match 'Next steps'
         $out | Should -Match 'is not on your PATH'
+    }
+
+    # CUA-1704: `cua` must work in the next terminal without a manual step.
+    It 'adds the CLI to the user PATH by default; -CliOnly neither asks nor signs in' {
+        $out = Invoke-Installer @{ DryRun = $true; CliOnly = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p11') }
+        $out | Should -Match '\[dry-run\] add .*p11.bin to the user PATH'
+        $out | Should -Not -Match 'is not on your PATH'
+        $out | Should -Not -Match 'Install the cua CLI to'
+        $out | Should -Not -Match 'signing in'
+        $out | Should -Not -Match 'setup.exe'
     }
 
     # Cua Spaces for Windows is the Electron app's NSIS setup.exe.
@@ -260,9 +271,10 @@ Describe 'install.ps1' {
         Get-Content $log | Should -Not -Match 'identity-regexp'
     }
 
-    It 'dry run: Spaces is off by default on Windows' {
+    It 'dry run: Spaces is on by default on Windows' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe /S'
         $out | Should -Not -Match 'msiexec'
         $out | Should -Not -Match 'cua-driver'
     }
@@ -277,7 +289,8 @@ Describe 'install.ps1' {
     It 'dry run: -Select cua-driver,host prints the driver, agents and host steps' {
         $out = Invoke-Installer @{ DryRun = $true; Select = 'cua-driver,host'; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p10') } @{ CUA_INSTALL_NONINTERACTIVE = '1'; CUA_INSTALL_DRIVER_URL = 'https://example.test/driver/install.ps1' }
         $out | Should -Match '\[dry-run\] download https://example.test/driver/install.ps1'
-        $out | Should -Match 'cua-driver-install.ps1 -NoPathUpdate'
+        $out | Should -Match 'cua-driver-install.ps1'
+        $out | Should -Not -Match 'NoPathUpdate'
         $out | Should -Match 'agents setup --cua-driver --agents all --yes --mcp-command .*p10.bin.cua-driver.exe'
         $out | Should -Match '\[dry-run\] .*cua.exe host setup'
         $out | Should -Not -Match 'msiexec'

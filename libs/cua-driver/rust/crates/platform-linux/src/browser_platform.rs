@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cua_driver_core::browser::binding::NativeWindowSize;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
@@ -105,6 +106,21 @@ fn hyprland_is_only_owned_window(
         return false;
     };
     hyprland_identity_matches(pid, window_id, owner, address) && owned.next().is_none()
+}
+
+fn hyprland_owned_window_sizes(
+    pid: u32,
+    windows: impl IntoIterator<Item = (u32, u64, u32, u32)>,
+) -> Vec<NativeWindowSize> {
+    windows
+        .into_iter()
+        .filter(|(owner, ..)| *owner == pid)
+        .map(|(_, address, width, height)| NativeWindowSize {
+            window_id: address,
+            width: f64::from(width),
+            height: f64::from(height),
+        })
+        .collect()
 }
 
 fn run_existing_profile_cleanup<T: Send + 'static>(
@@ -785,6 +801,35 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })
     }
 
+    async fn owned_native_window_sizes(
+        &self,
+        pid: i64,
+    ) -> Result<Option<Vec<NativeWindowSize>>, BrowserRefusal> {
+        // Hyprland attests every mapped client's pid, address and size,
+        // including hidden and off-workspace clients. Other Linux window
+        // systems report positions the browser can see, or cannot attest the
+        // complete set, so they keep the bounds and cardinality proofs only.
+        let Ok(pid_u32) = u32::try_from(pid) else {
+            return Ok(None);
+        };
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() || !crate::wayland::hyprland::is_session()
+        {
+            return Ok(None);
+        }
+        let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
+            .await
+            .ok()
+            .and_then(Result::ok);
+        Ok(windows.map(|windows| {
+            hyprland_owned_window_sizes(
+                pid_u32,
+                windows
+                    .into_iter()
+                    .map(|window| (window.pid, window.address, window.width, window.height)),
+            )
+        }))
+    }
+
     async fn is_only_exact_native_window(
         &self,
         pid: i64,
@@ -1438,6 +1483,33 @@ mod tests {
         }
         assert!(!hyprland_is_only_owned_window(0, address, [(0, address)]));
         assert!(!hyprland_is_only_owned_window(42, 0, [(42, 0)]));
+    }
+
+    #[test]
+    fn hyprland_owned_window_sizes_keep_only_the_pid_windows() {
+        let sizes = hyprland_owned_window_sizes(
+            42,
+            [
+                (42, 0x10, 1913, 1041),
+                (7, 0x20, 800, 600),
+                (42, 0x30, 3832, 2087),
+            ],
+        );
+        assert_eq!(
+            sizes,
+            vec![
+                NativeWindowSize {
+                    window_id: 0x10,
+                    width: 1913.0,
+                    height: 1041.0
+                },
+                NativeWindowSize {
+                    window_id: 0x30,
+                    width: 3832.0,
+                    height: 2087.0
+                },
+            ]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

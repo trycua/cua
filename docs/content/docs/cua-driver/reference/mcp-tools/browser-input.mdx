@@ -14,6 +14,7 @@ description: "Exact browser input over CDP: clicks, typing, pointer, dialogs, fi
 | --- | --- | --- |
 | [`browser_click`](#browser_click) | Click a page element (by ref) or viewport coordinates in an exactly-bound tab. | macOS, Linux, Windows |
 | [`browser_type`](#browser_type) | Type text into an exactly-bound tab via the Input domain. | macOS, Linux, Windows |
+| [`browser_select`](#browser_select) | Select one option of a native HTML &lt;select&gt; ref on an exactly-bound tab without opening its popup. | Linux |
 | [`browser_pointer`](#browser_pointer) | Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. | macOS, Linux, Windows |
 | [`browser_dialog`](#browser_dialog) | Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. | macOS, Linux, Windows |
 | [`browser_set_input_files`](#browser_set_input_files) | Assign one or more explicit absolute local files to an exact live &lt;input type=file&gt; ref through CDP. | macOS, Linux, Windows |
@@ -64,6 +65,27 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 
 ```json
 {"target_id":"<target_id>","tab_id":"<tab_id>","ref":"<ref>","text":"<text>"}
+```
+
+## `browser_select`
+
+Select one option of a native HTML &lt;select&gt; ref on an exactly-bound tab without opening its popup. Pass exactly one of label or value; exactly one option must equal it. Refuses non-native, multiple-selection, and disabled selects, disabled options, and zero or ambiguous matches before changing anything. A change dispatches bubbling input and change events; they are synthetic, so verify the page accepted the selection. Selecting the option that is already selected dispatches no events.
+
+Effect: mutating. Platforms: Linux.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="browser_select--label"></span>`label` | `string` |  | Exact visible label of the option to select. |
+| <span id="browser_select--ref"></span>`ref` | `string` | required | Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab. |
+| <span id="browser_select--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
+| <span id="browser_select--tab_id"></span>`tab_id` | `string` | required | Opaque tab id from get_browser_state (session-scoped). |
+| <span id="browser_select--target_id"></span>`target_id` | `string` | required | Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id). |
+| <span id="browser_select--value"></span>`value` | `string` |  | Exact value attribute of the option to select. |
+
+**Example arguments**
+
+```json
+{"target_id":"<target_id>","tab_id":"<tab_id>","ref":"<ref>"}
 ```
 
 ## `browser_pointer`

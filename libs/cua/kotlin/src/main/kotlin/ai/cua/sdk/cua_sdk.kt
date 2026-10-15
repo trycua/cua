@@ -31608,7 +31608,7 @@ data class PairingCode (
     var `code`: kotlin.String?
     ,
     /**
-     * `https://spaces.cua.ai/add/<code>` (the link and the QR code): only
+     * `https://cua.ai/add/<code>` (the link and the QR code): only
      * when just made.
      */
     var `url`: kotlin.String?

@@ -369,10 +369,8 @@ mod tests {
             other => panic!("expected InvalidArgument, got {:?}", other.map(|t| t.0)),
         }
         assert_eq!(
-            pairing_link_relay(
-                "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example"
-            )
-            .as_deref(),
+            pairing_link_relay("https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")
+                .as_deref(),
             Some("https://r.example")
         );
         assert_eq!(pairing_link_relay("K7QM-4XPB-2RHD"), None);

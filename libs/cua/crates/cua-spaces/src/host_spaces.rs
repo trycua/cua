@@ -2566,8 +2566,7 @@ mod tests {
             following_host_with(|| ask(start.elapsed()), "space-1", tokio::time::sleep(call)),
         )
         .await;
-        let out = seen.lock().unwrap().clone();
-        out
+        seen.lock().unwrap().clone()
     }
 
     /// A host that never lists the create (an older one, or one whose

@@ -1884,6 +1884,8 @@ pub async fn app_relay_usage(
 }
 
 fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
+    let (soft_limit_reached, reasons) =
+        core::relay_usage::with_warnings(u.soft_limit_reached, u.reasons, &u.warnings);
     core::relay_usage::checked(core::relay_usage::RelayUsage {
         metered: u.metered,
         period: u.period,
@@ -1897,8 +1899,8 @@ fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
         hours_used: u.hours_used,
         hours_limit: u.hours_limit,
         my_hours_used: u.my_hours_used,
-        soft_limit_reached: u.soft_limit_reached,
-        reasons: u.reasons,
+        soft_limit_reached,
+        reasons,
         upgrade_url: u.upgrade_url,
     })
 }

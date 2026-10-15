@@ -264,7 +264,7 @@ struct RelayUsageTests {
         let (m, defaults) = model(fixture)
         await m.readRelayUsage()
         let notice = try #require(m.relayNotice)
-        #expect(notice.text == "You've reached the free plan's remote limit for this month. Your Spaces keep working. Pro gives you more.")
+        #expect(notice.text == "You're using 20.4 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.")
         #expect(notice.upgrade == "Upgrade")
         #expect(notice.upgradeUrl == "https://app.cua.ai/buy/pro?from=app_meter")
         #expect(notice.level == "limit")

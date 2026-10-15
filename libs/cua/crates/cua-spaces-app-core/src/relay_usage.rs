@@ -93,7 +93,7 @@ pub struct RelayUsage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayAllowanceNotice {
-    /// "You've used your free relay allowance for this month. ..."
+    /// On Free: "You're using 2 of 2 live sessions on the free plan. ..."
     pub text: String,
     /// [`UPGRADE`].
     pub upgrade: String,
@@ -236,7 +236,31 @@ pub fn dismiss_key(u: &RelayUsage) -> String {
     format!("{}:{}", u.period, reasons.join(","))
 }
 
-/// The notice's sentence.
+/// Folds the relay's Free-limit `warnings` (at or over an allowance) into
+/// the "reached" flag and `reasons` the apps already draw from, so a Free
+/// person sees the prompt at 2 of 2 live sessions, not only past it.
+pub fn with_warnings(
+    reached: bool,
+    mut reasons: Vec<String>,
+    warnings: &[String],
+) -> (bool, Vec<String>) {
+    let mut reached = reached;
+    for (warning, reason) in [
+        ("free_limit_sessions", "sessions"),
+        ("free_limit_relay_hours", "hours"),
+    ] {
+        if warnings.iter().any(|w| w == warning) {
+            reached = true;
+            if !reasons.iter().any(|r| r == reason) {
+                reasons.push(reason.to_owned());
+            }
+        }
+    }
+    (reached, reasons)
+}
+
+/// The notice's sentence. On Free it says what is used and what Pro gives
+/// (the numbers on cua.ai/pricing); nothing is blocked.
 pub fn notice_text(u: &RelayUsage) -> String {
     if warns(u) {
         return format!(
@@ -245,7 +269,30 @@ pub fn notice_text(u: &RelayUsage) -> String {
             hours(u.hours_limit.unwrap_or_default()),
         );
     }
-    match plan_kind(&u.plan) {
+    let kind = plan_kind(&u.plan);
+    if kind == "free" {
+        let mut parts = Vec::new();
+        if let (true, Some(limit)) = (
+            u.reasons.iter().any(|r| r == "sessions"),
+            u.live_sessions_limit,
+        ) {
+            parts.push(format!("{} of {limit} live sessions", u.live_sessions));
+        }
+        if let (true, Some(limit)) = (u.reasons.iter().any(|r| r == "hours"), u.hours_limit) {
+            parts.push(format!(
+                "{} of {} remote hours",
+                hours(u.hours_used),
+                hours(limit)
+            ));
+        }
+        if !parts.is_empty() {
+            return format!(
+                "You're using {} on the free plan. Your Spaces keep working. Pro gives you {PRO_SESSIONS} live sessions and {PRO_HOURS} remote hours.",
+                parts.join(" and ")
+            );
+        }
+    }
+    match kind {
         "free" => "You've reached the free plan's remote limit for this month. Your Spaces keep working. Pro gives you more.".into(),
         "pro" => "You've reached your plan's remote limit for this month. Your Spaces keep working. Teams pools remote hours across seats.".into(),
         _ => "You've reached your team's remote limit for this month. Your Spaces keep working. Add seats for more.".into(),
@@ -434,7 +481,7 @@ mod tests {
         let n = v.notice.unwrap();
         assert_eq!(
             n.text,
-            "You've reached the free plan's remote limit for this month. Your Spaces keep working. Pro gives you more."
+            "You're using 1 of 2 live sessions and 20.2 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours."
         );
         assert_eq!(n.upgrade, "Upgrade");
         assert_eq!(n.level, "limit");
@@ -575,6 +622,39 @@ mod tests {
             "10 live sessions and 400 remote hours a month across 2 seats, shared by the team."
         );
         assert!(team.secondary.is_none());
+    }
+
+    #[test]
+    fn a_free_user_at_the_limit_is_asked_before_going_over() {
+        // The relay's warnings fire at 2 of 2 live sessions, before anything is over.
+        let (reached, reasons) = with_warnings(false, vec![], &["free_limit_sessions".into()]);
+        assert!(reached);
+        let u = RelayUsage {
+            live_sessions: 2,
+            soft_limit_reached: reached,
+            reasons,
+            ..free()
+        };
+        let n = view_for(&u, "https://app.cua.ai").unwrap().notice.unwrap();
+        assert_eq!(
+            n.text,
+            "You're using 2 of 2 live sessions on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours."
+        );
+        assert_eq!(n.upgrade, "Upgrade");
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
+        );
+        // Nothing to say without a warning or an overage; known reasons are not doubled.
+        assert_eq!(with_warnings(false, vec![], &[]), (false, vec![]));
+        assert_eq!(
+            with_warnings(
+                true,
+                vec!["hours".into()],
+                &["free_limit_relay_hours".into()]
+            ),
+            (true, vec!["hours".to_owned()])
+        );
     }
 
     #[test]

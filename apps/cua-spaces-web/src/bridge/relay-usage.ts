@@ -3,7 +3,7 @@
 
 /**
  * The account's relay allowance (`relay.usage`), read while a screen shows
- * it: at once, every 5 minutes, and when the app comes to the front (at
+ * it: at once, every minute, and when the app comes to the front (at
  * most once a minute). A host without the operation, signed out, or a relay
  * that meters nothing reads as null, and the page shows nothing. The words
  * are the app core's (`relayUsage.view`).
@@ -18,7 +18,7 @@ import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
 export type { PlanCard, PlanLink, RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
-export const RELAY_USAGE_POLL_MS = 5 * 60_000;
+export const RELAY_USAGE_POLL_MS = 60_000;
 /** A focus reads again only when the last read is older than this. */
 export const RELAY_USAGE_FOCUS_MS = 60_000;
 

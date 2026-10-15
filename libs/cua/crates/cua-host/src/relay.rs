@@ -432,6 +432,9 @@ pub struct RelayUsage {
     pub soft_limit_reached: bool,
     /// What is past it: `sessions` and/or `hours`.
     pub reasons: Vec<String>,
+    /// Free plan only: `free_limit_sessions` and/or `free_limit_relay_hours`
+    /// when at or over that allowance (CUA-1745). Older relays send none.
+    pub warnings: Vec<String>,
     /// Where to get more.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrade_url: Option<String>,

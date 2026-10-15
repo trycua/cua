@@ -9629,7 +9629,7 @@ pub struct AppRelayUsage {
 pub type AppRelayAllowanceNotice = core::relay_usage::RelayAllowanceNotice;
 #[uniffi::remote(Record)]
 pub struct AppRelayAllowanceNotice {
-    /// "You've used your free relay allowance for this month. ..."
+    /// On Free: "You're using 2 of 2 live sessions on the free plan. ..."
     pub text: String,
     /// [`UPGRADE`].
     pub upgrade: String,

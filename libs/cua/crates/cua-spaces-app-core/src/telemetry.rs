@@ -1415,11 +1415,11 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments::default();
-        let on = Experiments {
-            sharing: true,
+        let off = Experiments {
+            sharing: false,
             ..Default::default()
         };
+        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
@@ -1494,12 +1494,16 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
+        let off = Experiments {
+            sharing: false,
+            ..Default::default()
+        };
         let on = Experiments {
             cua_volume: true,
             sharing: true,
             ..Default::default()
         };
-        let signals = experiments_changed(&Experiments::default(), &on);
+        let signals = experiments_changed(&off, &on);
         assert_eq!(
             record(&t, &signals),
             2,

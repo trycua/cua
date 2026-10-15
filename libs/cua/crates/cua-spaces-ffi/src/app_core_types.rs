@@ -6361,7 +6361,8 @@ pub struct AppExperiments {
     pub cua_volume: bool,
     /// Your own clouds in the New Space wizard.
     pub your_cloud: bool,
-    /// Sharing a Space with other accounts.
+    /// Sharing a Space with other accounts. On unless turned off: a missing
+    /// key reads as on (the plans on cua.ai/pricing list sharing).
     pub sharing: bool,
     /// The New UI (the shared web UI) is the main window: the user's choice
     /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).

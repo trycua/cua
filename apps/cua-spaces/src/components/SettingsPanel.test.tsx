@@ -442,9 +442,11 @@ describe("SettingsPanel Experiments", () => {
     renderPanel({ telemetry });
     await screen.findByText("Share anonymous usage data");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
-    for (const name of ["Cua Volume", "Your cloud", "Sharing"]) {
+    for (const name of ["Cua Volume", "Your cloud"]) {
       expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
     }
+    // Sharing is on by default (cua.ai/pricing lists it).
+    expect(experiments.getByRole("switch", { name: "Sharing" })).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByRole("region", { name: "Storage" })).toBeNull();
     await user.click(experiments.getByRole("switch", { name: "Cua Volume" }));
     expect(await screen.findByRole("region", { name: "Storage" })).toBeInTheDocument();
@@ -455,7 +457,7 @@ describe("SettingsPanel Experiments", () => {
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume"] },
+      { type: "experiments-on", experiments: ["cua_volume", "sharing"] },
     ]);
   });
 });

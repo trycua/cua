@@ -377,8 +377,8 @@ describe("MainWindow", () => {
     const labels = [...document.querySelectorAll(".dw-toolbar-actions button")].map(
       (b) => b.getAttribute("aria-label") ?? b.textContent,
     );
-    // No Share without the Sharing experiment (Settings, Experiments).
-    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Delete Space", "Open"]);
+    // Share is on by default (Settings, Experiments, Sharing).
+    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Share", "Delete Space", "Open"]);
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "Stream",
       "Agents",
@@ -479,7 +479,7 @@ describe("MainWindow", () => {
     // The toolbar's power button sits right before Delete; the row has one too.
     const toolbar = document.querySelector(".dw-toolbar-actions")!;
     const labels = [...toolbar.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent);
-    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Suspend", "Delete Space", "Open"]);
+    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Share", "Suspend", "Delete Space", "Open"]);
     expect(screen.getAllByRole("button", { name: "Suspend" })).toHaveLength(2);
     // aurora (cloud) cannot be turned off: no power button on its row.
     expect(document.querySelectorAll(".dw-row-power")).toHaveLength(1);

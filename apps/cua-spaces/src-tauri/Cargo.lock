@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

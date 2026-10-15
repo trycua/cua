@@ -229,7 +229,7 @@ Returned by [`app_experiments_choose`](#app_experiments_choose), [`app_experimen
 | --- | --- | --- | --- |
 | `cua_volume` / `cuaVolume` | `bool` |  | Cua Volume in the first run and Settings, Storage. |
 | `your_cloud` / `yourCloud` | `bool` |  | Your own clouds in the New Space wizard. |
-| `sharing` | `bool` |  | Sharing a Space with other accounts. |
+| `sharing` | `bool` |  | Sharing a Space with other accounts. On unless turned off: a missing key reads as on (the plans on cua.ai/pricing list sharing). |
 | `web_ui` / `webUi` | `bool` |  | The New UI (the shared web UI) is the main window: the user's choice or, without one, `new_ui_default` (`crate.settings.resolve_new_ui`). |
 
 ## `app_experiments_choose`

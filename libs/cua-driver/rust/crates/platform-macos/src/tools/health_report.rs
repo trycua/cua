@@ -14,6 +14,7 @@ use cua_driver_core::health_report::{
     CheckData, CheckEntry, HealthCheckProvider, NAME_AX_CAPABILITY, NAME_BINARY_VERSION,
     NAME_BUNDLE_IDENTITY, NAME_PLATFORM_SUPPORTED, NAME_SCREEN_CAPTURE_CAPABILITY,
     NAME_SESSION_ACTIVE, NAME_TCC_ACCESSIBILITY, NAME_TCC_SCREEN_RECORDING,
+    NAME_WINDOWSERVER_CONNECTION,
 };
 
 use crate::permissions::status::{accessibility_granted, current_status, screen_recording_granted};
@@ -29,6 +30,7 @@ pub const MACOS_CHECK_NAMES: &[&str] = &[
     NAME_TCC_SCREEN_RECORDING,
     NAME_AX_CAPABILITY,
     NAME_SCREEN_CAPTURE_CAPABILITY,
+    NAME_WINDOWSERVER_CONNECTION,
 ];
 
 /// The canonical bundle identifier whose TCC grants matter for the
@@ -58,6 +60,7 @@ impl HealthCheckProvider for MacosHealthProvider {
             NAME_TCC_SCREEN_RECORDING => check_tcc_screen_recording(),
             NAME_AX_CAPABILITY => check_ax_capability(),
             NAME_SCREEN_CAPTURE_CAPABILITY => check_screen_capture_capability(),
+            NAME_WINDOWSERVER_CONNECTION => check_windowserver_connection(),
             // Defensive: the dispatcher only forwards names in
             // `check_names()`, so this branch should be unreachable.
             other => CheckEntry::skip(
@@ -69,6 +72,49 @@ impl HealthCheckProvider for MacosHealthProvider {
 }
 
 // ── Individual checks ────────────────────────────────────────────────────────
+
+/// True when this daemon is neither embedded in a host app nor inside
+/// CuaDriver.app: it relaunched itself disclaimed, as its own responsible
+/// process (CUA-1777).
+pub fn is_unbundled(embedded: bool, exe_path: &str) -> bool {
+    !embedded
+        && !(exe_path.contains("/CuaDriver.app/Contents/MacOS/")
+            || exe_path.contains("/CuaDriverLocal.app/Contents/MacOS/"))
+}
+
+fn check_windowserver_connection() -> CheckEntry {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| p.to_str().map(str::to_owned))
+        .unwrap_or_default();
+    windowserver_connection_entry(
+        is_unbundled(cua_driver_core::embedded_mode(), &exe),
+        crate::input::skylight::windowserver_connection_invalid(),
+    )
+}
+
+fn windowserver_connection_entry(unbundled: bool, invalid_seen: bool) -> CheckEntry {
+    let hint = super::WINDOWSERVER_INVALID_HINT;
+    if invalid_seen {
+        return CheckEntry::fail(
+            NAME_WINDOWSERVER_CONNECTION,
+            "SLPSPostEventRecordTo returned 1002 (invalid connection): background focus steps are failing.",
+            hint,
+        );
+    }
+    if unbundled {
+        return CheckEntry::fail(
+            NAME_WINDOWSERVER_CONNECTION,
+            "Running unbundled (outside CuaDriver.app): the daemon is its own responsible process and its no-raise focus steps are expected to fail with 1002.",
+            hint,
+        );
+    }
+    CheckEntry::pass(
+        NAME_WINDOWSERVER_CONNECTION,
+        "No invalid WindowServer connection observed.",
+    )
+}
 
 pub(crate) fn check_platform_supported() -> CheckEntry {
     // Reaching this code path on macOS implies a supported platform —
@@ -367,6 +413,32 @@ fn arch_label() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unbundled_detection_follows_embedding_and_bundle_path() {
+        assert!(is_unbundled(false, "/usr/local/bin/cua-driver"));
+        assert!(!is_unbundled(true, "/usr/local/bin/cua-driver"));
+        assert!(!is_unbundled(
+            false,
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+        ));
+    }
+
+    #[test]
+    fn windowserver_check_fails_loudly_when_invalid_or_unbundled() {
+        let seen = windowserver_connection_entry(false, true);
+        assert_eq!(seen.status, CheckStatus::Fail);
+        assert!(seen.message.contains("1002"));
+        assert!(seen.hint.unwrap().contains("open -n -g -a CuaDriver"));
+        assert_eq!(
+            windowserver_connection_entry(true, false).status,
+            CheckStatus::Fail
+        );
+        assert_eq!(
+            windowserver_connection_entry(false, false).status,
+            CheckStatus::Pass
+        );
+    }
     use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;

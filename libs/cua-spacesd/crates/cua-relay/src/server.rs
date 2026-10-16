@@ -114,6 +114,11 @@ pub struct RelayConfig {
     /// yamux's per-machine connection receive window: the most one
     /// machine's connection buffers across all of its streams (S7).
     pub machine_window_bytes: usize,
+    /// For this long after start, a request for a known machine that is
+    /// not connected waits for it to reconnect instead of failing: the
+    /// machines of the relay this one took over from are on their way.
+    /// Zero: fail at once.
+    pub reconnect_grace: Duration,
 }
 
 impl Default for RelayConfig {
@@ -146,6 +151,7 @@ impl Default for RelayConfig {
             max_global_streams: 4096,
             machine_max_streams: crate::mux::MAX_STREAMS,
             machine_window_bytes: crate::mux::DEFAULT_WINDOW_BYTES,
+            reconnect_grace: Duration::ZERO,
         }
     }
 }
@@ -250,6 +256,8 @@ pub struct Relay {
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
     pub(crate) global_streams: Arc<AtomicU64>,
+    /// When this relay started (the reconnect grace counts from it).
+    started: Instant,
 }
 
 /// One row of `/relay/v1/machines`.
@@ -304,6 +312,7 @@ impl Relay {
             devices: Arc::new(devices),
             key,
             global_streams: Arc::default(),
+            started: Instant::now(),
         })
     }
 
@@ -367,6 +376,23 @@ impl Relay {
     /// The connected machine `id`, if any.
     pub(crate) fn machine(&self, id: &str) -> Option<Arc<Machine>> {
         self.machines.lock().expect("machines").get(id).cloned()
+    }
+
+    /// Within the reconnect grace after start, waits for the known machine
+    /// `id` to connect (it was connected to the relay this one replaced and
+    /// is reconnecting); `None` once the grace is over or for an unknown id.
+    pub(crate) async fn await_reconnect(&self, id: &str) -> Option<Arc<Machine>> {
+        let until = self.started + self.config.reconnect_grace;
+        if Instant::now() >= until || self.directory.get(id).is_none() {
+            return None;
+        }
+        while Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Some(machine) = self.machine(id) {
+                return Some(machine);
+            }
+        }
+        None
     }
 
     /// Drops machine `id` and cuts its clients.
@@ -433,12 +459,21 @@ impl Relay {
         listener: tokio::net::TcpListener,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> std::io::Result<()> {
+        let handle = self.clone();
         axum::serve(
             listener,
             self.router()
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
-        .with_graceful_shutdown(shutdown)
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            // Machines reconnect at once, to the relay that replaces this
+            // one, instead of holding the shutdown open until the process
+            // exits.
+            let machines = handle.machine_ids().len();
+            handle.disconnect_all();
+            tracing::info!(machines, "closed machine connections");
+        })
         .await
     }
 
@@ -1033,6 +1068,10 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             "the relay forwards only requests carrying a spacesd credential",
         );
     }
+    let machine = match machine {
+        Some(machine) => Some(machine),
+        None => relay.await_reconnect(&id).await,
+    };
     let Some(machine) = machine else {
         return refuse(
             request.headers(),

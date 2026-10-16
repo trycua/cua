@@ -3,7 +3,8 @@
 
 // Settings → About and launch at login (`about.*`, `loginItem.*`): the
 // updater's controls, channel and checks (the SwiftUI host's
-// `UpdatesModel`; here electron-updater, `src/updater.ts`), and the login
+// `UpdatesModel`; here electron-updater, `src/updater.ts`), the in-app
+// update indicator's state and "Restart to update" (`update.*`), and the login
 // item (`LoginItem`; here Electron's login item settings on macOS and
 // Windows, an autostart entry on Linux, `src/login-item.ts`).
 import { bool } from "./args";
@@ -33,6 +34,14 @@ export function aboutMethods(ctx: BridgeContext): Handlers {
       if (typeof args.autoInstall === "boolean") u.setAutoInstall(args.autoInstall);
       if (typeof args.channel === "string") u.choose(args.channel);
       return encode(u.input);
+    },
+    // The in-app update indicator: a development run has no updater, so it is idle.
+    "update.get": () => encode(updates().updateState),
+    "update.install": () => {
+      const u = updates();
+      // The updater quits the app to install: answer first, then start it.
+      if (u.updateState.status === "downloaded") setTimeout(() => u.installUpdate(), 0);
+      return encode(u.updateState);
     },
     "about.checkNow": () => {
       const u = withUpdater();

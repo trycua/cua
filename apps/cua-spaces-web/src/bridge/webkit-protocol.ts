@@ -103,6 +103,8 @@ export const WEBKIT_METHODS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
@@ -131,6 +133,7 @@ export const WEBKIT_METHODS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   "settings.get",
@@ -184,6 +187,7 @@ export const WEBKIT_EVENTS = [
   "keyvault.changed",
   "session.changed",
   "settings.changed",
+  "update.changed",
   "agents.changed",
   "teleport.progress",
   "startup.changed",
@@ -232,7 +236,7 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
-  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null } | null;
+  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;

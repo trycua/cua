@@ -136,6 +136,8 @@ export const HOST_COVERAGE = {
   "about.get": { webkit: { methods: ["about.get"] }, tauri: ST["about.get"] },
   "about.set": { webkit: { methods: ["about.set"] }, tauri: ST["about.set"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
   "about.checkNow": { webkit: { methods: ["about.checkNow"] }, tauri: ST["about.checkNow"], unsupported: { tauri: "the Tauri updater has one feed and no controls" } },
+  "update.get": { webkit: { methods: ["update.get"] }, tauri: ST["update.get"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
+  "update.install": { webkit: { methods: ["update.install"] }, tauri: ST["update.install"], unsupported: { tauri: "the Tauri updater has no in-app indicator" } },
   "experiments.get": { webkit: { methods: ["app.info"] }, tauri: ST["experiments.get"] },
   "experiments.set": { webkit: { methods: ["app.info", "settings.choose"] }, tauri: ST["experiments.set"] },
   "loginItem.get": { webkit: { methods: ["loginItem.get"] }, tauri: ST["loginItem.get"] },

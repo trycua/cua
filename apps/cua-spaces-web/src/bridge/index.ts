@@ -117,6 +117,8 @@ export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
 export { defaultTeam, eligibleTeams, teamName, useTeamChoices, type TeamChoices } from "./teams";
+export { joinFailureText, useJoinWithCode, type JoinHook, type JoinPhase } from "./join";
+export { displayPairingCode, normalizePairingCode, pairingLinkRelay } from "./pairing-code";
 export { expiresInText, FINISHING_SETUP, PAIRING_POLL_MS, pairingUnsupported, usePairingCode, type PairingHook, type PairingPhase } from "./pairing";
 export { READY_STARTUP, type StartupAction, type StartupPhase, type StartupState } from "./ops/startup";
 export {

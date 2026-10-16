@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { XIcon } from "lucide-react";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 
 import { useRelayUsageView, useSession, useUpsellGate } from "@/bridge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,23 @@ function readDismissed(): string | null {
   }
 }
 
+const listeners = new Set<() => void>();
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+
+/**
+ * Whether the allowance notice is on screen now. The update indicator
+ * (`update-indicator.tsx`) steps back to an icon while it is, so the two
+ * prompts are never both open at once.
+ */
+export function useRelayAllowanceShowing(): boolean {
+  const notice = useRelayUsageView()?.notice;
+  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
+  return Boolean(notice) && dismissed !== notice?.dismissKey;
+}
+
 /**
  * The relay allowance for the month: one line above every page with
  * Upgrade, until dismissed (for that month and reason: the core's
@@ -28,7 +45,7 @@ function readDismissed(): string | null {
 export function RelayAllowanceNotice() {
   const notice = useRelayUsageView()?.notice;
   const { openExternal } = useSession();
-  const [dismissed, setDismissed] = useState(readDismissed);
+  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
   const hidden = !notice || dismissed === notice.dismissKey;
   const gate = useUpsellGate("meter", !hidden, notice?.level === "warn");
   if (!notice || hidden || !gate.show) return null;
@@ -39,7 +56,7 @@ export function RelayAllowanceNotice() {
     } catch {
       // Not kept: it shows again next launch.
     }
-    setDismissed(notice.dismissKey);
+    for (const l of [...listeners]) l();
   };
   const upgradeUrl = notice.upgradeUrl;
   return (

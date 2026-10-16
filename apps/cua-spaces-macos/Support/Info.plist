@@ -20,6 +20,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.9.2</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.trycua.spaces.macos</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cua</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>

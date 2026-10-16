@@ -311,6 +311,22 @@ impl Tool for DragTool {
             {
                 return refusal;
             }
+            // Electron/Chromium windows take the press and the moves of a
+            // background drag but lose the release (the page's pointer
+            // capture is dropped), so the drop never lands. Refuse instead
+            // of reporting a delivery that did not happen.
+            if crate::browser::ElectronJs::is_electron(pid) {
+                return cua_driver_core::delivery::background_unavailable_result(
+                    ELECTRON_BACKGROUND_DRAG_UNAVAILABLE,
+                    "background_unavailable",
+                    "Electron/Chromium windows lose the release of a background drag on macOS",
+                    serde_json::json!({
+                        "effect": "refused",
+                        "event_kind": "mouse_drag",
+                        "requires": ["delivery_mode:foreground", "window_id"],
+                    }),
+                );
+            }
         }
 
         // Animate agent cursor along drag path (start → end).
@@ -361,6 +377,9 @@ impl Tool for DragTool {
             .await
             {
                 Ok(activated) => {
+                    if !activated && crate::input::skylight::windowserver_connection_invalid() {
+                        return super::windowserver_connection_refusal(pid, Some(wid));
+                    }
                     crate::cursor::overlay::send_command(
                         cursor_key.clone(),
                         cursor_overlay::OverlayCommand::PinAbove(wid as u64),
@@ -547,6 +566,12 @@ impl Tool for DragTool {
 /// `kCGDraggingWindowLevel`: AppKit shows the image of a live (or sliding
 /// back) drag-and-drop session in a window of the source app at this level.
 const DRAGGING_WINDOW_LEVEL: i32 = 500;
+
+const ELECTRON_BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable for this \
+     Electron/Chromium window on macOS: it takes the press and the moves but loses the release, \
+     so the drop does not land. Use the app's own controls (a button, menu item or keyboard \
+     route) or, if the user allows the window to come forward, retry with \
+     delivery_mode:\"foreground\".";
 
 fn drag_image_windows(pid: i32) -> std::collections::HashSet<u32> {
     crate::windows::pid_on_screen_windows_any_layer(pid)

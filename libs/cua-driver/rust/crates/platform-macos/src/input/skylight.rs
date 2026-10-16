@@ -257,8 +257,9 @@ pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) ->
     if !get_process_psn_for_window(target, pid, &mut psn) {
         return false;
     }
-    let send =
-        |record: &[u8; 0xF8]| unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) == 0 };
+    let send = |record: &[u8; 0xF8]| {
+        note_post_status(unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) })
+    };
     let mut ok = true;
     if let Some(current) = current {
         let mut defocus = focus_record(current);
@@ -332,6 +333,38 @@ type GetWindowOwnerFn = unsafe extern "C" fn(u32, u32, *mut u32) -> i32;
 
 /// `OSStatus SLSGetConnectionPSN(uint32_t cid, void *psn)`
 type GetConnectionPSNFn = unsafe extern "C" fn(u32, *mut c_void) -> i32;
+
+// ── WindowServer connection health (CUA-1777) ───────────────────────────────
+
+/// `SLPSPostEventRecordTo` result for "invalid connection". The daemon gets it
+/// when it runs as its own responsible process (a bare binary outside
+/// CuaDriver.app, which relaunches itself disclaimed): the process has no
+/// usable WindowServer connection for the target, so every no-raise focus
+/// record is dropped.
+pub const WINDOWSERVER_INVALID_CONNECTION: i32 = 1002;
+
+static WINDOWSERVER_CONNECTION_INVALID: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record the status of one `SLPSPostEventRecordTo` and report success. A
+/// 1002 is remembered for the life of the process so tools and `health_report`
+/// can fail loudly instead of continuing without the focus step.
+pub(crate) fn note_post_status(status: i32) -> bool {
+    if status == WINDOWSERVER_INVALID_CONNECTION {
+        WINDOWSERVER_CONNECTION_INVALID.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    status == 0
+}
+
+/// True once any focus-record post returned the invalid-connection status.
+pub fn windowserver_connection_invalid() -> bool {
+    WINDOWSERVER_CONNECTION_INVALID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_windowserver_connection_invalid_for_test() {
+    WINDOWSERVER_CONNECTION_INVALID.store(false, std::sync::atomic::Ordering::Relaxed);
+}
 
 // ── Focus-without-raise SPIs ──────────────────────────────────────────────────
 
@@ -992,12 +1025,13 @@ pub fn activate_without_raise_with(
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
-    let defocus_ok =
-        !defocus_front || unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let defocus_ok = !defocus_front
+        || note_post_status(unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let focus_ok =
+        note_post_status(unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     defocus_ok && focus_ok
 }
@@ -1032,11 +1066,13 @@ pub fn restore_focus_after_without_raise(
 
     let mut buf = focus_record(target_wid);
     buf[0x8A] = 0x02;
-    let defocus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let defocus_ok =
+        note_post_status(unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     let mut buf = focus_record(previous_wid);
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let focus_ok =
+        note_post_status(unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     defocus_ok && focus_ok
 }
@@ -1184,7 +1220,8 @@ pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
     }
     for event_kind in [0x01, 0x02] {
         let record = make_key_window_record(target_wid, event_kind);
-        if unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) } != 0 {
+        if !note_post_status(unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) })
+        {
             return false;
         }
     }
@@ -1532,9 +1569,21 @@ pub fn with_menu_shortcut_activation(
 #[cfg(test)]
 mod tests {
     use super::{
-        focus_failure_hint_from, foreground_turn, make_key_window_record,
-        preserves_exact_existing_focus,
+        focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
+        preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
+        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
+
+    #[test]
+    fn a_1002_post_status_is_remembered_and_other_failures_are_not() {
+        reset_windowserver_connection_invalid_for_test();
+        assert!(note_post_status(0));
+        assert!(!note_post_status(-1));
+        assert!(!windowserver_connection_invalid());
+        assert!(!note_post_status(WINDOWSERVER_INVALID_CONNECTION));
+        assert!(windowserver_connection_invalid());
+        reset_windowserver_connection_invalid_for_test();
+    }
 
     #[test]
     fn focus_failure_names_the_dialog_that_holds_focus() {

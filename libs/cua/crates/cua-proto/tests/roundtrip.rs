@@ -422,6 +422,7 @@ fn daemon_messages_roundtrip() {
             id: "local:dev".into(),
             kind: "container".into(),
             runtime: "gvisor".into(),
+            stop_reason: "out of memory".into(),
         }),
     });
     roundtrip(&daemon::CreateSpaceRequest {

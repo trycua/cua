@@ -9,6 +9,7 @@ import { useBridge, useExperiments, useMachines, useSpaces, type Machine, type S
 import { spaceDetail } from "@/bridge/space-detail";
 import { UpsellPrompt } from "@/components/upsell-prompt";
 import { AddMachineDialog } from "@/components/add-machine-dialog";
+import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
 import { ThisMachine } from "@/components/this-machine";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -23,7 +24,13 @@ import { cn, relativeTime } from "@/lib/utils";
 export const Route = createFileRoute("/machines/")({
   component: MachinesPage,
   // `?add=1` opens "Add a machine" (the getting-started checklist links here).
-  validateSearch: (s: Record<string, unknown>): { add?: true } => (s.add === 1 || s.add === "1" || s.add === true ? { add: true } : {}),
+  // `?join=<code>` opens "Join with a code" with the code filled in (a `cua://add/<code>` link
+  // opened on this computer); `relay` names a relay other than the production one.
+  validateSearch: (s: Record<string, unknown>): { add?: true; join?: string; relay?: string } => ({
+    ...(s.add === 1 || s.add === "1" || s.add === true ? { add: true as const } : {}),
+    ...(typeof s.join === "string" && s.join ? { join: s.join.slice(0, 200) } : {}),
+    ...(typeof s.relay === "string" && s.relay ? { relay: s.relay.slice(0, 300) } : {}),
+  }),
 });
 
 function MachinesPage() {
@@ -33,7 +40,7 @@ function MachinesPage() {
   const exp = useExperiments();
   const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { add } = Route.useSearch();
+  const { add, join, relay } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [adding, setAddingState] = useState(add === true);
   const setAdding = (open: boolean) => {
@@ -43,6 +50,14 @@ function MachinesPage() {
   useEffect(() => {
     if (add) setAddingState(true);
   }, [add]);
+  const [joining, setJoiningState] = useState(join !== undefined);
+  const setJoining = (open: boolean) => {
+    setJoiningState(open);
+    if (!open && join) void navigate({ search: {}, replace: true });
+  };
+  useEffect(() => {
+    if (join) setJoiningState(true);
+  }, [join]);
   const selected = selectedMachine(machines, selectedId);
   // Reachable from here: a machine whose owner stopped sharing it is not.
   const online = machines.filter(reachable).length;
@@ -63,9 +78,14 @@ function MachinesPage() {
           isLoading ? "Loading machines…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
         }
         actions={
-          <Button variant="outline" onClick={() => setAdding(true)}>
-            <PlusIcon /> Add a machine
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => setJoining(true)} data-join-with-code-open>
+              Join with a code
+            </Button>
+            <Button variant="outline" onClick={() => setAdding(true)}>
+              <PlusIcon /> Add a machine
+            </Button>
+          </div>
         }
       />
       {error ? (
@@ -120,6 +140,7 @@ function MachinesPage() {
         </div>
       )}
       <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
+      <JoinWithCodeDialog open={joining} onOpenChange={setJoining} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }

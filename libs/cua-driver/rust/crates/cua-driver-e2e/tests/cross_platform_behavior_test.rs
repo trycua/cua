@@ -1657,7 +1657,9 @@ fn shared_case_with_native_hyprland(
             // Electron scroll is delivered in the background through
             // accessibility (reveal scroll), including inner scrollers.
             // The shared drag cell is a pointer-event drag, which the
-            // background window-routed drag delivers (CUA-1207).
+            // background window-routed drag delivers (CUA-1207). Electron
+            // loses the release, so the driver refuses there.
+            ("electron", "drag", Targeting::Px) => vec![RefusalCode::BackgroundUnavailable],
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

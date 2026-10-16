@@ -578,6 +578,33 @@ impl ContainerRuntime {
         }
     }
 
+    /// How the container `name` ended, when it has stopped: the engine's
+    /// exit code and whether the kernel killed it for memory
+    /// (`State.OOMKilled`). `None` while it runs, when it never ran, or
+    /// when there is no such container.
+    pub async fn exit_of(&self, name: &str) -> Result<Option<ExitRecord>> {
+        Ok(self.inspect(name).await?.as_ref().and_then(Self::exit_from))
+    }
+
+    fn exit_from(i: &bollard::models::ContainerInspectResponse) -> Option<ExitRecord> {
+        use bollard::models::ContainerStateStatusEnum as S;
+        let s = i.state.as_ref()?;
+        if !matches!(s.status, Some(S::EXITED) | Some(S::DEAD)) {
+            return None;
+        }
+        // Docker's zero time: created, never started.
+        if s.finished_at
+            .as_deref()
+            .is_none_or(|t| t.starts_with("0001-"))
+        {
+            return None;
+        }
+        Some(ExitRecord {
+            exit_code: s.exit_code.unwrap_or(0),
+            oom_killed: s.oom_killed.unwrap_or(false),
+        })
+    }
+
     fn endpoints_from(i: &bollard::models::ContainerInspectResponse) -> Endpoints {
         let mut ports = BTreeMap::new();
         if let Some(map) = i.network_settings.as_ref().and_then(|n| n.ports.as_ref()) {
@@ -1902,6 +1929,54 @@ fn pull_fraction(download: Option<f64>, extract: Option<f64>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn inspected(
+        status: bollard::models::ContainerStateStatusEnum,
+        finished: &str,
+        code: i64,
+        oom: bool,
+    ) -> bollard::models::ContainerInspectResponse {
+        bollard::models::ContainerInspectResponse {
+            state: Some(bollard::models::ContainerState {
+                status: Some(status),
+                finished_at: Some(finished.into()),
+                exit_code: Some(code),
+                oom_killed: Some(oom),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_stopped_container_says_how_it_ended() {
+        use bollard::models::ContainerStateStatusEnum as S;
+        let at = "2026-10-15T20:40:01.60761462Z";
+        // What the engine recorded for a Space the guest kernel killed.
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::EXITED, at, 137, true)),
+            Some(ExitRecord {
+                exit_code: 137,
+                oom_killed: true
+            })
+        );
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::DEAD, at, 1, false)),
+            Some(ExitRecord {
+                exit_code: 1,
+                oom_killed: false
+            })
+        );
+        // Running, or created and never started: nothing ended.
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::RUNNING, at, 0, false)),
+            None
+        );
+        assert_eq!(
+            ContainerRuntime::exit_from(&inspected(S::EXITED, "0001-01-01T00:00:00Z", 0, false)),
+            None
+        );
+    }
 
     #[test]
     fn manifest_layers_give_a_pull_its_total_and_count_what_exists() {

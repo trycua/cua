@@ -88,6 +88,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "about.get": {},
   "about.set": { channel: "beta" },
   "about.checkNow": {},
+  "update.get": {},
+  "update.install": {},
   "experiments.get": {},
   "experiments.set": { experiments: { cuaVolume: true } },
   "loginItem.get": {},
@@ -118,6 +120,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.droppedFiles": { names: ["notes.txt"] },
   "spaces.sendFiles": { spaceId: "s1", paths: ["/tmp/notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
+  "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},
@@ -161,6 +164,7 @@ function webkitResult(method: string): unknown {
       return { completed: true, mode: "client" };
     case "host.status":
     case "host.setUp":
+    case "host.joinWithCode":
     case "host.action":
       return { configured: false, sharing: false, serviceInstalled: false, serviceRunning: false, serviceKind: "process", clients: [], permissions: [], shareDesktop: true, provideSpaces: false, maxSpaces: 0 };
     case "keyvault.approve":

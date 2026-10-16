@@ -138,6 +138,8 @@ export interface SpacePower {
   turningOn?: boolean | null;
   /** Why the last power action failed, until the next one. */
   error?: string | null;
+  /** Why it stopped without being asked to ("out of memory"), while it is off. */
+  stopReason?: string | null;
 }
 
 /** How far a Space being created has come. */
@@ -194,6 +196,8 @@ export interface SpaceRow {
   power?: string;
   /** `running`, `suspended` or `stopped` as cua last left it, when known. */
   powerState?: string;
+  /** Why a local Space stopped without being asked to ("out of memory"), when it did. */
+  stopReason?: string;
   /** For a Space in your cloud: the provider word (`aws`, `gcp`, `modal`),
    * its account and region in words ("AWS · us-west-2"), and where Delete
    * Permanently can delete it (`here`, `host:<machine>`, `elsewhere`). */

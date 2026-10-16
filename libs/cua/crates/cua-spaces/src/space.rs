@@ -571,6 +571,11 @@ pub struct SpaceInfo {
     /// sharing it). Empty when reachable, and for other Spaces.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub status: String,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
+    /// and once it is started again.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stop_reason: String,
 }
 
 impl SpaceInfo {
@@ -604,6 +609,7 @@ impl SpaceInfo {
             cloud_place: record.cloud_place.clone(),
             cloud_delete: record.cloud_delete.clone(),
             status: String::new(),
+            stop_reason: record.stop_reason.clone(),
         })
     }
 }

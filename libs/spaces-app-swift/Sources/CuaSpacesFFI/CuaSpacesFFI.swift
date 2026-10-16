@@ -3164,7 +3164,7 @@ public func FfiConverterTypeAppAboutLink_lower(_ value: AppAboutLink) -> RustBuf
 
 public struct AppAboutUpdates: Equatable, Hashable {
     /**
-     * "Automatically check for updates".
+     * "Check for and download updates automatically".
      */
     public var autoCheckLabel: String
     /**
@@ -3172,7 +3172,7 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var autoCheck: Bool
     /**
-     * "Install updates automatically".
+     * "Install a downloaded update when Cua Spaces quits".
      */
     public var autoInstallLabel: String
     /**
@@ -3212,13 +3212,13 @@ public struct AppAboutUpdates: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Automatically check for updates".
+         * "Check for and download updates automatically".
          */autoCheckLabel: String,
         /**
          * Checked.
          */autoCheck: Bool,
         /**
-         * "Install updates automatically".
+         * "Install a downloaded update when Cua Spaces quits".
          */autoInstallLabel: String,
         /**
          * Checked.

@@ -241,9 +241,11 @@ public final class UpdateUserDriver: NSObject, SPUUserDriver {
     // MARK: - SPUUserDriver
 
     public func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
-        // Checking is on by default (SUEnableAutomaticChecks); a user's own
-        // choice is kept. Automatic downloads follow the Settings toggle.
-        reply(SUUpdatePermissionResponse(automaticUpdateChecks: true, sendSystemProfile: false))
+        // Checking and downloading are on by default (SUEnableAutomaticChecks,
+        // SUAutomaticallyUpdate); a user's own choice is kept. Nothing
+        // restarts the app without a click on "Restart to update".
+        reply(SUUpdatePermissionResponse(automaticUpdateChecks: true, automaticUpdateDownloading: true as NSNumber,
+                                         sendSystemProfile: false))
     }
 
     public func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) { beginUserCheck() }

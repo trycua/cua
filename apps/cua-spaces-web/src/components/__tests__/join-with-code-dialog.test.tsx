@@ -85,10 +85,24 @@ describe("Join with a code", () => {
     await mount(adapter, { initialCode: "K7QM4XPB2RHD" });
     fireEvent.click(join());
     await waitFor(() => expect(state()).toBe("failed"));
-    expect(document.querySelector("[data-join-error]")?.textContent).toBe("this pairing code was already used");
+    expect(document.querySelector("[data-join-error]")?.textContent).toBe(
+      "That code didn't work. It may be used, expired or mistyped. Make a new one in Add a machine.",
+    );
     expect(field().disabled).toBe(false);
     fireEvent.click(join());
     await waitFor(() => expect(state()).toBe("joined"));
+  });
+
+  it("hides the command's internal prefixes", async () => {
+    const { adapter } = host(async () => {
+      throw new HostError("cua: unauthenticated: host setup failed at register: relay: pairing code is not valid; make a new one", "failed");
+    });
+    await mount(adapter, { initialCode: "K7QM4XPB2RHD" });
+    fireEvent.click(join());
+    await waitFor(() => expect(state()).toBe("failed"));
+    const text = document.querySelector("[data-join-error]")?.textContent ?? "";
+    expect(text).toContain("That code didn't work");
+    expect(text).not.toMatch(/unauthenticated|host setup failed|relay:/);
   });
 
   it("says plainly when the host can't join with a code", async () => {

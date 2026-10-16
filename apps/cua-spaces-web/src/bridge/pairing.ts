@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { HostError, isUnsupported } from "./adapter";
 import type { PairingCode } from "./contracts/devices";
+import { plainPairingError } from "./friendly-errors";
 import { useBridge } from "./hooks";
 
 /** How often an open "Add a machine" asks whether its code was used (ms). */
@@ -106,7 +107,7 @@ export function usePairingCode({
       },
       (e: unknown) => {
         if (mine !== seq.current) return;
-        setState({ phase: "error", code: null, error: { message: e instanceof Error ? e.message : String(e), unsupported: pairingUnsupported(e) } });
+        setState({ phase: "error", code: null, error: { message: plainPairingError(e), unsupported: pairingUnsupported(e) } });
       },
     );
   };

@@ -136,6 +136,9 @@ pub struct AppSpacePower {
     pub turning_on: Option<bool>,
     /// Why the last power action failed, until the next one.
     pub error: Option<String>,
+    /// Why it stopped without being asked to, in plain words ("out of
+    /// memory"), while it is off.
+    pub stop_reason: Option<String>,
 }
 
 /// One Space as the shells show it.
@@ -257,6 +260,10 @@ pub struct AppSpaceRow {
     /// Where Delete permanently can delete it: `here`, `host:<machine>`
     /// (that machine created it) or `elsewhere` (another device did).
     pub cloud_delete: Option<String>,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"), as the SDK
+    /// recorded it; absent otherwise.
+    pub stop_reason: Option<String>,
 }
 
 /// Where new Spaces can be created.

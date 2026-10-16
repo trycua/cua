@@ -325,3 +325,31 @@ describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
     ]);
   });
 });
+
+describe("the permission rows of the first run", () => {
+  beforeEach(() => onPlatform("MacIntel"));
+
+  it("reads the permissions again and ticks a pane once it is granted (CUA-1765)", async () => {
+    const { probe, adapter } = mount(noCore);
+    const real = adapter.call.bind(adapter);
+    let granted: string[] = [];
+    (adapter as { call: unknown }).call = (op: string, args: unknown) =>
+      op === "host.status"
+        ? real(op as never, args as never).then((h: any) => ({ ...h, permissions: h.permissions.filter((p: { id: string }) => !granted.includes(p.id)) }))
+        : real(op as never, args as never);
+    await waitFor(() => expect(probe.flow.state).toBeTruthy());
+    await waitFor(() => expect(probe.flow.permissions.map((p) => p.id)).toEqual(["screen-recording", "accessibility"]));
+    expect(probe.flow.grantedPermissions).toEqual([]);
+
+    granted = ["screen-recording"];
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(probe.flow.permissions.map((p) => p.id)).toEqual(["accessibility"]));
+    expect(probe.flow.grantedPermissions.map((p) => p.id)).toEqual(["screen-recording"]);
+
+    granted = ["screen-recording", "accessibility"];
+    await waitFor(() => expect(probe.flow.permissions).toEqual([]), { timeout: 5000 });
+    expect(probe.flow.grantedPermissions.map((p) => p.id).sort()).toEqual(["accessibility", "screen-recording"]);
+  });
+});

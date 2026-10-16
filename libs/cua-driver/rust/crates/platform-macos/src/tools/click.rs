@@ -222,6 +222,81 @@ fn background_pixel_restore_pid(
     }
 }
 
+/// Hand the user's frontmost app and key window back after a raw background
+/// pixel action that ran the focus-without-raise prologue (click, drag).
+///
+/// The no-raise record can make NSWorkspace report the target as active even
+/// though its window never moved in z-order. Once the input has been queued,
+/// restore the prior app if the target is still reported frontmost. Base this
+/// on observed state, not `focus_without_raise`: the private recipe can report
+/// failure after partially activating the target, and the raw input can
+/// self-activate even when that recipe is unavailable. Do not overwrite a
+/// different app here; the wildcard suppression lease handles genuine side
+/// effects.
+pub(super) async fn restore_user_focus_after_background_pixel(
+    pid: i32,
+    prior_front: Option<i32>,
+    prior_key_wid: Option<u32>,
+    window_id: Option<u32>,
+    focus_without_raise: bool,
+) {
+    if prior_front == Some(pid) {
+        return;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let reactivated = if let Some(previous_pid) = background_pixel_restore_pid(
+        PixelActivationPolicy::AllowTargetWithoutRaise,
+        prior_front,
+        pid,
+        apps::frontmost_pid(),
+    ) {
+        let _ = apps::activate_pid(previous_pid);
+        wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
+        true
+    } else {
+        false
+    };
+    // The prologue leaves the user's window key, but the input can still make
+    // the target self-activate, and re-activating the prior app does not by
+    // itself make its window key again. Post the focus record to the user's
+    // window only then, or when WindowServer's key focus left the user's app.
+    // Posting it while their window is still key re-activates their app
+    // (AppKit sends it didBecomeActive), which Bench v2 counted as a
+    // disturbance after every background pixel click.
+    if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
+        let key_moved = user_focus_needs_restore(
+            reactivated,
+            focus_without_raise,
+            crate::input::skylight::key_focus_pid(),
+            previous_pid,
+        );
+        if key_moved && apps::frontmost_pid() == Some(previous_pid) {
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::input::skylight::restore_focus_after_without_raise(
+                    previous_pid,
+                    prior_key_wid,
+                    pid,
+                    wid,
+                )
+            })
+            .await;
+        }
+    }
+}
+
+/// Whether the user's window needs the focus record back after a background
+/// pixel action: their app was re-activated, or WindowServer's key focus
+/// (`key_focus`) left it. Not when it never moved, since the record then makes
+/// their app become active again.
+fn user_focus_needs_restore(
+    reactivated: bool,
+    focus_without_raise: bool,
+    key_focus: Option<i32>,
+    previous_pid: i32,
+) -> bool {
+    reactivated || (focus_without_raise && key_focus.is_some_and(|pid| pid != previous_pid))
+}
+
 /// Poll until `pid` is the frontmost application or `budget` runs out.
 async fn wait_until_frontmost(pid: i32, budget: std::time::Duration) -> bool {
     let deadline = std::time::Instant::now() + budget;
@@ -1202,30 +1277,34 @@ impl Tool for ClickTool {
             // is required by Chromium gates and remote-HID proxies such as
             // iPhone Mirroring. Re-pin after the focus record because changing
             // AppKit active state can disturb overlay ordering.
-            let focus_without_raise =
-                if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
-                    let wid = window_id.expect("activation policy requires window_id");
-                    match tokio::task::spawn_blocking(move || {
-                        crate::input::mouse::prepare_background_pixel_click(pid, wid)
-                    })
-                    .await
-                    {
-                        Ok(activated) => {
-                            crate::cursor::overlay::send_command(
-                                cursor_key.clone(),
-                                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                            );
-                            activated
+            let focus_without_raise = if activation_policy
+                == PixelActivationPolicy::AllowTargetWithoutRaise
+            {
+                let wid = window_id.expect("activation policy requires window_id");
+                match tokio::task::spawn_blocking(move || {
+                    crate::input::mouse::prepare_background_pixel_click(pid, wid)
+                })
+                .await
+                {
+                    Ok(activated) => {
+                        if !activated && crate::input::skylight::windowserver_connection_invalid() {
+                            return super::windowserver_connection_refusal(pid, Some(wid));
                         }
-                        Err(error) => {
-                            return ToolResult::error(format!(
-                                "Background click activation task failed: {error}"
-                            ));
-                        }
+                        crate::cursor::overlay::send_command(
+                            cursor_key.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                        );
+                        activated
                     }
-                } else {
-                    false
-                };
+                    Err(error) => {
+                        return ToolResult::error(format!(
+                            "Background click activation task failed: {error}"
+                        ));
+                    }
+                }
+            } else {
+                false
+            };
 
             // Pulse only after the activation settle so it visually coincides
             // with the real target click rather than the private focus prelude.
@@ -1322,51 +1401,15 @@ impl Tool for ClickTool {
             )
             .await;
 
-            // The no-raise record can make NSWorkspace report the target as
-            // active even though its window never moved in z-order. Once the
-            // click has been queued, restore the prior app if the target is
-            // still reported frontmost. Base this on observed state, not
-            // `focus_without_raise`: the private recipe can report failure
-            // after partially activating the target, and the raw click can
-            // self-activate even when that recipe is unavailable. Do not
-            // overwrite a different app here; the wildcard suppression lease
-            // handles genuine side effects.
-            if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
-                && prior_front != Some(pid)
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                let reactivated = if let Some(previous_pid) = background_pixel_restore_pid(
-                    activation_policy,
-                    prior_front,
+            if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
+                restore_user_focus_after_background_pixel(
                     pid,
-                    apps::frontmost_pid(),
-                ) {
-                    let _ = apps::activate_pid(previous_pid);
-                    wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
-                    true
-                } else {
-                    false
-                };
-                // The prologue leaves the user's window key, but the click can
-                // still make the target self-activate, and re-activating the
-                // prior app does not by itself make its window key again.
-                // Post the focus record to the user's window in both cases so
-                // their typing keeps landing there.
-                if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
-                    if (focus_without_raise || reactivated)
-                        && apps::frontmost_pid() == Some(previous_pid)
-                    {
-                        let _ = tokio::task::spawn_blocking(move || {
-                            crate::input::skylight::restore_focus_after_without_raise(
-                                previous_pid,
-                                prior_key_wid,
-                                pid,
-                                wid,
-                            )
-                        })
-                        .await;
-                    }
-                }
+                    prior_front,
+                    prior_key_wid,
+                    window_id,
+                    focus_without_raise,
+                )
+                .await;
             }
 
             let changes = super::finish_window_observation(snapshot).await;
@@ -1425,6 +1468,31 @@ impl Tool for ClickTool {
 ///
 /// `element` is the cached AX element pointer and its snapshot index; `window`
 /// is the target (pid, window_id).
+/// Whether a background AXPress needs its window to be the app's key window.
+///
+/// A toolbar or format-bar control in a native app sends its action to the
+/// first responder through the key window (TextEdit's Bold checkbox applies
+/// the trait to the text view that way). With the app behind the user's
+/// window nothing is key, so the press flips the control but the document
+/// does not change. Browsers and Electron shells run page content in their own
+/// process and take no part in this.
+fn press_needs_key_window(action: &str, front_pid: Option<i32>, pid: i32, native: bool) -> bool {
+    action == "AXPress" && native && front_pid != Some(pid)
+}
+
+/// Make the target window AppKit-key without raising it, activating the app
+/// or taking key status from the user's window (the focus record only, as the
+/// background pixel click does), then let AppKit settle.
+fn prime_key_window_for_background_press(pid: i32, window_id: u32, action: &str) {
+    let native = !super::type_text::is_browser_pid(pid)
+        && !crate::browser::electron_js::ElectronJs::is_electron(pid);
+    if press_needs_key_window(action, apps::frontmost_pid(), pid, native)
+        && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
+    {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+    }
+}
+
 fn perform_ax_click(
     element: (usize, usize),
     window: (i32, u32),
@@ -1575,6 +1643,9 @@ fn perform_ax_click(
     let toggle_before = is_toggle_press(ax_action, &role, &advertised)
         .then(read_value)
         .flatten();
+    if !foreground {
+        prime_key_window_for_background_press(pid, window_id, ax_action);
+    }
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
         // Checked before the row-selection fallback, which writes AXSelected
@@ -1831,6 +1902,20 @@ mod tests {
     /// canonical values and default to "left". Hermes / Codex / Claude Code
     /// consumers branch on this enum being present.
     #[test]
+    fn background_press_needs_the_key_window_only_in_a_native_background_app() {
+        assert!(press_needs_key_window("AXPress", Some(1), 2, true));
+        assert!(
+            !press_needs_key_window("AXPress", Some(2), 2, true),
+            "frontmost"
+        );
+        assert!(
+            !press_needs_key_window("AXPress", Some(1), 2, false),
+            "browser or Electron"
+        );
+        assert!(!press_needs_key_window("AXShowMenu", Some(1), 2, true));
+    }
+
+    #[test]
     fn schema_advertises_button_enum() {
         let d = def();
         let props = d.input_schema.get("properties").expect("properties");
@@ -1897,6 +1982,17 @@ mod tests {
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
         );
+    }
+
+    /// Bench v2: re-posting the focus record to a user window that stayed key
+    /// re-activated the user's app after every background pixel click.
+    #[test]
+    fn user_focus_record_only_when_focus_moved() {
+        assert!(!user_focus_needs_restore(false, true, Some(7), 7));
+        assert!(!user_focus_needs_restore(false, true, None, 7));
+        assert!(!user_focus_needs_restore(false, false, Some(42), 7));
+        assert!(user_focus_needs_restore(false, true, Some(42), 7));
+        assert!(user_focus_needs_restore(true, false, Some(7), 7));
     }
 
     /// The no-foreground contract must not depend on the private activation

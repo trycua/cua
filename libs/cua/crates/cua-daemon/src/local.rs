@@ -1030,6 +1030,33 @@ impl LocalRuntime for VmmLocal {
         Ok(out)
     }
 
+    /// A container's exit record (its code and `OOMKilled`), read from the
+    /// engine only while it is up: the built-in Linux runtime is never
+    /// booted for it. Other runtimes keep no such record.
+    async fn stop_reason(
+        &self,
+        name: &str,
+        runtime_type: &str,
+    ) -> RuntimeResult<Option<cua_sandbox_core::StopReason>> {
+        if !matches!(
+            runtime_type.trim().to_ascii_lowercase().as_str(),
+            "gvisor" | "runsc" | "runc" | "container" | "docker"
+        ) {
+            return Ok(None);
+        }
+        let Some(rt) = self.container_if_up().await else {
+            return Ok(None);
+        };
+        Ok(rt
+            .exit_of(name)
+            .await
+            .map_err(rt_err)?
+            .map(|e| cua_sandbox_core::StopReason {
+                exit_code: e.exit_code,
+                out_of_memory: e.oom_killed,
+            }))
+    }
+
     async fn status(&self, name: &str) -> RuntimeResult<InstanceStatus> {
         let (_, rt) = self.owner(name).await?;
         rt.status(name).await.map(status_of).map_err(rt_err)

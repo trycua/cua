@@ -11093,7 +11093,12 @@ export type AppSpacePower = {
     /**
      * Why the last power action failed, until the next one.
      */
-    error?: string
+    error?: string,
+    /**
+     * Why it stopped without being asked to, in plain words ("out of
+     * memory"), while it is off.
+     */
+    stopReason?: string
 }
 
 /**
@@ -11120,7 +11125,8 @@ const FfiConverterTypeAppSpacePower = (() => {
                 control: FfiConverterTypeAppPowerControl.read(from),
                 off: FfiConverterBool.read(from),
                 turningOn: FfiConverterOptionalBoolean.read(from),
-                error: FfiConverterOptionalString.read(from)
+                error: FfiConverterOptionalString.read(from),
+                stopReason: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -11128,12 +11134,14 @@ const FfiConverterTypeAppSpacePower = (() => {
             FfiConverterBool.write(value.off, into);
             FfiConverterOptionalBoolean.write(value.turningOn, into);
             FfiConverterOptionalString.write(value.error, into);
+            FfiConverterOptionalString.write(value.stopReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppPowerControl.allocationSize(value.control) +
              FfiConverterBool.allocationSize(value.off) +
              FfiConverterOptionalBoolean.allocationSize(value.turningOn) +
-             FfiConverterOptionalString.allocationSize(value.error);
+             FfiConverterOptionalString.allocationSize(value.error) +
+             FfiConverterOptionalString.allocationSize(value.stopReason);
 
         }
     };
@@ -35096,7 +35104,13 @@ export type AppSpaceRow = {
      * Where Delete permanently can delete it: `here`, `host:<machine>`
      * (that machine created it) or `elsewhere` (another device did).
      */
-    cloudDelete?: string
+    cloudDelete?: string,
+    /**
+     * Why a local Space stopped without being asked to, in plain words
+     * ("out of memory", "killed", "exited with code 1"), as the SDK
+     * recorded it; absent otherwise.
+     */
+    stopReason?: string
 }
 
 /**
@@ -35141,7 +35155,8 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 powerState: FfiConverterOptionalString.read(from),
                 cloud: FfiConverterOptionalString.read(from),
                 cloudPlace: FfiConverterOptionalString.read(from),
-                cloudDelete: FfiConverterOptionalString.read(from)
+                cloudDelete: FfiConverterOptionalString.read(from),
+                stopReason: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -35167,6 +35182,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.cloud, into);
             FfiConverterOptionalString.write(value.cloudPlace, into);
             FfiConverterOptionalString.write(value.cloudDelete, into);
+            FfiConverterOptionalString.write(value.stopReason, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -35190,7 +35206,8 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.powerState) +
              FfiConverterOptionalString.allocationSize(value.cloud) +
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
-             FfiConverterOptionalString.allocationSize(value.cloudDelete);
+             FfiConverterOptionalString.allocationSize(value.cloudDelete) +
+             FfiConverterOptionalString.allocationSize(value.stopReason);
 
         }
     };

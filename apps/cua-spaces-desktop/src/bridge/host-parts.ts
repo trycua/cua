@@ -51,6 +51,36 @@ async function runsAgents(model: AppModel): Promise<boolean> {
   return model.agents.persistent.count > 0;
 }
 
+const updatesModels = new WeakMap<AppModel, UpdatesModel>();
+
+/**
+ * The updater's model, made once per app model. The bridge asks for it at
+ * start (to tell the page when the updater moves on) without making the
+ * other parts, which read their own state when first asked.
+ */
+export function updatesModel(ctx: BridgeContext): UpdatesModel {
+  const known = updatesModels.get(ctx.model);
+  if (known) return known;
+  const { model, platform } = ctx;
+  const system = ctx.system ?? null;
+  const updates = new UpdatesModel(
+    model.native,
+    system?.updater ?? null,
+    { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
+    system?.updater?.channel === "beta" ? model.native.AppUpdateChannel.Beta : system?.updater ? model.native.AppUpdateChannel.Stable : model.settings.updateChannel,
+    (channel) => {
+      model.settings = { ...model.settings, updateChannel: channel };
+      model.saveSettings();
+    },
+    platform,
+  );
+  // Read when an event is recorded: the app model is given its telemetry after the bridge starts.
+  updates.telemetry = { record: (signals) => model.telemetry?.record(signals) };
+  updates.subscribe(() => model.changed("update"));
+  updatesModels.set(ctx.model, updates);
+  return updates;
+}
+
 export function hostParts(ctx: BridgeContext): HostParts {
   const known = parts.get(ctx.model);
   if (known) return known;
@@ -60,18 +90,7 @@ export function hostParts(ctx: BridgeContext): HostParts {
   const tool = () => (model.servicesIn ? (name: string, args: Record<string, unknown> = {}) => model.backend.tool(name, args) : null);
   const telemetry = model.telemetry;
 
-  const updates = new UpdatesModel(
-    native,
-    system?.updater ?? null,
-    { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
-    system?.updater?.channel === "beta" ? native.AppUpdateChannel.Beta : system?.updater ? native.AppUpdateChannel.Stable : model.settings.updateChannel,
-    (channel) => {
-      model.settings = { ...model.settings, updateChannel: channel };
-      model.saveSettings();
-    },
-    platform,
-  );
-  updates.telemetry = telemetry;
+  const updates = updatesModel(ctx);
 
   const loginItem = new LoginItemModel(
     native,

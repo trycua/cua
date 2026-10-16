@@ -316,6 +316,20 @@ describe("electron adapter", () => {
     await expect(createElectronAdapter(win).call("spaces.list", {})).rejects.toMatchObject({ code: "protocol" });
   });
 
+  it("reads update.get and update.install from the host, and turns update.changed into the page's event", async () => {
+    const state = { status: "downloaded", currentVersion: "0.9.2", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3", message: null };
+    const asked: string[] = [];
+    const { win, subs } = electronHost(bridged((method) => (asked.push(method), { ok: true, result: state })));
+    const a = createElectronAdapter(win);
+    expect(await a.call("update.get", {})).toEqual(state);
+    expect(await a.call("update.install", {})).toEqual(state);
+    expect(asked).toEqual(["update.get", "update.install"]);
+    const got: HostEvent[] = [];
+    a.subscribe((e) => got.push(e));
+    subs.get(ELECTRON_EVENT_CHANNEL)?.({ event: "update.changed" });
+    expect(got).toEqual([{ type: "update.changed" }]);
+  });
+
   it("delivers the host's cua:event pushes", () => {
     const { win, subs } = electronHost(bridged(() => ({ ok: true, result: null })));
     const a = createElectronAdapter(win);

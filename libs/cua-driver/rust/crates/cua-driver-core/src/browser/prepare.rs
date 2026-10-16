@@ -1008,12 +1008,14 @@ impl BrowserEngine {
             BrowserRefusalCode::BackgroundUnavailable,
             format!(
                 "{limitation}, so attaching now would bring the browser in front of the app the \
-                 user is working in. Nothing was changed. A browser window on another Space than \
-                 the user's attaches in the background: keep or put it on another Space and \
-                 retry. Retry with delivery_mode:\"foreground\" only when nobody is using this \
-                 screen or the user agreed to the browser coming forward; the driver then brings \
-                 the user's app back. Otherwise work from the window's accessibility tree and \
-                 screenshot (get_window_state), which need no attachment."
+                 user is working in. Nothing was changed, and browser_prepare is optional: \
+                 use get_window_state on the browser window and act through its accessibility \
+                 tree (set_value, click by element token), which needs no attachment. If the \
+                 first read shows only browser chrome, read the window again. A browser window \
+                 on another Space than the user's also attaches in the background. Retry with \
+                 delivery_mode:\"foreground\" only when nobody is using this screen or the \
+                 user agreed to the browser coming forward; the driver then brings the user's \
+                 app back."
             ),
         )
         .with_detail(serde_json::json!({

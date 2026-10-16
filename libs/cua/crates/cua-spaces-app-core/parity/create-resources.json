@@ -6,7 +6,7 @@
     "cloudAvailable": true,
     "localAvailable": true,
     "localReason": null,
-    "localBackends": null,
+    "localBackends": ["docker", "lume", "qemu"],
     "nameSeed": 42,
     "maxCpus": 8,
     "hostArch": "arm64",

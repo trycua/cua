@@ -67,7 +67,8 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     name: displayName(row.name || row.id),
     os,
     status,
-    detail: status === "running" ? "Running" : "Stopped",
+    // "Stopped: out of memory" when it stopped on its own (`spaces::off_text`).
+    detail: status === "running" ? "Running" : off && row.stopReason ? `Stopped: ${row.stopReason}` : "Stopped",
     lastUsedAt: Number.isFinite(added) ? added : now,
     scene: SCENES[os],
     provider: row.provider,
@@ -80,7 +81,11 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     host: row.host,
     hostName: row.hostName,
     power: row.power
-      ? { control: row.power === "stop" ? "stop" : "suspend", off: status !== "running" }
+      ? {
+          control: row.power === "stop" ? "stop" : "suspend",
+          off: status !== "running",
+          stopReason: off && row.stopReason ? row.stopReason : undefined,
+        }
       : undefined,
   };
 }

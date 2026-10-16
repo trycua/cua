@@ -43,7 +43,7 @@ pub fn status_text(space: &Space) -> String {
             return power_verb(power.control, on).into();
         }
         if power.off && space.status == SpaceStatus::Suspended {
-            return super::off_label(power.control).into();
+            return super::off_text(power);
         }
     }
     match space.status {
@@ -1685,6 +1685,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         let d = detail(&super::super::row_to_space(&row, 0));
         // Added by address: no image row, so only the identifier copies.
@@ -1733,6 +1734,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         };
         let space = super::super::creating::deleting_space(&super::super::row_to_space(&row, 0));
         let d = detail(&space);
@@ -1803,6 +1805,32 @@ mod tests {
         }))
         .unwrap();
         super::super::row_to_space(&row, 0)
+    }
+
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why() {
+        let row: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "local:a", "name": "box", "provider": "local", "os": "linux",
+            "reachable": false, "power": "stop", "powerState": "stopped",
+            "stopReason": "out of memory",
+        }))
+        .unwrap();
+        let s = super::super::row_to_space(&row, 0);
+        assert_eq!(status_text(&s), "Stopped: out of memory");
+        assert_eq!(s.detail, "Stopped: out of memory");
+        // Turned off on purpose: one word, as before.
+        let asked = powered("local:a", "stop", Some("stopped"), false);
+        assert_eq!(status_text(&asked), "Stopped");
+        // A reason never shows on a Space that runs again.
+        let running: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "local:a", "name": "box", "provider": "local", "os": "linux",
+            "reachable": true, "power": "stop", "powerState": "running",
+            "stopReason": "out of memory",
+        }))
+        .unwrap();
+        let s = super::super::row_to_space(&running, 0);
+        assert_eq!(status_text(&s), "Running");
+        assert_eq!(s.power.and_then(|p| p.stop_reason), None);
     }
 
     fn help(s: &Space) -> Option<(String, bool, bool)> {

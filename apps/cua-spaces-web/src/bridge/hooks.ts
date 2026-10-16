@@ -341,6 +341,17 @@ export function useSavedOnboarding(): SavedOnboarding {
   return useSyncExternalStore(subscribeSavedOnboarding, readSavedOnboarding, readSavedOnboarding);
 }
 
+/** How often the permission rows are read again while one is still to grant (ms). */
+export const PERMISSION_POLL_MS = 2_000;
+
+/** The panes in `shown` that `hints` no longer lists as missing. */
+export function grantedPermissionRows(shown: Record<string, string>, hints: PermissionHint[]): { id: string; title: string }[] {
+  const missing = new Set(hints.filter((p) => !p.granted).map((p) => p.id));
+  return Object.entries(shown)
+    .filter(([id]) => !missing.has(id))
+    .map(([id, title]) => ({ id, title }));
+}
+
 export interface OnboardingHook {
   /** The core's flow state; null until the session has loaded. */
   state: OnboardingFlowState | null;
@@ -352,6 +363,8 @@ export interface OnboardingHook {
   /** macOS panes still to grant for this machine (explainers only: the
    * grant itself happens in System Settings). */
   permissions: PermissionRow[];
+  /** Panes this page showed that are granted now (ticked, not dropped). */
+  grantedPermissions: { id: string; title: string }[];
   /** This machine is already set up for access (the host choice is real). */
   hostConfigured: boolean;
   /** One image per OS for the first Space. */
@@ -410,18 +423,43 @@ export function useOnboarding(): OnboardingHook {
     }
   });
 
-  // This machine's permissions, once (hosts without `host.status` show none).
+  // This machine's permissions (hosts without `host.status` show none). Read
+  // again every few seconds, and when the window is back in front, while any is
+  // still to grant: macOS's Settings is another window, and a grant there
+  // must tick here without a restart (CUA-1765).
+  const pending = hints ? hints.permissions.some((p) => !p.granted) : false;
+  const readHints = useRef<() => void>(() => undefined);
   useEffect(() => {
-    if (!adapter || hints) return;
+    if (!adapter) return;
     let live = true;
-    adapter
-      .call("host.status", {})
-      .then((h) => live && setHints({ permissions: h.permissions ?? [], configured: h.configured }))
-      .catch(() => live && setHints({ permissions: [], configured: false }));
+    readHints.current = () => {
+      adapter
+        .call("host.status", {})
+        .then((h) => live && setHints({ permissions: h.permissions ?? [], configured: h.configured }))
+        .catch(() => live && setHints((cur) => cur ?? { permissions: [], configured: false }));
+    };
+    readHints.current();
     return () => {
       live = false;
     };
-  }, [adapter, hints]);
+  }, [adapter]);
+  useEffect(() => {
+    if (!pending) return;
+    const again = () => readHints.current();
+    const timer = setInterval(again, PERMISSION_POLL_MS);
+    window.addEventListener("focus", again);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", again);
+    };
+  }, [pending]);
+  // The panes this page has shown, so one that is granted now shows ticked instead of vanishing.
+  const [shown, setShown] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!hints) return;
+    const missing = hints.permissions.filter((p) => !p.granted);
+    if (missing.some((p) => !(p.id in shown))) setShown((cur) => ({ ...cur, ...Object.fromEntries(missing.map((p) => [p.id, p.label])) }));
+  }, [hints, shown]);
 
   const drawn = state ? onboardingView(core, state) : null;
   // No switch until the host has said what the setting is: an "on" it
@@ -464,6 +502,7 @@ export function useOnboarding(): OnboardingHook {
     copy: onboardingCopy(core),
     signInText,
     permissions: hints ? permissionRows(core, hints.permissions) : [],
+    grantedPermissions: hints ? grantedPermissionRows(shown, hints.permissions) : [],
     hostConfigured: hints?.configured ?? false,
     images: firstSpaceImages(core),
     launchAtLogin: mode === "electron" ? (view?.launchAtLogin ?? null) : null,

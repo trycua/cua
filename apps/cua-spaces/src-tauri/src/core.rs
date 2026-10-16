@@ -426,6 +426,9 @@ pub struct SpaceRow {
     pub cloud_place: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cloud_delete: Option<String>,
+    /// Why a local Space stopped without being asked to ("out of memory").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
 }
 
 /// The name to show for a registered Space: the app core's rule (a
@@ -460,6 +463,7 @@ impl SpaceRow {
             cloud: (!info.cloud.is_empty()).then_some(info.cloud),
             cloud_place: (!info.cloud_place.is_empty()).then_some(info.cloud_place),
             cloud_delete: (!info.cloud_delete.is_empty()).then_some(info.cloud_delete),
+            stop_reason: (!info.stop_reason.is_empty()).then_some(info.stop_reason),
         }
     }
 

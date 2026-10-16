@@ -413,7 +413,15 @@ background: macOS tracks those sessions with the real pointer. The driver
 sees the session start, releases at once, and returns
 `background_unavailable` with `reason: "drag_and_drop_session"`. Look for a
 non-drag route first (Move Up/Down, a menu or context-menu command, a
-shortcut, cut and paste), then foreground if the user allows it. Toolkits that read the hardware pointer (Tk) or drop routed
+shortcut, cut and paste), then foreground if the user allows it.
+
+In an Electron window, `drag` is sent from the app's main process
+(CDP `Input.dispatchMouseEvent` with the button held, or
+`webContents.sendInputEvent`), because Chromium reads the held button from
+the hardware and a window-routed press cannot hold it. Pointer-capture
+widgets and HTML5 drag and drop both drop there, still without the real
+pointer, focus or a raise. If the app's inspector is off, the drag refuses
+with `background_unavailable`. Toolkits that read the hardware pointer (Tk) or drop routed
 mouse events (LibreOffice) refuse the background drag with
 `background_unavailable` before anything is sent.
 

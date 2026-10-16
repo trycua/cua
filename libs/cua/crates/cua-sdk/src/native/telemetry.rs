@@ -252,6 +252,20 @@ pub(crate) fn variant<T>(r: &Result<T>) -> Option<&'static str> {
     r.as_ref().err().map(CuaError::variant)
 }
 
+/// A create's error kind: a local runtime failure split by cause
+/// (`runtime_missing`, `runtime_not_running`, `runtime_permission`,
+/// `image_pull`), else the variant. Only the bounded word leaves the
+/// process, never the message.
+fn create_error_kind<T>(on: &str, r: &Result<T>) -> Option<&'static str> {
+    let e = r.as_ref().err()?;
+    let local_runtime =
+        on == "local" && matches!(e, CuaError::Runtime(_) | CuaError::ProviderNotConfigured(_));
+    if local_runtime && let Some(kind) = cua_sandbox_core::runtime_failure_kind(&e.to_string()) {
+        return Some(kind);
+    }
+    Some(e.variant())
+}
+
 fn outcome<T>(r: &Result<T>) -> Outcome {
     if r.is_ok() {
         Outcome::Ok
@@ -332,7 +346,7 @@ impl CreateFacts {
                 with_build: self.build,
             },
             outcome(r),
-            variant(r),
+            create_error_kind(&self.on, r),
             self.started.elapsed(),
         );
         t().capture(e);
@@ -412,6 +426,43 @@ mod cua_keyvault_links {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_error_kind_splits_local_runtime_failures() {
+        let err = |e: CuaError| -> Result<()> { Err(e) };
+        let kind = |on: &str, e: CuaError| {
+            create_error_kind(on, &err(e)).map(cua_telemetry::events::error_kind)
+        };
+        let no_engine = "local runtime: [local] a container engine is not available: no socket";
+        assert_eq!(
+            kind("local", CuaError::Runtime(no_engine.into())),
+            Some("runtime_missing")
+        );
+        assert_eq!(
+            kind("local", CuaError::ProviderNotConfigured(no_engine.into())),
+            Some("runtime_missing")
+        );
+        assert_eq!(
+            kind(
+                "local",
+                CuaError::Runtime("permission denied on unix:///x: add".into())
+            ),
+            Some("runtime_permission")
+        );
+        assert_eq!(
+            kind("local", CuaError::Runtime("boom".into())),
+            Some("runtime")
+        );
+        // A cloud without an account stays provider_not_configured.
+        assert_eq!(
+            kind(
+                "cloud",
+                CuaError::ProviderNotConfigured("x is not available: y".into())
+            ),
+            Some("provider_not_configured")
+        );
+        assert_eq!(create_error_kind::<()>("local", &Ok(())), None);
+    }
 
     #[test]
     fn requires_cua_app_maps_to_its_own_outcome() {

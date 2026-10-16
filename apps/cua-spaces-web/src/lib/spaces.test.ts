@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine, Space } from "@/bridge";
-import { busyMacosSpaces, canDelete, canPower, createError, isMachineDesktop, machineName, macosLimitText, osLabel, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces } from "./spaces";
+import { busyMacosSpaces, canDelete, canPower, createError, powerButton, isMachineDesktop, machineName, macosLimitText, osLabel, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces } from "./spaces";
 
 const space = (id: string, status: Space["status"], lastUsedAt: number, extra: Partial<Space> = {}): Space => ({
   id,
@@ -138,5 +138,26 @@ describe("an unknown OS", () => {
     expect(spacePlace(unknown, "Studio")).toBe("Studio");
     expect(spacePlace(space("a", "running", 1), "Studio")).toBe("Linux on Studio");
     expect(spacePlace(space("a", "running", 1, { os: "macos", osPrettyName: "macOS Tahoe 26.0" }), "Studio")).toBe("macOS Tahoe 26.0 on Studio");
+  });
+});
+
+describe("powerButton", () => {
+  const noCore = { tryCall: () => undefined };
+  const on = space("p", "running", 1, { power: { control: "suspend", off: false } });
+
+  it("follows the core when it answers", () => {
+    const core = { tryCall: <T,>() => ({ symbol: "power", help: "Suspend", turnOn: false, enabled: true, busy: false }) as T };
+    expect(powerButton(core, on)).toEqual({ help: "Suspend", turnOn: false, busy: false });
+    expect(powerButton({ tryCall: <T,>() => null as T }, on)).toBeNull();
+  });
+
+  it("without the core, has the core's rule and words", () => {
+    expect(powerButton(noCore, on)).toEqual({ help: "Suspend", turnOn: false, busy: false });
+    expect(powerButton(noCore, { ...on, power: { control: "stop", off: true } })).toEqual({ help: "Turn on", turnOn: true, busy: false });
+    expect(powerButton(noCore, { ...on, power: { control: "stop", off: false, turningOn: false } })).toEqual({ help: "Turning off…", turnOn: false, busy: true });
+    expect(powerButton(noCore, space("c", "running", 1))).toBeNull();
+    expect(powerButton(noCore, { ...on, status: "deleting" })).toBeNull();
+    expect(powerButton(noCore, { ...on, id: "this-mac" })).toBeNull();
+    expect(powerButton(noCore, { ...on, progress: { phase: "pulling", permille: 100, label: "Downloading" } })).toBeNull();
   });
 });

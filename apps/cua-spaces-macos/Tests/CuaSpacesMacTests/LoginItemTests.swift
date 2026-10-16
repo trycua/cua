@@ -93,7 +93,11 @@ struct LoginItemTests {
     @Test func doneAppliesTheCheckbox() async {
         let ticked = FixtureLoginItem()
         let a = ViewModelTests().makeModel(loginItem: ticked)
-        #expect(a.onboarding.state.launchAtLogin, "ticked by default")
+        for action: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
+                                            .driveContinue, .modeChosen(mode: .host)] {
+            a.onboarding.send(action)
+        }
+        #expect(a.onboarding.view.launchAtLogin?.checked == true)
         a.onboarding.finish()
         #expect(ticked.calls == ["register"])
         #expect(a.settings.launchAtLogin == true)
@@ -101,9 +105,11 @@ struct LoginItemTests {
         let unticked = FixtureLoginItem()
         let b = ViewModelTests().makeModel(loginItem: unticked)
         for a: AppOnboardingAction in [.start, .signinDone, .agentsDone(configured: []), .presentationDone,
-                                       .driveContinue, .modeChosen(mode: .client), .launchAtLoginToggled(on: false)] {
+                                       .driveContinue, .modeChosen(mode: .client)] {
             b.onboarding.send(a)
         }
+        #expect(b.onboarding.view.launchAtLogin?.checked == true)
+        b.onboarding.send(.launchAtLoginToggled(on: false))
         #expect(b.onboarding.view.launchAtLogin?.checked == false)
         b.onboarding.finish()
         #expect(unticked.calls == ["unregister"])

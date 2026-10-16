@@ -147,7 +147,7 @@ in the Space's `~/Downloads`, digest-verified.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CUA_FLEET_BASE_URL` | `https://run.cua.ai` | Cua Cloud API base URL |
+| `CUA_FLEET_BASE_URL` | none | Legacy Fleets API base URL (run.cua.ai is retired) |
 | `CUA_TOKEN_URL` | `https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token` | OAuth token endpoint |
 | `CUA_CLIENT_ID` / `CUA_CLIENT_SECRET` | none | client-credentials auth |
 | `FLEETS_TOKEN` | none | static bearer token (takes precedence) |

@@ -17,6 +17,7 @@
 import { useContext, useSyncExternalStore } from "react";
 import type { DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
+import { checklistDone } from "./checklist";
 import type { CoreClient } from "./core";
 import type { KeyvaultOverview, VaultAction, VaultSource, VaultState, VaultView } from "./contracts/keyvault";
 import type {
@@ -173,6 +174,8 @@ export class TeleportStore {
   constructor(
     readonly adapter: DataAdapter,
     readonly core: CoreClient,
+    /** An app was teleported (the getting-started checklist). */
+    private readonly onTeleported: () => void = () => {},
   ) {
     this.off = adapter.subscribe((e) => this.onEvent(e));
   }
@@ -417,6 +420,8 @@ export class TeleportStore {
         nowMs: Date.now(),
         selected: source.ids,
         passwordIds: source.passwordIds,
+        passwords: source.passwords ?? [],
+        passwordPicks: source.passwordPicks ?? false,
       });
     } catch {
       /* no Keyvault: nothing saved to send from */
@@ -464,6 +469,7 @@ export class TeleportStore {
     this.send({ type: "confirm" });
     try {
       const report = await this.adapter.call("teleport.run", { spaceId: s.spaceId, plan, consent, runId });
+      this.onTeleported();
       if (this.session?.runId === runId) this.send({ type: "finished", report });
     } catch (e) {
       if (this.session?.runId === runId) this.send({ type: "failed", message: words(e) });
@@ -578,7 +584,7 @@ const stores = new WeakMap<BridgeStore, TeleportStore>();
 export function teleportStore(store: BridgeStore): TeleportStore {
   let t = stores.get(store);
   if (!t) {
-    t = new TeleportStore(store.adapter, store.core);
+    t = new TeleportStore(store.adapter, store.core, () => checklistDone(store, "teleport"));
     stores.set(store, t);
   }
   return t;

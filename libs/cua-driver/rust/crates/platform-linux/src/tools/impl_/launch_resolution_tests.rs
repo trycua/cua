@@ -49,6 +49,35 @@ fn launch_queries_match_window_classes() {
     assert!(!window_matches_launch(&window(""), "nautilus"));
 }
 
+fn owned(xid: u64, pid: u32, class: &str) -> crate::x11::WindowInfo {
+    crate::x11::WindowInfo {
+        xid,
+        pid: Some(pid),
+        ..window(class)
+    }
+}
+
+#[test]
+fn a_launcher_splash_waits_for_the_app_window() {
+    let splash = owned(10, 377, "libreoffice");
+    let calc = owned(20, 398, "libreoffice-calc");
+    let none = std::collections::HashSet::new();
+    let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
+
+    assert!(settle_launch(&[splash.clone()], 377, "libreoffice", &none, is_splash).is_none());
+
+    let launched = settle_launch(&[splash, calc], 377, "libreoffice", &none, is_splash).unwrap();
+    assert_eq!(launched.pid, Some(398));
+    assert_eq!(
+        launched.windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
+        [20]
+    );
+
+    let gimp = owned(30, 377, "gimp");
+    let launched = settle_launch(&[gimp], 377, "gimp", &none, is_splash).unwrap();
+    assert_eq!((launched.pid, launched.handed_off), (Some(377), false));
+}
+
 #[test]
 fn a_missing_process_counts_as_exited() {
     assert!(process_exited(u32::MAX - 1));

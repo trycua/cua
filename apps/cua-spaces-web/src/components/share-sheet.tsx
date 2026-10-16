@@ -1,26 +1,41 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useShareSheet } from "@/bridge";
+import { teamName, useShareSheet, useTeamChoices } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { UpsellPrompt } from "@/components/upsell-prompt";
 import { cn } from "@/lib/utils";
 
 /**
  * "Share": one line per person with a role menu, an email field and Done,
  * as the SwiftUI app's `ShareSheetView`. Every word and step is the app
  * core's (`share.view`); sharing asks for presence in the daemon before it
- * reaches the relay.
+ * reaches the relay. "Share with team" offers the account's teams that can
+ * take machines (owner or admin, Teams plan), the current team first: it
+ * shares with `team:<id>`, as typing it would.
  */
 export default function ShareSheet() {
   const { session, sharing } = useShareSheet();
+  const choices = useTeamChoices(Boolean(session?.input.signedIn && session.input.shareable));
   if (!session || !sharing) return null;
   const v = session.view;
   const locked = v.busy || v.disabledReason !== null;
   const roles = v.roles.map((r) => ({ value: r.id, label: r.label }));
   const send = sharing.send.bind(sharing);
+  const shared = new Set(v.rows.map((r) => r.who));
+  const offered = choices.teams.filter((t) => !shared.has(`team:${t.id}`));
+  const shareWithTeam = async (id: string) => {
+    await send({ type: "set-who", who: `team:${id}` });
+    await send({ type: "submit" });
+  };
+  // `team:<id>` rows read as the team's name.
+  const label = (who: string) => {
+    const t = who.startsWith("team:") ? choices.all.find((x) => x.id === who.slice(5)) : undefined;
+    return t ? `${teamName(t)} (team)` : who;
+  };
   return (
     <Dialog open onOpenChange={(open) => !open && sharing.close()}>
       <DialogPopup data-share-sheet className="w-[min(520px,calc(100vw-2rem))]">
@@ -56,6 +71,15 @@ export default function ShareSheet() {
               {v.shareLabel}
             </Button>
           </form>
+          {offered.length > 0 && v.disabledReason === null ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2" data-share-teams>
+              {offered.map((t) => (
+                <Button key={t.id} size="sm" variant="outline" disabled={v.busy} onClick={() => void shareWithTeam(t.id)} data-share-team={t.id}>
+                  Share with {teamName(t)}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           {v.hint ? (
             <p className="mt-1.5 text-xs text-muted-foreground" data-share-hint>
               {v.hint}
@@ -74,7 +98,7 @@ export default function ShareSheet() {
                     className={cn("size-1.5 shrink-0 rounded-full", row.connected ? "bg-emerald-500" : "bg-muted-foreground/40")}
                     title={row.connected ? "Connected now" : undefined}
                   />
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{row.who}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{label(row.who)}</span>
                   {locked ? (
                     <span className="text-xs text-muted-foreground">{roles.find((r) => r.value === row.role)?.label ?? row.role}</span>
                   ) : (
@@ -93,6 +117,7 @@ export default function ShareSheet() {
               ))
             )}
           </ul>
+          <UpsellPrompt surface="share" active={v.rows.some((r) => !r.who.startsWith("team:"))} className="mt-3" />
           {v.error ? (
             <p className="mt-2 text-[13px] text-destructive" data-share-error>
               {v.error}

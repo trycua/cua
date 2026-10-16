@@ -506,8 +506,10 @@ impl From<cua_spaces::Error> for Error {
             E::CapabilityMissing { .. } => Error::CapabilityMissing(m),
             E::HostCapabilityMissing { .. } => Error::HostCapabilityMissing(m),
             E::WrongProvider { .. } => Error::Unsupported(m),
-            // Both are a consent gate saying no; the message names which.
-            E::TeleportRefused(_) | E::LoginRefused(_) => Error::TeleportRefused(m),
+            // Both are a consent gate saying no; the message names which (a
+            // teleport's own words: this error says "teleport refused:" itself).
+            E::TeleportRefused(why) => Error::TeleportRefused(why),
+            E::LoginRefused(_) => Error::TeleportRefused(m),
             E::Timeout(_) => Error::Timeout(m),
             E::Cancelled(c) => Error::Cancelled(c),
             E::Env(env) => Error::from(env),
@@ -673,6 +675,114 @@ pub fn pid_alive(pid: u32) -> bool {
     pid != 0 && cua_vmm::host::pid_alive(pid)
 }
 
+/// Whether `command` (a process's command line) runs a cua daemon:
+/// `<dir>/cua daemon start ...` (or the Cua Spaces `cua-spaces-cli`).
+#[cfg(unix)]
+fn is_daemon_command(command: &str) -> bool {
+    let Some(at) = command.find(" daemon start") else {
+        return false;
+    };
+    // The executable path may hold spaces ("Cua Spaces.app"): its last
+    // component is the program.
+    std::path::Path::new(command[..at].trim())
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| matches!(n, "cua" | "cua-spaces-cli"))
+}
+
+/// Whether the live process `pid` is a cua daemon (by its command line),
+/// so a pid read earlier was not reused by another program.
+#[cfg(unix)]
+pub fn is_daemon_process(pid: u32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|o| o.status.success() && is_daemon_command(&String::from_utf8_lossy(&o.stdout)))
+}
+
+/// Ends the cua daemon process `pid` that did not exit when asked: SIGTERM,
+/// then SIGKILL, waiting up to `grace` after each. A daemon that closed
+/// its listeners on `Shutdown` but never exited kept holding the Keyvault
+/// socket after an app update (trycua/cua#4950). Never signals this
+/// process or one that is not a cua daemon. Returns whether `pid` is gone.
+/// Blocking; call it off the async runtime.
+#[cfg(unix)]
+pub fn terminate_daemon(pid: u32, grace: std::time::Duration) -> bool {
+    if pid == 0 || pid == std::process::id() || pid > i32::MAX as u32 {
+        return false;
+    }
+    if !pid_alive(pid) {
+        return true;
+    }
+    if !is_daemon_process(pid) {
+        return false;
+    }
+    for signal in [libc::SIGTERM, libc::SIGKILL] {
+        // SAFETY: plain kill(2) on a positive pid checked above.
+        unsafe { libc::kill(pid as libc::pid_t, signal) };
+        let deadline = std::time::Instant::now() + grace;
+        while std::time::Instant::now() < deadline {
+            if !pid_alive(pid) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    !pid_alive(pid)
+}
+
+/// The pid of the process listening on the Unix socket at `path`
+/// (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux); `None` when nothing
+/// listens or the OS does not say.
+#[cfg(unix)]
+pub fn socket_listener_pid(path: &std::path::Path) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let stream = std::os::unix::net::UnixStream::connect(path).ok()?;
+    let fd = stream.as_raw_fd();
+    #[cfg(target_vendor = "apple")]
+    {
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: getsockopt into a properly sized pid_t on a live socket.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut pid as *mut libc::pid_t).cast(),
+                &mut len,
+            )
+        };
+        (rc == 0 && pid > 0).then_some(pid as u32)
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: getsockopt into a properly sized ucred on a live socket.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        (rc == 0 && cred.pid > 0).then_some(cred.pid as u32)
+    }
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+    {
+        let _ = fd;
+        None
+    }
+}
+
 /// Whether a server accepts connections on the Unix socket at `path`
 /// (a missing file or a refused connect is not listening).
 #[cfg(unix)]
@@ -766,6 +876,101 @@ pub fn random_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_cua_daemon_command_line_counts() {
+        assert!(is_daemon_command(
+            "/Applications/Cua Spaces.app/Contents/Resources/native/cua daemon start --foreground --loopback 127.0.0.1:0\n"
+        ));
+        assert!(is_daemon_command(
+            "/usr/local/bin/cua-spaces-cli daemon start --foreground"
+        ));
+        assert!(!is_daemon_command("/usr/bin/vim daemon start"));
+        assert!(!is_daemon_command(
+            "/Applications/Cua Spaces.app/Contents/MacOS/cua daemon stop"
+        ));
+        assert!(!is_daemon_command(""));
+    }
+
+    /// A process that looks like a daemon and ignores SIGTERM, as the
+    /// daemon that never exited after `Shutdown` did (#4950); reaped by a
+    /// thread so a killed one does not linger as a zombie.
+    #[cfg(unix)]
+    fn stubborn_daemon(dir: &std::path::Path) -> (u32, std::sync::mpsc::Receiver<()>) {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = dir.join("cua");
+        std::fs::write(&exe, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = std::process::Command::new(&exe)
+            .args(["daemon", "start", "--foreground"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            let _ = tx.send(());
+        });
+        // Until the shell has set its trap.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        (pid, rx)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_daemon_that_ignores_sigterm_is_killed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pid, exited) = stubborn_daemon(dir.path());
+        assert!(is_daemon_process(pid));
+        assert!(terminate_daemon(pid, std::time::Duration::from_secs(2)));
+        exited
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the stubborn daemon exited");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_never_signals_another_program() {
+        let mut other = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        assert!(!is_daemon_process(other.id()));
+        assert!(!terminate_daemon(
+            other.id(),
+            std::time::Duration::from_millis(100)
+        ));
+        assert!(other.try_wait().unwrap().is_none(), "left running");
+        assert!(!terminate_daemon(
+            std::process::id(),
+            std::time::Duration::from_millis(100)
+        ));
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_listener_of_a_socket_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        assert_eq!(socket_listener_pid(&path), None);
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert_eq!(socket_listener_pid(&path), Some(std::process::id()));
+    }
+
+    #[cfg(feature = "spaces")]
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = Error::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert_eq!(err, Error::TeleportRefused("the approver declined".into()));
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+        let back = Error::from_status(&err.to_status());
+        assert_eq!(back.to_string(), "teleport refused: the approver declined");
+    }
 
     #[test]
     fn error_roundtrips_through_status() {

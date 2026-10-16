@@ -45,14 +45,14 @@ async function mount(path: string, mode: DataAdapter["mode"] = "demo") {
 const q = (sel: string) => document.querySelector<HTMLElement>(sel);
 
 describe.skipIf(!wasmBuilt)("Electron parity, the small things", () => {
-  it("has no New UI (preview) switch in Electron (it is that UI); the SwiftUI host keeps it", { timeout: 20_000 }, async () => {
+  it("has no Use classic UI switch in Electron (it is only the New UI); the SwiftUI host keeps it", { timeout: 20_000 }, async () => {
     await mount("/settings/experiments", "electron");
     await waitFor(() => expect(q("[data-settings-section]")).not.toBeNull(), { timeout: 8000 });
-    expect(q('[data-setting-row="experiment:web_ui"]')).toBeNull();
+    expect(q('[data-setting-row="experiment:classic_ui"]')).toBeNull();
     expect(document.querySelectorAll("[data-setting-row^='experiment:']").length).toBeGreaterThan(0);
     cleanup();
     await mount("/settings/experiments", "demo");
-    await waitFor(() => expect(q('[data-setting-row="experiment:web_ui"]')).not.toBeNull(), { timeout: 8000 });
+    await waitFor(() => expect(q('[data-setting-row="experiment:classic_ui"]')).not.toBeNull(), { timeout: 8000 });
   });
 
   it("opens and closes New Space's image list from its Show images button", { timeout: 20_000 }, async () => {

@@ -104,3 +104,208 @@ export interface AgentSetupRow {
   mcpConfig: string | null;
   skillsDir: string | null;
 }
+
+/* ---- One persistent agent's detail ---------------------------------------------
+ * `cua-spaces-app-core/src/persistent.rs`: what the page reads
+ * (`AgentsInput`), its state and actions (`AgentsState`, `AgentsAction`,
+ * `AgentsRequest`) and what it draws (`AgentDetailView`). The page runs
+ * `agents.pageReduce` / `agents.pageView` in the core, as the SwiftUI
+ * app's `PersistentModel` does; the host runs the tools each request names.
+ */
+
+/** A file in the agent's home (`volume_ls`, files only). */
+export interface AgentHomeEntry {
+  path: string;
+  name: string;
+  size: number;
+}
+
+/** One version of a file (`volume_history`, newest first). */
+export interface AgentFileVersion {
+  version: string;
+  modifiedMs: number;
+  deleted: boolean;
+  latest: boolean;
+}
+
+/** An opened memory file (`volume_read` + `volume_history`). */
+export interface AgentOpenFile {
+  path: string;
+  /** Empty for a binary file. */
+  text: string;
+  binary: boolean;
+  versions: AgentFileVersion[];
+}
+
+/** A routine (`routine_list`). */
+export interface AgentRoutine {
+  id: string;
+  title: string;
+  /** `Every day at 8:00 AM`. */
+  label: string;
+  enabled: boolean;
+}
+
+/** A computer grant (`computer_access_list`). */
+export interface AgentComputerGrant {
+  agent: string;
+  machine: string;
+  revoked: boolean;
+}
+
+/** A computer-access audit line (`computer_access_list` with `audit`). */
+export interface AgentAccessAudit {
+  tsMs: number;
+  /** `grant`, `revoke`, `use`, `denied`. */
+  action: string;
+  /** `agent:ada` or `user`. */
+  principal: string;
+  /** The machine. */
+  path: string;
+  detail: string;
+}
+
+/** `agents.detail`: the selected agent's home, routines, every grant and the recent audit. */
+export interface AgentDetailInput {
+  home: AgentHomeEntry[];
+  routines: AgentRoutine[];
+  grants: AgentComputerGrant[];
+  audit: AgentAccessAudit[];
+  /** This machine's Space id when it is set up for access (`relay:<id>`). */
+  thisMachine: string | null;
+}
+
+/** `AgentsInput`: everything the core's Agents page reads. */
+export interface AgentsPageInput extends Partial<Omit<AgentDetailInput, "thisMachine">> {
+  agents: PersistentAgent[];
+  file?: AgentOpenFile | null;
+  thisMachine?: string | null;
+}
+
+export type AgentTab = "memory" | "routines" | "access";
+export type RoutineScheduleKind = "every" | "daily" | "weekly";
+
+/** The new-routine form (`RoutineForm`). */
+export interface RoutineForm {
+  title: string;
+  prompt: string;
+  schedule: RoutineScheduleKind;
+  /** Minutes for `every`. */
+  minutes: number;
+  /** `HH:MM` for daily and weekly. */
+  time: string;
+  /** `mon` ... `sun` for weekly. */
+  weekday: string;
+}
+
+/** The command the core asks the host to run (`AgentsRequest`). */
+export type AgentsPageRequest =
+  | { kind: "pause"; name: string }
+  | { kind: "resume"; name: string }
+  | { kind: "load"; name: string }
+  | { kind: "read-file"; path: string }
+  | { kind: "restore"; path: string; version: string }
+  | {
+      kind: "add-routine";
+      agent: string;
+      title: string;
+      prompt: string;
+      every_minutes: number | null;
+      daily_at: string | null;
+      weekly_on: string | null;
+    }
+  | { kind: "set-routine"; id: string; enabled: boolean }
+  | { kind: "remove-routine"; id: string }
+  | { kind: "allow"; agent: string; machine: string }
+  | { kind: "revoke"; agent: string; machine: string };
+
+/** The page's state (`AgentsState`). */
+export interface AgentsPageState {
+  selected?: string | null;
+  tab: AgentTab;
+  openPath?: string | null;
+  form: RoutineForm;
+  busy: boolean;
+  error?: string | null;
+  request?: AgentsPageRequest | null;
+}
+
+/** An input to the page (`AgentsAction`). */
+export type AgentsPageAction =
+  | { type: "select"; name: string }
+  | { type: "set-tab"; tab: AgentTab }
+  | { type: "open-file"; path: string }
+  | { type: "close-file" }
+  | { type: "pause"; name: string }
+  | { type: "resume"; name: string }
+  | { type: "restore"; version: string }
+  | { type: "set-title"; title: string }
+  | { type: "set-prompt"; prompt: string }
+  | { type: "set-schedule"; schedule: RoutineScheduleKind }
+  | { type: "set-minutes"; minutes: number }
+  | { type: "set-time"; time: string }
+  | { type: "set-weekday"; weekday: string }
+  | { type: "add-routine" }
+  | { type: "toggle-routine"; id: string }
+  | { type: "remove-routine"; id: string }
+  | { type: "allow-computer"; machine: string }
+  | { type: "revoke-computer"; machine: string }
+  | { type: "done" }
+  | { type: "failed"; error: string };
+
+/** One line with an id and an optional action (`LineView`). */
+export interface AgentLineView {
+  id: string;
+  text: string;
+  trailing: string;
+  actionLabel?: string | null;
+  secondaryLabel?: string | null;
+  on?: boolean | null;
+}
+
+export interface AgentTabView {
+  tab: AgentTab;
+  label: string;
+  selected: boolean;
+}
+
+/** The open memory file (`FileView`). */
+export interface AgentFileView {
+  path: string;
+  text: string;
+  versions: AgentLineView[];
+  closeLabel: string;
+}
+
+/** The selected agent (`AgentDetailView`). */
+export interface AgentDetailView {
+  name: string;
+  /** `Home agents/ada/, saved 5m ago`. */
+  subtitle: string;
+  tabs: AgentTabView[];
+  memory: AgentLineView[];
+  memoryEmpty: string;
+  file?: AgentFileView | null;
+  routines: AgentLineView[];
+  routinesEmpty: string;
+  form: RoutineForm;
+  /** The schedule choices; `on` marks the form's. */
+  schedules: AgentLineView[];
+  canAddRoutine: boolean;
+  addRoutineLabel: string;
+  access: AgentLineView[];
+  accessEmpty: string;
+  /** `Allow on this computer` when this machine is set up and not granted. */
+  allowThisMachineLabel?: string | null;
+  audit: AgentLineView[];
+  error?: string | null;
+}
+
+/** The page as drawn (`AgentsView`); the detail is what the agent detail shows. */
+export interface AgentsPageView {
+  title: string;
+  detail?: AgentDetailView | null;
+  busy: boolean;
+  error?: string | null;
+  requestText?: string | null;
+}

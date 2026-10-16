@@ -139,13 +139,13 @@ fn provider_label(p: SpaceProvider) -> &'static str {
 fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
     if status == SpaceStatus::Suspended {
         // Turned off on purpose: said so, not "Unreachable".
-        if let Some(control) = row.power.as_deref().and_then(PowerControl::parse)
-            && matches!(
+        if let Some(power) = power_of_row(row).filter(|p| {
+            matches!(
                 row.power_state.as_deref(),
                 Some("suspended") | Some("stopped")
-            )
-        {
-            return off_label(control).into();
+            ) && p.off
+        }) {
+            return off_text(&power);
         }
         return match &row.error {
             Some(e) if !e.is_empty() => format!("Unreachable \u{b7} {e}"),
@@ -277,12 +277,17 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
 fn power_of_row(row: &SpaceRow) -> Option<SpacePower> {
     let control = row.power.as_deref().and_then(PowerControl::parse)?;
     let state = row.power_state.as_deref().filter(|s| !s.trim().is_empty());
+    let off =
+        matches!(state, Some("suspended") | Some("stopped")) || (state.is_none() && !row.reachable);
     Some(SpacePower {
         control,
-        off: matches!(state, Some("suspended") | Some("stopped"))
-            || (state.is_none() && !row.reachable),
+        off,
         turning_on: None,
         error: None,
+        stop_reason: row
+            .stop_reason
+            .clone()
+            .filter(|r| off && !r.trim().is_empty()),
     })
 }
 
@@ -291,6 +296,19 @@ fn power_of_row(row: &SpaceRow) -> Option<SpacePower> {
 /// (suspended in memory, or shut down) is [`off_hint`].
 pub fn off_label(_control: PowerControl) -> &'static str {
     "Stopped"
+}
+
+/// [`off_label`], and why when it stopped without being asked to:
+/// "Stopped: out of memory".
+pub fn off_text(power: &SpacePower) -> String {
+    match power
+        .stop_reason
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+    {
+        Some(why) => format!("{}: {why}", off_label(power.control)),
+        None => off_label(power.control).into(),
+    }
 }
 
 /// How a stopped Space is off, for the Status fact's tooltip.
@@ -365,21 +383,43 @@ pub fn count_active(spaces: &[Space]) -> u32 {
         .count() as u32
 }
 
-/// The Spaces the user can open: every Space but "This machine", which
-/// counts only while it is shared as a Space and reachable (its status is
-/// `Local`). A Space a provider hosts on another machine counts. The notch
-/// tab and the menu bar item both show this number.
-pub fn openable_count(spaces: &[Space]) -> u32 {
+/// A machine's own desktop, not a Space: This machine (`this-mac`, and any
+/// row reported as `Local`), or one of your machines sharing its own desktop
+/// over the relay (`relay:<machine>` with no host above it). They belong
+/// with the machines (the sidebar's This Mac and My machines, the web UI's
+/// Machines page), not in the count of Spaces; the web UI's
+/// `isMachineDesktop` is the same rule.
+pub fn is_machine_desktop(space: &Space) -> bool {
+    if space.id == crate::host::THIS_MACHINE_ID || space.status == SpaceStatus::Local {
+        return true;
+    }
+    if space.provider != Some(SpaceProvider::Relay) || space.host.is_some() {
+        return false;
+    }
+    space
+        .id
+        .strip_prefix("relay:")
+        .is_some_and(|own| !own.is_empty() && !own.contains('/') && !own.starts_with("space-"))
+}
+
+/// The Spaces the user can open, in `spaces`' order: every Space but the
+/// machines' own desktops ([`is_machine_desktop`]): not This machine, even
+/// while it provides Spaces, and not one of your machines on the relay. A
+/// Space a machine provides is listed. The notch's tiles list these, and
+/// its tab and the menu bar item count them ([`openable_count`]), so the
+/// list and the count always agree.
+pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
     spaces
         .iter()
-        .filter(|s| {
-            if s.id == crate::host::THIS_MACHINE_ID {
-                s.status == SpaceStatus::Local
-            } else {
-                s.status != SpaceStatus::Local
-            }
-        })
-        .count() as u32
+        .filter(|s| !is_machine_desktop(s))
+        .cloned()
+        .collect()
+}
+
+/// How many [`openable_spaces`] there are: the notch tab's and the menu bar
+/// item's number.
+pub fn openable_count(spaces: &[Space]) -> u32 {
+    openable_spaces(spaces).len() as u32
 }
 
 /// The three ambient status dots.
@@ -444,6 +484,7 @@ mod tests {
             cloud: None,
             cloud_place: None,
             cloud_delete: None,
+            stop_reason: None,
         }
     }
 
@@ -459,7 +500,8 @@ mod tests {
     fn unknown_os_stays_neutral_across_the_roster_and_details() {
         let space = row_to_space(
             &SpaceRow {
-                id: "relay:mac-host".into(),
+                // A Space a machine provides (the machine itself is no tile).
+                id: "relay:space-0a1b2c3d".into(),
                 provider: "relay".into(),
                 os: None,
                 // Neither stale names nor a known image may invent an OS.
@@ -611,5 +653,62 @@ mod tests {
         ]);
         let ids: Vec<_> = sorted.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["space://cloud/cua-spaces-x/p", "b", "a"]);
+    }
+
+    /// The menu bar's count and the notch tab leave out the machines that
+    /// provide Spaces: This machine while it hosts, and one of your machines
+    /// sharing its own desktop over the relay (`relay:<machine>`, no host).
+    /// One real Space read "3 Spaces" before (This machine, the Space and
+    /// the other Mac); a Space a machine provides still counts.
+    #[test]
+    fn the_count_leaves_out_the_machines_that_provide_spaces() {
+        use crate::host::{HostSummaryInput, this_machine_space};
+        let hosting = HostSummaryInput {
+            configured: true,
+            service_running: true,
+            sharing: true,
+            ..Default::default()
+        };
+        let this_mac = this_machine_space(Some(&hosting), 0, SpaceOs::Macos);
+        assert_eq!(this_mac.status, SpaceStatus::Local);
+        let mut local = row();
+        local.id = "local:fbd1".into();
+        local.provider = "local".into();
+        let mut machine = row();
+        machine.id = "relay:96fedb7e1be65c3d31fa18587febde2c".into();
+        machine.name = "Studio".into();
+        machine.provider = "relay".into();
+        machine.reachable = false;
+        let mut provided = row();
+        provided.id = "relay:space-ca12d6d23907f387".into();
+        provided.provider = "relay".into();
+        provided.host = Some("96fedb7e1be65c3d31fa18587febde2c".into());
+        let mut named = row();
+        named.id = "relay:mac-mini/release-checks".into();
+        named.provider = "relay".into();
+        named.host = Some("mac-mini".into());
+
+        let rows = |rs: &[&SpaceRow]| {
+            let mut out = vec![this_mac.clone()];
+            out.extend(rs.iter().map(|r| row_to_space(r, 0)));
+            out
+        };
+        // This machine hosting, nothing else: no Spaces.
+        assert_eq!(openable_count(&rows(&[])), 0);
+        assert!(is_machine_desktop(&this_mac));
+        // One Space, This machine hosting, another Mac on the relay: 1.
+        let roster = rows(&[&local, &machine]);
+        assert!(is_machine_desktop(&roster[2]));
+        assert_eq!(openable_count(&roster), 1);
+        assert_eq!(crate::notch::tab(&roster).count, "1");
+        // The Spaces that other Mac provides count.
+        assert_eq!(
+            openable_count(&rows(&[&local, &machine, &provided, &named])),
+            3
+        );
+        // This machine not hosting is not a Space either.
+        let idle = this_machine_space(None, 0, SpaceOs::Macos);
+        assert!(is_machine_desktop(&idle));
+        assert_eq!(openable_count(&[idle]), 0);
     }
 }

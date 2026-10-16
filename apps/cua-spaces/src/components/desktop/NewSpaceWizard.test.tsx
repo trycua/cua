@@ -156,7 +156,7 @@ describe("the image field", () => {
 
 describe("New Space wizard", () => {
   it("walks System, Resources, Options, Summary and creates a local VM with its resources", () => {
-    const { onCreate } = renderWizard();
+    const { onCreate } = renderWizard({ localBackends: ["docker", "lume", "qemu"] });
     expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent(
       "1System2Resources3Options4Summary",
     );
@@ -166,7 +166,7 @@ describe("New Space wizard", () => {
     fireEvent.change(screen.getByRole("slider", { name: "CPU cores" }), { target: { value: "3" } });
     fireEvent.change(screen.getByRole("slider", { name: "Memory" }), { target: { value: "6" } });
     next();
-    fireEvent.change(screen.getByPlaceholderText("Optional"), {
+    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), {
       target: { value: "cua-e2e-vm" },
     });
     next();
@@ -268,7 +268,7 @@ describe("New Space wizard", () => {
     renderWizard();
     next();
     next();
-    fireEvent.change(screen.getByPlaceholderText("Optional"), { target: { value: "Bad Name" } });
+    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), { target: { value: "Bad Name" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
@@ -308,9 +308,26 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.disk)} (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked)}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("includes the first Linux runtime in the Summary footprint", () => {
+    renderWizard({
+      hostArch: "arm64",
+      storage: { ...storage(), linuxRuntimeDownloadBytes: 455 * 1024 * 1024 },
+    });
+    runOn("local");
+    next();
+    expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
+    expect(screen.queryByText("Linux runtime")).toBeNull();
+    next();
+    next();
+    expect(screen.getByText(/includes 455 MB one-time Linux runtime download/)).toBeInTheDocument();
+    expect(screen.queryByText("Linux runtime")).toBeNull();
+    expect(screen.getAllByText("Disk")).toHaveLength(1);
+    expect(screen.getByText(/GB–.*GB initially; grows with use/)).toBeInTheDocument();
   });
 
   it("blocks Continue in one line when the Space does not fit", () => {
@@ -322,7 +339,7 @@ describe("the Resources step", () => {
   });
 
   it("grows a Linux VM's disk with a slider and creates with it", () => {
-    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage() });
+    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -352,7 +369,7 @@ describe("the Resources step", () => {
   });
 
   it("warns that an image without a build for this Mac runs emulated, locally only", () => {
-    renderWizard({ hostArch: "arm64", storage: storage() });
+    renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/omarchy:edge" } });
     runOn("local");
     next();
@@ -421,6 +438,44 @@ describe("local runtime readiness", () => {
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/macos:26" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("cannot run Lume Spaces");
+  });
+});
+
+describe("QEMU VMs", () => {
+  const continueButton = () => screen.getByRole("button", { name: "Continue" });
+  const pick = (ref: string) => fireEvent.change(imageField(), { target: { value: ref } });
+
+  it("are not offered while the runtimes are unknown; containers and Lume still are", () => {
+    renderWizard();
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    pick("ghcr.io/trycua/linux:24.04-disk");
+    expect(continueButton()).toBeDisabled();
+    pick("ghcr.io/trycua/linux:24.04");
+    expect(continueButton()).toBeEnabled();
+    pick("ghcr.io/trycua/macos:26");
+    expect(continueButton()).toBeEnabled();
+  });
+
+  it("need QEMU among the ready runtimes", () => {
+    renderWizard({ localBackends: ["docker", "lume"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("cannot run QEMU Spaces");
+    pick("ghcr.io/trycua/macos:26");
+    expect(continueButton()).toBeEnabled();
+    pick("ghcr.io/trycua/linux:24.04");
+    expect(continueButton()).toBeEnabled();
+  });
+
+  it("are offered once QEMU is ready", () => {
+    renderWizard({ localBackends: ["docker", "qemu"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeEnabled();
   });
 });
 

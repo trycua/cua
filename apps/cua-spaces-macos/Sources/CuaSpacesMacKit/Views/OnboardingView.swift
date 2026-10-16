@@ -14,8 +14,8 @@ import SwiftUI
 /// in the corner), page dots centred between them. Done adds the example
 /// prompts under both columns, scrolling slowly. Pages, copy, cards,
 /// which buttons show and the answers are the core's (`appOnboardingView`);
-/// only the placement is this view's, the same as the Tauri app's. There is
-/// no command-line page, the bundled `cua` installs on first launch.
+/// only the placement is this view's, the same as the Tauri app's. The
+/// bundled `cua` installs only from its Command line page.
 public struct OnboardingView: View {
     @Bindable var onboarding: OnboardingModel
     var onSignIn: (() async -> String?)?
@@ -26,6 +26,9 @@ public struct OnboardingView: View {
     var onCancelSignIn: (() -> Void)?
     /// The page a waiting sign-in finishes on, to open it again.
     var signInURL: URL?
+    /// The This machine page's selection (nil: the core's preselected one).
+    /// Choosing only selects; Continue moves on.
+    @State private var selectedMode: AppOnboardingMode?
 
     public init(onboarding: OnboardingModel, onSignIn: (() async -> String?)? = nil,
                 signInPhase: AppSignInPhase = .idle, onCancelSignIn: (() -> Void)? = nil, signInURL: URL? = nil) {
@@ -78,12 +81,12 @@ public struct OnboardingView: View {
             footer(v).layoutPriority(1)
         }
         .frame(minWidth: 720, minHeight: 520)
-        .task { await onboarding.installCliSilently() }
+        .task { await onboarding.planCli() }
         .task { if !onboarding.state.driveChecked { await onboarding.checkDrive() } }
     }
 
-    /// The Sign in page's Teams line: the website's waitlist (the app
-    /// collects nothing).
+    /// The Sign in page's Teams line: a link to the account app (app.cua.ai),
+    /// which administers teams.
     @ViewBuilder private var teamsLine: some View {
         let copy = onboarding.copy
         HStack(spacing: 4) {
@@ -165,6 +168,7 @@ public struct OnboardingView: View {
     private func hasCard(_ v: AppOnboardingView) -> Bool {
         switch v.step {
         case .signin: return onboarding.state.identity != nil || signInPhase != .idle
+        case .cli: return onboarding.state.cliError != nil
         default: return true
         }
     }
@@ -220,6 +224,10 @@ public struct OnboardingView: View {
                         }
                     }
             }
+        case .cli:
+            if let error = onboarding.state.cliError {
+                Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
         case .presentation:
             VStack(spacing: 10) {
                 ForEach(v.presentations, id: \.id) { c in
@@ -236,7 +244,7 @@ public struct OnboardingView: View {
                 // A failed setup shows under the form, not inside its scroll.
                 VStack(alignment: .leading, spacing: 8) {
                     HostFormView(host: onboarding.host, buttons: false, showsFailure: false)
-                        .frame(height: 230)
+                        .frame(minHeight: 230, maxHeight: .infinity)
                     if let failure = onboarding.host.setupFailure {
                         HostSetupFailureView(failure: failure, retrying: onboarding.host.settingUp) {
                             Task { await onboarding.setUpHost() }
@@ -252,7 +260,7 @@ public struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(v.choices, id: \.label) { choice in
                         Button {
-                            if choice.mode == .host { onboarding.host.openForm() } else { onboarding.send(.modeChosen(mode: .client)) }
+                            selectedMode = choice.mode
                         } label: {
                             Text(choice.label)
                                 .fontWeight(.semibold)
@@ -264,11 +272,10 @@ public struct OnboardingView: View {
                         .buttonStyle(.plain)
                         .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(choice.preselected ? Color.primary : Color(nsColor: .separatorColor),
-                                          lineWidth: choice.preselected ? 2 : 1))
+                            .strokeBorder(choice.mode == currentMode(v) ? Color.primary : Color(nsColor: .separatorColor),
+                                          lineWidth: choice.mode == currentMode(v) ? 2 : 1))
+                        .accessibilityAddTraits(choice.mode == currentMode(v) ? .isSelected : [])
                         .accessibilityIdentifier(choice.mode == .host ? "onboarding-host" : "onboarding-client")
-                        // Return picks the preselected choice (the page has no other primary).
-                        .keyboardShortcut(choice.preselected ? .defaultAction : nil)
                     }
                 }
             }
@@ -371,7 +378,7 @@ public struct OnboardingView: View {
                     ScrollView { agentGrid }
                         .scrollIndicators(.automatic)
                 }
-                .frame(maxHeight: Self.agentsListHeight)
+                .frame(maxHeight: Self.agentsListHeight, alignment: .top)
                 .accessibilityIdentifier("agents-list")
                 Divider()
                 HStack(spacing: 16) {
@@ -404,7 +411,7 @@ public struct OnboardingView: View {
                         if on { onboarding.agentSelection.insert(a.id) } else { onboarding.agentSelection.remove(a.id) }
                     }))
                     .toggleStyle(.checkbox)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .help([a.mcpConfig ?? a.skillsDir ?? "", a.error ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} "))
             }
         }
@@ -466,6 +473,7 @@ public struct OnboardingView: View {
             } else {
                 if skipShows(v) {
                     Button(onboarding.copy.skip) { skip(v.step) }
+                        .buttonStyle(.borderless)
                         .accessibilityIdentifier("onboarding-skip")
                 }
                 primary(v)
@@ -499,7 +507,11 @@ public struct OnboardingView: View {
                 .accessibilityIdentifier("agents-setup")
             }
         case .mode:
-            EmptyView()
+            Button(v.primaryLabel) { continueMode(v) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("onboarding-continue")
         case .drive:
             Button(v.primaryLabel) { Task { await onboarding.continueDrive() } }
                 .buttonStyle(.borderedProminent)
@@ -512,7 +524,17 @@ public struct OnboardingView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
+                .disabled(onboarding.state.cliInstalling)
         }
+    }
+
+    private func currentMode(_ v: AppOnboardingView) -> AppOnboardingMode {
+        selectedMode ?? v.preselectedMode
+    }
+
+    /// Continue on This machine: the selected mode (host opens its form).
+    private func continueMode(_ v: AppOnboardingView) {
+        if currentMode(v) == .host { onboarding.host.openForm() } else { onboarding.send(.modeChosen(mode: .client)) }
     }
 
     private func skipShows(_ v: AppOnboardingView) -> Bool {
@@ -524,6 +546,7 @@ public struct OnboardingView: View {
 
     private func skip(_ step: AppOnboardingStep) {
         switch step {
+        case .cli: Task { await onboarding.finishCli(install: false) }
         case .signin: onboarding.send(.signinDone)
         case .agents: onboarding.finishAgents(skipped: true)
         default: advance(step)
@@ -533,11 +556,12 @@ public struct OnboardingView: View {
     private func advance(_ step: AppOnboardingStep) {
         switch step {
         case .welcome: onboarding.send(.start)
+        case .cli: Task { await onboarding.finishCli(install: true) }
         case .signin: onboarding.send(.signinDone)
         case .agents: onboarding.finishAgents(skipped: true)
         case .presentation: onboarding.send(.presentationDone)
         case .drive: Task { await onboarding.continueDrive() }
-        case .mode: onboarding.send(.modeChosen(mode: .client))
+        case .mode: continueMode(onboarding.view)
         case .done: onboarding.finish()
         }
     }
@@ -589,67 +613,40 @@ struct PresentationCardView: View {
     }
 }
 
-/// Done's example prompts (the core's), one quoted line each, scrolling
-/// up slowly and continuously to suggest what to ask a coding agent. Not
-/// interactive: it pauses under the pointer, and with Reduce Motion it is a
-/// static list of the first rows.
+/// Done's example prompts (the core's): "Try asking your agent:" and a few
+/// static lines. Each copies to the clipboard on click and says "Copied".
 struct PromptTicker: View {
     let prompts: [String]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.onboardingMotionStill) private var motionStill
-    @State private var origin = Date()
-    @State private var pausedAt: Date?
-
-    static let rowHeight: CGFloat = 22
-    static let visibleRows = 3
-    /// Points per second: a row every 4 seconds (the Tauri app's too).
-    static let speed: CGFloat = rowHeight / 4
+    @State private var copied: String?
 
     var body: some View {
-        let height = Self.rowHeight * CGFloat(Self.visibleRows)
-        Group {
-            if reduceMotion || motionStill {
-                rows(Array(prompts.prefix(Self.visibleRows)))
-            } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: pausedAt != nil)) { context in
-                    let cycle = Self.rowHeight * CGFloat(prompts.count)
-                    let elapsed = (pausedAt ?? context.date).timeIntervalSince(origin)
-                    let offset = (CGFloat(elapsed) * Self.speed).truncatingRemainder(dividingBy: max(cycle, 1))
-                    rows(prompts + prompts)
-                        .offset(y: -offset)
-                        .frame(height: height, alignment: .top)
-                        .clipped()
-                        .mask(LinearGradient(stops: [
-                            .init(color: .clear, location: 0), .init(color: .black, location: 0.25),
-                            .init(color: .black, location: 0.75), .init(color: .clear, location: 1),
-                        ], startPoint: .top, endPoint: .bottom))
-                }
-                .onHover { inside in
-                    if inside {
-                        pausedAt = Date()
-                    } else if let at = pausedAt {
-                        origin += Date().timeIntervalSince(at)
-                        pausedAt = nil
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Try asking your agent:")
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 2)
+            ForEach(prompts, id: \.self) { text in
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    copied = text
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        if copied == text { copied = nil }
                     }
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("\u{201C}\(text)\u{201D}")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if copied == text { Text("Copied") }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(.rect)
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Example prompts")
-                .accessibilityValue(prompts.joined(separator: ", "))
+                .buttonStyle(.plain)
+                .accessibilityHint("Copies this prompt")
             }
         }
-        .frame(height: height, alignment: .top)
-    }
-
-    private func rows(_ items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, text in
-                Text("\u{201C}\(text)\u{201D}")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(height: Self.rowHeight, alignment: .leading)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

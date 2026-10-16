@@ -551,6 +551,7 @@ pub trait LocalRuntime: Send + Sync {
   async fn suspend(&self, name: &str) -> RuntimeResult<()>;
   async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance>;
   fn power_control(&self, runtime_type: &str) -> Option<PowerControl>;
+  async fn stop_reason(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<StopReason>>;
   async fn fork(&self, source: &str, new_name: &str) -> RuntimeResult<()>;
   async fn checkpoint(&self, name: &str, checkpoint: &str) -> RuntimeResult<()>;
   async fn list(&self) -> RuntimeResult<Vec<LocalSummary>>;
@@ -1180,6 +1181,9 @@ impl Sandboxes {
   fn remember_direct(&self, name: &str, url: &str) -> Result<()>;
   async fn list(&self) -> Result<Vec<SandboxInfo>>;
   async fn get(&self, name: &str) -> Result<SandboxInfo>;
+  fn stop_reason(&self, name: &str) -> Option<StopReason>;
+  async fn note_unasked_stops(&self) -> Vec<(String, StopReason)>;
+  fn spawn_stop_watch(&self) -> JoinHandle<()>;
   async fn suspend(&self, name: &str) -> Result<()>;
   async fn resume(&self, name: &str) -> Result<()>;
   async fn restart(&self, name: &str) -> Result<()>;
@@ -1221,6 +1225,7 @@ pub struct SandboxInfo {
   pub provider: ProviderKind,
   pub runtime_type: String,
   pub status: Status,
+  pub stop_reason: Option<StopReason>,
 }
 ```
 
@@ -1263,6 +1268,7 @@ impl SandboxState {
   fn name(&self) -> &str;
   fn runtime_type(&self) -> &str;
   fn status(&self) -> &str;
+  fn stop_reason(&self) -> Option<StopReason>;
 }
 ```
 
@@ -1402,6 +1408,7 @@ impl StateStore {
   fn load_raw(&self, name: &str) -> Option<Map<String, Value>>;
   fn update(&self, name: &str, fields: Map<String, Value>) -> Result<()>;
   fn set_status(&self, name: &str, status: &str) -> Result<()>;
+  fn record_stop(&self, name: &str, reason: &StopReason) -> Result<()>;
   fn delete(&self, name: &str) -> Result<()>;
   fn write_lease(&self, name: &str, pid: u32) -> Result<()>;
   fn remove_lease(&self, name: &str) -> Result<()>;
@@ -1421,6 +1428,20 @@ pub enum Status {
   Stopped,
   Provisioning,
   Unknown(String),
+}
+```
+
+### `StopReason`
+
+Why a sandbox stopped without being asked to, as its ...
+
+```rust
+pub struct StopReason {
+  pub exit_code: i64,
+  pub out_of_memory: bool,
+}
+impl StopReason {
+  fn words(&self) -> String;
 }
 ```
 
@@ -1613,6 +1634,10 @@ pub const DEFAULT_PATH: &str = "/mcp";
 // mod settings
 /// Every setting, in display order.
 pub const KEYS: [Key; 9] = _;
+
+// mod state
+/// State-file key: why a local sandbox ...
+pub const STOP_REASON: &str = "stop_reason";
 ```
 
 ## Type aliases
@@ -1640,4 +1665,4 @@ pub type RouteFuture = Pin<Box<dyn Future<Output = RouteDecision> + Send>>;
 
 ## Re-exports
 
-`sandbox::BuildFile`, `sandbox::BuildSpec`, `tokio_util::sync::CancellationToken`, `cua_vmm::cleanup`, `cua_fleet`, `cua_spacesd_client`, `cua_vmm::gpu`, `sandbox::ImageLayer`, `rmcp`, `cua_vmm::progress`, `sandbox::RegistryCredentials`, `sandbox::Sidecar`.
+`sandbox::BuildFile`, `sandbox::BuildSpec`, `tokio_util::sync::CancellationToken`, `cua_vmm::cleanup`, `cua_fleet`, `cua_spacesd_client`, `cua_vmm::gpu`, `sandbox::ImageLayer`, `rmcp`, `cua_vmm::progress`, `sandbox::RegistryCredentials`, `cua_vmm::error::failure_kind`, `sandbox::Sidecar`.

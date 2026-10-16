@@ -11,6 +11,7 @@ import { bindingFor } from "@/lib/keybindings";
 import { useTheme } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
 import { useNavItems } from "./nav";
+import { TopBarUpdateIndicator } from "./update-indicator";
 
 export function TopBar() {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
@@ -46,6 +47,7 @@ export function TopBar() {
         <span className="flex-1 truncate text-left">Search or run a command</span>
         <Shortcut spec={bindingFor("commandPalette.toggle") ?? ""} />
       </button>
+      {sidebarOpen ? null : <TopBarUpdateIndicator />}
       <Tooltip content={resolved === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}>
         <Button
           variant="ghost"

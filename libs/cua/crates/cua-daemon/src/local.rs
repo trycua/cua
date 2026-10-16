@@ -10,6 +10,7 @@
 //! | `container:<ref>` / `docker:<ref>` or a bare OCI ref | container (gVisor `runsc` when available) |
 //! | `vm:<ref>` (containerDisk) / `disk:<path>` / a `.qcow2`/`.img`/`.raw`/`.iso` path | QEMU |
 //! | `lume:<ref>`, or any image with `os = macos` | Lume |
+//! | bare ref without a container engine, with ready QEMU and a containerDisk | QEMU |
 //!
 //! A bare, `vm:` or `container:` OCI ref is resolved first by the one
 //! resolver ([`cua_image::resolve`]: the variant the backend runs, pinned by
@@ -85,8 +86,8 @@ pub fn vmm_error(e: VmmError) -> Error {
         }
         VmmError::Invalid(m) => Error::InvalidArgument(m),
         VmmError::UnsupportedImage { reason, .. } => Error::Unsupported(reason),
-        VmmError::Missing { what, hint } => {
-            Error::ProviderNotConfigured(format!("{what} is not available: {hint}"))
+        e @ (VmmError::Missing { .. } | VmmError::NotRunning { .. }) => {
+            Error::ProviderNotConfigured(e.to_string())
         }
         VmmError::InsufficientDisk(d) => Error::InsufficientDisk(d.to_string()),
         other => Error::Runtime(other.to_string()),
@@ -109,19 +110,53 @@ pub struct Placement {
     pub image: ImageSource,
 }
 
+fn backend_prefix(image: &str) -> Option<(&str, &str)> {
+    image.trim().split_once(':').filter(|(p, r)| {
+        ["container", "docker", "vm", "disk", "lume"].contains(p) && !r.starts_with("//")
+    })
+}
+
+fn missing_fallback_allowed(
+    kind: cua_sandbox_core::placement::Kind,
+    runtime: &cua_sandbox_core::placement::Runtime,
+    prefix: Option<(&str, &str)>,
+    backend: BackendKind,
+    source: LinuxSource,
+) -> bool {
+    use cua_sandbox_core::placement::{Kind, Runtime};
+    kind == Kind::Auto
+        && *runtime == Runtime::Auto
+        && prefix.is_none()
+        && backend == BackendKind::Container
+        && source == LinuxSource::Auto
+}
+
+async fn vm_instead(
+    image: &str,
+    os: &str,
+    creds: Option<&cua_image::RegistryCredentials>,
+    qemu_ready: bool,
+) -> Option<Resolved> {
+    if !qemu_ready {
+        return None;
+    }
+    let r = resolve_placement_inner(&format!("vm:{}", image.trim()), os, creds, true)
+        .await
+        .ok()?;
+    r.image
+        .as_ref()
+        .is_some_and(|i| i.variant == cua_image::resolve::Variant::Containerdisk)
+        .then_some(r)
+}
+
 /// Decides the backend for `image` / `os` (see the module docs).
 pub fn place(image: &str, os: &str) -> Result<Placement> {
     let image = image.trim();
     if image.is_empty() {
         return Err(Error::InvalidArgument("image is required".into()));
     }
-    let (prefix, rest) = match image.split_once(':') {
-        Some((p, r))
-            if ["container", "docker", "vm", "disk", "lume"].contains(&p)
-                && !r.starts_with("//") =>
-        {
-            (Some(p), r)
-        }
+    let (prefix, rest) = match backend_prefix(image) {
+        Some((p, r)) => (Some(p), r),
         _ => (None, image),
     };
     let disk_like = |s: &str| {
@@ -215,9 +250,7 @@ pub async fn resolve_placement_for(
     creds: Option<&cua_image::RegistryCredentials>,
 ) -> Result<Resolved> {
     use cua_sandbox_core::placement::{Kind, Runtime};
-    let prefixed = image.trim().split_once(':').is_some_and(|(p, r)| {
-        ["container", "docker", "vm", "disk", "lume"].contains(&p) && !r.starts_with("//")
-    });
+    let prefixed = backend_prefix(image).is_some();
     if prefixed || (kind == Kind::Auto && *runtime == Runtime::Auto) {
         return resolve_placement_with(image, os, creds).await;
     }
@@ -263,13 +296,7 @@ async fn resolve_placement_inner(
 ) -> Result<Resolved> {
     use cua_image::resolve::{Backend, Variant};
     let placement = place(image, os)?;
-    let prefix = image
-        .trim()
-        .split_once(':')
-        .filter(|(p, r)| {
-            ["container", "docker", "vm", "disk", "lume"].contains(p) && !r.starts_with("//")
-        })
-        .map(|(p, _)| p);
+    let prefix = backend_prefix(image).map(|(p, _)| p);
     let syntactic = |placement: Placement| Resolved {
         placement,
         arch: None,
@@ -771,7 +798,7 @@ impl LocalRuntime for VmmLocal {
             .transpose()
             .map_err(RuntimeError::InvalidPlacement)?
             .unwrap_or_default();
-        let r = resolve_placement_for(
+        let mut r = resolve_placement_for(
             &spec.image,
             &spec.os,
             kind,
@@ -798,6 +825,27 @@ impl LocalRuntime for VmmLocal {
             }),
             other => RuntimeError::Other(other.to_string()),
         })?;
+        if missing_fallback_allowed(
+            kind,
+            &runtime,
+            backend_prefix(&spec.image),
+            r.placement.backend,
+            LinuxSource::current(),
+        ) && let Err(e @ VmmError::Missing { .. }) = self.engine().await
+        {
+            let ready = doctor_report()
+                .await
+                .backend(BackendKind::Qemu)
+                .is_some_and(|b| b.ready);
+            r = vm_instead(
+                &spec.image,
+                &spec.os,
+                spec.registry_credentials.as_ref(),
+                ready,
+            )
+            .await
+            .ok_or_else(|| rt_err(e))?;
+        }
         let p = r.placement.clone();
         if spec.disk_size_gb.is_some() && p.backend == BackendKind::Container {
             return Err(RuntimeError::Unsupported {
@@ -980,6 +1028,33 @@ impl LocalRuntime for VmmLocal {
             }
         }
         Ok(out)
+    }
+
+    /// A container's exit record (its code and `OOMKilled`), read from the
+    /// engine only while it is up: the built-in Linux runtime is never
+    /// booted for it. Other runtimes keep no such record.
+    async fn stop_reason(
+        &self,
+        name: &str,
+        runtime_type: &str,
+    ) -> RuntimeResult<Option<cua_sandbox_core::StopReason>> {
+        if !matches!(
+            runtime_type.trim().to_ascii_lowercase().as_str(),
+            "gvisor" | "runsc" | "runc" | "container" | "docker"
+        ) {
+            return Ok(None);
+        }
+        let Some(rt) = self.container_if_up().await else {
+            return Ok(None);
+        };
+        Ok(rt
+            .exit_of(name)
+            .await
+            .map_err(rt_err)?
+            .map(|e| cua_sandbox_core::StopReason {
+                exit_code: e.exit_code,
+                out_of_memory: e.oom_killed,
+            }))
     }
 
     async fn status(&self, name: &str) -> RuntimeResult<InstanceStatus> {
@@ -1304,7 +1379,7 @@ pub async fn pull_image(local: &VmmLocal, reference: &str) -> Result<LocalImageI
         (BackendKind::Qemu, ImageSource::Oci { reference: r }) => {
             let client = cua_image::RegistryClient::default();
             let cache = cua_image::ImageCache::default();
-            let disk = cua_image::containerdisk::pull(&client, &cache, &r, arch.oci(), false)
+            let disk = cua_image::containerdisk::pull(&client, &cache, &r, arch.oci())
                 .await
                 .map_err(image_error)?;
             let size = std::fs::metadata(&disk).map(|m| m.len()).unwrap_or(0);
@@ -1427,7 +1502,6 @@ async fn build_with(
                     &cua_image::ImageCache::default(),
                     &reference,
                     opts.arch.oci(),
-                    false,
                 )
                 .await
                 .map_err(image_error)?,
@@ -1583,6 +1657,23 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn missing_fallback_requires_auto_linux_source() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        for source in [LinuxSource::Auto, LinuxSource::Builtin, LinuxSource::System] {
+            assert_eq!(
+                missing_fallback_allowed(
+                    Kind::Auto,
+                    &Runtime::Auto,
+                    None,
+                    BackendKind::Container,
+                    source,
+                ),
+                source == LinuxSource::Auto,
+            );
+        }
+    }
+
     /// The macOS path of "Spaces on your machines", verified without a VM:
     /// the canonical macOS image (what a host resolves `macos:26` to) is a
     /// Lume VM according to the registry. Reads ghcr.io; creates nothing.
@@ -1659,6 +1750,34 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(lume_only_vm.unwrap().placement.backend, BackendKind::Lume);
+    }
+
+    #[tokio::test]
+    async fn automatic_vm_fallback_requires_ready_verified_disk() {
+        let _turn = FAKE_REGISTRY.lock().await;
+        let host = cua_vmm::Arch::host();
+        let mut reg = cua_image::testing::FakeRegistry::default();
+        reg.index("ghcr.io/acme/app:1", &[host.oci()], false, None);
+        reg.index("ghcr.io/acme/app:1-disk", &[host.oci()], true, None);
+        reg.index("ghcr.io/acme/rootfs:1", &[host.oci()], false, None);
+        cua_image::resolve::set_source(Some(Arc::new(reg)));
+        let disk = vm_instead("ghcr.io/acme/app:1", "linux", None, true).await;
+        let rootfs = vm_instead("ghcr.io/acme/rootfs:1", "linux", None, true).await;
+        let missing = vm_instead("ghcr.io/acme/missing:1", "linux", None, true).await;
+        cua_image::resolve::set_source(None);
+        let disk = disk.unwrap();
+        assert_eq!(disk.placement.backend, BackendKind::Qemu);
+        assert_eq!(disk.arch, Some(host));
+        assert_eq!(
+            disk.image.as_ref().unwrap().variant,
+            cua_image::resolve::Variant::Containerdisk
+        );
+        assert!(
+            matches!(&disk.placement.image, ImageSource::Oci { reference } if reference.contains("app@sha256"))
+        );
+        assert!(rootfs.is_none());
+        assert!(missing.is_none());
+        assert!(vm_instead("invalid", "linux", None, false).await.is_none());
     }
 
     #[tokio::test]

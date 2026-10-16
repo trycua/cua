@@ -202,6 +202,16 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/machines.json"),
         include_str!("../parity/golden/machines.json"),
     ),
+    (
+        "checklist",
+        include_str!("../parity/checklist.json"),
+        include_str!("../parity/golden/checklist.json"),
+    ),
+    (
+        "create-stages",
+        include_str!("../parity/create-stages.json"),
+        include_str!("../parity/golden/create-stages.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -324,7 +334,7 @@ pub mod frame {
                 },
             })
         };
-        json!({
+        let mut out = json!({
             "step": view["step"],
             "canContinue": view["canContinue"],
             "primaryLabel": view["primaryLabel"],
@@ -370,7 +380,21 @@ pub mod frame {
             "fields": view["fields"].as_array().map(|a| a.iter().map(field).collect::<Vec<_>>()).unwrap_or_default(),
             "imageField": image_field,
             "address": address,
-        })
+        });
+        // A slider's value being typed: `cpus: 9 !Choose 1 to 8 cores.`
+        // (only while one is).
+        if let Some(e) = view["resourceEdit"].as_object() {
+            out["resourceEdit"] = Value::String(format!(
+                "{}: {}{}",
+                e["field"].as_str().unwrap_or(""),
+                e["text"].as_str().unwrap_or(""),
+                e["error"]
+                    .as_str()
+                    .map(|m| format!(" !{m}"))
+                    .unwrap_or_default()
+            ));
+        }
+        out
     }
 
     fn str_of(v: &Value) -> &str {
@@ -1176,7 +1200,7 @@ pub mod frame {
         sensitive: &Value,
         plan_sensitive: &Value,
     ) -> Value {
-        json!({
+        let mut out = json!({
             "step": state["step"],
             "selectedId": state["selectedId"],
             "entry": state["entry"]["id"],
@@ -1203,7 +1227,20 @@ pub mod frame {
                 o["group"].as_str().unwrap_or(""), o["label"].as_str().unwrap_or(""),
                 o["detail"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "planSensitive": plan_sensitive,
-        })
+        });
+        // Saved passwords, while the review offers them: the box's label
+        // and, ticked, `site user (counts) [x]` per choice.
+        if review["offersPasswords"] == true {
+            out["passwords"] = json!({
+                "label": review["passwordsLabel"],
+                "on": review["includePasswords"],
+                "summary": review["passwordSummary"],
+                "rows": review["passwords"].as_array().map(|a| a.iter().map(|p| Value::String(format!("{} {} ({}) [{}]",
+                    p["site"].as_str().unwrap_or(""), p["username"].as_str().unwrap_or(""),
+                    p["counts"].as_str().unwrap_or(""), if p["selected"] == true { "x" } else { " " }))).collect::<Vec<_>>()).unwrap_or_default(),
+            });
+        }
+        out
     }
 
     /// After each notch event.
@@ -1879,7 +1916,9 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "main-window" => run_main_window(&flow, h),
         "notch" => run_notch(&flow, h),
         "notch-drag-trigger" => run_notch_drag_trigger(&flow, h),
-        "provisioning" | "create-progress" | "create-cancel" => run_provisioning(&flow, h),
+        "provisioning" | "create-progress" | "create-cancel" | "create-stages" => {
+            run_provisioning(&flow, h)
+        }
         "stream-section" => run_stream_section(&flow, h),
         "space-facts" => run_space_facts(&flow, h),
         "picker-grid" => run_picker_grid(&flow, h),
@@ -1902,6 +1941,7 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "experiments" => run_experiments(&flow, h),
         "placement-picker" => run_placement_picker(&flow, h),
         "machines" => run_machines(&flow, h),
+        "checklist" => run_checklist(&flow, h),
         other => Err(format!("unknown flow {other}")),
     }
 }
@@ -2950,7 +2990,115 @@ fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
             .collect();
         frames.push(json!({ "case": case["name"], "rows": lines, "runOn": run_on }));
     }
+    for page in f["pages"].as_array().into_iter().flatten() {
+        let rows = c(h, "machines.pageRows", json!({ "input": page["input"] }))?;
+        frames.push(json!({ "page": page["name"], "rows": page_lines(&rows) }));
+    }
     Ok(json!({ "flow": "machines", "frames": frames }))
+}
+
+/// The Machines page's rows (`machines.pageRows`), one line each: name,
+/// id, how it is reached, its system, online, the device in it or a
+/// device of its own, its desktop's Space, whether it stopped sharing, and
+/// the status word and Spaces count every UI shows.
+fn page_lines(rows: &Value) -> Vec<String> {
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let state = if r["online"].as_bool() == Some(true) {
+                "online"
+            } else {
+                "offline"
+            };
+            let mut line = format!(
+                "{} [{}] {} {} {state}",
+                str_of(&r["name"]),
+                str_of(&r["id"]),
+                str_of(&r["via"]),
+                if str_of(&r["os"]).is_empty() {
+                    "?"
+                } else {
+                    str_of(&r["os"])
+                },
+            );
+            if r["current"].as_bool() == Some(true) {
+                line.push_str(" (this machine)");
+            }
+            match (r["deviceOnly"].as_bool(), r["device"].as_str()) {
+                (Some(true), _) => line.push_str(" (a device)"),
+                (_, Some(d)) => line.push_str(&format!(" + {d}")),
+                _ => {}
+            }
+            if let Some(s) = r["spaceId"].as_str() {
+                line.push_str(&format!(" desktop {s}"));
+            }
+            if r["stoppedSharing"].as_bool() == Some(true) {
+                line.push_str(" (stopped sharing)");
+            }
+            // The words every UI shows: its status and its Spaces.
+            line.push_str(&format!(" \"{}\"", str_of(&r["status"])));
+            if !str_of(&r["spacesLabel"]).is_empty() {
+                line.push_str(&format!(" \"{}\"", str_of(&r["spacesLabel"])));
+            }
+            line
+        })
+        .collect()
+}
+
+/// The checklist for each case: the Machines page from the case's page
+/// input, what `checklist.observeFrom` reads from it and the case's Spaces
+/// and agents, the count after that observation on the stored progress,
+/// and after merging progress kept elsewhere before.
+fn run_checklist(f: &Value, h: &dyn Host) -> Result<Value, String> {
+    let mut frames = Vec::new();
+    for case in f["cases"].as_array().into_iter().flatten() {
+        let rows = c(h, "machines.pageRows", json!({ "input": case["page"] }))?;
+        let seen = json!({
+            "machines": rows,
+            "spaces": case["page"]["spaces"],
+            "agents": case["agents"],
+            "runs": case["runs"],
+        });
+        let action = c(h, "checklist.observeFrom", json!({ "seen": seen }))?;
+        let t = c(
+            h,
+            "checklist.reduce",
+            json!({ "state": case["state"], "action": action }),
+        )?;
+        let view = c(h, "checklist.view", json!({ "state": t["state"] }))?;
+        let events: Vec<&str> = t["signals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|s| str_of(&s["step"]))
+            .collect();
+        let mut frame = json!({
+            "case": case["name"],
+            "observe": {
+                "otherMachine": action["otherMachine"],
+                "hasSpace": action["hasSpace"],
+                "agentRan": action["agentRan"],
+            },
+            "progress": view["progress"],
+            "events": events,
+        });
+        if !case["earlier"].is_null() {
+            let merged = c(
+                h,
+                "checklist.reduce",
+                json!({ "state": t["state"], "action": { "type": "merge", "state": case["earlier"] } }),
+            )?;
+            let view = c(h, "checklist.view", json!({ "state": merged["state"] }))?;
+            frame["merged"] = json!({
+                "progress": view["progress"],
+                "visible": view["visible"],
+                "events": merged["signals"].as_array().map_or(0, |s| s.len()),
+            });
+        }
+        frames.push(frame);
+    }
+    Ok(json!({ "flow": "checklist", "frames": frames }))
 }
 
 fn run_space_facts(f: &Value, h: &dyn Host) -> Result<Value, String> {

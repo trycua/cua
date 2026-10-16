@@ -396,3 +396,83 @@ struct DevicesBanner: View {
         }
     }
 }
+
+/// The relay allowance for the month is used up: one line above the main
+/// window with Upgrade, until dismissed. Nothing stops at the limit, so it
+/// only says so. The words are the core's (`appRelayUsageView`).
+struct RelayAllowanceBanner: View {
+    @Bindable var devices: DevicesModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let notice = devices.relayNotice {
+            HStack(spacing: 8) {
+                Text(notice.text).lineLimit(2).foregroundStyle(.secondary).help(notice.text)
+                Spacer(minLength: 8)
+                if let url = notice.upgradeUrl.flatMap(URL.init(string:)) {
+                    Button(notice.upgrade) {
+                        devices.recordUpsell("upsell_meter_click")
+                        openURL(url)
+                    }
+                        .controlSize(.small)
+                        .accessibilityIdentifier("relay-upgrade")
+                }
+                Button {
+                    devices.dismissRelayNotice()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel(notice.dismiss)
+                .accessibilityIdentifier("relay-dismiss")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("relay-allowance")
+            .onAppear { devices.recordUpsell("upsell_meter_shown") }
+        }
+    }
+}
+
+/// Settings → Account: the plan and the relay allowance this month, where
+/// it applies. The plan card is always there, never a prompt: Free offers
+/// Pro and a team; each button opens its checkout on the account app.
+struct RelayUsageRow: View {
+    let view: AppRelayUsageView
+    var onPlanLink: () -> Void = {}
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        LabeledContent {
+            Text(view.plan).foregroundStyle(.secondary)
+        } label: {
+            Text(view.label)
+            Text(view.line)
+        }
+        .accessibilityIdentifier("settings-relay-usage")
+        LabeledContent {
+            HStack {
+                if let link = view.planCard.secondary { planButton(link, id: "plan-secondary") }
+                if let link = view.planCard.primary { planButton(link, id: "plan-primary") }
+            }
+        } label: {
+            Text(view.planCard.label)
+            Text(view.planCard.detail)
+        }
+        .accessibilityIdentifier("settings-plan-card")
+    }
+
+    private func planButton(_ link: AppPlanLink, id: String) -> some View {
+        Button(link.label) {
+            guard let url = URL(string: link.url) else { return }
+            onPlanLink()
+            openURL(url)
+        }
+        .controlSize(.small)
+        .accessibilityIdentifier(id)
+    }
+}

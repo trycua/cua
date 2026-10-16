@@ -53,6 +53,15 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "showcase requires a normal desktop, got {width}x{height}"
         );
 
+        // The showcase asserts the session badge at rest, which only the
+        // verbose badge mode draws; minimal (the default) shows no badge
+        // until a foreground moment or a key combo.
+        call_ok(
+            &mut driver,
+            "set_config",
+            serde_json::json!({ "cursor.badges": "verbose" }),
+        );
+
         call_ok(
             &mut driver,
             "start_session",

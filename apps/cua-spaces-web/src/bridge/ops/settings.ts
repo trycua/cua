@@ -11,7 +11,7 @@
 
 import { UnsupportedOperationError } from "../adapter";
 import type { LoginItemStatus } from "../contracts/host";
-import type { DevicesInput, EnrollResult } from "../contracts/devices";
+import type { DevicesInput, EnrollResult, PairingCode, TeamsList } from "../contracts/devices";
 import type {
   AboutInput,
   DriveCacheInput,
@@ -23,6 +23,7 @@ import type {
   StorageInput,
   StorageRequest,
   UpdateChannelId,
+  UpdateState,
 } from "../contracts/settings";
 
 type Empty = Record<string, never>;
@@ -34,6 +35,13 @@ export interface SettingsOperations {
   "about.set": { args: { autoCheck?: boolean; autoInstall?: boolean; channel?: UpdateChannelId }; result: AboutInput };
   /** Check Now. */
   "about.checkNow": { args: Empty; result: AboutInput };
+
+  /** The in-app update indicator: where the host's updater is. */
+  "update.get": { args: Empty; result: UpdateState };
+  /** "Restart to update": installs the downloaded update and relaunches.
+   * Only a click calls it; the host never restarts on its own. With nothing
+   * downloaded it changes nothing and answers the state. */
+  "update.install": { args: Empty; result: UpdateState };
 
   /** Settings, Experiments: the switches as stored. */
   "experiments.get": { args: Empty; result: Experiments };
@@ -58,6 +66,16 @@ export interface SettingsOperations {
   "devices.revoke": { args: { id: string }; result: null };
   /** Vouches for a machine that registered without an enrolled device's proof. */
   "devices.confirmMachine": { args: { id: string }; result: null };
+  /** A one-time link, QR code and install commands that add another
+   * computer to the account (or to `team`), from this enrolled device. */
+  "devices.createPairingCode": { args: { team?: string | null }; result: PairingCode };
+  /** The account's pairing codes, newest first (without the codes). */
+  "devices.pairingCodes": { args: Empty; result: PairingCode[] };
+  /** Revokes an unused pairing code (`pc_…`). */
+  "devices.revokePairingCode": { args: { id: string }; result: null };
+  /** The account's Teams (organizations of `GET /v1/me`) and the current one:
+   * "Add a machine" and "Share" offer them. */
+  "teams.list": { args: Empty; result: TeamsList };
 
   /** The Cua Volume's storage, mount and cache (`volume_storage`, `volume_mount_status`, `volume_cache_stats`). */
   "storage.get": { args: Empty; result: StorageInput };
@@ -71,6 +89,8 @@ export const SETTINGS_OPERATIONS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "experiments.get",
   "experiments.set",
   "loginItem.get",
@@ -83,6 +103,10 @@ export const SETTINGS_OPERATIONS = [
   "devices.rename",
   "devices.revoke",
   "devices.confirmMachine",
+  "devices.createPairingCode",
+  "devices.pairingCodes",
+  "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
 ] as const satisfies readonly SettingsOpName[];
@@ -142,6 +166,8 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
     "about.get": about,
     "about.set": () => Promise.reject(new UnsupportedOperationError("tauri", "about.set")),
     "about.checkNow": () => Promise.reject(new UnsupportedOperationError("tauri", "about.checkNow")),
+    "update.get": () => Promise.reject(new UnsupportedOperationError("tauri", "update.get")),
+    "update.install": () => Promise.reject(new UnsupportedOperationError("tauri", "update.install")),
 
     // The Tauri app keeps the switches in its UI storage, as its own Settings does.
     "experiments.get": async () => readExperiments(),
@@ -179,6 +205,13 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
       await invoke("devices_confirm_machine", { id });
       return null;
     },
+    "devices.createPairingCode": ({ team }) => invoke<PairingCode>("devices_create_pairing_code", { team: team ?? null }),
+    "devices.pairingCodes": () => invoke<PairingCode[]>("devices_pairing_codes"),
+    "devices.revokePairingCode": async ({ id }) => {
+      await invoke("devices_revoke_pairing_code", { id });
+      return null;
+    },
+    "teams.list": () => invoke<TeamsList>("teams_list"),
 
     "storage.get": storage,
     "storage.run": async ({ request }) => {
@@ -211,13 +244,15 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
 }
 
 /** The Tauri updater has one feed and no controls. */
-export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow"] as const satisfies readonly SettingsOpName[];
+export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install"] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
 export const SETTINGS_TAURI_COMMANDS = {
   "about.get": ["plugin:app|version", "get_environment"],
   "about.set": [],
   "about.checkNow": [],
+  "update.get": [],
+  "update.install": [],
   "experiments.get": [],
   "experiments.set": ["ui_storage_set"],
   "loginItem.get": ["login_item_status", "host_status", "agents_tool"],
@@ -230,6 +265,10 @@ export const SETTINGS_TAURI_COMMANDS = {
   "devices.rename": ["devices_rename"],
   "devices.revoke": ["devices_revoke"],
   "devices.confirmMachine": ["devices_confirm_machine"],
+  "devices.createPairingCode": ["devices_create_pairing_code"],
+  "devices.pairingCodes": ["devices_pairing_codes"],
+  "devices.revokePairingCode": ["devices_revoke_pairing_code"],
+  "teams.list": ["teams_list"],
   "storage.get": ["get_environment", "agents_tool"],
   "storage.run": ["agents_tool", "drive_reveal", "host_open_settings"],
 } as const satisfies Record<SettingsOpName, readonly string[]>;

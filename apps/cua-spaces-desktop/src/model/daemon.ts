@@ -18,6 +18,7 @@ import { execFile, spawn } from "node:child_process";
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { daemonLacksDockerGroup } from "./linux-runtime";
 import { sleep } from "./time";
 
 /** `CUA_KEYCHAIN_NONINTERACTIVE` (cua-auth's `KEYCHAIN_NONINTERACTIVE_ENV`). */
@@ -26,10 +27,11 @@ export const KEYCHAIN_NONINTERACTIVE_ENV = "CUA_KEYCHAIN_NONINTERACTIVE";
 /** `CUA_DAEMON_KEEP` (cua-daemon's `identity::KEEP_ENV`): other apps' daemon executables this app replaced once. */
 export const DAEMON_KEEP_ENV = "CUA_DAEMON_KEEP";
 
-/** The cua home the daemon uses (`CUA_HOME`, else `~/.cua`). */
+/** The cua home the daemon uses (`CUA_HOME`, else `~/.cua`, or `~/.cua/envs/staging` for `CUA_ENV=staging`, as cua-home resolves it). */
 export function cuaHome(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CUA_HOME) return env.CUA_HOME;
-  return path.join(env.HOME || env.USERPROFILE || os.homedir(), ".cua");
+  const base = path.join(env.HOME || env.USERPROFILE || os.homedir(), ".cua");
+  return (env.CUA_ENV ?? "").trim().toLowerCase() === "staging" ? path.join(base, "envs", "staging") : base;
 }
 
 /** The daemon still starting (`daemon.starting`) and the one running (`daemon.json`), as their files name them. */
@@ -195,6 +197,7 @@ export class DaemonSupervisor {
    * starts it again (`CUA_DAEMON_KEEP`, here and for the SDK in this process).
    */
   async start(timeoutMs = 60_000): Promise<string | null> {
+    await this.replaceDaemonWithoutDockerGroup();
     const before = await this.stranger();
     const error = await this.run(["daemon", "start"], timeoutMs);
     // Replaced: another daemon is named now, or that one is gone.
@@ -205,6 +208,24 @@ export class DaemonSupervisor {
       console.log(`[cua-spaces] replaced another app's cua daemon (${before.executable}); if it comes back, it is kept`);
     }
     return error;
+  }
+
+  /**
+   * Linux (CUA-1763): a daemon of this bundle that started before the user
+   * joined the `docker` group never gets it (a lingering session keeps the
+   * old groups), so it cannot reach Docker while this app can. Stops it
+   * here; the start that follows runs a new one with the group.
+   */
+  private async replaceDaemonWithoutDockerGroup(): Promise<void> {
+    if (this.platform !== "linux") return;
+    for (const pid of daemonPids(this.cuaHome)) {
+      if (!(await this.isOwn(pid))) continue;
+      if (await daemonLacksDockerGroup(pid)) {
+        console.log(`[cua-spaces] the cua daemon (pid ${pid}) started without the docker group this app has; replacing it`);
+        await this.run(["daemon", "stop"], 15_000);
+        await DaemonSupervisor.stop(pid);
+      }
+    }
   }
 
   /** Stops this app's daemon (bounded), kills one of this bundle that still starts or no longer answers, then starts it. */

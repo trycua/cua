@@ -603,6 +603,114 @@ async fn sandbox_mcp_sends_the_direct_token() {
     assert!(o.stderr.contains("401"), "{o:?}");
 }
 
+const SPACE_TOKEN: &str = "registry-only-5073-tok";
+
+async fn spacesd_with_token() -> (cua_spacesd_client::testing::MockServer, String) {
+    use cua_spacesd_client::testing::{MockAuth, MockServer};
+    let server = MockServer::start(MockAuth {
+        token: Some(SPACE_TOKEN.into()),
+        ..Default::default()
+    })
+    .await;
+    let id = format!("direct:{}", server.url().trim_start_matches("http://"));
+    (server, id)
+}
+
+fn add_space(h: &Home, id: &str, credential: cua_spaces::registry::Credential) {
+    let space = cua_proto::daemon::v1::Space {
+        id: id.into(),
+        ..Default::default()
+    };
+    cua_spaces::registry::Registry::new(h.cua_home())
+        .upsert(space, credential)
+        .unwrap();
+}
+
+async fn view(h: &Home, id: &str) -> Out {
+    h.run(&["--embedded", "--json", "sb", "view", id, "--no-open"])
+        .await
+}
+
+fn files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flat_map(|e| {
+            let p = e.unwrap().path();
+            if p.is_dir() { files(&p) } else { vec![p] }
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sandbox_view_sends_the_spacesd_token_of_a_space_added_by_address() {
+    use cua_spaces::registry::Credential;
+    let (server, id) = spacesd_with_token().await;
+    let mut h = Home::new();
+    add_space(
+        &h,
+        &id,
+        Credential {
+            url: Some(server.url()),
+            token: Some(SPACE_TOKEN.into()),
+            ..Default::default()
+        },
+    );
+    let o = view(&h, &id).await;
+    o.ok();
+    assert!(
+        o.json()["url"]
+            .as_str()
+            .unwrap()
+            .contains("#ticket=mock-viewer"),
+        "{o:?}"
+    );
+    h.set("CUA_ENV_TOKEN", "wrong");
+    view(&h, &id).await.ok();
+
+    let creds = h.cua_home().join("spaces-credentials.json");
+    for f in files(&h.cua_home()) {
+        if f != creds {
+            let body = String::from_utf8_lossy(&std::fs::read(&f).unwrap()).into_owned();
+            assert!(!body.contains(SPACE_TOKEN), "{}", f.display());
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&creds).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    h.env.remove("CUA_ENV_TOKEN");
+
+    let (server, _) = spacesd_with_token().await;
+    let url = server.url().trim_start_matches("http://").to_string();
+    direct_with(&h, &url, "own-token", SPACE_TOKEN).await;
+    add_space(
+        &h,
+        &format!("direct:{url}"),
+        Credential {
+            token: Some("wrong".into()),
+            ..Default::default()
+        },
+    );
+    view(&h, "own-token").await.ok();
+
+    let (mcp_server, mcp_id) = spacesd_with_token().await;
+    add_space(
+        &h,
+        &mcp_id,
+        Credential {
+            token: Some(SPACE_TOKEN.into()),
+            service_urls: [("mcp".into(), format!("{}/mcp", mcp_server.url()))].into(),
+            ..Default::default()
+        },
+    );
+    assert_ne!(view(&h, &mcp_id).await.code, 0);
+
+    let (_unregistered, unregistered_id) = spacesd_with_token().await;
+    assert_ne!(view(&h, &unregistered_id).await.code, 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandbox_mcp_tools_call_and_content() {
     use cua_sandbox_core::testing::{McpTestServer, expected_result, png_bytes};

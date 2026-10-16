@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // A machine its owner stopped sharing is not counted
-// online and reads "Not reachable" (the core's word, as the SwiftUI detail
-// shows it), its Status line wraps instead of being cut, and it can be
+// online and reads "Not sharing" (the core's word, `machines::NOT_SHARING`,
+// as the SwiftUI Machines list shows it), its Status line wraps instead of being cut, and it can be
 // removed with the core's Delete action, as the SwiftUI toolbar has it.
 
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -43,7 +43,7 @@ function host(removed: string[]): TestHost {
 }
 
 describe.skipIf(!wasmBuilt)("a machine its owner stopped sharing (real routes, wasm core)", () => {
-  it("is not counted online, reads Not reachable, shows its whole Status line, and can be removed", async () => {
+  it("is not counted online, reads Not sharing, shows its whole Status line, and can be removed", async () => {
     const removed: string[] = [];
     const { router, hooks } = await mountApp("/machines", host(removed));
     await router.load();
@@ -53,11 +53,11 @@ describe.skipIf(!wasmBuilt)("a machine its owner stopped sharing (real routes, w
     await screen.findByText(`${total} machines, ${online} online`);
 
     const row = document.querySelector('[data-machine-id="studio"]') as HTMLElement;
-    expect(within(row).getByText("Not reachable")).toBeTruthy();
+    expect(within(row).getByText("Not sharing")).toBeTruthy();
     act(() => row.click());
     const detail = await screen.findByRole("region", { name: "Studio details" });
     expect(within(detail).queryByText(/Online, not sharing/)).toBeNull();
-    expect(within(detail).getAllByText("Not reachable").length).toBeGreaterThan(0);
+    expect(within(detail).getAllByText("Not sharing").length).toBeGreaterThan(0);
     const status = within(detail).getByText("Status").closest("div")!.parentElement!.parentElement!;
     const value = status.querySelector("[data-fact-value]")!;
     expect(value.textContent).toContain("cua host start");

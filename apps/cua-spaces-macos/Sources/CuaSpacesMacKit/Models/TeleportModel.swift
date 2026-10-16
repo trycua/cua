@@ -84,6 +84,8 @@ public final class TeleportModel {
     private var sdkEntries: [String: TeleportCatalogEntry] = [:]
     private var sdkPlan: TeleportPlan?
     /// A run started (true) or ended (false): the notch shows a transfer.
+    /// An app was teleported (the getting-started checklist).
+    public var onTeleported: (() -> Void)?
     public var onTransfer: ((Bool) -> Void)?
     /// Streams one of the Space's windows here (From <Space>).
     public var onStreamWindow: ((String) -> Void)?
@@ -394,7 +396,8 @@ public final class TeleportModel {
             reviewVault = KvVaultState(query: "", selected: source.ids, expanded: [provider], app: provider)
             send(.vaultItems(count: source.count, newestMs: source.newestMs,
                              nowMs: Int64(keyvault.clock().timeIntervalSince1970 * 1000), selected: source.ids,
-                             passwordIds: source.passwordIds))
+                             passwordIds: source.passwordIds, passwords: source.passwords,
+                             passwordPicks: source.passwordPicks))
         }
         guard review.needsDomains else { return }
         guard let client = keyvault?.client else { send(.domainsFailed); return }
@@ -462,6 +465,7 @@ public final class TeleportModel {
                 listener: RunEvents { [weak self] event in
                     Task { @MainActor in self?.send(.progress(event: appTeleportRunEvent(event: event))) }
                 })
+            onTeleported?()
             send(.finished(report: AppTeleportRunReport(
                 appId: report.appId, installed: report.installed, sent: report.sent,
                 imported: report.imported, skipped: report.skipped, launched: report.launched)))
@@ -512,5 +516,6 @@ func sdkConsent(_ consent: AppTeleportConsent) -> TeleportConsent {
                     cookieDomains: consent.cookieDomains,
                     exclude: consent.exclude,
                     fromVault: consent.fromVault,
-                    includePasswords: consent.includePasswords)
+                    includePasswords: consent.includePasswords,
+                    passwordDomains: consent.passwordDomains)
 }

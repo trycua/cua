@@ -210,14 +210,16 @@ if [[ "${PREFLIGHT_EXIT}" != 0 ]]; then
   exit 1
 fi
 
+# shellcheck source=../lib/e2e-retry-once.sh
+source "${REPO_ROOT}/scripts/ci/lib/e2e-retry-once.sh"
+export CUA_E2E_PLATFORM=linux
+
 run_test() {
   local name="$1"
   shift
   echo "[RUN] ${name}"
-  set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
-  local exit_code=${PIPESTATUS[0]}
-  set -e
+  local exit_code=0
+  cua_e2e_run_case "${name}" "${ARTIFACT_DIR}/${name}.log" "${RUST_ROOT}" "$@" || exit_code=$?
   if [[ "${exit_code}" != 0 ]]; then
     FAILURE_COUNT=$((FAILURE_COUNT + 1))
   fi

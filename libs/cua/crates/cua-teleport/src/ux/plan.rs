@@ -295,6 +295,10 @@ pub struct TeleportPlan {
     /// Also send the saved passwords ([`Consent::include_passwords`]).
     #[serde(default, skip_serializing_if = "is_false")]
     pub include_passwords: bool,
+    /// The sites whose saved passwords to send
+    /// ([`Consent::password_domains`]); `None`: those of `cookie_domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_domains: Option<Vec<String>>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -341,6 +345,11 @@ pub struct Consent {
     /// browser's own key.
     #[serde(default)]
     pub include_passwords: bool,
+    /// The review's per-site choice of saved passwords (reading the live
+    /// app): the registrable domains whose passwords to send. `None` sends
+    /// those of `cookie_domains` (every site when that is `None` too).
+    #[serde(default)]
+    pub password_domains: Option<Vec<String>>,
 }
 
 /// A plan the user approved. Only [`TeleportPlan::approve`] makes one.
@@ -418,6 +427,10 @@ impl TeleportPlan {
         self.cookie_domains = consent.cookie_domains.clone();
         self.from_vault = consent.from_vault.clone();
         self.include_passwords = consent.include_passwords;
+        self.password_domains = consent
+            .password_domains
+            .clone()
+            .filter(|_| consent.include_passwords);
         self.save_to_keyvault = self.sensitive && consent.save_to_keyvault;
         Ok(ApprovedPlan(self))
     }
@@ -591,7 +604,16 @@ pub fn build(
             }
         };
         if selected.is_empty() {
-            return Err(UxError::Invalid("select at least one state item".into()));
+            // Nothing to pick from: the app has no profile where Cua looks (a
+            // sandboxed or relocated install), which is not the user's choice.
+            return Err(UxError::Invalid(if m.items.is_empty() {
+                format!(
+                    "no {} sign-in data was found on this computer; move just the app instead",
+                    m.app_display_name
+                )
+            } else {
+                "select at least one state item".into()
+            }));
         }
         for i in &selected {
             let count = match (i.count, &i.count_noun) {
@@ -661,6 +683,7 @@ pub fn build(
         cookie_domains: None,
         from_vault: None,
         include_passwords: false,
+        password_domains: None,
     })
 }
 

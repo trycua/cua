@@ -20,6 +20,7 @@ import type {
   AppAgentSetupOutcomeInput,
   AppAgentSetupStatus,
   AppAgentsAction,
+  AppAgentsRequest,
   AppAgentsState,
   AppAgentsView,
   AppSpaceAgentRun,
@@ -122,7 +123,10 @@ export class PersistentAgents {
     return this.call("agent_events", args);
   }
 
-  private async loadDetail(name: string): Promise<void> {
+  /** The selected agent's home (files only, recursively), its routines, every
+   * computer grant and the recent audit: the core's input records. The web
+   * UI's `agents.detail` answers it. */
+  async detail(name: string): Promise<{ home: Json[]; routines: Json[]; grants: Json[]; audit: Json[] }> {
     const files: Json[] = [];
     const queue = [`agents/${name}/`];
     let folders = 0;
@@ -141,10 +145,67 @@ export class PersistentAgents {
       enabled: typeof r.isEnabled === "boolean" ? r.isEnabled : true,
     }));
     const access = await this.call("computer_access_list", { audit: 20 });
-    this.input.home = files;
-    this.input.routines = routines;
-    this.input.grants = arr(access, "grants").map((g) => ({ agent: g.agent ?? "", machine: g.machine ?? "", revoked: g.revoked ?? false }));
-    this.input.audit = arr(access, "audit").map((a) => ({ tsMs: a.ts_ms ?? 0, action: a.action ?? "", principal: a.principal ?? "", path: a.path ?? "", detail: a.detail ?? "" }));
+    return {
+      home: files,
+      routines,
+      grants: arr(access, "grants").map((g) => ({ agent: g.agent ?? "", machine: g.machine ?? "", revoked: g.revoked ?? false })),
+      audit: arr(access, "audit").map((a) => ({ tsMs: a.ts_ms ?? 0, action: a.action ?? "", principal: a.principal ?? "", path: a.path ?? "", detail: a.detail ?? "" })),
+    };
+  }
+
+  private async loadDetail(name: string): Promise<void> {
+    Object.assign(this.input, await this.detail(name));
+  }
+
+  /** A home file's text and versions (`OpenFileInput`). */
+  async readFile(path: string): Promise<Json> {
+    const [file, history] = await Promise.all([this.call("volume_read", { path }), this.call("volume_history", { path })]);
+    const binary = file.encoding === "base64";
+    return {
+      path,
+      text: binary ? "" : (file.content ?? ""),
+      binary,
+      versions: arr(history, "versions").map((v) => ({ version: v.version ?? "", modifiedMs: v.modified_ms ?? 0, deleted: v.deleted ?? false, latest: v.latest ?? false })),
+    };
+  }
+
+  /** Runs one of the core's changes (`AgentsRequest`) with the daemon's tools. */
+  async perform(request: AppAgentsRequest): Promise<void> {
+    switch (request.tag) {
+      case "Load":
+      case "ReadFile":
+        return;
+      case "Pause":
+        await this.call("agent_pause", { name: request.inner.name });
+        return;
+      case "Resume":
+        await this.call("agent_resume", { name: request.inner.name });
+        return;
+      case "Restore":
+        await this.call("volume_restore", { path: request.inner.path, version: request.inner.version });
+        return;
+      case "AddRoutine": {
+        const r = request.inner;
+        const args: Record<string, unknown> = { agent: r.agent, title: r.title, prompt: r.prompt };
+        if (r.everyMinutes !== undefined) args.every_minutes = r.everyMinutes;
+        if (r.dailyAt !== undefined) args.daily_at = r.dailyAt;
+        if (r.weeklyOn !== undefined) args.weekly_on = r.weeklyOn;
+        await this.call("routine_add", args);
+        return;
+      }
+      case "SetRoutine":
+        await this.call("routine_set_enabled", { id: request.inner.id, enabled: request.inner.enabled });
+        return;
+      case "RemoveRoutine":
+        await this.call("routine_remove", { id: request.inner.id });
+        return;
+      case "Allow":
+        await this.call("computer_access_grant", { agent: request.inner.agent, machine: request.inner.machine });
+        return;
+      case "Revoke":
+        await this.call("computer_access_revoke", { agent: request.inner.agent, machine: request.inner.machine });
+        return;
+    }
   }
 
   /** Reduces `action` through the core and runs the request it asks for (the page's Pause and Resume, the Agents page's actions). */
@@ -159,50 +220,16 @@ export class PersistentAgents {
         case "Load":
           await this.loadDetail(request.inner.name);
           break;
-        case "ReadFile": {
-          const path = request.inner.path;
-          const [file, history] = await Promise.all([this.call("volume_read", { path }), this.call("volume_history", { path })]);
-          const binary = file.encoding === "base64";
-          this.input.file = {
-            path,
-            text: binary ? "" : (file.content ?? ""),
-            binary,
-            versions: arr(history, "versions").map((v) => ({ version: v.version ?? "", modifiedMs: v.modified_ms ?? 0, deleted: v.deleted ?? false, latest: v.latest ?? false })),
-          };
+        case "ReadFile":
+          this.input.file = await this.readFile(request.inner.path);
           break;
-        }
         case "Pause":
-          await this.call("agent_pause", { name: request.inner.name });
-          await this.load();
-          break;
         case "Resume":
-          await this.call("agent_resume", { name: request.inner.name });
+          await this.perform(request);
           await this.load();
           break;
-        case "Restore":
-          await this.call("volume_restore", { path: request.inner.path, version: request.inner.version });
-          break;
-        case "AddRoutine": {
-          const r = request.inner;
-          const args: Record<string, unknown> = { agent: r.agent, title: r.title, prompt: r.prompt };
-          if (r.everyMinutes !== undefined) args.every_minutes = r.everyMinutes;
-          if (r.dailyAt !== undefined) args.daily_at = r.dailyAt;
-          if (r.weeklyOn !== undefined) args.weekly_on = r.weeklyOn;
-          await this.call("routine_add", args);
-          break;
-        }
-        case "SetRoutine":
-          await this.call("routine_set_enabled", { id: request.inner.id, enabled: request.inner.enabled });
-          break;
-        case "RemoveRoutine":
-          await this.call("routine_remove", { id: request.inner.id });
-          break;
-        case "Allow":
-          await this.call("computer_access_grant", { agent: request.inner.agent, machine: request.inner.machine });
-          break;
-        case "Revoke":
-          await this.call("computer_access_revoke", { agent: request.inner.agent, machine: request.inner.machine });
-          break;
+        default:
+          await this.perform(request);
       }
       // What changed something is read again for the open agent.
       if (!["Load", "ReadFile", "Pause", "Resume"].includes(request.tag) && this.state.selected !== undefined) {

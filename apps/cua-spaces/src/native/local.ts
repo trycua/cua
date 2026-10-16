@@ -22,6 +22,7 @@ export interface StorageVolume {
 export interface LocalStorage {
   /** Bytes the SDK keeps free on a volume. */
   reserveBytes: number;
+  linuxRuntimeDownloadBytes?: number;
   lume: StorageVolume | null;
   qemu: StorageVolume | null;
   container: StorageVolume | null;

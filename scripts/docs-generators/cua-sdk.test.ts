@@ -316,8 +316,9 @@ test('nested folders get their own meta.json; a catalog page lists its subtree i
   assert.deepEqual(JSON.parse(out.get('/out/sandbox/life/meta.json')!), { title: 'Lifecycle', pages: ['results'] });
   const home = out.get('/out/sandbox/index.mdx')!;
   assert.match(home, /^## All items$/m);
-  // The index is grouped by page: one line of item links per page.
-  assert.match(home, /\*\*Results\*\*: .*\[`ExecResult`\]\(\/cua-sdk\/reference\/sandbox\/life\/results#execresult-record\)/);
+  // The index is grouped by page: one line per subpage, its title a link,
+  // then its item names; this page's own items keep their anchor links.
+  assert.match(home, /\*\*\[Results\]\(\/cua-sdk\/reference\/sandbox\/life\/results\)\*\*: .*`ExecResult`/);
   assert.match(home, /\[`Sandbox`\]\(#sandbox\)/);
   const types = out.get('/out/types.mdx')!;
   assert.doesNotMatch(types, /\[`ExecResult`\]/);

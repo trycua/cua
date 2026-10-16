@@ -34,6 +34,7 @@ import type { SpaceOs, SpaceRow } from "./contracts/spaces";
 import { NEW_SPACE_OPERATIONS, type NewSpaceOperations } from "./ops/new-space";
 import { SHARE_OPERATIONS, type ShareOperations } from "./ops/share";
 import { AGENT_KEYS_OPERATIONS } from "./ops/agent-keys";
+import { AGENT_DETAIL_OPERATIONS } from "./ops/agent-detail";
 import { KEYVAULT_MANAGE_OPERATIONS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_OPERATIONS } from "./ops/keyvault-setup";
 import { TELEPORT_EVENTS, TELEPORT_OPERATIONS, type TeleportHostEvent, type TeleportOperations } from "./ops/teleport";
@@ -43,6 +44,10 @@ import { SETTINGS_OPERATIONS, type SettingsOperations } from "./ops/settings";
 import type { HostSetupOps } from "./ops/host-setup";
 import type { SpaceDetailOps } from "./ops/space-detail";
 import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
+import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
+import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
+import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
+import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import type { TelemetryOps } from "./ops/telemetry";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
 
@@ -95,6 +100,20 @@ export interface SettingsSnapshot {
    * laid them out; each absent or null one is not this host's, and the page
    * leaves its row out. Changed with `settings.choose`. */
   hostSettings?: HostSettings;
+  /** The global shortcut that brings the app to the front, as the host
+   * registered it with the system. Absent or null: this host has none. */
+  globalShortcut?: GlobalShortcut | null;
+  /** The host's account app (`https://app.cua.ai`, or staging's), which the
+   * page's core cannot resolve itself. Absent or null: the production one. */
+  accountUrl?: string | null;
+}
+
+/** A system-wide shortcut the host registered (macOS: ⌘⇧Space). */
+export interface GlobalShortcut {
+  /** As glyphs (`⌘⇧Space`). */
+  label: string;
+  /** False when the system refused it (another app holds the same keys). */
+  registered: boolean;
 }
 
 /** `settings::SettingsInput`'s host-only fields: the core lays out their rows. */
@@ -107,6 +126,12 @@ export interface HostSettings {
   autoConnect?: boolean | null;
   /** The Keyvault wipes access from Spaces automatically. */
   keyvaultAutoWipe?: boolean | null;
+  /** The Keyvault explains unattended access before allowing it (off after "Never ask again"). */
+  keyvaultUnlockPrompt?: boolean | null;
+  /** The Keyvault loads site icons the browser had none for. */
+  keyvaultSiteIcons?: boolean | null;
+  /** The Keyvault's protection facts, as the host's Settings lists them. */
+  keyvaultProtection?: { label: string; value: string }[] | null;
 }
 
 export const DEFAULT_SETTINGS: SettingsValues = {
@@ -159,7 +184,11 @@ export interface HostOperations
     SpaceDetailOps,
     HostSetupOps,
     StartupOps,
-    StreamOps {
+    StreamOps,
+    RelayUsageOps,
+    ChecklistOps,
+    PresenceOps,
+    RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
   /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
   "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs }; result: SpaceRow };
@@ -251,6 +280,7 @@ export const OPERATIONS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,
   ...SHARE_OPERATIONS,
@@ -259,6 +289,10 @@ export const OPERATIONS = [
   ...KEYVAULT_MANAGE_OPERATIONS,
   ...VOLUME_OPERATIONS,
   ...STREAM_OPERATIONS,
+  ...RELAY_USAGE_OPERATIONS,
+  ...CHECKLIST_OPERATIONS,
+  ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   "telemetry.track",
@@ -270,6 +304,7 @@ export const OPERATIONS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
   ...STARTUP_OPERATIONS,
@@ -284,6 +319,8 @@ export type HostEvent =
   | { type: "spaces.createProgress"; progress: CreateProgress }
   | { type: "machines.changed" }
   | { type: "settings.changed" }
+  /** The host's updater moved on (found, downloading, ready): ask `update.get` again. */
+  | { type: "update.changed" }
   | { type: "keyvault.changed" }
   /** Tauri `auth:signed-in`. */
   | { type: "session.signedIn"; identity?: string }
@@ -295,6 +332,8 @@ export type HostEvent =
   | { type: "session.changed" }
   /** A persistent agent or a run changed (paused, resumed, a turn ended): refetch. */
   | { type: "agents.changed" }
+  /** The host's copy of the getting-started checklist changed (`ops/checklist.ts`): refetch. */
+  | { type: "checklist.changed" }
   | TeleportHostEvent
   /** The native app moved on while starting (the startup screen; payload: the new state). */
   | StartupHostEvent;
@@ -306,12 +345,14 @@ export const HOST_EVENTS = [
   "spaces.createProgress",
   "machines.changed",
   "settings.changed",
+  "update.changed",
   "keyvault.changed",
   "session.signedIn",
   "session.signInFailed",
   "session.signedOut",
   "session.changed",
   "agents.changed",
+  "checklist.changed",
   ...TELEPORT_EVENTS,
   ...STARTUP_EVENTS,
 ] as const satisfies readonly HostEventType[];

@@ -18,8 +18,32 @@ const HOLD_OPEN: Duration = Duration::from_millis(400);
 /// [`unreachable_error`] instead of waiting out its whole budget. A guest
 /// that just got its address can be briefly unroutable; one that stays so
 /// is blocked from this process (on macOS: Local Network privacy) and
-/// never becomes reachable by waiting.
+/// never becomes reachable by waiting, unless someone lifts the block
+/// ([`APP_UNREACHABLE_GRACE`]).
 pub const UNREACHABLE_GRACE: Duration = Duration::from_secs(20);
+
+/// [`UNREACHABLE_GRACE`] for a process that runs from a macOS `.app` (the
+/// Spaces app's daemon): there the block lifts as soon as the person clicks
+/// Allow on the "find devices on local networks" prompt, which macOS shows
+/// on the first connection, during this very wait, or turns the app on in
+/// System Settings. With 20 s, a macOS Space create in the Spaces app could
+/// fail while the prompt was still on screen. A CLI or a background service
+/// has no prompt anyone answers, so it keeps the short grace.
+pub const APP_UNREACHABLE_GRACE: Duration = Duration::from_secs(120);
+
+/// The grace this process gets ([`UNREACHABLE_GRACE`],
+/// [`APP_UNREACHABLE_GRACE`]).
+pub fn unreachable_grace() -> Duration {
+    grace_for(std::env::current_exe().ok().as_deref())
+}
+
+fn grace_for(exe: Option<&std::path::Path>) -> Duration {
+    if cfg!(target_os = "macos") && exe.and_then(app_bundle).is_some() {
+        APP_UNREACHABLE_GRACE
+    } else {
+        UNREACHABLE_GRACE
+    }
+}
 
 /// One probe attempt.
 #[derive(Debug)]
@@ -54,8 +78,9 @@ pub async fn attempt(ep: &Endpoints, probe: &Probe) -> Result<Attempt> {
 }
 
 /// Poll every probe until all pass or `timeout` elapses. A probe whose
-/// every attempt fails with "no route to host" for [`UNREACHABLE_GRACE`]
-/// fails at once with [`unreachable_error`].
+/// every attempt fails with "no route to host" for [`unreachable_grace`]
+/// fails at once with [`unreachable_error`], and so does one that is still
+/// unreachable when `timeout` runs out.
 pub async fn wait_all(
     name: &str,
     ep: &Endpoints,
@@ -63,6 +88,7 @@ pub async fn wait_all(
     timeout: Duration,
 ) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
+    let grace = unreachable_grace();
     for probe in probes {
         let mut unreachable = UnreachableWatch::default();
         loop {
@@ -74,7 +100,10 @@ pub async fn wait_all(
                 }
                 Attempt::NotYet => unreachable.reset(),
                 Attempt::Unreachable { addr, error } => {
-                    if unreachable.observe(now) >= UNREACHABLE_GRACE {
+                    // Still unroutable when the budget ends: say why, not
+                    // that nothing answered.
+                    if unreachable.observe(now) >= grace || tokio::time::Instant::now() >= deadline
+                    {
                         return Err(unreachable_error(&addr, &error));
                     }
                 }
@@ -408,6 +437,22 @@ mod tests {
             Some(("Cua Spaces".into(), "/Applications/Cua Spaces.app".into()))
         );
         assert_eq!(app_bundle(std::path::Path::new("/usr/local/bin/cua")), None);
+    }
+
+    #[test]
+    fn only_an_app_waits_long_for_local_network() {
+        let app = std::path::Path::new("/Applications/Cua Spaces.app/Contents/MacOS/cua");
+        let want = if cfg!(target_os = "macos") {
+            APP_UNREACHABLE_GRACE
+        } else {
+            UNREACHABLE_GRACE
+        };
+        assert_eq!(grace_for(Some(app)), want);
+        assert_eq!(
+            grace_for(Some(std::path::Path::new("/usr/local/bin/cua"))),
+            UNREACHABLE_GRACE
+        );
+        assert_eq!(grace_for(None), UNREACHABLE_GRACE);
     }
 
     #[test]

@@ -1654,9 +1654,12 @@ fn shared_case_with_native_hyprland(
             ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
-            ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
-                vec![RefusalCode::BackgroundUnavailable]
-            }
+            // Electron scroll is delivered in the background through
+            // accessibility (reveal scroll), including inner scrollers.
+            // The shared drag cell is a pointer-event drag, which the
+            // background window-routed drag delivers (CUA-1207). Electron
+            // loses the release, so the driver refuses there.
+            ("electron", "drag", Targeting::Px) => vec![RefusalCode::BackgroundUnavailable],
             _ => Vec::new(),
         }
     } else if cfg!(target_os = "linux")

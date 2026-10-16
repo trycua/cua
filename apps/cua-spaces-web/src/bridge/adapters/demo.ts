@@ -9,8 +9,9 @@
 
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
 import type { AgentSetupRow, PersistentAgent } from "../contracts/agents";
-import type { OnboardingState } from "../contracts/host";
+import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
+import type { UpdateState } from "../contracts/settings";
 import type { SpaceOs, SpaceRow } from "../contracts/spaces";
 import {
   DEFAULT_SETTINGS,
@@ -18,6 +19,7 @@ import {
   type OpArgs,
   type OpName,
   type OpResult,
+  type HostSettings,
   type SessionSnapshot,
   type SettingsSnapshot,
   type SettingsValues,
@@ -33,10 +35,14 @@ import {
 } from "./demo-data";
 import { demoNewSpaceState, newSpaceDemoHandlers, type DemoNewSpaceState } from "./demo/new-space";
 import { demoShareHandlers } from "./demo/share";
+import { demoAgentDetailHandlers } from "./demo/agent-detail";
 import { demoAgentKeysHandlers } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
+import { unsupportedPresenceOps } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
 import { demoAgentSetup, demoPersistentAgents, demoRunRecords, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
@@ -44,6 +50,7 @@ import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./dem
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
+import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
@@ -65,14 +72,25 @@ export interface DemoOptions {
   keychain?: boolean;
   /** Answer New Space's options as the SwiftUI host does (`demo/new-space.ts`). */
   macHost?: boolean;
+  /** This device is not enrolled on the relay yet (the enroll bar above every page). */
+  unenrolled?: boolean;
+  /** The relay allowance: `idle` (free, no live session, so prompts can show),
+   * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
+  usage?: "idle" | "warn" | "limit" | "pro" | "teams";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
+  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
+  update?: Partial<UpdateState>;
 }
 
+const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
+
 /** `?demo=fresh` (signed out, first run), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
- * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen) and
- * `?demo=mac-host` (New Space options in the SwiftUI host's shape). */
+ * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
+ * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
+ * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
+ * `?demo=update-ready` (an update is downloaded) and `?demo=update-downloading`. */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -83,8 +101,33 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noSpaces: flags.has("empty"),
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
+    unenrolled: flags.has("unenrolled"),
+    usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    ...(flags.has("update-ready")
+      ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
+      : flags.has("update-downloading")
+        ? { update: { status: "downloading" as const, version: "0.9.3", percent: 42, notesUrl: DEMO_NOTES } }
+        : {}),
   };
 }
+
+/** The SwiftUI host's Keyvault settings (`?demo=mac-host`). */
+const DEMO_MAC_HOST_SETTINGS: HostSettings = {
+  keyvaultAutoWipe: false,
+  keyvaultUnlockPrompt: true,
+  keyvaultSiteIcons: true,
+  keyvaultProtection: [
+    { label: "Touch ID", value: "Asked by the Cua daemon to widen access" },
+    { label: "Unlock", value: "Mac login" },
+    { label: "This app", value: "Verified as Cua" },
+  ],
+};
+
+const DEMO_KEYVAULT_ROWS: Partial<Record<string, "keyvaultAutoWipe" | "keyvaultUnlockPrompt" | "keyvaultSiteIcons">> = {
+  "keyvault-auto-wipe": "keyvaultAutoWipe",
+  "keyvault-unlock-prompt": "keyvaultUnlockPrompt",
+  "keyvault-site-icons": "keyvaultSiteIcons",
+};
 
 const CREATE_PHASES = ["preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting"];
 
@@ -109,11 +152,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     onboarding: { completed: options.onboarded !== false, mode: options.onboarded === false ? null : "client" },
     creates: new Map(),
     agents: demoPersistentAgents(now()),
-    runs: demoRunRecords(now()),
+    // A named allowance is for showing the prompts, which wait for no agent run.
+    runs: options.usage ? [] : demoRunRecords(now()),
     agentSetup: demoAgentSetup(),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
+    paired: [],
+    hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
+    ...demoRelayUsageState(),
+    ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
     ...demoHostSetupState(now(), options.onboarded === false),
     ...demoStartupState(Boolean(options.keychain)),
@@ -146,6 +194,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
     telemetry: demoTelemetry(state.settings.telemetry),
+    ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
+    // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
+    globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());
@@ -269,7 +320,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return null;
     },
 
-    "machines.list": () => demoMachineRows(now(), state.host, state.platform),
+    "machines.list": () => [...demoMachineRows(now(), state.host, state.platform), ...state.paired.map((m) => ({ ...m, limits: [...m.limits] }))],
     "host.status": () => ({ ...state.host }),
 
     "settings.get": () => settingsSnapshot(),
@@ -278,8 +329,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       emit({ type: "settings.changed" });
       return settingsSnapshot();
     },
-    // The demo lays out none of the host's own rows: nothing to change.
-    "settings.choose": async ({ row }) => {
+    // The host's own rows: only the Keyvault's switches, as `?demo=mac-host`.
+    "settings.choose": async ({ row, option }) => {
+      const key = DEMO_KEYVAULT_ROWS[row];
+      if (key && state.hostSettings) state.hostSettings = { ...state.hostSettings, [key]: option === "on" };
       // An AI agents row's button (the SwiftUI host's `press`): set it up, or remove what cua added.
       const agent = row.startsWith("agent:") ? state.agentSetup.find((r) => `agent:${r.agent}` === row && r.installed) : undefined;
       if (agent) {
@@ -429,16 +482,21 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),
     ...demoTeleportHandlers({ wait, emit, now, stepMs: step }),
     ...demoShareHandlers({ wait, stepMs: step }),
+    ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
-    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })) }),
+    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
+    ...demoRelayUsageHandlers(ctx),
     ...demoSpaceDetailHandlers(ctx),
     ...demoHostSetupHandlers(ctx),
     ...demoKeyvaultSetupHandlers(ctx),
     ...demoKeyvaultManageHandlers(ctx, overview),
     ...demoStartupHandlers(ctx),
     ...unsupportedStreamOps("demo"),
+    ...unsupportedChecklistOps("demo"),
+    ...unsupportedPresenceOps("demo"),
+    ...unsupportedRuntimeFixOps("demo"),
   };
 
   return {
@@ -459,7 +517,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 }
 
-export interface DemoState extends DemoTelemetryState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;
@@ -475,4 +533,8 @@ export interface DemoState extends DemoTelemetryState, DemoSpaceDetailState, Dem
   agentSetup: AgentSetupRow[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
+  /** Machines added with a pairing code ("Add a machine"). */
+  paired: MachineRow[];
+  /** `?demo=mac-host`: the Keyvault's switches the SwiftUI host lays out in Settings. */
+  hostSettings?: HostSettings;
 }

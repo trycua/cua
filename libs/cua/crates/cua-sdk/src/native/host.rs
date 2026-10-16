@@ -104,6 +104,54 @@ impl From<cua_host::Machine> for RelayMachine {
     }
 }
 
+/// A one-time code that adds a machine to the account ("Add a machine"
+/// by link or QR code).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PairingCode {
+    /// `pc_…` (to revoke it).
+    pub id: String,
+    /// `XXXX-XXXX-XXXX`: only when just made.
+    pub code: Option<String>,
+    /// `https://cua.ai/add/<code>` (the link and the QR code): only
+    /// when just made.
+    pub url: Option<String>,
+    /// `curl … | sh -s -- --pair <code>` (macOS, Linux): only when just made.
+    pub install_sh: Option<String>,
+    /// The PowerShell one-liner (Windows): only when just made.
+    pub install_powershell: Option<String>,
+    /// `active`, `used`, `revoked` or `expired`.
+    pub state: String,
+    /// Team the machine is added for.
+    pub team: Option<String>,
+    /// Unix seconds.
+    pub created_at: u64,
+    /// Unix seconds.
+    pub expires_at: u64,
+    /// When a machine used it.
+    pub used_at: Option<u64>,
+    /// The machine it added (relay machine id).
+    pub machine: Option<String>,
+}
+
+impl PairingCode {
+    fn from_host(p: cua_host::PairingCode, relay: &str) -> Self {
+        let made = |f: &dyn Fn(&str) -> String| p.code.as_deref().map(f);
+        Self {
+            url: made(&|c| cua_host::add_machine_url(c, relay)),
+            install_sh: made(&|c| cua_host::install_command(c, relay, "linux")),
+            install_powershell: made(&|c| cua_host::install_command(c, relay, "windows")),
+            id: p.id,
+            code: p.code,
+            state: p.state,
+            team: p.team,
+            created_at: p.created_at,
+            expires_at: p.expires_at,
+            used_at: p.used_at,
+            machine: p.machine,
+        }
+    }
+}
+
 /// The signed-in account's view of a cua-relay.
 #[derive(uniffi::Object)]
 pub struct Relay {
@@ -920,6 +968,79 @@ impl Devices {
     pub async fn revoke(&self, id: String) -> Result<RelayDevice> {
         let auth = self.auth.clone();
         run(async move { Ok(auth.revoke(&id).await?.into()) }).await
+    }
+
+    /// Makes a one-time code (link, QR, install commands) that adds another
+    /// computer to the account, or to `team` (from this enrolled device).
+    /// It expires after `ttl_secs` (30 minutes when `None`).
+    pub async fn create_pairing_code(
+        &self,
+        team: Option<String>,
+        ttl_secs: Option<u64>,
+    ) -> Result<PairingCode> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        // `team` (an organization id) is only echoed back: the relay's own
+        // teams are retired, and the machine becomes a team machine once it
+        // joined, by sharing it with `team:<id>` (the Spaces API).
+        run(async move {
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            let relay = auth.relay_url().to_string();
+            let code = cua_host::RelayClient::new(&relay)?
+                .with_device_session(Some(session))
+                .create_pairing_code(
+                    &token,
+                    &cua_host::PairingCodeRequest {
+                        name: None,
+                        team: None,
+                        ttl_secs,
+                    },
+                )
+                .await?;
+            let code = cua_host::PairingCode {
+                team: team.filter(|t| !t.trim().is_empty()),
+                ..code
+            };
+            Ok(PairingCode::from_host(code, &relay))
+        })
+        .await
+    }
+
+    /// The account's pairing codes, newest first (without the codes).
+    pub async fn pairing_codes(&self) -> Result<Vec<PairingCode>> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        run(async move {
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            let relay = auth.relay_url().to_string();
+            let codes = cua_host::RelayClient::new(&relay)?
+                .with_device_session(Some(session))
+                .pairing_codes(&token)
+                .await?;
+            Ok(codes
+                .into_iter()
+                .map(|c| PairingCode::from_host(c, &relay))
+                .collect())
+        })
+        .await
+    }
+
+    /// Revokes an unused pairing code (`pc_…`).
+    pub async fn revoke_pairing_code(&self, id: String) -> Result<()> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        run(async move {
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            cua_host::RelayClient::new(auth.relay_url())?
+                .with_device_session(Some(session))
+                .revoke_pairing_code(&token, &id)
+                .await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Vouches for `machine_id`, a machine that registered without an

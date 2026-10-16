@@ -1208,6 +1208,8 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "name": i.name,
         "status": row_status(i),
         "state": status_of(i),
+        // Why it stopped without being asked to ("out of memory"), or null.
+        "stop_reason": i.stop_reason,
         "location": i.location,
         "kind": i.kind,
         "runtime": i.runtime,
@@ -1226,6 +1228,16 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "endpoints": i.endpoints,
         "provider_details": i.provider_details,
     })
+}
+
+/// A listing's STATUS cell: the row's status, and why it stopped when it
+/// stopped on its own (`stopped (out of memory)`).
+fn status_cell(row: &serde_json::Value) -> String {
+    let status = row["status"].as_str().unwrap_or_default();
+    match row["stop_reason"].as_str().filter(|r| !r.is_empty()) {
+        Some(why) if status == "stopped" => format!("{status} ({why})"),
+        _ => status.to_string(),
+    }
 }
 
 /// The status a listing shows: the portable phase, or `missing` for a
@@ -1354,6 +1366,13 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::Cancelled(m) => E::Cancelled(f(m)),
     }
 }
+
+/// Appended when `--on cloud` has no Cua cloud account: Spaces run on
+/// compute you bring, so point at the ways that need no Cua cloud.
+const BYO_COMPUTE_HINT: &str = "Cua Spaces run on computers you bring: this one (`--on local`), \
+     a machine you own (`cua auth login`, then `cua host setup --profile spare` on that machine \
+     and `--on host:<machine>` here), or your own cloud account (`cua cloud connect \
+     aws|gcp|modal`, then `--on aws`)";
 
 /// What a failed create kept: the sandbox ref, its cloud claim (pool and
 /// namespace) when it has one, and how to delete it.
@@ -1514,9 +1533,30 @@ async fn create(
         eprintln!("Starting a cloud sandbox (first start of an image can take a few minutes)");
     }
     let requested_name = o.name.clone();
+    // Each step of the create on a terminal (never in --json output).
+    let steps = {
+        use std::io::IsTerminal as _;
+        (!json && std::io::stderr().is_terminal()).then(|| {
+            let mut words = crate::util::CreateWords::for_image(
+                &o.image,
+                o.kind.as_deref().unwrap_or_default(),
+                false,
+            );
+            words.macos |= o.os.as_deref() == Some("macos");
+            words.vm |= words.macos;
+            Arc::new(crate::util::StepLines::new(words))
+        })
+    };
     let created = {
         let sandboxes = cua.sandboxes();
-        let mut create = Box::pin(sandboxes.create(o));
+        let mut create: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+            match &steps {
+                Some(steps) => {
+                    let steps = steps.clone();
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                }
+                None => Box::pin(sandboxes.create(o)),
+            };
         tokio::select! {
             r = &mut create => r,
             _ = tokio::signal::ctrl_c() => {
@@ -1535,6 +1575,9 @@ async fn create(
         }
     };
     crate::util::exit_on_ctrl_c();
+    if let Some(steps) = &steps {
+        steps.finish();
+    }
     if created.is_err()
         && a.keep_on_failure
         && let Some(n) = &requested_name
@@ -1545,12 +1588,20 @@ async fn create(
     let sb = created
         .map_err(|e| match e {
             // The cloud came from a default: say how to sign in or go back.
-            CuaError::ProviderNotConfigured(m) => CuaError::ProviderNotConfigured(
-                match cua_sandbox_core::settings::cloud_default_hint(&placement.on_source) {
-                    Some(hint) => format!("{m}; {hint}"),
-                    None => m,
-                },
-            ),
+            // The cloud came from a default: say how to sign in or go back
+            // (once: some SDK paths have said it already).
+            CuaError::ProviderNotConfigured(mut m) => {
+                if let Some(hint) =
+                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
+                    && !m.contains(&hint)
+                {
+                    m = format!("{m}; {hint}");
+                }
+                if on == On::Cloud {
+                    m = format!("{m}. {BYO_COMPUTE_HINT}");
+                }
+                CuaError::ProviderNotConfigured(m)
+            }
             other => other,
         })
         .map_err(|e| on_backend(e, &label))?;
@@ -1816,7 +1867,7 @@ pub async fn run(
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
-                        line(out, format!("Status:   {}", row_status(&i)));
+                        line(out, format!("Status:   {}", status_cell(&info_json(&i))));
                         line(out, format!("Location: {}", i.location));
                         line(out, format!("Expires:  {}", expires_of(i.expires_at_unix)));
                         if let Some(img) = &i.image {
@@ -2103,6 +2154,14 @@ fn direct_token(info: &SandboxInfo) -> Option<String> {
         .iter()
         .find_map(|k| tokens.get(k.as_str()).and_then(|v| v.as_str()))
         .map(str::to_string)
+        .or_else(|| {
+            cua_spaces::registry::Registry::new(util::cua_home())
+                .credential(&info.id)
+                .ok()
+                .flatten()
+                .filter(|c| c.service_urls.is_empty())
+                .and_then(|c| c.token)
+        })
         .or_else(|| {
             std::env::var("CUA_ENV_TOKEN")
                 .ok()
@@ -2397,7 +2456,7 @@ async fn ls(
             .map(|r| {
                 let mut row = vec![
                     s(&r["id"]),
-                    s(&r["status"]),
+                    status_cell(r),
                     s(&r["location"]),
                     dash(&r["kind"]),
                     dash(&r["runtime"]),
@@ -3045,6 +3104,25 @@ pub(crate) fn confirm_delete(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why_in_the_listing() {
+        let row = |status: &str, why: serde_json::Value| serde_json::json!({"status": status, "stop_reason": why});
+        assert_eq!(
+            status_cell(&row("stopped", "out of memory".into())),
+            "stopped (out of memory)"
+        );
+        assert_eq!(
+            status_cell(&row("stopped", serde_json::Value::Null)),
+            "stopped"
+        );
+        assert_eq!(status_cell(&row("ready", serde_json::Value::Null)), "ready");
+        // A row from a daemon that sends no reason.
+        assert_eq!(
+            status_cell(&serde_json::json!({"status": "stopped"})),
+            "stopped"
+        );
+    }
+
     use cua_sandbox_core::{
         InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
         RuntimeError,
@@ -3375,6 +3453,7 @@ mod tests {
                 ("namespace".to_string(), "cua-auto-abc".to_string()),
             ]),
             image_info: None,
+            stop_reason: None,
         };
         let m = kept_message(&info);
         assert!(m.contains("cloud:cua-e2e-kept"), "{m}");

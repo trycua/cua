@@ -40,6 +40,11 @@ concurrency:
   group: platform-linux-portability-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   platform-linux-off-linux:
     name: platform-linux compiles on macOS

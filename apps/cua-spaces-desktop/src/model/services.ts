@@ -110,11 +110,27 @@ export interface TelemetryRunning {
   setEnabled(on: boolean): AppTelemetryInput;
   /** Records signals the app core derived (`appTelemetry*`). */
   record(signals: AppTelemetrySignal[]): void;
+  /** The first-run notice was on screen and the person moved on (left
+   * Welcome, finished the first run, or used the switch beside the note):
+   * from here usage events may be sent (the SwiftUI app's
+   * `appTelemetryWelcomeLeft`). */
+  acknowledgeNotice(): void;
 }
 
+/** Signals held while the first-run notice is still on screen. */
+const MAX_HELD = 200;
+
 /** The SDK's telemetry setting (`$CUA_HOME/config.toml`, the same switch as
- * `cua telemetry off`); the environment wins and locks it. */
+ * `cua telemetry off`); the environment wins and locks it.
+ *
+ * The SDK sends nothing from a machine before the app showed its first-run
+ * notice (`acknowledgeNotice`). Until then signals wait here, in order, so
+ * the first session's run start, sign-in and first Space still count once
+ * Welcome is left; turning usage data off drops them. */
 export class LiveTelemetry implements TelemetryRunning {
+  private held: AppTelemetrySignal[] = [];
+  private noticeShown = false;
+
   constructor(private readonly native: Native) {}
 
   static input(s: TelemetryStatus): AppTelemetryInput {
@@ -127,10 +143,39 @@ export class LiveTelemetry implements TelemetryRunning {
   }
 
   setEnabled(on: boolean): AppTelemetryInput {
+    if (!on) this.held = [];
     return LiveTelemetry.input(this.native.telemetrySetEnabled(on));
   }
 
   record(signals: AppTelemetrySignal[]): void {
-    if (signals.length) this.native.appTelemetryRecord(signals);
+    if (!signals.length) return;
+    if (this.shown()) {
+      this.native.appTelemetryRecord(signals);
+      return;
+    }
+    this.held.push(...signals);
+    if (this.held.length > MAX_HELD) this.held.splice(0, this.held.length - MAX_HELD);
+  }
+
+  acknowledgeNotice(): void {
+    const s = this.native.telemetryStatus();
+    if (!s.noticeShown) {
+      try {
+        // Keeps the switch as it is, writes the notice marker, then records
+        // the `app_launched` that waited for it.
+        this.native.appTelemetryWelcomeLeft(s.enabled);
+      } catch (error) {
+        console.warn(`[cua-spaces] usage notice not recorded: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+    this.noticeShown = true;
+    const held = this.held.splice(0);
+    if (held.length && s.enabled) this.native.appTelemetryRecord(held);
+  }
+
+  private shown(): boolean {
+    if (!this.noticeShown) this.noticeShown = this.native.telemetryStatus().noticeShown;
+    return this.noticeShown;
   }
 }

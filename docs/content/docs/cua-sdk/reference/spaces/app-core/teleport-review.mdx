@@ -27,7 +27,7 @@ Returned by [`app_picker_review`](/cua-sdk/reference/spaces/app-core/teleport#ap
 | --- | --- | --- | --- |
 | `title` | `String` |  | "Teleport Slack to Aurora". |
 | `items` | [`Vec<AppConsentItem>`](#appconsentitem-record) |  | The consent lines. |
-| `steps` | [`Vec<AppPlanStepView>`](#appplanstepview-record) |  | Plan steps. |
+| `steps` | [`Vec<AppPlanStepView>`](#appplanstepview-record) |  | What happens, in plan steps, when the review has nothing to choose (no files, state, secrets or sites; e.g. "Just the app" for an app the Space's image already has), so the review is never blank. Empty otherwise: the lines below say what is sent, and a step's counts would not follow what is turned off. The installs are in `items`. |
 | `needs_acknowledgement` / `needsAcknowledgement` | `bool` |  | The secrets checkbox shows. |
 | `acknowledged` | `bool` |  | Checked. |
 | `offers_save_to_keyvault` / `offersSaveToKeyvault` | `bool` |  | The "Save to Keyvault" checkbox shows (a sensitive plan only: there is nothing to keep sealed otherwise). |
@@ -52,6 +52,9 @@ Returned by [`app_picker_review`](/cua-sdk/reference/spaces/app-core/teleport#ap
 | `offers_passwords` / `offersPasswords` | `bool` |  | "Also send saved passwords" shows (there are some to send). |
 | `include_passwords` / `includePasswords` | `bool` |  | Ticked. |
 | `passwords_label` / `passwordsLabel` | `String` |  | "Also send 14 saved passwords". |
+| `passwords` | [`Vec<AppReviewPassword>`](#appreviewpassword-record) |  | Ticked: the saved passwords to pick from (sites with counts when reading the app, each saved password's site and username from the Keyvault; never a value), filtered by the search. |
+| `password_summary` / `passwordSummary` | `String` |  | "2 of 5 sites", "2 of 5 passwords". |
+| `password_query` / `passwordQuery` | `String` |  | The passwords search text. |
 | `source_note` / `sourceNote` | `String` |  | What the Keychain will do for this source, in a line. |
 
 ## `AppSendSource` enum
@@ -89,6 +92,8 @@ AppSendSource::Vault
 | `saved` | `String` |  | "saved 2 days ago". |
 | `selected` | `Vec<String>` |  | The items chosen to send (ids). |
 | `password_ids` / `passwordIds` | `Vec<String>` |  | The app's saved passwords (ids), sent only when ticked. |
+| `passwords` | [`Vec<AppVaultPassword>`](/cua-sdk/reference/spaces/app-core#appvaultpassword-record) |  | The same passwords with their site and username (never a value), for the review to list. |
+| `password_picks` / `passwordPicks` | `bool` |  | The Keyvault daemon enforces a choice of passwords by site (`password_domains` in its status). Without it the review offers the passwords as before (those of the chosen sites, or every saved one) and lists none to pick: it never shows a choice the daemon would not keep. |
 
 ## `AppRememberedChoice` record
 
@@ -139,6 +144,10 @@ Returned by [`app_review_remember`](#app_review_remember).
 | `vault` | [`AppVaultSource`](#appvaultsource-record) |  | The saved items. |
 | `loaded` | `bool` |  | The sites were asked for (a failure counts: the review then sends what the plan lists). |
 | `include_passwords` / `includePasswords` | `bool` |  | The saved passwords are ticked to send (off unless the user ticks them; never remembered). |
+| `password_domains` / `passwordDomains` | `Vec<String>` |  | The sites whose saved passwords to send (reading the app). |
+| `password_items` / `passwordItems` | `Vec<String>` |  | The saved passwords to send (ids, from the Keyvault). |
+| `password_query` / `passwordQuery` | `String` |  | The passwords list's search text. |
+| `passwords_picked` / `passwordsPicked` | `bool` |  | The password choice was made (the default is picked the first time the box is ticked). |
 
 ## `AppReviewDomain` record
 
@@ -153,6 +162,16 @@ Returned by [`app_review_remember`](#app_review_remember).
 | `selectable` | `bool` |  | Can be chosen: it holds something that can be sent. A site whose cookies are all unreadable is greyed out. |
 | `unavailable` | `u32` |  | Cookies that cannot be read, shown greyed with `unavailable_note`. |
 | `unavailable_note` / `unavailableNote` | `String` |  | "3 cookies cannot be sent: Chrome protects them with ...", or empty. |
+
+## `AppReviewPassword` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `String` |  | What picking it toggles: the site (reading the app) or the item id (from the Keyvault). |
+| `site` | `String` |  | The site (`github.com`), or "Saved password" when not known. |
+| `username` | `String` |  | The username, when known (a saved item). |
+| `counts` | `String` |  | "2 passwords" (a site of the browser); empty for one saved item. |
+| `selected` | `bool` |  | Chosen to send. |
 
 ## `AppReviewToggle` record
 

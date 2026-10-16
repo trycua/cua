@@ -884,6 +884,27 @@ Returned by [`Host.configure`](#hostconfigure), [`Host.pause_signed_out`](#hostp
 | `owner` | `Option<String>` | `None` | The account this machine is registered to (relay mode): its id. |
 | `owner_email` / `ownerEmail` | `Option<String>` | `None` | The owner's email, when the relay gave one. |
 
+## `PairingCode` record
+
+A one-time code that adds a machine to the account ("Add a machine"
+by link or QR code).
+
+Returned by [`Devices.create_pairing_code`](/cua-sdk/reference/spaces/devices#devicescreate_pairing_code), [`Devices.pairing_codes`](/cua-sdk/reference/spaces/devices#devicespairing_codes).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | `pc_…` (to revoke it). |
+| `code` | `Option<String>` |  | `XXXX-XXXX-XXXX`: only when just made. |
+| `url` | `Option<String>` |  | `https://cua.ai/add/<code>` (the link and the QR code): only when just made. |
+| `install_sh` / `installSh` | `Option<String>` |  | `curl … \| sh -s -- --pair <code>` (macOS, Linux): only when just made. |
+| `install_powershell` / `installPowershell` | `Option<String>` |  | The PowerShell one-liner (Windows): only when just made. |
+| `state` | `String` |  | `active`, `used`, `revoked` or `expired`. |
+| `team` | `Option<String>` |  | Team the machine is added for. |
+| `created_at` / `createdAt` | `u64` |  | Unix seconds. |
+| `expires_at` / `expiresAt` | `u64` |  | Unix seconds. |
+| `used_at` / `usedAt` | `Option<u64>` |  | When a machine used it. |
+| `machine` | `Option<String>` |  | The machine it added (relay machine id). |
+
 ## `RelayClientInfo` record
 
 Somebody connected to a machine through the relay.

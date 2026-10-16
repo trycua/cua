@@ -30,8 +30,6 @@ pub struct RevealOutcome {
     pub container_role: String,
     /// How far the content moved, in points, in the requested direction.
     pub moved: f64,
-    /// Nothing lay beyond the edge: the container is already at its end.
-    pub at_end: bool,
 }
 
 /// `[x, y, w, h]` in screen points.
@@ -160,6 +158,13 @@ pub fn pick_clamped(
 /// scroll container under the point or the reveal moved nothing; the caller
 /// then reports that background scroll is unavailable.
 ///
+/// Chromium exposes an `overflow: auto` element as a plain group, not an
+/// AXScrollArea, so the nearest scroll-role ancestor of a point inside an
+/// inner scroller is the page's AXWebArea. The groups between the hit
+/// element and that ancestor that clip content past their edge are tried
+/// first, innermost out; the scroll-role container is the last resort. The
+/// first one that moves wins.
+///
 /// # Safety
 ///
 /// Performs AX calls on `pid`'s elements; call from a blocking context.
@@ -171,33 +176,97 @@ pub unsafe fn reveal_scroll(
     distance: f64,
 ) -> Option<RevealOutcome> {
     let hit = element_at_screen_position(pid, point.0, point.1)?;
-    let container = scroll_container(hit);
+    let candidates = scroll_candidates(hit, direction);
     CFRelease(hit as CFTypeRef);
-    let (container, role) = container?;
-    let outcome = reveal_in(container, &role, window, direction, distance);
-    CFRelease(container as CFTypeRef);
-    outcome
+    let mut candidates = candidates.into_iter();
+    while let Some((container, role)) = candidates.next() {
+        let outcome = reveal_in(container, &role, window, direction, distance);
+        CFRelease(container as CFTypeRef);
+        match outcome {
+            Some(outcome) => {
+                for (rest, _) in candidates {
+                    CFRelease(rest as CFTypeRef);
+                }
+                return Some(outcome);
+            }
+            None => {}
+        }
+    }
+    None
 }
 
-/// The nearest scroll container at or above `element`, retained.
-unsafe fn scroll_container(element: AXUIElementRef) -> Option<(AXUIElementRef, String)> {
+/// The elements at or above `element` to try, innermost first and retained:
+/// each one that clips content past its edge in `direction`, then the
+/// nearest scroll-role container. Empty without a scroll-role container.
+unsafe fn scroll_candidates(
+    element: AXUIElementRef,
+    direction: &str,
+) -> Vec<(AXUIElementRef, String)> {
+    let mut candidates = Vec::new();
     CFRetain(element as CFTypeRef);
     let mut current = element;
     for _ in 0..MAX_ASCENT {
         let role = copy_string_attr(current, "AXRole");
         match role.as_deref() {
             Some(role) if CONTAINER_ROLES.contains(&role) => {
-                return Some((current, role.to_owned()));
+                candidates.push((current, role.to_owned()));
+                return candidates;
             }
             Some("AXWindow") | Some("AXApplication") | None => break,
-            _ => {}
+            Some(role) => {
+                if clips_past_edge(current, direction) {
+                    CFRetain(current as CFTypeRef);
+                    candidates.push((current, role.to_owned()));
+                }
+            }
         }
-        let parent = copy_element_attr(current, "AXParent");
+        let Some(parent) = copy_element_attr(current, "AXParent") else {
+            CFRelease(current as CFTypeRef);
+            current = std::ptr::null_mut();
+            break;
+        };
         CFRelease(current as CFTypeRef);
-        current = parent?;
+        current = parent;
     }
-    CFRelease(current as CFTypeRef);
-    None
+    if !current.is_null() {
+        CFRelease(current as CFTypeRef);
+    }
+    for (candidate, _) in candidates {
+        CFRelease(candidate as CFTypeRef);
+    }
+    Vec::new()
+}
+
+/// Whether `element` holds content past its edge in `direction`: a direct
+/// child lies beyond it, or is a sliver clamped to it.
+unsafe fn clips_past_edge(element: AXUIElementRef, direction: &str) -> bool {
+    let Some(frame) = element_screen_rect(element).filter(|frame| real_size(*frame)) else {
+        return false;
+    };
+    let mut clips = false;
+    for child in copy_children(element) {
+        if !clips {
+            clips =
+                element_screen_rect(child).is_some_and(|rect| past_edge(frame, direction, rect));
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    clips
+}
+
+/// Whether `rect`, a child of the element with `frame`, lies past that
+/// frame's edge in `direction` or is a sliver clamped to that edge (how
+/// Chromium reports content scrolled out of an overflow container).
+pub fn past_edge(frame: Rect, direction: &str, rect: Rect) -> bool {
+    let [fx, fy, fw, fh] = frame;
+    let [x, y, w, h] = rect;
+    match direction {
+        "down" => y + h > fy + fh + 1.0 || (h <= 1.5 && y >= fy + fh - 2.5),
+        "up" => y < fy - 1.0 || (h <= 1.5 && y <= fy + 1.5),
+        "right" => x + w > fx + fw + 1.0 || (w <= 1.5 && x >= fx + fw - 2.5),
+        "left" => x < fx - 1.0 || (w <= 1.5 && x <= fx + 1.5),
+        _ => false,
+    }
 }
 
 unsafe fn reveal_in(
@@ -283,11 +352,10 @@ unsafe fn reveal_in(
         (moved > 0.5).then(|| RevealOutcome {
             container_role: role.to_owned(),
             moved,
-            at_end: false,
         })
     } else if let Some(pick) = pick_clamped(viewport, direction, distance, &nodes) {
         // A clamped sliver: it scrolled when it now shows at a real size
-        // inside the viewport and a visible element moved (or left). Its old
+        // inside the viewport or a visible reference moved (or left). Its old
         // position is estimated from the row count, so the distance is
         // approximate.
         let reference = nodes
@@ -300,21 +368,8 @@ unsafe fn reveal_in(
         let reference_after = reference.and_then(|at| element_screen_rect(elements[at]));
         let shown =
             after.is_some_and(|rect| real_size(rect) && intersect(rect, viewport).is_some());
-        match content_moved(reference_before, reference_after) {
-            // Nothing visible moved: the container is at its end that way.
-            Some(false) => {
-                return finish(
-                    elements,
-                    Some(RevealOutcome {
-                        container_role: role.to_owned(),
-                        moved: 0.0,
-                        at_end: true,
-                    }),
-                )
-            }
-            Some(true) => {}
-            None if shown => {}
-            None => return finish(elements, None),
+        if content_moved(reference_before, reference_after) != Some(true) && !shown {
+            return finish(elements, None);
         }
         after.filter(|rect| real_size(*rect)).map(|after| {
             let past = (pick.rows as f64 - 1.0) * pick.pitch;
@@ -328,15 +383,10 @@ unsafe fn reveal_in(
             RevealOutcome {
                 container_role: role.to_owned(),
                 moved: moved.max(1.0),
-                at_end: false,
             }
         })
     } else {
-        Some(RevealOutcome {
-            container_role: role.to_owned(),
-            moved: 0.0,
-            at_end: true,
-        })
+        None
     };
     finish(elements, outcome)
 }
@@ -413,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn at_the_end_or_with_only_containers_beyond_nothing_is_picked() {
+    fn without_candidates_beyond_the_viewport_nothing_is_picked() {
         let visible = vec![row(120.0), row(300.0), row(550.0)];
         assert_eq!(pick_reveal_target(VIEWPORT, "down", 120.0, &visible), None);
         // A page-sized wrapper reaching past the edge is not a target.
@@ -468,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reveal_that_moves_nothing_visible_is_the_end() {
+    fn a_reveal_that_moves_nothing_visible_is_not_confirmed_movement() {
         let row = [518.0, 301.0, 600.0, 41.0];
         // Seen live at the top of the page: the reveal changed nothing.
         assert_eq!(content_moved(Some(row), Some(row)), Some(false));
@@ -495,5 +545,20 @@ mod tests {
             intersect([0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 5.0, 5.0]),
             None
         );
+    }
+    #[test]
+    fn a_child_past_or_clamped_to_the_edge_marks_an_inner_scroller() {
+        let frame = [0.0, 100.0, 300.0, 128.0];
+        // A row below the visible area, and Chromium's 1 pt sliver clamped
+        // to the bottom edge for a row scrolled out of view.
+        assert!(past_edge(frame, "down", [0.0, 240.0, 300.0, 16.0]));
+        assert!(past_edge(frame, "down", [0.0, 227.0, 300.0, 1.0]));
+        // A visible row inside the frame is not.
+        assert!(!past_edge(frame, "down", [0.0, 110.0, 300.0, 16.0]));
+        // At the top nothing is above; a row above marks it for "up".
+        assert!(!past_edge(frame, "up", [0.0, 110.0, 300.0, 16.0]));
+        assert!(past_edge(frame, "up", [0.0, 60.0, 300.0, 16.0]));
+        assert!(past_edge(frame, "right", [250.0, 110.0, 100.0, 16.0]));
+        assert!(!past_edge(frame, "left", [0.0, 110.0, 300.0, 16.0]));
     }
 }

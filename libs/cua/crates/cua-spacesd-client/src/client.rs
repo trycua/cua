@@ -113,6 +113,9 @@ pub struct ConnectOptions {
     /// Probe with `GetCapabilities` while connecting. Disabling it requires
     /// an explicit transport and skips `SpacesdNotAvailable` detection.
     pub probe: bool,
+    /// Extra headers sent on every request (gRPC, HTTP and WebSocket), as
+    /// sensitive values: for example a mesh forward's session key.
+    pub headers: Vec<(String, String)>,
 }
 
 impl ConnectOptions {
@@ -129,6 +132,7 @@ impl ConnectOptions {
             keepalive: Keepalive::default(),
             retry: RetryPolicy::default(),
             probe: true,
+            headers: Vec::new(),
         }
     }
 
@@ -179,6 +183,12 @@ impl ConnectOptions {
         self
     }
 
+    /// Adds a header sent on every request.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
     /// Enables or disables the connect-time probe.
     pub fn probe(mut self, probe: bool) -> Self {
         self.probe = probe;
@@ -193,6 +203,7 @@ impl ConnectOptions {
             gateway: self.gateway.clone(),
             connect_timeout: self.connect_timeout,
             keepalive: self.keepalive,
+            headers: self.headers.clone(),
         }
     }
 }

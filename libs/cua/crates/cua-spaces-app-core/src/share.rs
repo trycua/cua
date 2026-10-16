@@ -185,13 +185,45 @@ pub struct ShareSheetView {
 }
 
 /// Why `who` is not an email or account id, or its normalized form.
+/// A team (`team:<id>`) only while Teams are on ([`cua_home::experimental`]).
 pub fn validate_who(who: &str) -> Result<String, String> {
+    validate_who_with(who, cua_home::experimental::teams_enabled())
+}
+
+fn validate_who_with(who: &str, teams: bool) -> Result<String, String> {
     let w = who.trim();
     if w.is_empty() {
         return Err("Enter an email or account ID.".into());
     }
-    if ["team:", "org:", "group:"].iter().any(|p| w.starts_with(p)) {
-        return Err("Share with people, one at a time.".into());
+    if !teams && ["team:", "org:", "group:"].iter().any(|p| w.starts_with(p)) {
+        return Err(format!(
+            "{} Share with people, one at a time.",
+            cua_home::experimental::TEAMS_UNAVAILABLE
+        ));
+    }
+    if let Some(team) = w.strip_prefix("team:") {
+        // A team (`team:<id>` as `cua team ls` or the Teams page shows it):
+        // an organization's id or alias. Every member gets the Space, from
+        // a device an admin approved. The relay's old `team-<16 hex>` ids
+        // are refused.
+        let legacy = team
+            .strip_prefix("team-")
+            .is_some_and(|h| h.len() == 16 && h.chars().all(|c| c.is_ascii_hexdigit()));
+        let ok = !team.is_empty()
+            && team.len() <= 64
+            && team
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        return if legacy {
+            Err("That team ID is from the old Teams. Use the team ID `cua team ls` shows.".into())
+        } else if ok {
+            Ok(format!("team:{team}"))
+        } else {
+            Err("Enter a team as team:<id>, as `cua team ls` shows it.".into())
+        };
+    }
+    if ["org:", "group:"].iter().any(|p| w.starts_with(p)) {
+        return Err("Share with people, or with a team as team:<id>.".into());
     }
     if w.len() > 254 || w.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err("Enter an email or account ID.".into());
@@ -213,6 +245,15 @@ pub fn validate_who(who: &str) -> Result<String, String> {
 
 fn role_of(role: &str) -> &'static str {
     if role == "editor" { "editor" } else { "viewer" }
+}
+
+/// A team always gets full use (teams have no view-only members).
+fn role_for(who: &str, role: &str) -> &'static str {
+    if who.starts_with("team:") {
+        "editor"
+    } else {
+        role_of(role)
+    }
 }
 
 /// The roles, in menu order.
@@ -259,11 +300,8 @@ pub fn share_reduce(
             if let Ok(who) = validate_who(&s.who) {
                 s.busy = true;
                 s.error = None;
-                s.request = Some(ShareRequest::Share {
-                    space,
-                    who,
-                    role: role_of(&s.role).into(),
-                });
+                let role = role_for(&who, &s.role).into();
+                s.request = Some(ShareRequest::Share { space, who, role });
             }
         }
         ShareSheetAction::ChangeRole { who, role } if !s.busy && can_act(input) => {
@@ -318,7 +356,7 @@ pub fn share_view(input: &ShareInput, state: &ShareSheetState) -> ShareSheetView
             .iter()
             .map(|e| ShareRowView {
                 who: e.who.clone(),
-                role: role_of(&e.role).into(),
+                role: role_for(&e.who, &e.role).into(),
                 connected: e.connected,
             })
             .collect(),
@@ -414,9 +452,41 @@ mod tests {
         );
         assert_eq!(s.error.as_deref(), Some("not shared: you declined"));
         assert!(!s.busy);
+    }
+
+    #[test]
+    fn teams_are_shared_with_unless_turned_off() {
+        // On (the default): a team id, always for full use.
         assert_eq!(
-            validate_who("team:design").unwrap_err(),
-            "Share with people, one at a time."
+            validate_who_with("team:Design Team", true).unwrap_err(),
+            "Enter a team as team:<id>, as `cua team ls` shows it."
+        );
+        // An organization, by id or alias.
+        assert_eq!(
+            validate_who_with(" team:0f1e2d3c-0000-4000-8000-000000000001 ", true).unwrap(),
+            "team:0f1e2d3c-0000-4000-8000-000000000001"
+        );
+        assert_eq!(
+            validate_who_with("team:design", true).unwrap(),
+            "team:design"
+        );
+        // Not the old relay team ids.
+        assert!(
+            validate_who_with("team:team-0a1b2c3d4e5f6a7b", true)
+                .unwrap_err()
+                .contains("old Teams")
+        );
+        assert_eq!(role_for("team:design", "viewer"), "editor");
+        // Off (CUA_EXPERIMENTAL_TEAMS=0): refused, whatever the id.
+        for who in ["team:team-0a1b", "team:design", "org:acme"] {
+            assert_eq!(
+                validate_who_with(who, false).unwrap_err(),
+                "Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0). Share with people, one at a time."
+            );
+        }
+        assert_eq!(
+            validate_who_with("bob@example.com", false).unwrap(),
+            "bob@example.com"
         );
     }
 

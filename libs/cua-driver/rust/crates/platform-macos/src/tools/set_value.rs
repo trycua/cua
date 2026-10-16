@@ -48,13 +48,13 @@ fn def() -> &'static ToolDef {
         name: "set_value".into(),
         description: "Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (in the background the user's front window keeps key focus). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
             \n\
-            A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
+            A Finder file name cell (list or icon view, not being edited) is renamed through Finder's scripting interface with Finder left in the background, and the new name is read back from disk; the value is the full new name with its extension. macOS asks the user once to allow Cua Driver to control Finder. Finder's Get Info `Name` field is refused with `file_name_needs_rename`. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "value"],
+            "required": ["value"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "window_id": {
                     "type": "integer",
                     "description": "Window ID. Omit with element_token."
@@ -130,20 +130,45 @@ impl Tool for SetValueTool {
         // A file's name as Finder lists it takes an AXValue write and reads it
         // back, but the file is never renamed. Refuse before anything moves.
         // Finder's Get Info Name field does the same.
+        // In Finder, the file is renamed through Finder's scripting interface
+        // instead, with Finder left in the background, and read back from
+        // disk.
         let name_guard = element_guard.clone();
-        if let Ok(Some(reason)) = tokio::task::spawn_blocking(move || unsafe {
+        let name_target = tokio::task::spawn_blocking(move || unsafe {
             let element = name_guard.as_ptr() as AXUIElementRef;
             if file_name_cell(element) {
-                Some(LIST_RENAME_ROUTE)
+                let finder =
+                    crate::apps::bundle_id_for_pid(pid).as_deref() == Some("com.apple.finder");
+                match copy_url_attr(element)
+                    .as_deref()
+                    .and_then(crate::apple_events::file_url_to_path)
+                {
+                    Some(path) if finder => Some(NameTarget::FinderItem(path)),
+                    _ => Some(NameTarget::Refuse(LIST_RENAME_ROUTE)),
+                }
             } else if get_info_name_field(pid, element) {
-                Some(GET_INFO_RENAME_ROUTE)
+                Some(NameTarget::Refuse(GET_INFO_RENAME_ROUTE))
             } else {
                 None
             }
         })
         .await
-        {
-            return file_name_needs_rename(pid, window_id, reason);
+        .ok()
+        .flatten();
+        match name_target {
+            Some(NameTarget::Refuse(reason)) => {
+                return file_name_needs_rename(pid, window_id, reason)
+            }
+            Some(NameTarget::FinderItem(path)) => {
+                let new_name = value.clone();
+                let rename_path = path.clone();
+                let renamed = tokio::task::spawn_blocking(move || {
+                    crate::apple_events::finder_rename(&rename_path, &new_name)
+                })
+                .await;
+                return finder_rename_result(pid, window_id, &path, &value, renamed);
+            }
+            None => {}
         }
 
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
@@ -197,7 +222,13 @@ impl Tool for SetValueTool {
             "set_value.AXValue",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    set_value_blocking(element_guard.as_ptr(), element_index, pid, &value)
+                    set_value_blocking(
+                        element_guard.as_ptr(),
+                        element_index,
+                        pid,
+                        window_id,
+                        &value,
+                    )
                 })
                 .await
             },
@@ -207,6 +238,11 @@ impl Tool for SetValueTool {
         let changes = snapshot.detect_async().await;
 
         match result {
+            Ok(Ok(outcome)) if outcome.not_applied && !ax_echo_surface => {
+                let vcl = crate::input::pointer_toolkit::detect(pid)
+                    == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl);
+                not_applied_result(element_index, vcl)
+            }
             Ok(Ok(mut outcome)) => {
                 apply_surface_trust(&mut outcome, ax_echo_surface);
                 apply_verification_label(&mut outcome);
@@ -218,6 +254,9 @@ impl Tool for SetValueTool {
                     "verified": verified,
                     "effect": if verified { "confirmed" } else { "unverifiable" },
                 });
+                if let Some(edited) = outcome.document_edited {
+                    structured["document_key_edit_sent"] = serde_json::json!(edited);
+                }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
                         "recommended": "px",
@@ -280,6 +319,82 @@ fn is_get_info_name_field(
         && focused != Some(true)
 }
 
+/// What a write to a file-name element turns into.
+enum NameTarget {
+    /// A Finder item at this path: rename it through Finder.
+    FinderItem(std::path::PathBuf),
+    /// Refuse with this route.
+    Refuse(&'static str),
+}
+
+/// A rename read back from disk: the new name is listed, the old one gone.
+fn rename_record() -> cua_driver_core::action_record::ActionExecutionRecord {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
+        EvidenceKind, RequestedDelivery,
+    };
+    ActionExecutionRecord::builder(
+        ActionEffect::Confirmed,
+        ActionTransport::MacosAppleEvent,
+        RequestedDelivery::Background,
+    )
+    .actual_delivery(ActualDelivery::Background)
+    .evidence(ActionEvidence {
+        kind: EvidenceKind::ValueReadback,
+        detail: "The folder on disk lists the new name and not the old one".into(),
+    })
+    .build()
+    .expect("rename record is valid")
+}
+
+fn finder_rename_result(
+    pid: i32,
+    window_id: u32,
+    path: &std::path::Path,
+    new_name: &str,
+    renamed: Result<
+        Result<std::path::PathBuf, crate::apple_events::ScriptRefusal>,
+        tokio::task::JoinError,
+    >,
+) -> ToolResult {
+    let old_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match renamed {
+        Ok(Ok(new_path)) => ToolResult::text(format!(
+            "✅ Renamed \"{old_name}\" to \"{new_name}\" through Finder's scripting interface, \
+             with Finder left in the background (not activated). Verified on disk: {} exists \
+             and the old name is gone. Take a fresh get_window_state before addressing the \
+             item again.",
+            new_path.display()
+        ))
+        .with_structured(serde_json::json!({
+            "path": "apple_events",
+            "verified": true,
+            "effect": "confirmed",
+            "renamed_from": path.display().to_string(),
+            "renamed_to": new_path.display().to_string(),
+        }))
+        .with_action_record(rename_record()),
+        Ok(Err(refusal)) => ToolResult::error(format!(
+            "set_value refused ({FILE_NAME_NEEDS_RENAME}): renaming \"{old_name}\" through \
+             Finder did not complete ({}: {}). The file keeps its name; nothing else was sent.",
+            refusal.code, refusal.reason
+        ))
+        .with_structured(serde_json::json!({
+            "code": FILE_NAME_NEEDS_RENAME,
+            "effect": "refused",
+            "path": "apple_events",
+            "pid": pid,
+            "window_id": window_id,
+            "reason": refusal.reason,
+            "cause": refusal.code,
+        })),
+        Err(error) => ToolResult::error(format!("set_value rename task failed: {error}")),
+    }
+}
+
 const LIST_RENAME_ROUTE: &str = "This is a file's name as the list shows it. Writing its AXValue \
     changes only what the list shows, never the file, so nothing was written. To rename the \
     file: click this element to select the item, then with Finder frontmost send press_key \
@@ -289,8 +404,9 @@ const LIST_RENAME_ROUTE: &str = "This is a file's name as the list shows it. Wri
 
 const GET_INFO_RENAME_ROUTE: &str = "This is the Name & Extension field of Finder's Get Info \
     window. Writing its AXValue changes only what the field shows, never the file, so nothing \
-    was written. To rename the file: take a fresh get_window_state of this window and click the \
-    field's centre in its screenshot pixels (pass its capture_id), then hotkey cmd+a, type_text \
+    was written. To rename the file in the background, call set_value with the new name on the \
+    file's name cell in a Finder window that lists it. Otherwise take a fresh get_window_state \
+    of this window and click the field's centre in its screenshot pixels (pass its capture_id), then hotkey cmd+a, type_text \
     the full new name with its extension, and press_key return, each with \
     delivery_mode:\"foreground\" on this window. A changed extension makes Finder ask for \
     confirmation in a dialog first. Then check the new name in a fresh listing of the folder; \
@@ -327,6 +443,12 @@ struct SetValueOutcome {
     /// `Some(false)` when the element already held the requested value, so the
     /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
     changed: Option<bool>,
+    /// The read-back still showed the old value after a short settle: the app
+    /// took the accessibility write but did not apply it.
+    not_applied: bool,
+    /// The document's edited mark after the write; `None` outside a
+    /// document or when the value did not move.
+    document_edited: Option<bool>,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -352,6 +474,7 @@ fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
@@ -361,12 +484,20 @@ fn set_value_blocking(
     if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         // Menu-item selection, not an AXValue write — no read-back to report.
-        select_popup_option(element, element_index, pid, value, &element_title).map(|detail| {
-            SetValueOutcome {
-                detail,
-                verified: None,
-                changed: None,
-            }
+        select_popup_option(
+            element,
+            element_index,
+            pid,
+            window_id,
+            value,
+            &element_title,
+        )
+        .map(|detail| SetValueOutcome {
+            detail,
+            verified: None,
+            changed: None,
+            not_applied: false,
+            document_edited: None,
         })
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
@@ -393,23 +524,54 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
-            let after = unsafe { copy_string_attr(element, "AXValue") };
-            let (verified, changed) = classify_write(
+            let mut after = unsafe { copy_string_attr(element, "AXValue") };
+            let (mut verified, mut changed) = classify_write(
                 before.as_deref(),
                 after.as_deref(),
                 value,
                 numeric_target.is_some(),
             );
+            // Some apps apply the write a moment later; give it a short
+            // settle before calling it not applied.
+            let secure = unsafe { copy_string_attr(element, "AXSubrole") }.as_deref()
+                == Some("AXSecureTextField");
+            for _ in 0..NOT_APPLIED_REREADS {
+                if secure || !write_not_applied(verified, changed) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                after = unsafe { copy_string_attr(element, "AXValue") };
+                (verified, changed) = classify_write(
+                    before.as_deref(),
+                    after.as_deref(),
+                    value,
+                    numeric_target.is_some(),
+                );
+            }
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
                 (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
                 (None, _) => " Value is not readable through AX; could not confirm.",
             };
+            // An AX write bypasses NSTextView's edit model, so a document is
+            // not marked edited and would never save the new text (DS-07).
+            let document = if changed == Some(true) {
+                unsafe { crate::document_edit::ensure_marked_after_ax_write(pid, element, true) }
+            } else {
+                crate::document_edit::DocumentEdited::NotADocument
+            };
             Ok(SetValueOutcome {
-                detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
+                detail: format!(
+                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{}",
+                    document.note()
+                ),
                 verified,
                 changed,
+                // A secure text field reads back empty or masked, so its
+                // read-back proves nothing either way.
+                not_applied: !secure && write_not_applied(verified, changed),
+                document_edited: document.structured(),
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
@@ -424,6 +586,8 @@ fn set_value_blocking(
                     ),
                     verified,
                     changed,
+                    not_applied: false,
+                    document_edited: None,
                 })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
@@ -432,6 +596,41 @@ fn set_value_blocking(
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+/// Re-reads (100 ms apart) before an unchanged value counts as not applied.
+const NOT_APPLIED_REREADS: usize = 3;
+
+/// The read-back did not match and the value did not move: the app accepted
+/// the accessibility write (LibreOffice Calc cells do) but did not apply it.
+fn write_not_applied(verified: Option<bool>, changed: Option<bool>) -> bool {
+    verified == Some(false) && changed == Some(false)
+}
+
+/// The refusal for a write the app did not apply. Nothing changed, so a
+/// script must stop here instead of carrying on as if it had.
+fn not_applied_result(element_index: usize, vcl: bool) -> ToolResult {
+    let route = if vcl {
+        "LibreOffice ignores accessibility value writes and drops background pointer \
+         input, so its cells cannot be edited in the background. Editing them needs the \
+         window in front: bring_to_front if the user allows it, then type_text into the \
+         cell. Otherwise stop and report that the edit is blocked."
+    } else {
+        "Try the control's own input route instead: click it, then type_text, or use a \
+         keyboard shortcut. If that needs the window in front, bring_to_front only if the \
+         user allows it."
+    };
+    ToolResult::error(format!(
+        "set_value did not take: element [{element_index}] still shows its old value after \
+         the write. The app accepted the accessibility write but did not apply it, so nothing \
+         changed. {route}"
+    ))
+    .with_structured(serde_json::json!({
+        "code": "write_not_applied",
+        "path": "ax",
+        "verified": false,
+        "effect": "not_applied",
+    }))
 }
 
 /// Decide what a post-write AXValue read proves.
@@ -666,13 +865,153 @@ fn dismiss_popup_menu(popup: AXUIElementRef, pid: i32) {
     }
 }
 
+/// Whether a popup belongs to a Chromium renderer (Chrome-family browsers and
+/// Electron apps), whose `<select>` menu is a native popup.
+fn is_chromium_popup_owner(pid: i32) -> bool {
+    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
+    super::type_text::is_chromium_identity(&bundle_id)
+        || crate::browser::electron_js::ElectronJs::is_electron(pid)
+}
+
+/// Whether pressing `element` would open a Chromium or Electron `<select>`
+/// menu: an `AXPopUpButton` inside web content of a Chromium renderer. The
+/// browser's own toolbar popups have no web-area ancestor and do not match.
+pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElementRef) -> bool {
+    unsafe { copy_string_attr(element, "AXRole") }.as_deref() == Some("AXPopUpButton")
+        && is_chromium_popup_owner(pid)
+        && super::type_text::target_in_web_area(
+            pid,
+            Some((element as usize, None)),
+            Some(window_id),
+        )
+}
+
+/// Refusal for a background press that would open a Chromium `<select>` menu
+/// (CUA-1795). Opening it orders the browser window above the user's window
+/// for at least a frame, which undoing afterwards cannot hide; `set_value`
+/// selects through the page's type-ahead and never opens the menu.
+pub(super) fn chromium_select_open_refusal(
+    pid: i32,
+    window_id: u32,
+    element_index: Option<usize>,
+    element: AXUIElementRef,
+) -> cua_driver_core::protocol::ToolResult {
+    let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+    let current = unsafe { copy_string_attr(element, "AXValue") }.unwrap_or_default();
+    let target = match element_index {
+        Some(index) => format!("[{index}] AXPopUpButton \"{title}\""),
+        None => format!("the AXPopUpButton \"{title}\" at that point"),
+    };
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "Not opened: {target} is a web dropdown (<select>). In the background, opening its \
+         menu brings the browser window above the user's window, so nothing was sent. Its \
+         current value is \"{current}\". Choose an option in one call with \
+         set_value(element_token, \"<option text>\"): it types the option's text into the \
+         closed control and the menu never opens. Open the menu with \
+         delivery_mode:\"foreground\" only if the user agreed to the browser coming forward."
+    ))
+    .with_structured(serde_json::json!({
+        "code": "select_menu_would_raise_window",
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "current_value": current,
+        "escalation": {
+            "recommended": "set_value",
+            "reason": "a background <select> is chosen with set_value; opening its menu would raise the browser window",
+        },
+    }))
+}
+
+/// How long the page may take to apply a type-ahead selection.
+const TYPEAHEAD_SETTLE: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// Select a background Chromium `<select>` without opening its menu.
+///
+/// Chromium shows a `<select>` menu as a native popup. Opening it orders the
+/// whole browser window above the user's window, and the window stays there
+/// after the menu closes; re-activating the user's app does not reorder it
+/// (Bench v2: WF-02 to WF-08, IR-05, IR-06, MA-02, CDB-G04). A focused closed
+/// `<select>` takes the page's own type-ahead instead: typing an option's
+/// label selects it and fires `input` and `change`, and the menu never opens.
+///
+/// Returns `None` when this route does not apply or did not land on `value`;
+/// the caller then falls back to opening the menu.
+fn select_chromium_popup_by_typeahead(
+    popup: AXUIElementRef,
+    element_index: usize,
+    pid: i32,
+    window_id: u32,
+    value: &str,
+    element_title: &str,
+) -> Option<String> {
+    let wanted = value.trim();
+    if wanted.is_empty()
+        || crate::apps::frontmost_pid() == Some(pid)
+        || popup_menu_is_open(popup)
+        || !is_chromium_popup_owner(pid)
+    {
+        return None;
+    }
+    let selected = || unsafe { copy_string_attr(popup, "AXValue") }.unwrap_or_default();
+    let matches = |current: &str| current.trim().to_lowercase() == wanted.to_lowercase();
+    if matches(&selected()) {
+        return Some(format!(
+            "✅ '{wanted}' is already selected in AXPopUpButton [{element_index}] \
+             \"{element_title}\"; nothing was changed."
+        ));
+    }
+    // Focus moves inside the page only: no activation, no window order change.
+    unsafe { crate::ax::bindings::set_bool_attr_true(popup, "AXFocused") };
+    std::thread::sleep(POPUP_POLL_INTERVAL);
+    if unsafe { copy_bool_attr(popup, "AXFocused") } != Some(true) {
+        return None;
+    }
+    // Keys go to the window's focused element, so the window must be the
+    // app's key window (in-app records only; the app is not activated).
+    let _scope = super::key_scope(pid, Some(window_id)).ok()?;
+    crate::input::keyboard::type_text(pid, wanted).ok()?;
+    let deadline = std::time::Instant::now() + TYPEAHEAD_SETTLE;
+    loop {
+        let current = selected();
+        if matches(&current) {
+            return Some(format!(
+                "✅ Selected '{current}' in AXPopUpButton [{element_index}] \
+                 \"{element_title}\" by typing its label into the focused control \
+                 (the menu was not opened, so the window order did not change)."
+            ));
+        }
+        if std::time::Instant::now() >= deadline {
+            tracing::debug!(
+                pid,
+                wanted,
+                current,
+                "type-ahead did not select the option; opening the menu"
+            );
+            return None;
+        }
+        std::thread::sleep(POPUP_POLL_INTERVAL);
+    }
+}
+
 fn select_popup_option(
     element: AXUIElementRef,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
     element_title: &str,
 ) -> anyhow::Result<String> {
+    if let Some(detail) = select_chromium_popup_by_typeahead(
+        element,
+        element_index,
+        pid,
+        window_id,
+        value,
+        element_title,
+    ) {
+        return Ok(detail);
+    }
     let mut options = popup_options(element);
     let mut opened_menu = false;
     let mut press_thread = None;
@@ -954,8 +1293,8 @@ fn hex_digit(n: u8) -> char {
 mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
-        is_file_name_cell, is_get_info_name_field, SetValueOutcome, GET_INFO_RENAME_ROUTE,
-        LIST_RENAME_ROUTE,
+        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
+        SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
 
     #[test]
@@ -963,6 +1302,30 @@ mod tests {
         let url = Some("file:///Users/me/lab/charlie.bin");
         assert!(is_file_name_cell(Some("charlie.bin"), url, Some(false)));
         assert!(is_file_name_cell(Some("charlie.bin"), url, None));
+    }
+
+    #[test]
+    fn a_finder_rename_publishes_a_confirmed_system_api_record() {
+        let record = super::rename_record();
+        assert!(record.validate().is_ok());
+        let path = std::path::Path::new("/tmp/a.txt");
+        let ok = super::finder_rename_result(7, 42, path, "b.txt", Ok(Ok("/tmp/b.txt".into())));
+        assert_eq!(ok.is_error, None);
+        assert!(ok.action_record.is_some());
+        let refused = super::finder_rename_result(
+            7,
+            42,
+            path,
+            "b.txt",
+            Ok(Err(crate::apple_events::ScriptRefusal {
+                code: "automation_denied",
+                reason: "off".into(),
+            })),
+        );
+        assert_eq!(refused.is_error, Some(true));
+        let data = refused.structured_content.unwrap();
+        assert_eq!(data["code"], "file_name_needs_rename");
+        assert_eq!(data["cause"], "automation_denied");
     }
 
     #[test]
@@ -1042,6 +1405,29 @@ mod tests {
         ] {
             assert!(reason.contains(needed), "missing {needed:?}: {reason}");
         }
+    }
+
+    #[test]
+    fn an_unchanged_read_back_is_not_applied_but_an_idempotent_one_is_fine() {
+        // Read-back still shows the old value: not applied.
+        let (verified, changed) =
+            classify_write(Some("pending"), Some("pending"), "matched", false);
+        assert!(write_not_applied(verified, changed));
+        // Already held the requested value: idempotent, applied.
+        let (verified, changed) =
+            classify_write(Some("matched"), Some("matched"), "matched", false);
+        assert!(!write_not_applied(verified, changed));
+        // The app reformatted the value: it moved, so it is not "not applied".
+        let (verified, changed) = classify_write(Some(""), Some("1,248.60"), "1248.6", false);
+        assert!(!write_not_applied(verified, changed));
+        // Unreadable before or after: cannot tell.
+        let (verified, changed) = classify_write(None, Some("x"), "y", false);
+        assert!(!write_not_applied(verified, changed));
+        let refusal = not_applied_result(4, true);
+        assert_eq!(refusal.is_error, Some(true));
+        let data = refusal.structured_content.unwrap();
+        assert_eq!(data["code"], "write_not_applied");
+        assert_eq!(data["effect"], "not_applied");
     }
 
     #[test]
@@ -1136,6 +1522,8 @@ mod tests {
             detail: "Set value.".to_owned(),
             verified: Some(true),
             changed: Some(true),
+            not_applied: false,
+            document_edited: None,
         };
         apply_surface_trust(&mut outcome, true);
         assert_eq!(outcome.verified, Some(false));
@@ -1149,6 +1537,8 @@ mod tests {
             detail: "Set value.".to_owned(),
             verified: Some(true),
             changed: Some(true),
+            not_applied: false,
+            document_edited: None,
         };
         apply_surface_trust(&mut outcome, false);
         assert_eq!(outcome.verified, Some(true));
@@ -1162,6 +1552,8 @@ mod tests {
             detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
             verified: Some(false),
             changed: Some(false),
+            not_applied: false,
+            document_edited: None,
         };
         apply_verification_label(&mut outcome);
         assert_eq!(

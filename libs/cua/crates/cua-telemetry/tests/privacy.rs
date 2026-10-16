@@ -205,6 +205,7 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::api_used("sandbox.connect", Outcome::Ok, Some(s), d).unwrap());
     v.push(events::spaces_feature_used("teleport_drop").unwrap());
     v.push(events::onboarding_step("signed_in", Outcome::Ok).unwrap());
+    v.push(events::onboarding_step("checklist_share", Outcome::Ok).unwrap());
     v.push(events::app_launched(Some(true)));
     v.push(events::app_launched(None));
     v.push(events::sign_in_failed("timeout"));
@@ -215,6 +216,7 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
     v.push(events::share("share", s, Outcome::Ok).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
+    v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
     v
@@ -989,6 +991,23 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
         d,
     );
     assert_eq!(disk.props["error_kind"], "insufficient_disk");
+    // The causes the Spaces app reads from a failure's text.
+    for (variant, kind) in [("LocalNetwork", "local_network"), ("VmLimit", "vm_limit")] {
+        let e = events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os: "macos",
+                kind: "vm",
+                last_phase: "waiting_for_services",
+                stalled: false,
+                gpu: false,
+                error_variant: variant,
+            },
+            Outcome::Error,
+            d,
+        );
+        assert_eq!(e.props["error_kind"], kind);
+    }
     let stalled = events::space_create(
         &events::SpaceCreate {
             on: "local",

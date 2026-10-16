@@ -181,14 +181,22 @@ struct SnapshotTests {
                 spacesdVersion: "0.4.1", features: [], addedAt: nil, os: os,
                 osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
                 kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
             let space = appRowsToSpaces(rows: [row], nowMs: 0)[0]
             let facts = appSpaceDetail(space: space).facts
             #expect(facts.first { $0.label == "System" }?.value == expected)
             #expect(space.os.label == expected)
             var notch = appNotchInitial()
             notch.open = true
-            let tile = try #require(appNotchView(state: notch, spaces: [space]).tiles.first)
+            // The machine itself is no notch tile (CUA-1619): a Space it
+            // provides, with the same OS, is.
+            var providedRow = row
+            providedRow.id = "relay:test-host/dev"
+            providedRow.host = "test-host"
+            let provided = appRowsToSpaces(rows: [providedRow], nowMs: 0)[0]
+            #expect(appNotchView(state: notch, spaces: [space]).tiles.isEmpty)
+            let tile = try #require(appNotchView(state: notch, spaces: [space, provided]).tiles.first)
+            #expect(tile.id == provided.id)
             #expect(tile.symbol == (os == nil ? "computer" : "os-macos"))
             let view = VStack(alignment: .leading, spacing: 12) {
                 HStack { OsIconImage(id: tile.symbol, size: 18); Text(space.name) }
@@ -382,7 +390,7 @@ struct SnapshotTests {
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
                         kind: os == .macos ? .vm : .container, arch: "arm64", reachable: reachable,
                         error: nil, host: nil, hostName: nil, power: power, powerState: state,
-                        cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                        cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             row("local:aurora", .linux, "Ubuntu", power: "suspend", state: "suspended", reachable: false),
@@ -682,7 +690,7 @@ struct SnapshotTests {
                         features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
                         kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
-                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),

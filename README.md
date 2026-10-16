@@ -82,7 +82,7 @@ curl -fsSL https://cua.ai/install.sh | sh
 
 On macOS the installer selects the Cua Spaces app by default and adds the `cua` CLI. You can also [download the signed `.dmg`](https://github.com/trycua/cua/releases/download/cua-spaces-v0.1.0/cua-spaces-0.1.0-darwin-universal.dmg), or get the `.pkg` from the [Cua Spaces 0.1.0 release](https://github.com/trycua/cua/releases/tag/cua-spaces-v0.1.0).
 
-Spaces is free for individuals. Pro and Teams plans are coming soon. The app is source-available under [FSL-1.1-MIT](#licensing).
+Spaces is free for individuals. Pro is $18 a month and Teams is $30 per seat a month, available now from 1 seat. See [pricing](https://cua.ai/pricing). The app is source-available under [FSL-1.1-MIT](#licensing).
 
 **[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac (relay, Tailscale or SSH)](https://cua.ai/docs/start-here/host-spaces-on-your-spare-mac)** | **[Your own cloud](https://cua.ai/docs/cua-sdk/guides/your-cloud)** | **[App source](apps/cua-spaces-macos/README.md)**
 

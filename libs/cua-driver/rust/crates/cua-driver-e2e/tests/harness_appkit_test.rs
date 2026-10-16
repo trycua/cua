@@ -2210,7 +2210,13 @@ fn harness_appkit_slider_drag_px_background() {
             "AppKit background drag failed: {}",
             response.text()
         );
-        assert_eq!(response.structured()["path"].as_str(), Some("cgevent"));
+        assert!(
+            response
+                .text()
+                .contains("background: routed to the window's pid"),
+            "AppKit background drag was not routed to the window's pid: {}",
+            response.text()
+        );
         std::thread::sleep(Duration::from_millis(300));
         assert!(
             !snapshot_elements(driver, pid, wid)

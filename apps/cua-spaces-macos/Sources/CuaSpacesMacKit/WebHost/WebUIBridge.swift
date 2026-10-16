@@ -108,8 +108,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
-        // The Machines page's rename and Remove from account (WebUIBridge+Pages.swift).
-        "machines.rename", "machines.remove",
+        // The Machines page's rename, Remove from account and each machine's
+        // health checks (WebUIBridge+Pages.swift).
+        "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
     ]

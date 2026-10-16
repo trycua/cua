@@ -14,6 +14,12 @@ import SwiftUI
 struct MachinesPageView: View {
     @Bindable var model: AppModel
     @State private var selectedId: String?
+
+    /// `selected`: the machine whose page shows first (default: the first).
+    init(model: AppModel, selected: String? = nil) {
+        self.model = model
+        _selectedId = State(initialValue: selected)
+    }
     @State private var query = ""
     @State private var oldOpen = false
     @State private var removingOld: AppMachinesViewRemoveAll?
@@ -51,6 +57,14 @@ struct MachinesPageView: View {
         }
         .navigationTitle("Machines")
         .navigationSubtitle(view.machines.isEmpty ? "" : view.summary)
+        // Each machine's own daemon checks its health while the page shows
+        // (This Mac, and your other machines that are online).
+        .task {
+            while !Task.isCancelled {
+                await model.checkMachineHealth()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -152,12 +166,22 @@ struct MachinesPageView: View {
 /// The OS mark for a machine's system (`os-macos`, ..., `computer`).
 private func osIcon(_ os: String) -> String { os.isEmpty ? "computer" : "os-\(os)" }
 
-/// The green dot of a machine that can be used now, grey otherwise.
+/// The green dot of a machine that can be used now, grey otherwise;
+/// orange or red while it has issues (`health` `warn`, `fail`).
 private struct StatusDot: View {
     let online: Bool
+    var health: String = ""
     var size: CGFloat = 8
     var body: some View {
-        Circle().fill(online ? Color.green : Color.secondary.opacity(0.5)).frame(width: size, height: size)
+        Circle().fill(color).frame(width: size, height: size)
+    }
+
+    private var color: Color {
+        switch health {
+        case "fail": .red
+        case "warn": .orange
+        default: online ? .green : .secondary.opacity(0.5)
+        }
     }
 }
 
@@ -168,7 +192,7 @@ struct MachineRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            StatusDot(online: machine.online)
+            StatusDot(online: machine.online, health: machine.health)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(machine.name).fontWeight(.medium).lineLimit(1)
@@ -240,7 +264,7 @@ struct MachinePage: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    StatusDot(online: m.online, size: 7)
+                    StatusDot(online: m.online, health: m.health, size: 7)
                     Text(m.status)
                     if let by = m.sharedBy {
                         Text("\u{b7}").foregroundStyle(.tertiary)
@@ -250,6 +274,21 @@ struct MachinePage: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
                 .accessibilityIdentifier("machine-status")
+
+                if !m.issues.isEmpty {
+                    Text(m.issuesTitle)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 22)
+                        .padding(.bottom, 8)
+                    card {
+                        ForEach(Array(m.issues.enumerated()), id: \.element.id) { i, issue in
+                            if i > 0 { Divider() }
+                            issueRow(issue)
+                        }
+                    }
+                    .accessibilityIdentifier("machine-issues")
+                }
 
                 card {
                     if let notice = m.notice {
@@ -452,6 +491,39 @@ struct MachinePage: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .accessibilityIdentifier("machine-toggle-\(t.id)")
+    }
+
+    /// One issue: its mark, one sentence, and its fix when there is one
+    /// here (a System Settings pane, or This Mac's host action).
+    private func issueRow(_ issue: AppMachinesViewIssue) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: issue.level == "fail" ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(issue.level == "fail" ? Color.red : Color.orange)
+                .accessibilityLabel(issue.level == "fail" ? "Problem" : "Warning")
+            Text(issue.text).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            if let action = issue.action {
+                Button(action.label) { fix(action) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(action.hostAction != nil && (!machine.current || host.busy))
+                    .accessibilityIdentifier("machine-issue-fix-\(issue.id)")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .accessibilityIdentifier("machine-issue-\(issue.id)")
+    }
+
+    private func fix(_ action: AppMachinesViewIssueAction) {
+        if let url = action.url {
+            PermissionRows.open(url)
+        } else if let id = action.hostAction, machine.current {
+            Task {
+                await host.run(id)
+                await model.checkMachineHealth()
+            }
+        }
     }
 
     /// This Mac's switch: its actions in order, or the setup form.

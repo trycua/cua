@@ -278,6 +278,7 @@ struct BridgeContractTests {
         "devices.revoke": "changes the fixture account", "devices.confirmMachine": "changes the fixture account",
         "machines.rename": "changes the fixture account; MachinesViewTests covers it",
         "machines.remove": "changes the fixture account; MachinesViewTests covers it",
+        "machines.checkHealth": "asks each machine's daemon; MachinesViewTests covers it",
         "stream.pip": "opens a picture-in-picture window",
         "keyvault.delete": "asks in an alert; TeleportBridgeTests answers it",
         "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID or a passphrase in a sheet",

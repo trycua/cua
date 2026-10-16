@@ -40,6 +40,7 @@ extension ParityTests {
             if let all = g.removeAll { title += " \u{b7} \(all.label)" }
             let rows = g.ids.compactMap { byId[$0] }.map { m in
                 "\(m.online ? "\u{25cf}" : "\u{25cb}") \(m.name)\(m.badge.map { " [\($0)]" } ?? "") \u{2014} \(m.line)"
+                    + (m.health.isEmpty ? "" : " [\(m.health)]")
             }
             return ["group": title, "rows": rows]
         }
@@ -49,6 +50,9 @@ extension ParityTests {
             if let by = m.sharedBy { head += " \u{b7} \(by)" }
             if let r = m.rename { head += " (rename: \(r.target))" }
             lines.append(head)
+            for i in m.issues {
+                lines.append("\(m.issuesTitle.lowercased()) \(i.level): \(i.text)\(i.action.map { " [\($0.label)]" } ?? "")")
+            }
             if let n = m.notice { lines.append("notice: \(n)\(m.noticeAction.map { " [\($0.label)]" } ?? "")") }
             for t in m.toggles {
                 let how = !t.editable ? "read-only" : !t.enabled ? "disabled"
@@ -137,5 +141,58 @@ struct MachinesViewTests {
 
         // Nothing to remove is refused.
         await #expect(throws: (any Error).self) { _ = try await bridge.handle("machines.remove", [:]) }
+    }
+
+    /// `checkMachineHealth` asks only the machines the view says can be
+    /// checked: This Mac (through its daemon) and your machines that are
+    /// online; never an offline or a team machine.
+    @Test func healthIsCheckedOnlyWhereItCanBe() async {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend)
+        let view = m.machinesView
+        let me = view.machines.first { $0.current }
+        #expect(me?.healthTarget == "")
+        #expect(view.machines.filter { !$0.current && !$0.online }.allSatisfy { $0.healthTarget == nil })
+        #expect(view.machines.filter(\.team).allSatisfy { $0.healthTarget == nil })
+        await m.checkMachineHealth()
+        #expect(Set(backend.healthChecked) == Set(view.machines.compactMap(\.healthTarget)))
+        #expect(backend.healthChecked.contains(""))
+        // Healthy: nothing extra on any machine.
+        #expect(m.machinesView.machines.allSatisfy { $0.issues.isEmpty && $0.health.isEmpty })
+    }
+
+    /// What This Mac's daemon reports shows as its issues, with the fix,
+    /// on the classic page and through the bridge (the New UI).
+    @Test func issuesShowWithTheirFix() async throws {
+        let backend = FixtureSpacesBackend()
+        let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+        backend.fixtureHealth[""] = AppMachinesViewHealth(
+            id: "", checks: [
+                AppMachinesViewCheck(id: "machine.local_network", status: "fail", message: "blocked",
+                                     remediation: "", facts: ["app": "Cua Spaces", "settings_url": url]),
+                AppMachinesViewCheck(id: "machine.disk", status: "pass", message: "200 GB free",
+                                     remediation: "", facts: [:]),
+            ], cuaVersion: "0.4.1", error: nil)
+        let m = await signedInModel(backend: backend)
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        #expect(WebUIBridge.methods.contains("machines.checkHealth"))
+        #expect(try await bridge.handle("machines.checkHealth", [:]) is NSNull)
+        let me = try #require(m.machinesView.machines.first { $0.current })
+        #expect(me.health == "fail")
+        #expect(me.issuesTitle == "Issues")
+        #expect(me.issues.map(\.text) == [
+            "Cua can\u{2019}t reach this Mac\u{2019}s macOS Spaces: Local Network access is off for Cua Spaces.",
+        ])
+        #expect(me.issues.first?.action?.label == "Open Local Network settings")
+        #expect(me.issues.first?.action?.url == url)
+        // The New UI reads the same issues in `machines.list`'s view.
+        let answer = bridge.machines()["view"] as? [String: Any]
+        let mine = (answer?["machines"] as? [[String: Any]])?.first { $0["current"] as? Bool == true }
+        #expect((mine?["issues"] as? [[String: Any]])?.count == 1)
+        #expect(mine?["health"] as? String == "fail")
+        // Once fixed, the issue goes.
+        backend.fixtureHealth[""] = nil
+        await m.checkMachineHealth()
+        #expect(m.machinesView.machines.first { $0.current }?.issues.isEmpty == true)
     }
 }

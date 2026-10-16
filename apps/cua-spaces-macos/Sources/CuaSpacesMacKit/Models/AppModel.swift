@@ -392,7 +392,72 @@ public final class AppModel {
                                  providesSpaces: $0.providesSpaces)
         }
         return appMachinesView(input: AppMachinesViewInput(
-            page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil))
+            page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
+            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] }))
+    }
+
+    /// What each machine's own daemon last reported of its health, by
+    /// Machines page row id (`checkMachineHealth`): the view's issues.
+    public var machineHealth: [String: AppMachinesViewHealth] = [:]
+    @ObservationIgnored private var healthCheck: Task<Void, Never>?
+
+    /// At most this many machines are checked at once.
+    static let healthConcurrency = 3
+    /// One machine's check may take this long.
+    static let healthTimeout: Double = 35
+
+    /// Checks the health of every machine the Machines page can check
+    /// (`healthTarget`: This Mac through its daemon, another of your
+    /// machines that is online through its own daemon over the relay or
+    /// mesh), a few at once, and keeps what each said. A machine that is
+    /// no longer checkable (offline, removed) loses its old result, so no
+    /// stale issue shows. One check at a time; a call during one waits for
+    /// it.
+    public func checkMachineHealth() async {
+        if let running = healthCheck {
+            await running.value
+            return
+        }
+        let task = Task { await self.runHealthChecks() }
+        healthCheck = task
+        await task.value
+        healthCheck = nil
+    }
+
+    private func runHealthChecks() async {
+        let targets = machinesView.machines.compactMap { m in m.healthTarget.map { (id: m.id, target: $0) } }
+        let wanted = Set(targets.map(\.id))
+        machineHealth = machineHealth.filter { wanted.contains($0.key) }
+        let backend = self.backend
+        var pending = targets[...]
+        while !pending.isEmpty {
+            let batch = pending.prefix(Self.healthConcurrency)
+            pending = pending.dropFirst(batch.count)
+            let results = await withTaskGroup(of: (String, AppMachinesViewHealth).self) { group in
+                for t in batch {
+                    group.addTask {
+                        let machine = t.target.isEmpty ? nil : t.target
+                        let r = await withTimeout(seconds: Self.healthTimeout) {
+                            try await backend.machineHealth(machine: machine)
+                        }
+                        switch r {
+                        case .success(var h):
+                            h.id = t.id
+                            return (t.id, h)
+                        case .failure(let error):
+                            let why = (error as? TimeoutError) != nil
+                                ? "it didn\u{2019}t answer within \(Int(Self.healthTimeout)) s"
+                                : LiveSpacesBackend.words(error)
+                            return (t.id, AppMachinesViewHealth(id: t.id, checks: [], cuaVersion: "", error: why))
+                        }
+                    }
+                }
+                var out: [(String, AppMachinesViewHealth)] = []
+                for await r in group { out.append(r) }
+                return out
+            }
+            for (id, h) in results where wanted.contains(id) { machineHealth[id] = h }
+        }
     }
 
     /// This Mac as the Machines page names it: its name, the app's

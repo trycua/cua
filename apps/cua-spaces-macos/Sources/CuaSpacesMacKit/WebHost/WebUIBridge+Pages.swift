@@ -138,6 +138,11 @@ extension WebUIBridge {
             guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
             try await model.removeMachine(machine: machine, device: device)
             return NSNull()
+        // Each machine's own daemon checks its health; the next
+        // `machines.list` view carries the issues.
+        case "machines.checkHealth":
+            await model.checkMachineHealth()
+            return NSNull()
 
         // Settings, Storage
         case "storage.get":

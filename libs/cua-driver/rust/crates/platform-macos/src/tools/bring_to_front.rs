@@ -270,7 +270,7 @@ pub(crate) fn reactivate_application(pid: i32) -> bool {
 
 /// Best-effort completion of the one exact-window request. This addresses only
 /// the requested AX window; it never orders every window owned by the process.
-fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {
+pub(crate) fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {

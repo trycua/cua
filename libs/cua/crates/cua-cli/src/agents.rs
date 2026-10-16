@@ -4,9 +4,9 @@
 use crate::util::{self, internal, line};
 use clap::{Args, Subcommand};
 use cua_agent_setup::{
-    AgentSetup, AgentStatus, Change, ConnectionReport, ConnectionRow, ConnectionState, ImportState,
-    McpServer, McpState, Outcome, Parts, ProblemAction, RemoveOptions, SignedInState,
-    StatusOptions, Target, connection::ConnectParts,
+    AgentSetup, AgentStatus, Change, ConnectionReport, ConnectionRow, ConnectionState,
+    DRIVER_MCP_SERVER_NAME, ImportState, McpServer, McpState, Outcome, Parts, ProblemAction,
+    RemoveOptions, SignedInState, StatusOptions, Target, connection::ConnectParts,
 };
 use cua_sdk::CuaError;
 use std::{
@@ -898,7 +898,12 @@ pub fn run_driver_setup(
             ),
         );
     }
-    if parts.mcp && server.command == "cua-driver" {
+    // Nothing is written for a cua-driver that is missing or doesn't answer
+    // MCP (the rows above say why).
+    if outcomes
+        .iter()
+        .any(|o| o.failed() && o.target == Target::Mcp && o.item == DRIVER_MCP_SERVER_NAME)
+    {
         let how = if cfg!(windows) {
             "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Only cua-driver"
         } else {
@@ -906,7 +911,7 @@ pub fn run_driver_setup(
         };
         line(
             out,
-            format!("cua-driver is not installed yet. Install it with: {how}"),
+            format!("cua-driver is not installed or not working. Install it with: {how}"),
         );
     }
     line(

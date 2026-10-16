@@ -333,6 +333,7 @@ export const DETAIL_ARGS = {
   "spaces.droppedFiles": { names: ["notes.txt"] },
   "spaces.sendFiles": { spaceId: "local:design-review", paths: ["/Users/demo/notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
+  "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" as const },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
 };

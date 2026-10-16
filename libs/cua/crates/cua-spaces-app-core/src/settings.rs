@@ -121,11 +121,43 @@ pub fn load(path: &Path) -> AppSettings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
+    migrate_sharing(path, &mut s);
     if s.new_ui.is_none() && s.experiments.web_ui {
         s.new_ui = Some(true);
     }
     s.experiments.web_ui = s.new_ui == Some(true);
     s
+}
+
+/// The migration marker next to the settings file. The shells round-trip
+/// [`AppSettings`] through their own mirrors, so the marker lives in a file of
+/// its own that no shell rewrites.
+fn migrations_path(path: &Path) -> std::path::PathBuf {
+    path.with_file_name("settings-migrations.json")
+}
+
+/// Sharing became on by default in 0.9.1 (CUA-1668). 0.9.0 saved
+/// `sharing: false` for anyone who toggled any experiment, without them
+/// choosing it, and left no record of an explicit choice. The first load
+/// without the marker turns a stored `false` on once and writes the marker
+/// (also on a fresh install, so a later "off" is never overridden); from then
+/// on the stored value is the user's. Best effort: a failed write only
+/// repeats the migration on the next load.
+fn migrate_sharing(path: &Path, s: &mut AppSettings) {
+    let marker = migrations_path(path);
+    if marker.exists() {
+        return;
+    }
+    if !s.experiments.sharing {
+        s.experiments.sharing = true;
+        if path.exists() && save(path, s).is_err() {
+            return;
+        }
+    }
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&marker, r#"{"sharingDefaultOn":true}"#);
 }
 
 /// `settings` with the New UI as this launch shows it: the user's choice,
@@ -1393,5 +1425,43 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_new_ui(&fresh, "0.8.1-beta.1").experiments.web_ui);
+    }
+
+    #[test]
+    fn sharing_on_by_default_migrates_a_0_9_0_false_once() {
+        // Fresh install: on, and an "off" afterwards survives restarts.
+        let (dir, path) = temp_settings("sharing-fresh");
+        let s = load(&path);
+        assert!(s.experiments.sharing);
+        let off = choose_experiment(&s, "experiment:sharing", "off");
+        save(&path, &off).unwrap();
+        assert!(!load(&path).experiments.sharing);
+        assert!(!load(&path).experiments.sharing, "and again");
+        let _ = std::fs::remove_dir_all(dir);
+
+        // 0.9.0: toggling any experiment saved sharing false, no marker.
+        let (dir, path) = temp_settings("sharing-090");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"cuaVolume":true,"sharing":false}}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.sharing && s.experiments.cua_volume);
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["sharing"], true, "persisted");
+        // The user turns it off in 0.9.1: stays off across restarts.
+        save(&path, &choose_experiment(&s, "experiment:sharing", "off")).unwrap();
+        assert!(!load(&path).experiments.sharing);
+        assert!(!load(&path).experiments.sharing);
+        assert!(load(&path).experiments.cua_volume);
+        let _ = std::fs::remove_dir_all(dir);
+
+        // 0.9.0 settings with sharing already true stay true.
+        let (dir, path) = temp_settings("sharing-true");
+        std::fs::write(&path, r#"{"experiments":{"sharing":true}}"#).unwrap();
+        assert!(load(&path).experiments.sharing);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

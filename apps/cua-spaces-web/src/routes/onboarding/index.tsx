@@ -4,7 +4,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 
-import { useFirstSpaceOffers, useOnboarding, useOnboardingVolume, useSession, useSpaces, useThisMachine, type OnboardingHook, type OnboardingView, type SandboxImage } from "@/bridge";
+import {
+  useFirstSpaceOffers,
+  useMachines,
+  useOnboarding,
+  useOnboardingVolume,
+  useSession,
+  useSpaces,
+  useThisMachine,
+  type OnboardingHook,
+  type OnboardingView,
+  type SandboxImage,
+} from "@/bridge";
+import { AddMachineDialog } from "@/components/add-machine-dialog";
 import { CuaLogo } from "@/components/cua-logo";
 import { useAgentsStep, type AgentsStep } from "@/components/volume/use-agents-step";
 import { OsIcon } from "@/components/os-icon";
@@ -18,6 +30,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 
 export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
 
@@ -182,7 +195,7 @@ function Columns({ flow, view, agents }: { flow: OnboardingHook; view: Onboardin
         </div>
       </div>
       {/* Only hosts need Screen Recording and Accessibility (the core's host setup). */}
-      {settingUpHost && flow.permissions.length > 0 ? <Permissions flow={flow} /> : null}
+      {settingUpHost && (flow.permissions.length > 0 || flow.grantedPermissions.length > 0) ? <Permissions flow={flow} /> : null}
       {view.step === "done" ? <FirstSpace images={flow.images} /> : null}
     </div>
   );
@@ -281,6 +294,14 @@ function Permissions({ flow }: { flow: OnboardingHook }) {
       </h2>
       <p className="mb-3 text-xs text-muted-foreground">macOS asks for each one itself. Cua Spaces can't turn them on for you.</p>
       <Card className="divide-y p-0">
+        {flow.grantedPermissions.map((p) => (
+          <div key={p.id} className="flex items-center justify-between gap-6 px-4 py-3" data-granted="true">
+            <div className="text-[13px]">{p.title}</div>
+            <span className="text-xs text-muted-foreground" aria-label={`${p.title} granted`}>
+              ✓ Granted
+            </span>
+          </div>
+        ))}
         {flow.permissions.map((p) => {
           const url = p.settingsUrl?.startsWith("x-apple.systempreferences:") ? p.settingsUrl : null;
           return (
@@ -340,7 +361,9 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
   const [started, setStarted] = useState<SandboxImage | null>(null);
   const create = (image: SandboxImage) => {
     setStarted(image);
-    createSpace({ image: image.ref, os: image.os }).catch((e: unknown) => {
+    // The hosts' create needs the kind (Electron and the SwiftUI bridge
+    // reject a config without one), as New Space's plan sends it.
+    createSpace({ image: image.ref, kind: image.variant, os: image.os }).catch((e: unknown) => {
       setStarted(null);
       toast(`Couldn't create ${image.name}`, { description: e instanceof Error ? e.message : String(e) });
     });
@@ -377,7 +400,26 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
           );
         })}
       </ul>
+      {/* Windows without Docker Desktop: install or start it from here, and the cards follow. */}
+      {images.some((image) => first.blockedReason(image.ref) !== null) ? <RuntimeFixRow /> : null}
+      {/* Nothing runs here (no runtime, virtualization off): another computer can run them. */}
+      {first.known && images.length > 0 && images.every((image) => first.blockedReason(image.ref) !== null) ? <AnotherComputer /> : null}
     </section>
+  );
+}
+
+/** "Or run Spaces on another computer": Add a machine, from the last page. */
+function AnotherComputer() {
+  const [adding, setAdding] = useState(false);
+  const { setupGuide } = useMachines();
+  return (
+    <div data-first-space-elsewhere="" className="mt-3 flex items-center gap-3">
+      <p className="text-xs text-muted-foreground">Or run Spaces on another computer you use: add it here and create Spaces on it from this one.</p>
+      <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+        Add a machine
+      </Button>
+      <AddMachineDialog open={adding} onOpenChange={setAdding} guide={setupGuide} />
+    </div>
   );
 }
 

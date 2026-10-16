@@ -15,6 +15,7 @@ render and do platform glue.
 | Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
+| Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
 | Notch panel | The "N Spaces" tab, Space tiles with live thumbnails, and the Teleport prompt; hover opens it after 300 ms, a dragged window or file drops on a tile. Window drags need Accessibility; the panel says so with an Open Settings button |
 
 Keyboard in the live desktop (main window and floating viewer): once you
@@ -117,7 +118,7 @@ with `{id, ok: true, result}` or `{id, ok: false, error: {code, message}}`
 `native_only`, `forbidden`, `unsupported`, `failed`). `app.info` lists the
 methods. Native events arrive as `cua:event` window events (`spaces.changed`,
 `machines.changed`, `keyvault.changed`, `session.changed`, `settings.changed`,
-`agents.changed`, `spaces.createProgress`, `spaces.newRequested`,
+`agents.changed`, `update.changed`, `spaces.createProgress`, `spaces.newRequested`,
 `settings.openRequested`). Results are the
 core's records as the SwiftUI views get them (camelCase fields; enums as the
 case name, or `{type, ...}` with a payload). `keyvault.get` also carries the
@@ -266,8 +267,8 @@ so the sign-in is never lost.
 ## Which app is primary
 
 Both ship from the same core, so neither owns behaviour. Recommendation:
-make this SwiftUI app the default macOS distribution and keep the Tauri app
-for Windows and Linux.
+make this SwiftUI app the default macOS distribution and keep the Electron
+app for Windows and Linux.
 
 - The Mac surfaces that matter most are native here: the notch panel, the
   menu bar extra, sheets, Liquid Glass, Passwords-style lists and system
@@ -340,7 +341,24 @@ component released last, so a `/releases/latest/download/` URL would not
 always be the Spaces feed; a fixed tag always is. The app is outside the App
 Sandbox, so it needs no `SUEnableInstallerLauncherService`.
 `SUVerifyUpdateBeforeExtraction` checks the signature before anything is
-unpacked.
+unpacked (Sparkle does this whatever the user driver).
+
+Sparkle shows no window of its own. `SparkleUpdater` runs an `SPUUpdater`
+with a custom user driver (`UpdateUserDriver`, over the plain-value
+`UpdateFlow` state machine in `UpdateDriver.swift`). It checks at launch and
+periodically (`SUEnableAutomaticChecks` is on; an explicit off is kept). An
+update found by a scheduled check downloads and extracts at once; Sparkle's
+ready-to-install reply is then held, and nothing restarts the app until the
+page calls `update.install` ("Restart to update"). With "install updates
+automatically" on, Sparkle's silent path reaches the same state through
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`. The page
+reads the state with `update.get` (`{status, currentVersion, version,
+percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
+`downloading`, `downloaded` or `error`) and refetches on the `update.changed`
+event. Check Now (Settings, About) is quiet too: nothing found ends silently,
+and only an error from a check the user started shows a small "Update Error!"
+alert; background errors are logged. Usage telemetry records `found`,
+`not_found`, `downloaded`, `installed` and `failed`.
 
 Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to
 "Update to: Beta" (`AppSettings.updateChannel`) are offered.

@@ -59,6 +59,7 @@ import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
+import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -84,6 +85,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
   "agents.events",
   "agents.setupDriver",
+  "host.joinWithCode",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
   ...TAURI_SETTINGS_UNSUPPORTED,
@@ -92,6 +94,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...RELAY_USAGE_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */

@@ -64,7 +64,7 @@ pub use fleet_local::{
 pub use http::{HttpResponse, RequestBody, ServiceEndpoint, StreamingResponse};
 pub use mcp::{McpClient, McpConfig};
 pub use pool_image::pool_image_info;
-pub use power::{PowerControl, PowerState};
+pub use power::{PowerControl, PowerState, StopReason};
 pub use provider::{
     CLOUD_LOCATIONS, CONTRIB_LOCATIONS, ImageMode, PortExposure, Provider, ProviderCapabilities,
     ProviderCreate, ProviderImage, ProviderInstance, RunKind, is_cloud_location,

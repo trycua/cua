@@ -1306,6 +1306,16 @@
             "null"
           ]
         },
+        "fix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeFix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "hostArch": {
           "type": "string"
         },
@@ -1968,6 +1978,43 @@
         "targetEpoch"
       ]
     },
+    "RuntimeFix": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "install-docker",
+            "start-docker",
+            null
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "busy": {
+          "type": "boolean"
+        },
+        "termsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "label",
+        "note",
+        "busy",
+        "termsUrl"
+      ]
+    },
     "SessionSnapshot": {
       "type": "object",
       "properties": {
@@ -2432,6 +2479,9 @@
         "powerState": {
           "type": "string"
         },
+        "stopReason": {
+          "type": "string"
+        },
         "cloud": {
           "type": "string"
         },
@@ -2599,6 +2649,56 @@
       "required": [
         "teams",
         "currentTeamId"
+      ]
+    },
+    "UpdateState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "idle",
+            "checking",
+            "available",
+            "downloading",
+            "downloaded",
+            "error"
+          ]
+        },
+        "currentVersion": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "notesUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "currentVersion",
+        "version",
+        "percent",
+        "notesUrl",
+        "message"
       ]
     },
     "VolumeOverview": {
@@ -3884,6 +3984,12 @@
                 "string",
                 "null"
               ]
+            },
+            "stopReason": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -4416,6 +4522,9 @@
     "host.action": {
       "$ref": "#/$defs/HostStatus"
     },
+    "host.joinWithCode": {
+      "$ref": "#/$defs/HostStatus"
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -4744,6 +4853,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "spaces.fixRuntime": {
+      "type": "null"
     },
     "spaces.list": {
       "type": "array",
@@ -5221,6 +5333,12 @@
           "supported"
         ]
       }
+    },
+    "update.get": {
+      "$ref": "#/$defs/UpdateState"
+    },
+    "update.install": {
+      "$ref": "#/$defs/UpdateState"
     },
     "volume.approve": {
       "type": "null"
@@ -5907,6 +6025,16 @@
       "type": "null"
     },
     "host.action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.joinWithCode": {
       "anyOf": [
         {
           "$ref": "#/$defs/WkHostState"
@@ -6633,6 +6761,12 @@
           "supported"
         ]
       }
+    },
+    "update.get": {
+      "$ref": "#/$defs/UpdateState"
+    },
+    "update.install": {
+      "$ref": "#/$defs/UpdateState"
     },
     "volume.approve": {
       "type": "null"

@@ -810,7 +810,7 @@ impl Tool for BrowserPrepareTool {
                     .and_then(Value::as_str)
                     .unwrap_or("attaching would bring the browser to the front")
                     .to_owned();
-                crate::delivery::background_unavailable_result(
+                crate::delivery::background_unavailable_result_with_suggestion(
                     format!("browser_prepare refused: {}", refusal.message),
                     refusal.code.as_str(),
                     reason,
@@ -818,12 +818,17 @@ impl Tool for BrowserPrepareTool {
                         "status": "refused",
                         "refusal": refusal,
                     }),
+                    BROWSER_PREPARE_BACKGROUND_SUGGESTION,
                 )
             }
             Err(refusal) => refusal.to_tool_result(),
         }
     }
 }
+
+/// `browser_prepare` is optional: the page's accessibility tree is a working
+/// background route, so the refusal leads with it.
+const BROWSER_PREPARE_BACKGROUND_SUGGESTION: &str = "Not blocked: use get_window_state on this window and act through the accessibility tree (set_value, click by element token). If the first read shows only browser chrome and no AXWebArea, read the window again after a moment. Use delivery_mode:\"foreground\" only if that fails and nobody is using the screen.";
 
 fn isolated_session_lifecycle(
     session: &str,

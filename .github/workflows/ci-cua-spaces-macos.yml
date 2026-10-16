@@ -123,6 +123,14 @@ jobs:
           answers="$RUNNER_TEMP/bridge-answers.json"
           (cd apps/cua-spaces-macos && CUA_BRIDGE_ANSWERS="$answers" scripts/test.sh --filter BridgeContractTests)
           (cd apps/cua-spaces-web && CUA_BRIDGE_ANSWERS="$answers" npx vitest run src/bridge/__tests__/contract.test.ts)
+      # The Electron shell's TypeScript binding of the same library
+      # (apps/cua-spaces-desktop/src/native/generated). A stale one used to
+      # surface only in the release build; this fails the PR instead.
+      - name: The Electron TypeScript app core binding is up to date
+        working-directory: apps/cua-spaces-desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm native -- --skip-build --check-bindings
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4

@@ -2068,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "serde",
 ]
@@ -2136,7 +2136,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "schemars",
  "serde",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2185,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "async-trait",
  "core-foundation 0.10.1",
@@ -2259,6 +2259,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2895,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -6020,7 +6021,7 @@ checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
 
 [[package]]
 name = "pip-preview"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "serde_json",
 ]
@@ -6060,7 +6061,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -6106,7 +6107,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6144,7 +6145,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.35.4"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "async-trait",

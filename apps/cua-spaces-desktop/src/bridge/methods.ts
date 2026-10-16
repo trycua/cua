@@ -26,7 +26,7 @@ export const METHODS = [
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "agents.setupDriver",
-  "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+  "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
   "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
   "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
@@ -34,7 +34,7 @@ export const METHODS = [
   "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-  "host.setUp", "host.action", "host.openSettings",
+  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
   "settings.get", "settings.choose",
   "keyvault.get", "keyvault.lock", "keyvault.unlock",
   "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
@@ -47,8 +47,9 @@ export const METHODS = [
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player, the
- * first run's state (the SwiftUI app draws its first run natively), and
- * presence over the page's video (the SwiftUI app draws it natively). */
-export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave"] as const;
+ * first run's state (the SwiftUI app draws its first run natively),
+ * presence over the page's video (the SwiftUI app draws it natively), and
+ * New Space's runtime fix on Windows ("Install Docker Desktop"). */
+export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 export type Method = (typeof METHODS)[number] | (typeof ELECTRON_METHODS)[number];

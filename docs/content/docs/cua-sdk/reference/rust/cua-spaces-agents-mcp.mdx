@@ -108,6 +108,7 @@ impl McpServer {
   fn new(spaces: Spaces) -> Self;
   fn remote(backend: Arc<dyn ToolBackend>) -> Self;
   fn with_session_broker(self, broker: Arc<dyn SessionBroker>) -> Self;
+  fn with_client_info_hook(self, hook: ClientInfoHook) -> Self;
   fn with_extension(self, extension: Arc<dyn ToolExtension>) -> Self;
   fn with_filter(self, filter: ToolFilter) -> Self;
   fn with_name(self, name: &'static str) -> Self;
@@ -289,6 +290,8 @@ pub const MAX_LINE_BYTES: usize = _;
 
 ```rust
 // mod mcp
+/// See `McpServer::with_client_info_hook`.
+pub type ClientInfoHook = Arc<dyn Fn(&Value) + Send + Sync>;
 /// Which contract tools a server exposes ...
 pub type ToolFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 ```

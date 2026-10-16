@@ -1171,6 +1171,9 @@ pub enum UploadSource {
 ## Functions
 
 ```rust
+/// Sets the principal every client in this ...
+pub fn set_process_principal(principal: Option<Principal>)
+
 // mod diagnose
 /// Encodes artifact bytes for display ...
 pub fn encode_artifact(data: &[u8]) -> String

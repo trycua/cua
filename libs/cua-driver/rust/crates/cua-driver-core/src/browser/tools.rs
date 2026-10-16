@@ -36,6 +36,7 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
+    registry.register(Box::new(BrowserSelectTool::new(engine.clone())));
     registry.register(Box::new(BrowserDialogTool::new(engine.clone())));
     registry.register(Box::new(BrowserSetInputFilesTool::new(engine.clone())));
     registry.register(Box::new(BrowserDownloadTool::new(engine.clone())));
@@ -2226,6 +2227,226 @@ impl Tool for BrowserTypeTool {
     }
 }
 
+const SELECT_NATIVE_OPTION: &str = "function(field, wanted) { \
+    const view = this.ownerDocument && this.ownerDocument.defaultView; \
+    if (!view || !(this instanceof view.HTMLSelectElement)) \
+        return { refused: 'the ref is not a native HTML select element' }; \
+    if (this.multiple) return { refused: 'multiple-selection select elements are not supported' }; \
+    if (this.matches(':disabled')) return { refused: 'the select element is disabled' }; \
+    const matches = Array.from(this.options).filter((option) => option[field] === wanted); \
+    if (matches.length !== 1) \
+        return { refused: `${matches.length} options match the requested ${field}; exactly one must` }; \
+    const option = matches[0]; \
+    if (option.matches(':disabled')) return { refused: 'the matching option is disabled' }; \
+    const changed = !option.selected; \
+    if (changed) { \
+        option.selected = true; \
+        this.dispatchEvent(new view.Event('input', { bubbles: true, composed: true })); \
+        this.dispatchEvent(new view.Event('change', { bubbles: true })); \
+    } \
+    const current = this.options[this.selectedIndex]; \
+    return { changed, value: this.value, label: current ? current.label : null }; \
+}";
+
+pub struct BrowserSelectTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl BrowserSelectTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        let def = ToolDef {
+            name: "browser_select".into(),
+            description: "Select one option of a native HTML <select> ref on an exactly-bound \
+                tab without opening its popup. Pass exactly one of label or value; exactly one \
+                option must equal it. Refuses non-native, multiple-selection, and disabled \
+                selects, disabled options, and zero or ambiguous matches before changing \
+                anything. A change dispatches bubbling input and change events; they are \
+                synthetic, so verify the page accepted the selection. Selecting the option \
+                that is already selected dispatches no events."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_id": schema_target_id(),
+                    "tab_id": schema_tab_id(),
+                    "session": schema_session(),
+                    "ref": schema_ref(),
+                    "label": {
+                        "type": "string",
+                        "description": "Exact visible label of the option to select."
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Exact value attribute of the option to select."
+                    },
+                },
+                "required": ["target_id", "tab_id", "ref"],
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        };
+        Self { def, engine }
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserSelectTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_select").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let (target_id, tab_id, ext_ref) = match (
+            args.require_str("target_id"),
+            args.require_str("tab_id"),
+            args.require_str("ref"),
+        ) {
+            (Ok(target), Ok(tab), Ok(ext_ref)) => (target, tab, ext_ref),
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => return error,
+        };
+        let (field, wanted) = match (args.opt_str("label"), args.opt_str("value")) {
+            (Some(label), None) => ("label", label),
+            (None, Some(value)) => ("value", value),
+            _ => return ToolResult::error("pass exactly one of label or value"),
+        };
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(error) => return error,
+        };
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let validated = match self
+            .engine
+            .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
+            .await
+        {
+            Ok(validated) => validated,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let entry = match self
+            .engine
+            .store
+            .resolve_ref(&session, &target_id, &tab_id, &ext_ref)
+        {
+            Ok(entry) => entry,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let cdp_session = match self
+            .engine
+            .frame_session_for_mutation(&session, &target_id, &tab_id, &validated, &entry.frame)
+            .await
+        {
+            Ok(session) => session,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let conn = &validated.conn;
+        let object_id = match conn
+            .call(
+                Some(&cdp_session),
+                "DOM.resolveNode",
+                json!({ "backendNodeId": entry.backend_node_id }),
+            )
+            .await
+            .ok()
+            .and_then(|resolved| resolved["object"]["objectId"].as_str().map(str::to_owned))
+        {
+            Some(object_id) => object_id,
+            None => {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the ref's node no longer resolves in the live page",
+                )
+                .to_tool_result()
+            }
+        };
+        let outcome = match conn
+            .call(
+                Some(&cdp_session),
+                "Runtime.callFunctionOn",
+                json!({
+                    "objectId": object_id,
+                    "functionDeclaration": SELECT_NATIVE_OPTION,
+                    "arguments": [{ "value": field }, { "value": wanted }],
+                    "returnByValue": true,
+                }),
+            )
+            .await
+        {
+            Ok(reply) => reply["result"]["value"].clone(),
+            Err(error) => {
+                return BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserActionUnavailable,
+                    format!("the select script could not run on the ref: {error}"),
+                )
+                .to_tool_result()
+            }
+        };
+        if let Some(reason) = outcome["refused"].as_str() {
+            return BrowserRefusal::new(BrowserRefusalCode::BrowserActionUnavailable, reason)
+                .to_tool_result();
+        }
+        let Some(changed) = outcome["changed"].as_bool() else {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "the select script failed before reporting a selection",
+            )
+            .to_tool_result();
+        };
+        ToolResult::text(if changed {
+            format!(
+                "selected {} in {tab_id} and dispatched synthetic input and change events",
+                outcome["label"]
+            )
+        } else {
+            format!("{} was already selected in {tab_id}", outcome["label"])
+        })
+        .with_structured(json!({
+            "status": "ok",
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "ref": ext_ref,
+            "frame": entry.frame.kind.as_str(),
+            "changed": changed,
+            "value": outcome["value"],
+            "label": outcome["label"],
+        }))
+    }
+}
+
 // ── browser_dialog ──────────────────────────────────────────────────────────
 
 pub struct BrowserDialogTool {
@@ -2951,6 +3172,10 @@ mod tests {
                 "browser_type",
             ),
             (
+                BrowserSelectTool::new(e.clone()).def().clone(),
+                "browser_select",
+            ),
+            (
                 BrowserDialogTool::new(e.clone()).def().clone(),
                 "browser_dialog",
             ),
@@ -2978,6 +3203,7 @@ mod tests {
             BrowserNavigateTool::new(e.clone()).def().clone(),
             BrowserClickTool::new(e.clone()).def().clone(),
             BrowserTypeTool::new(e.clone()).def().clone(),
+            BrowserSelectTool::new(e.clone()).def().clone(),
             BrowserDialogTool::new(e.clone()).def().clone(),
             BrowserSetInputFilesTool::new(e.clone()).def().clone(),
             BrowserDownloadTool::new(e.clone()).def().clone(),
@@ -3002,6 +3228,7 @@ mod tests {
                 "browser_navigate",
                 "browser_click",
                 "browser_type",
+                "browser_select",
                 "browser_dialog",
                 "browser_set_input_files",
                 "browser_download",

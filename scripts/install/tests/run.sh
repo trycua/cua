@@ -455,9 +455,9 @@ if script --version 2>/dev/null | grep -q util-linux; then
                 timeout 60 script -qec "env SHELL=/bin/zsh $sh_bin '$installer' --cli-only --no-onboarding --prefix '$2'" /dev/null >"$work/out" 2>&1
             status=$?
         }
-        pty_path '\r' "$work/pt1"
+        pty_path '\r\r' "$work/pt1"
         check "PATH prompt: Enter adds the bin dir to .zshrc" sh -c "[ $status = 0 ] && grep -q '$work/pt1/bin' '$home/.zshrc' && grep -q 'Add .* to PATH' '$work/out'"
-        pty_path 'n\r' "$work/pt2"
+        pty_path '\rn\r' "$work/pt2"
         check "PATH prompt: n leaves the profile alone and prints the one-liner" sh -c "[ $status = 0 ] && [ ! -e '$home/.zshrc' ] && grep -q 'is not on your PATH' '$work/out'"
     fi
 

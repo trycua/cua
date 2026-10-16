@@ -176,14 +176,21 @@ struct KeyFocusUnconfirmed;
 
 fn with_confirmed_key_focus<T>(
     target: Option<usize>,
-    focus: impl FnOnce(usize) -> anyhow::Result<()>,
-    is_focused: impl FnOnce(usize) -> bool,
+    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
+    mut is_focused: impl FnMut(usize) -> bool,
     dispatch: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     if let Some(target) = target {
-        focus(target)?;
-        if !is_focused(target) {
-            return Err(KeyFocusUnconfirmed.into());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            focus(target)?;
+            if is_focused(target) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(KeyFocusUnconfirmed.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
     dispatch()
@@ -210,6 +217,7 @@ fn def() -> &'static ToolDef {
             - `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n\
             - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\
             \n\
+            An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\n\
             Confirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -542,7 +550,45 @@ mod tests {
             failure.structured_content.as_ref().unwrap()["effect"],
             "refused"
         );
-        assert_eq!(*events.borrow(), vec![("focus", 42), ("verify", 42)]);
+        let events = events.borrow();
+        assert!(events.len() >= 4);
+        for pair in events.chunks(2) {
+            assert_eq!(pair, &[("focus", 42), ("verify", 42)]);
+        }
+    }
+
+    #[test]
+    fn targeted_key_retries_focus_before_dispatch() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let mut checks = 0;
+        with_confirmed_key_focus(
+            Some(42),
+            |target| {
+                events.borrow_mut().push(("focus", target));
+                Ok(())
+            },
+            |target| {
+                events.borrow_mut().push(("verify", target));
+                checks += 1;
+                checks == 2
+            },
+            || {
+                events.borrow_mut().push(("dispatch", 0));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ("focus", 42),
+                ("verify", 42),
+                ("focus", 42),
+                ("verify", 42),
+                ("dispatch", 0)
+            ]
+        );
     }
 
     #[test]

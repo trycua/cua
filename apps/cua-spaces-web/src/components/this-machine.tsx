@@ -14,6 +14,8 @@ import {
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
+import { limitsFor } from "@/bridge/friendly-errors";
+import { hostOs } from "@/bridge/host-os";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -102,7 +104,7 @@ export function ThisMachine({ panel, progress }: { panel: HostPanelView; progres
               <Switch checked={t.on} disabled={host.busy || !t.enabled} aria-label={t.label} onCheckedChange={() => void host.run(t.action)} />
             </Row>
           ))}
-          {panel.limits ? <p className="px-4 py-2.5 text-xs text-muted-foreground">{panel.limits}</p> : null}
+          {panel.limits ? <p className="px-4 py-2.5 text-xs text-muted-foreground">{limitsFor(panel.limits, hostOs() === "macos")}</p> : null}
         </Group>
       ) : null}
 

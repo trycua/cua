@@ -913,12 +913,23 @@ impl ServiceManager for WindowsTask {
         Ok(())
     }
     fn uninstall(&self) -> Result<()> {
+        let program = self.spec().ok().map(|s| s.program);
         if self.run_entry_installed() {
             let _ = self.stop();
         }
         self.remove_run_entry();
         let _ = run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]));
         let _ = run(Command::new("schtasks").args(["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]));
+        // `/End` stops only the task's own process (conhost): the cmd.exe
+        // and the driver under it keep running, the driver still online and
+        // cmd.exe holding driver.log open, so ~/.cua/host could not be
+        // removed (CUA-1749).
+        for pid in program
+            .map(|p| windows_procs::pids_of(&p))
+            .unwrap_or_default()
+        {
+            let _ = run(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]));
+        }
         let _ = std::fs::remove_file(&self.xml_path);
         remove_legacy_task();
         Ok(())

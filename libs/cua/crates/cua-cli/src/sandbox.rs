@@ -1208,6 +1208,8 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "name": i.name,
         "status": row_status(i),
         "state": status_of(i),
+        // Why it stopped without being asked to ("out of memory"), or null.
+        "stop_reason": i.stop_reason,
         "location": i.location,
         "kind": i.kind,
         "runtime": i.runtime,
@@ -1226,6 +1228,16 @@ pub fn info_json(i: &SandboxInfo) -> serde_json::Value {
         "endpoints": i.endpoints,
         "provider_details": i.provider_details,
     })
+}
+
+/// A listing's STATUS cell: the row's status, and why it stopped when it
+/// stopped on its own (`stopped (out of memory)`).
+fn status_cell(row: &serde_json::Value) -> String {
+    let status = row["status"].as_str().unwrap_or_default();
+    match row["stop_reason"].as_str().filter(|r| !r.is_empty()) {
+        Some(why) if status == "stopped" => format!("{status} ({why})"),
+        _ => status.to_string(),
+    }
 }
 
 /// The status a listing shows: the portable phase, or `missing` for a
@@ -1855,7 +1867,7 @@ pub async fn run(
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
-                        line(out, format!("Status:   {}", row_status(&i)));
+                        line(out, format!("Status:   {}", status_cell(&info_json(&i))));
                         line(out, format!("Location: {}", i.location));
                         line(out, format!("Expires:  {}", expires_of(i.expires_at_unix)));
                         if let Some(img) = &i.image {
@@ -2444,7 +2456,7 @@ async fn ls(
             .map(|r| {
                 let mut row = vec![
                     s(&r["id"]),
-                    s(&r["status"]),
+                    status_cell(r),
                     s(&r["location"]),
                     dash(&r["kind"]),
                     dash(&r["runtime"]),
@@ -3092,6 +3104,25 @@ pub(crate) fn confirm_delete(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_space_that_stopped_on_its_own_says_why_in_the_listing() {
+        let row = |status: &str, why: serde_json::Value| serde_json::json!({"status": status, "stop_reason": why});
+        assert_eq!(
+            status_cell(&row("stopped", "out of memory".into())),
+            "stopped (out of memory)"
+        );
+        assert_eq!(
+            status_cell(&row("stopped", serde_json::Value::Null)),
+            "stopped"
+        );
+        assert_eq!(status_cell(&row("ready", serde_json::Value::Null)), "ready");
+        // A row from a daemon that sends no reason.
+        assert_eq!(
+            status_cell(&serde_json::json!({"status": "stopped"})),
+            "stopped"
+        );
+    }
+
     use cua_sandbox_core::{
         InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
         RuntimeError,
@@ -3422,6 +3453,7 @@ mod tests {
                 ("namespace".to_string(), "cua-auto-abc".to_string()),
             ]),
             image_info: None,
+            stop_reason: None,
         };
         let m = kept_message(&info);
         assert!(m.contains("cloud:cua-e2e-kept"), "{m}");

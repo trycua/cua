@@ -8,7 +8,8 @@ import { BridgeProvider, useOnboarding, useSession, useThisMachine, type Onboard
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { readSavedOnboarding, resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
-import { ModeCard } from "@/components/onboarding-mode";
+import { ModeCard, ModeContinue, useModeChoice } from "@/components/onboarding-mode";
+import { pressPrimaryOnReturn } from "@/components/onboarding-keys";
 
 beforeEach(() => {
   localStorage.clear();
@@ -22,9 +23,32 @@ function Page() {
   const flow = useOnboarding();
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
+  const choice = useModeChoice(flow, flow.view, host);
   probe.flow = flow;
   if (flow.view?.step !== "mode") return null;
-  return <ModeCard flow={flow} view={flow.view} host={host} />;
+  return (
+    <div onKeyDown={pressPrimaryOnReturn}>
+      <h1 tabIndex={-1} data-testid="heading">
+        {flow.view.title}
+      </h1>
+      <ModeCard flow={flow} view={flow.view} host={host} choice={choice} />
+      <ModeContinue view={flow.view} host={host} choice={choice} />
+    </div>
+  );
+}
+
+async function toMode() {
+  const adapter = createDemoAdapter({ latencyMs: 1, stepMs: 1, signedIn: true, onboarded: false });
+  render(
+    <BridgeProvider adapter={adapter} core={await testCore()} storeOptions={{ tickMs: 5 }}>
+      <Page />
+    </BridgeProvider>,
+  );
+  await waitFor(() => expect(probe.flow.state).toBeTruthy());
+  act(() => probe.flow.send({ type: "start" }));
+  act(() => probe.flow.send({ type: "signin-done" }));
+  act(() => probe.flow.send({ type: "agents-done", configured: [] }));
+  act(() => probe.flow.send({ type: "presentation-done" }));
 }
 
 describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
@@ -45,7 +69,10 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
     expect(screen.queryByText(/Available once this machine is set up/)).toBeNull();
     expect(hostChoice.textContent).toMatch(/Next: name this machine/);
 
+    // Choosing only selects; Continue opens the form.
     fireEvent.click(hostChoice);
+    expect(document.querySelector("[data-host-form]")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /Continue/ }));
     const form = await waitFor(() => {
       const f = document.querySelector("[data-host-form]");
       if (!f) throw new Error("no host form");
@@ -70,6 +97,18 @@ describe.skipIf(!wasmBuilt)("This machine in the first run", () => {
     act(() => probe.flow.send({ type: "agents-done", configured: [] }));
     act(() => probe.flow.send({ type: "presentation-done" }));
     fireEvent.click(await screen.findByTestId("onboarding-client"));
+    expect(readSavedOnboarding().state?.step).toBe("mode");
+    fireEvent.click(await screen.findByRole("button", { name: /Continue/ }));
+    expect(readSavedOnboarding().state).toMatchObject({ step: "done", mode: "client" });
+  });
+
+  it("always has an enabled Continue, with Access other machines selected, and Return continues", async () => {
+    await toMode();
+    const next = (await screen.findByRole("button", { name: /Continue/ })) as HTMLButtonElement;
+    expect(next.disabled).toBe(false);
+    expect(screen.getByRole("radio", { name: /Access other machines/ }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: /Set up this machine/ }).getAttribute("aria-checked")).toBe("false");
+    fireEvent.keyDown(screen.getByTestId("heading"), { key: "Enter" });
     expect(readSavedOnboarding().state).toMatchObject({ step: "done", mode: "client" });
   });
 });

@@ -270,6 +270,20 @@ pub const FEATURES: &[&str] = &[
     // Settings, General: Launch Cua Spaces at login turned on or off.
     "launch_at_login_on",
     "launch_at_login_off",
+    // The in-app Pro and Teams prompts (`cua-spaces-app-core` `upsell`):
+    // a value-moment prompt shown, clicked or dismissed; the always-visible
+    // plan card and account-menu plan only clicked.
+    "upsell_meter_shown",
+    "upsell_meter_click",
+    "upsell_meter_dismiss",
+    "upsell_share_shown",
+    "upsell_share_click",
+    "upsell_share_dismiss",
+    "upsell_machine_shown",
+    "upsell_machine_click",
+    "upsell_machine_dismiss",
+    "upsell_plan_card_click",
+    "upsell_account_menu_click",
 ];
 pub const ONBOARDING_STEPS: &[&str] = &[
     "installer_started",
@@ -394,8 +408,17 @@ pub const KEYVAULT_METHODS: &[&str] = &["os_key_store", "passphrase", "recovery_
 pub const SHARE_ACTIONS: &[&str] = &["share", "unshare", "change_role"];
 /// The role a Space is shared with.
 pub const SHARE_ROLES: &[&str] = &["viewer", "editor", "none"];
-/// Updater steps.
-pub const UPDATE_ACTIONS: &[&str] = &["checked", "found", "not_found", "installed", "failed"];
+/// Updater steps. In the product's words: `found` is update_available,
+/// `downloaded` is update_downloaded (the background download finished),
+/// `installed` is update_installed.
+pub const UPDATE_ACTIONS: &[&str] = &[
+    "checked",
+    "found",
+    "not_found",
+    "downloaded",
+    "installed",
+    "failed",
+];
 /// Update channels (`cua-spaces-app-core` `about::UpdateChannel`).
 pub const UPDATE_CHANNELS: &[&str] = &["stable", "beta"];
 /// Who started an update check.
@@ -1258,7 +1281,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "action",
                 Kind::Enum(UPDATE_ACTIONS),
-                "A check, an update found or not, installed, or failed.",
+                "A check, an update found or not, downloaded in the background, installed, or failed.",
             ),
             p(
                 "channel",

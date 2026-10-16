@@ -62,6 +62,9 @@ describe("Add a machine by link or QR code", () => {
     expect(document.querySelector("[data-pairing-qr] path")?.getAttribute("d")).toMatch(/^M\d/);
     expect(screen.getByText(/^https:\/\/cua\.ai\/add\/K7QM-4XPB-/)).toBeTruthy();
     expect(screen.getByText(/sh -s -- --pair K7QM-4XPB-/)).toBeTruthy();
+    // The bare code too, for Join with a code on a computer that has the app.
+    expect(document.querySelector("[data-pairing-code] code")?.textContent).toMatch(/^K7QM-4XPB-[0-9A-Z]{4}$/);
+    expect(screen.getByLabelText("Copy code")).toBeTruthy();
     expect(screen.getByText("Waiting for the computer…")).toBeTruthy();
     expect(document.querySelector("[data-pairing-expires]")?.textContent).toBe("Works once. Expires in 30 min");
 
@@ -194,11 +197,12 @@ describe("Add a machine by link or QR code", () => {
     const base = adapter.call.bind(adapter);
     const flaky = Object.assign(Object.create(adapter) as DataAdapter, {
       call: ((op: string, args: never) =>
-        op === "devices.createPairingCode" && fail ? Promise.reject(new Error("relay unreachable")) : base(op as never, args)) as DataAdapter["call"],
+        op === "devices.createPairingCode" && fail ? Promise.reject(new Error("not found: relay: no such device")) : base(op as never, args)) as DataAdapter["call"],
     });
     await mount(flaky);
     await waitFor(() => expect(phase()).toBe("error"));
-    expect(screen.getByText(/Couldn't make a link: relay unreachable/)).toBeTruthy();
+    expect(screen.getByText(/This computer isn't set up for access yet\. Set it up first, then add machines\./)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/relay: no such device|not found:/);
     fail = false;
     fireEvent.click(screen.getByText("Try again"));
     await waitFor(() => expect(phase()).toBe("ready"));

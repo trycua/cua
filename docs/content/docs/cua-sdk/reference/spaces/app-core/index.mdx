@@ -43,6 +43,23 @@ pub fn cua_spaces_register()
 </Tab>
 </Tabs>
 
+## `AppPlanCard` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `plan` | `String` |  | `free`, `pro` or `teams`. |
+| `label` | `String` |  | "Free plan". |
+| `detail` | `String` |  | What the plan includes, in one sentence. |
+| `primary` | [`Option<AppPlanLink>`](#appplanlink-record) |  | The main button ("Get Pro"); none when there is nothing to buy. |
+| `secondary` | [`Option<AppPlanLink>`](#appplanlink-record) |  | The other one ("Start a team"). |
+
+## `AppPlanLink` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | "Get Pro". |
+| `url` | `String` |  | https, on the account app. |
+
 ## `AppResourceEdit` record
 
 | Field | Type | Default | Description |
@@ -123,11 +140,11 @@ pub fn app_account_app_url() -> String
 
 ## All items
 
-626 items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.
+628 items, across this page and its subpages, grouped by page (each item's section is on its page). Methods are listed on their object.
 
 **[About, updates and launch](/cua-sdk/reference/spaces/app-core/about)**: `app_about_after_launch`, `app_about_allowed_channels`, `app_about_input_from_json`, `app_about_refresh_notice`, `app_about_restart_daemon`, `app_about_view`, `app_daemon_check_from_json`, `app_launch_input_from_json`, `app_refresh_report_from_json`, `AppAboutInput`, `AppAboutLink`, `AppAboutLinkId`, `AppAboutUpdates`, `AppAboutView`, `AppCliInstaller`, `AppCliInstallPlan`, `AppCliInstallRequest`, `AppDaemonCheck`, `AppInstallMethod`, `AppLaunchInput`, `AppLaunchPlan`, `AppRefreshReport`, `AppUpdateChannel`
 
-**Spaces app core**: [`app_account_app_url`](#app_account_app_url), [`AppResourceEdit`](#appresourceedit-record), [`AppResourceEditView`](#appresourceeditview-record), [`AppResourceField`](#appresourcefield-enum), [`AppVaultPassword`](#appvaultpassword-record), [`cua_spaces_register`](#cua_spaces_register)
+**Spaces app core**: [`app_account_app_url`](#app_account_app_url), [`AppPlanCard`](#appplancard-record), [`AppPlanLink`](#appplanlink-record), [`AppResourceEdit`](#appresourceedit-record), [`AppResourceEditView`](#appresourceeditview-record), [`AppResourceField`](#appresourcefield-enum), [`AppVaultPassword`](#appvaultpassword-record), [`cua_spaces_register`](#cua_spaces_register)
 
 **[Settings, Agents](/cua-sdk/reference/spaces/app-core/agent-keys)**: `app_agent_key_form`, `app_agent_key_form_input_from_json`, `app_agent_key_name_problem`, `app_agent_key_remove_confirm`, `app_agent_keys_input_from_json`, `app_agent_keys_view`, `app_agent_settings_rows`, `app_agent_setup_outcome`, `app_agent_setup_outcomes_from_json`, `app_agent_setup_status`, `app_agent_setup_statuses_from_json`, `app_agent_setup_summary`, `AppAgentKeyConfirm`, `AppAgentKeyFormInput`, `AppAgentKeyFormView`, `AppAgentKeyInput`, `AppAgentKeyRow`, `AppAgentKeysInput`, `AppAgentKeysView`, `AppAgentSettingsRow`, `AppAgentSetupOutcomeInput`, `AppAgentSetupStatus`, `AppAgentSetupSummary`
 

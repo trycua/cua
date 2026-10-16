@@ -69,6 +69,29 @@ export interface AboutView {
   updates: AboutUpdates | null;
 }
 
+/* ---- In-app updates (`update.*`) ------------------------------------------ */
+
+/** Where an update is: nothing to do, a check running, found and about to
+ * download, downloading, ready to install, or the last step failed. */
+export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "error";
+
+/** What the host's updater (Sparkle in the Mac app, electron-updater on
+ * Windows and Linux) reports for the in-app indicator. The host downloads
+ * on its own; it installs only on `update.install`. */
+export interface UpdateState {
+  status: UpdateStatus;
+  /** The version this app runs. */
+  currentVersion: string;
+  /** The version found, downloading or ready; null with none. */
+  version: string | null;
+  /** Download progress, 0 to 100, while `downloading`; else null. */
+  percent: number | null;
+  /** The GitHub release notes page for `version`; null with none. */
+  notesUrl: string | null;
+  /** Why the last step failed (`error` only); else null. */
+  message: string | null;
+}
+
 /** What `about.set` changes. */
 export type AboutSetting = { key: "autoCheck"; value: boolean } | { key: "autoInstall"; value: boolean } | { key: "channel"; value: UpdateChannelId };
 

@@ -29,7 +29,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 /** What the page's fix button does (`spaces.fixRuntime {action}`). */
-export type RuntimeFixAction = "install-docker" | "start-docker";
+export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app";
 
 /** A step the page can offer next to the "no local runtime" reason. */
 export interface RuntimeFix {
@@ -260,6 +260,7 @@ export class WindowsRuntime {
   /** Runs `action` in the background; the page sees its progress in the options. */
   run(action: RuntimeFixAction): void {
     if (this.phase.kind === "downloading" || this.phase.kind === "installing") return;
+    if (action === "restart-app") return;
     if (action === "start-docker") {
       this.start();
       return;

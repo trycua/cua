@@ -7,6 +7,7 @@
 import { HostError } from "../../adapter";
 import type { HostStatus } from "../../contracts/host";
 import { HOST_SETTING_CHANGE, isSettingsPane } from "../../ops/host-setup";
+import { normalizePairingCode } from "../../pairing-code";
 import { demoHostStatus } from "../demo-data";
 import type { DemoContext, DemoHandlers } from "./context";
 
@@ -17,7 +18,7 @@ export interface DemoHostSetupState {
 
 export const demoHostSetupState = (now: number, firstRun: boolean): DemoHostSetupState => ({ host: demoHostStatus(now, firstRun) });
 
-export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.action" | "host.openSettings"> {
+export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.openSettings"> {
   const set = (host: HostStatus) => {
     state.host = host;
     emit({ type: "machines.changed" });
@@ -40,6 +41,12 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
         clients: [],
         recentAccess: [],
       });
+    },
+    // The demo has no relay: any well-formed code joins, a bad one fails as the CLI does.
+    "host.joinWithCode": async ({ code }) => {
+      if (!normalizePairingCode(code)) throw new HostError(`${code.trim() || "That"} is not a pairing code (12 letters and digits, like K7QM-4XPB-2RHD)`, "bad_args");
+      await wait(stepMs * 2);
+      return set({ ...demoHostStatus(now()), name: "This Mac", permissions: state.host.permissions, clients: [], recentAccess: [] });
     },
     "host.action": async ({ action }) => {
       await wait(stepMs);

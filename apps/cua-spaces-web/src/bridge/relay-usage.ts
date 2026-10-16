@@ -16,7 +16,7 @@ import { relayUsageView } from "./derive";
 import { useSettings } from "./hooks";
 import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
-export type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
+export type { PlanCard, PlanLink, RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
 export const RELAY_USAGE_POLL_MS = 5 * 60_000;
 /** A focus reads again only when the last read is older than this. */

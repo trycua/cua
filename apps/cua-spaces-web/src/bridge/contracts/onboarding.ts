@@ -135,6 +135,8 @@ export interface OnboardingView {
   usage?: OnboardingUsage | null;
   /** The Cua Volume page's card (on its page only). */
   drive?: DriveCard | null;
+  /** Done's example prompts, one line each (on Done only). */
+  prompts?: string[];
   /** Done's "Launch at login" checkbox (on Done only). */
   launchAtLogin?: OnboardingCheckbox | null;
 }

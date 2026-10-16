@@ -38,7 +38,9 @@ Preselect the app's first-run choice: host or client (implies spaces).
 .PARAMETER Pair
 Add this machine to your account with a one-time code from the Cua Spaces app
 (Add a machine): installs the CLI and runs `cua host setup --pair <code>`, with
-no sign-in and no checklist.
+no sign-in and no checklist. A computer that already has a cua with
+`host setup --pair` uses it instead of downloading again; -Prefix, -Version or
+CUA_INSTALL_REINSTALL=1 install anyway.
 .PARAMETER Relay
 Relay for -Pair (default https://relay.cua.ai).
 .PARAMETER Version
@@ -104,6 +106,7 @@ $script:Picked = $false
 # Cua Spaces ships for Windows as the Electron app's NSIS setup.exe
 # (cd-cua-spaces.yml). Set this to $false to skip a selected `spaces` with a note.
 $script:SpacesSupported = $true
+$script:SigNoted = $false
 
 function Get-Sha256Hex([string]$Path) {
     # .NET directly: Get-FileHash is missing when the Utility module is not
@@ -307,7 +310,11 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
         Stop-Install "no verifiable signature for $(Split-Path -Leaf $File) (install minisign or cosign)"
     }
     if (-not $ok -and ($Entry.PSObject.Properties['minisig'] -or $Entry.PSObject.Properties['cosign_bundle'])) {
-        Write-Warning "$(Split-Path -Leaf $File) is signed, but neither minisign nor cosign is installed; verified its sha256 only (install cosign, or pass -RequireSignature to insist)"
+        # One quiet line per run: sha256 is checked either way.
+        if (-not $script:SigNoted) {
+            $script:SigNoted = $true
+            Write-Info 'checked sha256 (cosign is not installed, so release signatures were not checked; -RequireSignature makes that an error)'
+        }
     }
 }
 
@@ -471,6 +478,13 @@ function Invoke-HostPair([string]$Cua) {
     $pairArgs = @('host', 'setup', '--pair', $Pair)
     if ($Relay) { $pairArgs += @('--relay', $Relay) }
     if ($DryRun) { Write-Host "[dry-run] $Cua $($pairArgs -join ' ')"; return }
+    # A CLI released before pairing exists would fail with a bare
+    # "unexpected argument '--pair'"; say what to do instead.
+    $setupHelp = (& $Cua host setup --help 2>&1 | Out-String)
+    if ($setupHelp -notmatch '--pair') {
+        $have = (& $Cua --version 2>&1 | Out-String).Trim()
+        Stop-Install "the installed cua CLI ($have) cannot add a machine with a code (no 'cua host setup --pair'); install a newer release (-Version) or sign in instead: cua auth login; cua host setup"
+    }
     Write-Info 'adding this machine to your account (cua host setup --pair)'
     $null | & $Cua @pairArgs
     if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>' }
@@ -485,6 +499,23 @@ function Invoke-HostSetup([string]$Cua) {
     Write-Info 'setting up this machine as a host (cua host setup)'
     if (Test-Interactive) { & $Cua host setup } else { $null | & $Cua host setup }
     if ($LASTEXITCODE -ne 0) { Write-Warning "host setup did not finish; run 'cua host setup' after 'cua auth login'" }
+}
+
+# -Pair on a computer that already has Cua: the `cua` that is there (it must
+# know `host setup --pair`), or $null. -Prefix, -Version and
+# CUA_INSTALL_REINSTALL=1 install anyway.
+function Find-ExistingCua {
+    if (-not $Pair -or $Prefix -or $Version -or $env:CUA_INSTALL_REINSTALL -eq '1') { return $null }
+    $candidates = @()
+    $onPath = Get-Command cua -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($onPath) { $candidates += $onPath.Source }
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\cua\bin\cua.exe') }
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        $help = (& $candidate host setup --help 2>&1 | Out-String)
+        if ($help -match '--pair') { return $candidate }
+    }
+    return $null
 }
 
 function Invoke-CuaInstall {
@@ -505,13 +536,23 @@ function Invoke-CuaInstall {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cua-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
-        $manifestUrl = Get-ManifestUrl
-        $manifestFile = Join-Path $tmp 'release-artifacts.json'
-        Get-Remote $manifestUrl $manifestFile
-        $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
-        if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
-        Write-Info "platform $platform, manifest $manifestUrl"
         $cua = $null
+        $existing = Find-ExistingCua
+        if ($existing) {
+            Write-Info "cua is already installed at $existing; using it (CUA_INSTALL_REINSTALL=1 installs it again)"
+            $sel.cli = $false
+            $cua = $existing
+        }
+        $manifestUrl = $null
+        # Nothing to download (-Pair on a computer that has Cua): no manifest to read.
+        if ($sel.cli -or $sel.spaces -or $sel['cua-driver']) {
+            $manifestUrl = Get-ManifestUrl
+            $manifestFile = Join-Path $tmp 'release-artifacts.json'
+            Get-Remote $manifestUrl $manifestFile
+            $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
+            if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
+            Write-Info "platform $platform, manifest $manifestUrl"
+        }
         if ($sel.cli) { $cua = Install-Cli $manifest $manifestUrl $platform $tmp }
         if ($sel.spaces) {
             if ($Mode) {

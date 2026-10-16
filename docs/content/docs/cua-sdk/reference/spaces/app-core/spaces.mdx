@@ -631,6 +631,7 @@ Returned by [`app_space_rows_from_json`](#app_space_rows_from_json).
 | `cloud` | `Option<String>` |  | For a Space in your cloud: the provider word (`aws`, `gcp`, `modal`). |
 | `cloud_place` / `cloudPlace` | `Option<String>` |  | Its account and region in words ("AWS · us-west-2"). |
 | `cloud_delete` / `cloudDelete` | `Option<String>` |  | Where Delete permanently can delete it: `here`, `host:<machine>` (that machine created it) or `elsewhere` (another device did). |
+| `stop_reason` / `stopReason` | `Option<String>` |  | Why a local Space stopped without being asked to, in plain words ("out of memory", "killed", "exited with code 1"), as the SDK recorded it; absent otherwise. |
 
 ## `AppSpaceSdkRef` record
 

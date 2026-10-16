@@ -335,7 +335,8 @@ struct ViewModelTests {
         var panel = h.panel
         #expect(panel.toggles.map(\.on) == [false, true])
         #expect(panel.toggles.map(\.enabled) == [true, true], "both may be off")
-        #expect(panel.limits?.contains("Apple\u{2019}s license allows two per Mac") == true)
+        #expect(panel.limits?.hasSuffix("2 macOS VMs") == true)
+        #expect(panel.limits?.contains("license") == false)
         #expect(panel.providedEmpty == "None yet")
         #expect(panel.permissions.isEmpty, "no desktop, no screen permissions")
         await h.run(panel.toggles[0].action)
@@ -616,7 +617,7 @@ struct ViewModelTests {
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
                                  imageDigest: nil, kind: nil, arch: nil, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
-                                 cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         let backend = FixtureSpacesBackend(rows: [record])
         backend.holdCreates = true
         let model = makeModel(backend)
@@ -1005,7 +1006,7 @@ struct ViewModelTests {
             AppSpaceRow(id: id, name: name, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
                         reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
-                        cloud: cloud, cloudPlace: place, cloudDelete: delete)
+                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             cloudRow("relay:cloud-0000000000000a01", "research-box", "aws", "AWS \u{b7} us-west-2", "here"),
@@ -1280,8 +1281,8 @@ struct ViewModelTests {
         o.send(.driveContinue)
         o.send(.modeChosen(mode: .client))
         #expect(o.view.step == .done)
-        #expect(o.view.prompts.count == 7, "Done suggests what to ask a coding agent")
-        #expect(o.view.prompts.first == "qa my app on windows, macos and linux")
+        #expect(o.view.prompts.count == 3, "Done suggests what to ask a coding agent")
+        #expect(o.view.prompts.first == "Open a Linux Space and run my test suite in it")
         o.finish()
         #expect(OnboardingModel(statePath: path).completed)
         try? FileManager.default.removeItem(atPath: path)

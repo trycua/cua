@@ -22,6 +22,8 @@ public enum MainUIRoute: Equatable, Sendable {
     case machines
     case agents
     case keyvault
+    /// A page path as given (`/machines?join=<CODE>` from a `cua://add` link).
+    case path(String)
 
     /// The page's path, query included.
     var webPath: String {
@@ -33,6 +35,7 @@ public enum MainUIRoute: Equatable, Sendable {
         case .machines: return "/machines"
         case .agents: return "/agents"
         case .keyvault: return "/keyvault"
+        case let .path(path): return path
         case let .space(id, dropped):
             let path = "/spaces/\(Self.encodeComponent(id))"
             let names = dropped.map(\.lastPathComponent)

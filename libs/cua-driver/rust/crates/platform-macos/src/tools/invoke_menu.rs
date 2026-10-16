@@ -577,6 +577,11 @@ unsafe fn item_is_save(item: AXUIElementRef) -> bool {
             == 0.0
 }
 
+/// How long a disabled item gets to enable after its window becomes key, and
+/// how often it is re-read.
+const ENABLE_WAIT: Duration = Duration::from_millis(600);
+const ENABLE_POLL: Duration = Duration::from_millis(40);
+
 /// Resolve the whole path from the app's live menu bar without opening any
 /// level, then perform the final item's action. Used for a background app:
 /// opening a menu-bar menu would take key focus and draw over the user's
@@ -611,7 +616,13 @@ unsafe fn invoke_path_in_background(
         if copy_bool_attr(target, "AXEnabled") == Some(false)
             && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
         {
-            std::thread::sleep(Duration::from_millis(120));
+            // AppKit revalidates the item once the window is key; wait for it
+            // instead of reading the stale flag after a fixed pause.
+            let mut waited = Duration::ZERO;
+            while waited < ENABLE_WAIT && copy_bool_attr(target, "AXEnabled") == Some(false) {
+                std::thread::sleep(ENABLE_POLL);
+                waited += ENABLE_POLL;
+            }
         }
         if copy_bool_attr(target, "AXEnabled") == Some(false) {
             return Err(BackgroundPressError::Disabled {

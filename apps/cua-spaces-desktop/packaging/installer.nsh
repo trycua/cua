@@ -112,10 +112,26 @@ Var pid
   nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "${CUA_HOST_TASK}" /F'
   Pop $0
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${CUA_HOST_RUN_NAME}"
+  ; The driver, and the conhost/cmd.exe that runs it and holds driver.log
+  ; open (`>> driver.log`), with their children: killing only the driver
+  ; left cmd.exe writing the log, so driver.log outlived the folder (CUA-1749).
   ${if} $IsPowerShellAvailable == 0
-    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path -like '*\host\bin\cua-spacesd.exe'} | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+    nsExec::Exec /TIMEOUT=30000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "for ($$i = 0; $$i -lt 40; $$i++) { $$h = @(Get-CimInstance -ClassName Win32_Process | ? {$$_.ProcessId -ne $$PID -and (($$_.Path -and $$_.Path -like '*\host\bin\cua-spacesd.exe') -or ($$_.CommandLine -and ($$_.CommandLine -like '*\host\bin\cua-spacesd.exe*' -or $$_.CommandLine -like '*\host\driver.log*')))}); if (-not $$h) { break }; $$h | % { taskkill.exe /T /F /PID $$_.ProcessId 2>&1 | Out-Null }; Start-Sleep -Milliseconds 250 }"`
     Pop $0
   ${endIf}
-  Sleep 500
-  RMDir /r "$PROFILE\.cua\host"
+  !insertmacro removeHostFolder
+!macroend
+
+; ~/.cua/host, retried for up to 10 s: Windows releases a killed process's
+; files (driver.log above all) a moment after it exits.
+!macro removeHostFolder
+  StrCpy $1 0
+  ${Do}
+    Sleep 500
+    RMDir /r "$PROFILE\.cua\host"
+    ${IfNot} ${FileExists} "$PROFILE\.cua\host\*.*"
+      ${Break}
+    ${EndIf}
+    IntOp $1 $1 + 1
+  ${LoopUntil} $1 >= 20
 !macroend

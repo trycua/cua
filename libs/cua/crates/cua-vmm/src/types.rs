@@ -621,6 +621,15 @@ pub struct Instance {
     pub arch: Option<Arch>,
 }
 
+/// How a stopped instance ended, as its engine recorded it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExitRecord {
+    /// The exit code (137: killed with SIGKILL).
+    pub exit_code: i64,
+    /// The kernel killed it for memory (the engine's `OOMKilled`).
+    pub oom_killed: bool,
+}
+
 /// One row of [`crate::Runtime::list`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceSummary {

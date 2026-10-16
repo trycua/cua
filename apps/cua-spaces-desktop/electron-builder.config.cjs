@@ -184,6 +184,10 @@ module.exports = {
   electronLanguages: ["en", "en-US"],
   electronFuses: env.CUA_SPACES_NO_FUSES === "1" ? null : electronFuses({ resetAdHocSignature: !macSigning }),
 
+  // `cua://add/<code>` (the add-machine link) opens this app: Info.plist on macOS, the desktop
+  // entry's MIME type on Linux. Windows registers it when the app first runs (src/main.ts).
+  protocols: [{ name: "Cua", schemes: ["cua"] }],
+
   mac: {
     appId: "com.trycua.spaces.macos",
     category: "public.app-category.developer-tools",

@@ -945,15 +945,15 @@ fn missing_tools(
     ))
 }
 
-/// Add this user to the kvm group when `/dev/kvm` is denied (`sudo -n`);
+/// Add this user to the kvm group and grant it `/dev/kvm` now when denied (`sudo -n`);
 /// what was done or would be, or why `/dev/kvm` is not used.
 pub async fn grant_kvm(
-    kvm: std::io::Result<()>,
+    probe: impl Fn() -> std::io::Result<()>,
     user: Option<String>,
     dry_run: bool,
     run: impl AsyncFn(&str, &[&str]) -> Result<String>,
 ) -> Result<Option<String>> {
-    let e = match kvm {
+    let e = match probe() {
         Ok(()) => return Ok(None),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => e,
         Err(e) => return Ok(Some(host::kvm_hint(&e))),
@@ -961,7 +961,9 @@ pub async fn grant_kvm(
     let user = user.filter(|user| !user.is_empty());
     if dry_run {
         let user = user.as_deref().unwrap_or("$USER");
-        return Ok(Some(format!("would: add {user} to the kvm group")));
+        return Ok(Some(format!(
+            "would: add {user} to the kvm group and grant it /dev/kvm now (setfacl)"
+        )));
     }
     let denied = || VmmError::PermissionDenied(host::kvm_hint(&e));
     let group = run("stat", &["-c", "%G", "/dev/kvm"]).await;
@@ -975,9 +977,14 @@ pub async fn grant_kvm(
     run("sudo", &["-n", "usermod", "-aG", "kvm", &user])
         .await
         .map_err(|_| denied())?;
-    Ok(Some(format!(
-        "added {user} to the kvm group; log out and back in (or run `newgrp kvm`)"
-    )))
+    let acl = format!("u:{user}:rw");
+    let setfacl = run("sudo", &["-n", "setfacl", "-m", &acl, "/dev/kvm"]).await;
+    Ok(Some(match setfacl.is_ok() && probe().is_ok() {
+        true => format!("added {user} to the kvm group and granted /dev/kvm now"),
+        false => {
+            format!("added {user} to the kvm group; log out and back in (or run `newgrp kvm`)")
+        }
+    }))
 }
 
 /// Install QEMU through the host package manager (explicit opt-in).

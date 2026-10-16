@@ -1366,17 +1366,16 @@ async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
     if cua_vmm::host::HostOs::current() != cua_vmm::host::HostOs::Linux {
         return None;
     }
-    let kvm = cua_vmm::host::kvm_usable();
-    let denied = kvm
-        .as_ref()
+    let denied = cua_vmm::host::kvm_usable()
         .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
     let user = std::env::var("USER").ok();
     let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
-    let (status, detail) = match cua_vmm::qemu::grant_kvm(kvm, user, dry_run, run).await {
-        Ok(detail) if dry_run && denied => (CheckStatus::Installable, detail),
-        Ok(detail) => (CheckStatus::Ok, detail),
-        Err(e) => (CheckStatus::Error, Some(e.to_string())),
-    };
+    let (status, detail) =
+        match cua_vmm::qemu::grant_kvm(cua_vmm::host::kvm_usable, user, dry_run, run).await {
+            Ok(detail) if dry_run && denied => (CheckStatus::Installable, detail),
+            Ok(detail) => (CheckStatus::Ok, detail),
+            Err(e) => (CheckStatus::Error, Some(e.to_string())),
+        };
     detail.map(|detail| SetupStep {
         name: "kvm".into(),
         status: status as i32,

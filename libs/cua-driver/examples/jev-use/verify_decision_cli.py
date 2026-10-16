@@ -11,7 +11,7 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=("mock", "jev", "s1"), required=True)
+    parser.add_argument("--model", choices=("mock", "jev", "openjev", "s1"), required=True)
     parser.add_argument(
         "--expected-id",
         help="expected selection (default: submit-form, or ax:button:increment for --fixture native)",

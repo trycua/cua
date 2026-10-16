@@ -110,7 +110,7 @@ def choose_request(value: Any, model: Any) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=("mock", "jev", "s1"), default="mock")
+    parser.add_argument("--model", choices=("mock", "jev", "openjev", "s1"), default="mock")
     parser.add_argument(
         "--s1-modality",
         choices=S1_MODALITIES,
@@ -140,6 +140,19 @@ def main() -> None:
         raise SystemExit(f"invalid request: {error}") from None
     if args.model == "mock":
         model = MockDecisionModel()
+    elif args.model == "openjev":
+        try:
+            from openjev_model import (
+                OpenJevDecisionModel,
+                read_openjev_config,
+                validate_openjev_base_url,
+            )
+
+            config = read_openjev_config()
+            validate_openjev_base_url(config.base_url, has_api_key=bool(config.api_key))
+            model = OpenJevDecisionModel(config)
+        except (ImportError, ValueError, RuntimeError) as error:
+            raise SystemExit(f"OpenJev setup failed: {error}") from None
     elif args.model == "s1":
         try:
             model = local_s1_model(

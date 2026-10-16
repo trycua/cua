@@ -62,6 +62,7 @@ cua-auth = { workspace = true, optional = true }
 cua-fleet.workspace = true
 cua-image.workspace = true
 cua-sandbox-core.workspace = true
+cua-vmm.workspace = true
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
 cua-host.workspace = true
 # `relay:` Spaces over the WireGuard®-based mesh.

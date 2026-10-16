@@ -6,6 +6,7 @@
 // shell-harness tests are gone with that wire; cua-spaces' Rust tests own it).
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
+import { getEventListeners } from "node:events"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -353,7 +354,7 @@ test("TauriTransport carries messages through invoke and maps a notification to 
 })
 
 /** A loopback stand-in for the daemon's `/mcp`. */
-async function withMcpServer(body) {
+async function withMcpServer(body, reply) {
   const seen = []
   const server = createServer(async (req, res) => {
     const chunks = []
@@ -378,17 +379,22 @@ async function withMcpServer(body) {
       res.writeHead(404).end("unknown session")
       return
     }
+    if (reply?.(m, res)) return
     if (!("id" in m)) {
       res.writeHead(202).end()
       return
     }
     res.writeHead(200, { "content-type": "application/json" })
-    res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "ok" }], isError: false } }))
+    const result = m.method === "tools/list"
+      ? { tools: [{ name: "list_spaces" }] }
+      : { content: [{ type: "text", text: "ok" }], isError: false }
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }))
   })
   await new Promise((r) => server.listen(0, "127.0.0.1", r))
   try {
     return await body(`http://127.0.0.1:${server.address().port}`, seen)
   } finally {
+    server.closeAllConnections()
     await new Promise((r) => server.close(r))
   }
 }
@@ -410,6 +416,160 @@ test("McpHttpTransport reports a refused bearer as a 401 TransportError", async 
   await withMcpServer(async (url) => {
     const s = new McpSession(new McpHttpTransport({ url, token: "wrong" }))
     await assert.rejects(s.listTools(), (e) => e instanceof TransportError && e.code === 401)
+  })
+})
+
+function deferred() {
+  let resolve
+  const promise = new Promise((r) => { resolve = r })
+  return { promise, resolve }
+}
+
+// Only an external bound: expiry fails the test, it never aborts the SDK call
+// or supplies a reply. withMcpServer destroys sockets on every exit path.
+async function bounded(promise) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("test watchdog: SDK wait did not settle")), 1500)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const abortedFetch = (error) => error instanceof TransportError && /AbortError/.test(error.message)
+const abortedBody = (error) => error?.name === "AbortError"
+
+test("McpHttpTransport rejects a pre-aborted listTools without sending it", async () => {
+  await withMcpServer(async (url, seen) => {
+    const s = new McpSession(new McpHttpTransport({ url, token: "daemon-token" }))
+    await s.initialize()
+    const controller = new AbortController()
+    controller.abort()
+    await assert.rejects(bounded(s.listTools({ signal: controller.signal })), abortedFetch)
+    assert.equal(seen.filter((r) => JSON.parse(r.text).method === "tools/list").length, 0)
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0)
+  })
+})
+
+test("McpHttpTransport aborts listTools while waiting for response headers", async () => {
+  const requested = deferred()
+  await withMcpServer(async (url) => {
+    const s = new McpSession(new McpHttpTransport({ url, token: "daemon-token" }))
+    await s.initialize()
+    const controller = new AbortController()
+    const rejected = assert.rejects(bounded(s.listTools({ signal: controller.signal })), abortedFetch)
+    await bounded(requested.promise)
+    controller.abort()
+    await rejected
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0)
+  }, (m) => {
+    if (m.method !== "tools/list") return false
+    requested.resolve()
+    return true // Keep both headers and body held until fixture cleanup.
+  })
+})
+
+for (const mode of ["caller abort", "timeout"]) {
+  test(`McpHttpTransport keeps ${mode} active through a partial response body`, async () => {
+    const headersReceived = deferred()
+    let observeReplies = false
+    let released = false
+    let releaseBody
+    await withMcpServer(async (url) => {
+      // Observe headers from the actual native fetch, without replacing its
+      // response, body reader, signal handling or errors. This makes the
+      // header/body boundary deterministic; there is no mock fetch.
+      const transport = new McpHttpTransport({ url, token: "daemon-token", fetch: async (...args) => {
+        const response = await globalThis.fetch(...args)
+        if (observeReplies) headersReceived.resolve()
+        return response
+      } })
+      const s = new McpSession(transport)
+      await s.initialize()
+      observeReplies = true
+      const controller = new AbortController()
+      const options = mode === "caller abort"
+        ? { signal: controller.signal }
+        : { timeoutSeconds: 0.2, signal: controller.signal }
+      const call = mode === "caller abort"
+        ? s.listTools(options)
+        : s.callText("list_spaces", {}, options)
+      const rejected = assert.rejects(bounded(call), abortedBody)
+      await bounded(headersReceived.promise)
+      if (mode === "caller abort") controller.abort()
+      await rejected
+      assert.equal(released, false, "must reject before the server finishes its body")
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0)
+      releaseBody()
+    }, (m, res) => {
+      if (!("id" in m)) return false
+      const result = m.method === "tools/list"
+        ? { tools: [{ name: "list_spaces" }] }
+        : { content: [{ type: "text", text: "ok" }], isError: false }
+      const text = JSON.stringify({ jsonrpc: "2.0", id: m.id, result })
+      res.writeHead(200, { "content-type": "application/json" })
+      res.write(text.slice(0, 15))
+      releaseBody = () => {
+        released = true
+        res.end(text.slice(15))
+      }
+      // The valid remainder is released only after the SDK rejection is
+      // asserted. The watchdog can only fail; cleanup destroys sockets.
+      return true
+    })
+  })
+}
+
+test("McpHttpTransport succeeds with cancellation options and removes the listener", async () => {
+  await withMcpServer(async (url) => {
+    const s = new McpSession(new McpHttpTransport({ url, token: "daemon-token" }))
+    await s.initialize()
+    const controller = new AbortController()
+    const options = { timeoutSeconds: 1, signal: controller.signal }
+    assert.deepEqual((await s.listTools(options)).map((t) => t.name), ["list_spaces"])
+    assert.equal(await s.callText("list_spaces", {}, options), "ok")
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0)
+    controller.abort()
+    assert.equal(await s.callText("list_spaces"), "ok")
+  })
+})
+
+test("McpHttpTransport reinitializes once after a real HTTP 404", async () => {
+  let expired = true
+  await withMcpServer(async (url, seen) => {
+    const s = new McpSession(new McpHttpTransport({ url, token: "daemon-token" }))
+    assert.deepEqual((await s.listTools()).map((t) => t.name), ["list_spaces"])
+    assert.deepEqual(seen.map((r) => JSON.parse(r.text).method), [
+      "initialize", "notifications/initialized", "tools/list",
+      "initialize", "notifications/initialized", "tools/list",
+    ])
+  }, (m, res) => {
+    if (m.method !== "tools/list" || !expired) return false
+    expired = false
+    res.writeHead(404).end("unknown session")
+    return true
+  })
+})
+
+test("McpHttpTransport maps an accepted notification with a body to null", async () => {
+  await withMcpServer(async (url) => {
+    const transport = new McpHttpTransport({ url, token: "daemon-token" })
+    const s = new McpSession(transport)
+    await s.initialize()
+    const controller = new AbortController()
+    assert.equal(await transport.send({ jsonrpc: "2.0", method: "notifications/test" }, {
+      signal: controller.signal, timeoutSeconds: 1,
+    }), null)
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0)
+  }, (m, res) => {
+    if (m.method !== "notifications/test") return false
+    res.writeHead(202).end("accepted")
+    return true
   })
 })
 

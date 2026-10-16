@@ -1,0 +1,307 @@
+$ npm run build
+
+> @trycua/cua@0.4.1 build
+> tsc -p tsconfig.json
+
+npm notice
+npm notice New major version of npm available! 10.9.9 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+
+exit=0
+
+$ node --test test/spaces-unit.test.mjs test/presence-netcode.test.mjs
+TAP version 13
+# node:fs:440
+#     return binding.readFileUtf8(path, stringToFlags(options.flag));
+#                    ^
+# Error: ENOENT: no such file or directory, open '/tmp/cua-promotion-20261016/libs/cua/crates/cua-spaces/assets/presence-conformance.json'
+#     at readFileSync (node:fs:440:20)
+#     at file:///tmp/cua-promotion-20261016/libs/cua/typescript/test/presence-netcode.test.mjs:18:3
+#     at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+#     at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+#     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+#   errno: -2,
+#   code: 'ENOENT',
+#   syscall: 'open',
+#   path: '/tmp/cua-promotion-20261016/libs/cua/crates/cua-spaces/assets/presence-conformance.json'
+# }
+# Node.js v22.23.3
+# Subtest: test/presence-netcode.test.mjs
+not ok 1 - test/presence-netcode.test.mjs
+  ---
+  duration_ms: 90.163073
+  type: 'test'
+  location: '/tmp/cua-promotion-20261016/libs/cua/typescript/test/presence-netcode.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: placement cannot be defaulted into
+ok 2 - placement cannot be defaulted into
+  ---
+  duration_ms: 2.220365
+  type: 'test'
+  ...
+# Subtest: shared placement without the acknowledgement is refused with code isolation
+ok 3 - shared placement without the acknowledgement is refused with code isolation
+  ---
+  duration_ms: 0.355312
+  type: 'test'
+  ...
+# Subtest: a falsy-but-present acknowledgement is still refused
+ok 4 - a falsy-but-present acknowledgement is still refused
+  ---
+  duration_ms: 0.291875
+  type: 'test'
+  ...
+# Subtest: an acknowledged shared placement and a dedicated placement both pass
+ok 5 - an acknowledged shared placement and a dedicated placement both pass
+  ---
+  duration_ms: 0.194531
+  type: 'test'
+  ...
+# Subtest: the turn lock serializes turns in call order
+ok 6 - the turn lock serializes turns in call order
+  ---
+  duration_ms: 12.357657
+  type: 'test'
+  ...
+# Subtest: a failed turn does not wedge the Space forever
+ok 7 - a failed turn does not wedge the Space forever
+  ---
+  duration_ms: 0.317813
+  type: 'test'
+  ...
+# Subtest: the adapter emits only what is new between polls
+ok 8 - the adapter emits only what is new between polls
+  ---
+  duration_ms: 988.034062
+  type: 'test'
+  ...
+# Subtest: every derived event says it is derived
+ok 9 - every derived event says it is derived
+  ---
+  duration_ms: 0.663021
+  type: 'test'
+  ...
+# Subtest: the adapter reports lost output instead of dropping it silently
+ok 10 - the adapter reports lost output instead of dropping it silently
+  ---
+  duration_ms: 1.072552
+  type: 'test'
+  ...
+# Subtest: a scrolled window with overlap emits only the unseen remainder
+ok 11 - a scrolled window with overlap emits only the unseen remainder
+  ---
+  duration_ms: 1.225625
+  type: 'test'
+  ...
+# Subtest: files and images are separated, links are captured, directories are not
+ok 12 - files and images are separated, links are captured, directories are not
+  ---
+  duration_ms: 1.391094
+  type: 'test'
+  ...
+# Subtest: approval detection fires only on a trailing prompt
+ok 13 - approval detection fires only on a trailing prompt
+  ---
+  duration_ms: 0.335416
+  type: 'test'
+  ...
+# Subtest: native CuaError variants map to stable codes
+ok 14 - native CuaError variants map to stable codes
+  ---
+  duration_ms: 0.68776
+  type: 'test'
+  ...
+# Subtest: startThread refuses bad input before any call
+ok 15 - startThread refuses bad input before any call
+  ---
+  duration_ms: 0.939375
+  type: 'test'
+  ...
+# Subtest: a thread's events stop when the run settles, with a state event per change
+ok 16 - a thread's events stop when the run settles, with a state event per change
+  ---
+  duration_ms: 11.368958
+  type: 'test'
+  ...
+# Subtest: events() is bounded even when the run never settles
+ok 17 - events() is bounded even when the run never settles
+  ---
+  duration_ms: 7.09776
+  type: 'test'
+  ...
+# Subtest: send is refused while a turn runs and delivered once idle; stop reports what it witnessed
+ok 18 - send is refused while a turn runs and delivered once idle; stop reports what it witnessed
+  ---
+  duration_ms: 0.92375
+  type: 'test'
+  ...
+# Subtest: send follows the server's published acceptsMessage, not the status word
+ok 19 - send follows the server's published acceptsMessage, not the status word
+  ---
+  duration_ms: 0.413959
+  type: 'test'
+  ...
+# Subtest: closing a dedicated thread deletes the Space it created
+ok 20 - closing a dedicated thread deletes the Space it created
+  ---
+  duration_ms: 0.337553
+  type: 'test'
+  ...
+# Subtest: McpSession handshakes once and turns isError into a ToolError with its kind
+ok 21 - McpSession handshakes once and turns isError into a ToolError with its kind
+  ---
+  duration_ms: 1.241719
+  type: 'test'
+  ...
+# Subtest: McpSession re-initializes once when the server says the session expired
+ok 22 - McpSession re-initializes once when the server says the session expired
+  ---
+  duration_ms: 0.402188
+  type: 'test'
+  ...
+# Subtest: TauriTransport carries messages through invoke and maps a notification to null
+ok 23 - TauriTransport carries messages through invoke and maps a notification to null
+  ---
+  duration_ms: 0.36125
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport sends the bearer, keeps the session id, and ends it on close
+ok 24 - McpHttpTransport sends the bearer, keeps the session id, and ends it on close
+  ---
+  duration_ms: 61.592656
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport reports a refused bearer as a 401 TransportError
+ok 25 - McpHttpTransport reports a refused bearer as a 401 TransportError
+  ---
+  duration_ms: 14.823907
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport rejects a pre-aborted listTools without sending it
+ok 26 - McpHttpTransport rejects a pre-aborted listTools without sending it
+  ---
+  duration_ms: 12.294375
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport aborts listTools while waiting for response headers
+ok 27 - McpHttpTransport aborts listTools while waiting for response headers
+  ---
+  duration_ms: 17.316042
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport keeps caller abort active through a partial response body
+ok 28 - McpHttpTransport keeps caller abort active through a partial response body
+  ---
+  duration_ms: 14.220468
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport keeps timeout active through a partial response body
+ok 29 - McpHttpTransport keeps timeout active through a partial response body
+  ---
+  duration_ms: 209.514063
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport succeeds with cancellation options and removes the listener
+ok 30 - McpHttpTransport succeeds with cancellation options and removes the listener
+  ---
+  duration_ms: 16.481719
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport reinitializes once after a real HTTP 404
+ok 31 - McpHttpTransport reinitializes once after a real HTTP 404
+  ---
+  duration_ms: 11.399166
+  type: 'test'
+  ...
+# Subtest: McpHttpTransport maps an accepted notification with a body to null
+ok 32 - McpHttpTransport maps an accepted notification with a body to null
+  ---
+  duration_ms: 10.383437
+  type: 'test'
+  ...
+# Subtest: no control file means the app is not running, and that is said plainly
+ok 33 - no control file means the app is not running, and that is said plainly
+  ---
+  duration_ms: 4.003125
+  type: 'test'
+  ...
+# Subtest: a malformed control file is a protocol error, not a silent fallback
+ok 34 - a malformed control file is a protocol error, not a silent fallback
+  ---
+  duration_ms: 4.409323
+  type: 'test'
+  ...
+# Subtest: pin sends the bearer the app wrote and the space id
+ok 35 - pin sends the bearer the app wrote and the space id
+  ---
+  duration_ms: 8.610625
+  type: 'test'
+  ...
+# Subtest: a non-local id is refused here rather than sent for the app to reject with 400
+ok 36 - a non-local id is refused here rather than sent for the app to reject with 400
+  ---
+  duration_ms: 2.579531
+  type: 'test'
+  ...
+# Subtest: streamWindow requires a freshly-read token
+ok 37 - streamWindow requires a freshly-read token
+  ---
+  duration_ms: 2.56125
+  type: 'test'
+  ...
+# Subtest: streamWindow passes the replica flag through
+ok 38 - streamWindow passes the replica flag through
+  ---
+  duration_ms: 8.125
+  type: 'test'
+  ...
+# Subtest: an HTTP 200 without an acknowledgement is an unproven effect, not a success
+ok 39 - an HTTP 200 without an acknowledgement is an unproven effect, not a success
+  ---
+  duration_ms: 5.771094
+  type: 'test'
+  ...
+# Subtest: a control-server error status surfaces with its status code
+ok 40 - a control-server error status surfaces with its status code
+  ---
+  duration_ms: 7.007656
+  type: 'test'
+  ...
+# Subtest: a control server that has gone away reads as host_unavailable
+ok 41 - a control server that has gone away reads as host_unavailable
+  ---
+  duration_ms: 7.680625
+  type: 'test'
+  ...
+# Subtest: the control file lives under CUA_HOME, like the Rust core
+ok 42 - the control file lives under CUA_HOME, like the Rust core
+  ---
+  duration_ms: 3.456719
+  type: 'test'
+  ...
+1..42
+# tests 42
+# suites 0
+# pass 41
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1620.02151
+
+exit=1
+
+$ npm run typecheck
+
+> @trycua/cua@0.4.1 typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+exit=0

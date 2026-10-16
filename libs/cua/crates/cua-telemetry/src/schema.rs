@@ -394,8 +394,17 @@ pub const KEYVAULT_METHODS: &[&str] = &["os_key_store", "passphrase", "recovery_
 pub const SHARE_ACTIONS: &[&str] = &["share", "unshare", "change_role"];
 /// The role a Space is shared with.
 pub const SHARE_ROLES: &[&str] = &["viewer", "editor", "none"];
-/// Updater steps.
-pub const UPDATE_ACTIONS: &[&str] = &["checked", "found", "not_found", "installed", "failed"];
+/// Updater steps. In the product's words: `found` is update_available,
+/// `downloaded` is update_downloaded (the background download finished),
+/// `installed` is update_installed.
+pub const UPDATE_ACTIONS: &[&str] = &[
+    "checked",
+    "found",
+    "not_found",
+    "downloaded",
+    "installed",
+    "failed",
+];
 /// Update channels (`cua-spaces-app-core` `about::UpdateChannel`).
 pub const UPDATE_CHANNELS: &[&str] = &["stable", "beta"];
 /// Who started an update check.
@@ -1258,7 +1267,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "action",
                 Kind::Enum(UPDATE_ACTIONS),
-                "A check, an update found or not, installed, or failed.",
+                "A check, an update found or not, downloaded in the background, installed, or failed.",
             ),
             p(
                 "channel",

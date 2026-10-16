@@ -108,7 +108,8 @@ Each is an existing Tauri command under a host-neutral name:
 | `agents.detail`, `.readFile`, `.restoreFile`, `.addRoutine`, `.setRoutine`, `.removeRoutine`, `.allowComputer`, `.revokeComputer` | `agents_tool` (the tools `PersistentModel` runs; see `ops/agent-detail.ts`) |
 
 Events (`HostEvent`): `spaces.changed`, `spaces.createProgress`,
-`machines.changed`, `settings.changed`, `keyvault.changed`,
+`machines.changed`, `settings.changed`, `update.changed` (the host's updater
+moved on: ask `update.get` again), `keyvault.changed`,
 `session.signedIn`, `session.signInFailed`, `session.signedOut` and
 `agents.changed` (no Tauri event yet; the store also refetches agents when a
 watched run starts or ends, and when Spaces change). They
@@ -167,7 +168,7 @@ speaks it as is:
 - Events arrive as `window` `cua:event` CustomEvents (`detail: { event }`):
   `spaces.changed` (it also refreshes machines), `machines.changed` (this
   Mac's host status or the account's devices), `keyvault.changed`,
-  `settings.changed`, `session.changed` and `agents.changed`.
+  `settings.changed`, `update.changed`, `session.changed` and `agents.changed`.
 - `spaces.cancelCreate {pendingId}`, `host.status`, `keyvault.approve
   {requestId, items}`, `keyvault.deny {requestId}`, `keyvault.revokeGrant
   {id}` and the seven `agents.*` methods keep the operation's own name and
@@ -423,6 +424,8 @@ mechanism. Types are in `contracts/settings.ts`, `contracts/devices.ts` and
 | `about.get` | `{}` | `AboutInput` | `plugin:app\|version`, `get_environment` (no updater) | `UpdatesModel.input` |
 | `about.set` | `{ autoCheck?, autoInstall?, channel? }` | `AboutInput` | unsupported | `UpdatesModel.setAutoCheck/setAutoInstall/choose(channel:)` |
 | `about.checkNow` | `{}` | `AboutInput` | unsupported | `UpdatesModel.checkNow` |
+| `update.get` | `{}` | `UpdateState` (`status`, `currentVersion`, `version`, `percent`, `notesUrl`, `message`) | unsupported | `UpdatesModel.updateState` (Sparkle driven by `InAppUpdateDriver`; Electron: `update-state.ts`) |
+| `update.install` | `{}` | `UpdateState` | unsupported | `UpdatesModel.installUpdate`: "Restart to update". Only a click calls it; with nothing downloaded it changes nothing |
 | `experiments.get` / `.set` | `{}` / `{ experiments }` | `Experiments` | UI storage `cua.settings.experiments` | `app.info`, `settings.choose {row: "experiment:…"}` (routed today) |
 | `loginItem.get` / `.set` | `{}` / `{ on }` | `{ status, providesSpaces, runsAgents }` | `login_item_status` / `login_item_set`, `host_status`, `agents_tool` | `LoginItem.status()`, `register/unregister`, `HostModel.provideSpaces`, `PersistentModel` |
 | `loginItem.openSettings` | `{}` | `null` | `host_open_settings` | `SMAppService.openSystemSettingsLoginItems()` |

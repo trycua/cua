@@ -2648,6 +2648,56 @@
         "currentTeamId"
       ]
     },
+    "UpdateState": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "idle",
+            "checking",
+            "available",
+            "downloading",
+            "downloaded",
+            "error"
+          ]
+        },
+        "currentVersion": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "notesUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "currentVersion",
+        "version",
+        "percent",
+        "notesUrl",
+        "message"
+      ]
+    },
     "VolumeOverview": {
       "type": "object",
       "properties": {
@@ -5272,6 +5322,12 @@
         ]
       }
     },
+    "update.get": {
+      "$ref": "#/$defs/UpdateState"
+    },
+    "update.install": {
+      "$ref": "#/$defs/UpdateState"
+    },
     "volume.approve": {
       "type": "null"
     },
@@ -6683,6 +6739,12 @@
           "supported"
         ]
       }
+    },
+    "update.get": {
+      "$ref": "#/$defs/UpdateState"
+    },
+    "update.install": {
+      "$ref": "#/$defs/UpdateState"
     },
     "volume.approve": {
       "type": "null"

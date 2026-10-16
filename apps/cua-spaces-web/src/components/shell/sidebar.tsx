@@ -17,6 +17,7 @@ import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
 import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
+import { SidebarUpdateIndicator } from "./update-indicator";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -65,7 +66,10 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <AccountFooter />
+      <div className="mt-auto">
+        <SidebarUpdateIndicator />
+        <AccountFooter />
+      </div>
       <ResizeHandle />
     </aside>
   );

@@ -320,6 +320,14 @@ chosen with `click` on the `AXMenuItem` (or in one call with
 `set_value` on the popup). Keyboard navigation of such a menu with
 `press_key` is not the route; pick the item by element.
 
+Opening a menu also brings the app's window above the user's window for a
+moment, and no client can stop that. So in the background, a `click` on a
+web `<select>` in Chrome or an Electron app is refused before anything is
+sent (`select_menu_would_raise_window`): choose the option with
+`set_value` on the same element, which types the option's text into the
+closed control and never opens the menu. Native popups and context menus
+still open and flash the window briefly.
+
 ### Apps that activate themselves
 
 Some apps activate themselves in answer to input, even in the background:

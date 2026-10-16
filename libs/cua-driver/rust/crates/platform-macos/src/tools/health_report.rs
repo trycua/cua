@@ -371,7 +371,7 @@ fn current_bundle_identifier() -> Option<String> {
 /// Read in-process from the `kern.osproductversion` sysctl. The previous
 /// implementation spawned `/usr/bin/sw_vers` — a full fork/exec (several
 /// ms) on every health_report call — to read the same value.
-fn sw_vers_product_version() -> Option<String> {
+pub(crate) fn sw_vers_product_version() -> Option<String> {
     let name = std::ffi::CString::new("kern.osproductversion").ok()?;
     let mut buf = [0u8; 64];
     let mut len = buf.len();

@@ -12,7 +12,7 @@
 //! Window discovery remains available; input authorization does not.
 
 use std::collections::HashSet;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::process::Command;
 use std::time::Duration;
 
@@ -343,14 +343,10 @@ fn is_trusted_kwin(pid: u32, helper_owner: &str) -> bool {
         return false;
     }
 
-    let executable = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
-    match executable {
-        Some(path) => {
-            let metadata = std::fs::metadata(&path).ok();
-            path.file_name().and_then(|name| name.to_str()) == Some("kwin_wayland")
-                && metadata
-                    .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
-        }
+    // The running image, so KWin stays trusted after a package update replaces
+    // its file and before the next login (see proc_fs::running_executable).
+    match crate::proc_fs::running_executable(pid) {
+        Some(exe) => exe.is_system_program("kwin_wayland"),
         None => true,
     }
 }

@@ -73,6 +73,11 @@ struct State_ {
     /// Statuses the next machine registrations answer with, in order
     /// (a relay mid-deploy, a proxy in front of it).
     fail_register: std::collections::VecDeque<u16>,
+    /// Statuses the next machine reads (GET) answer with, in order.
+    fail_reads: std::collections::VecDeque<u16>,
+    /// Every machine read answers 503, as the proxy in front of the
+    /// relay does while it has no backend.
+    reads_down: bool,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
@@ -475,8 +480,19 @@ async fn pairing_revoke(
     }
 }
 
+/// A machine read the fake relay was told to fail (`fail_reads`,
+/// `set_reads_down`), as the proxy in front of a relay answers.
+fn failed_read(st: &mut State_) -> Option<Response> {
+    let code = st.fail_reads.pop_front().or(st.reads_down.then_some(503))?;
+    let status = StatusCode::from_u16(code).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+    Some((status, "no available server").into_response())
+}
+
 async fn list(State(s): State<S>, headers: HeaderMap) -> Response {
-    let st = s.lock().unwrap();
+    let mut st = s.lock().unwrap();
+    if let Some(r) = failed_read(&mut st) {
+        return r;
+    }
     if let Err(r) = st.gate(&headers) {
         return r;
     }
@@ -520,7 +536,10 @@ fn fake_jwks() -> serde_json::Value {
 }
 
 async fn get_one(State(s): State<S>, headers: HeaderMap, Path(id): Path<String>) -> Response {
-    let st = s.lock().unwrap();
+    let mut st = s.lock().unwrap();
+    if let Some(r) = failed_read(&mut st) {
+        return r;
+    }
     match authorize(&st, &headers, &id, false) {
         Ok((m, _)) => Json(m).into_response(),
         Err(r) => r,
@@ -1173,6 +1192,22 @@ impl FakeRelay {
             .unwrap()
             .fail_register
             .extend(statuses.iter().copied());
+    }
+
+    /// The next machine reads (the list, or one machine) answer with
+    /// `statuses`, in order, before the relay answers normally again.
+    pub fn fail_reads(&self, statuses: &[u16]) {
+        self.state
+            .lock()
+            .unwrap()
+            .fail_reads
+            .extend(statuses.iter().copied());
+    }
+
+    /// While `down`, every machine read answers 503 "no available server"
+    /// (a relay deploy, as its proxy answers).
+    pub fn set_reads_down(&self, down: bool) {
+        self.state.lock().unwrap().reads_down = down;
     }
 
     /// Machine registrations received so far (refused ones too).

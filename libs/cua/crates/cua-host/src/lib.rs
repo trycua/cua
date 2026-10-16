@@ -54,8 +54,8 @@ pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, Pen
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES, PermissionHint, SetupOptions,
-    SpacesDaemon, local_network_hint, permission_hints,
+    HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES, PermissionHint, RELAY_HICCUP_GRACE,
+    SetupOptions, SpacesDaemon, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
 pub use pairing::{
@@ -164,6 +164,21 @@ impl Error {
             Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
             Error::Relay(m) | Error::Download(m) => status_in(m),
             _ => None,
+        }
+    }
+
+    /// A relay failure that may pass on its own: the relay (or the proxy in
+    /// front of it, which answers 503 "no available server" while the
+    /// relay's one pod is replaced) answered 429, 502, 503 or 504, or it
+    /// was not reached at all (offline, DNS, a timeout). Not a refusal, a
+    /// missing machine or an answer that could not be read.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Error::Relay(m) => match status_in(m) {
+                Some(code) => matches!(code, 429 | 502 | 503 | 504),
+                None => !m.starts_with("bad relay response"),
+            },
+            _ => false,
         }
     }
 }

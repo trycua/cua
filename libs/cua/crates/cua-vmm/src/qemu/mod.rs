@@ -477,10 +477,6 @@ impl QemuRuntime {
     ) -> Result<()> {
         match self.launch_once(st, spec, loadvm.clone(), false).await {
             Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
-                // A host whose KVM opens but cannot run a vCPU (a broken
-                // nested-virtualization setup oopses in vcpu creation) leaves
-                // QEMU alive with a dead vCPU thread and a QMP monitor that
-                // never answers. Retry once under TCG instead of failing.
                 tracing::warn!(
                     sandbox = %st.name,
                     "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
@@ -934,8 +930,6 @@ pub fn usernet_established(table: &str, host_port: u16, guest_port: u16) -> bool
     })
 }
 
-/// Whether a launch failed because QEMU stopped answering its QMP monitor,
-/// which under KVM means the vCPU never started.
 fn kvm_stalled(e: &VmmError) -> bool {
     matches!(e, VmmError::Qmp(m) if m.contains("timed out"))
 }
@@ -1025,7 +1019,6 @@ pub async fn grant_kvm(
 }
 
 /// Install QEMU through the host package manager (explicit opt-in).
-/// Tries per package-manager step in [`install_qemu`].
 const PACKAGE_ATTEMPTS: u32 = 3;
 
 pub async fn install_qemu() -> Result<()> {
@@ -1047,10 +1040,6 @@ pub async fn install_qemu() -> Result<()> {
             let program = program.display().to_string();
             tracing::info!("installing QEMU with {manager:?} (sudo -n)");
             for args in manager.commands(&program) {
-                // A package mirror answering 5xx for a moment should not end a
-                // one-shot install: retry each step, and let a refresh that
-                // keeps failing fall through to the install, which still
-                // works from the package lists the host already has.
                 let refresh = args.last() == Some(&"update");
                 let mut attempt = 1;
                 loop {

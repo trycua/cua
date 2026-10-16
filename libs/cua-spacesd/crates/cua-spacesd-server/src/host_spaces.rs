@@ -435,11 +435,7 @@ impl HostSpacesService for HostSpacesImpl {
         let mut message = request.into_inner();
         message.machine.clear();
         client
-            .diagnose_host(with_caller(
-                message,
-                &who,
-                Some(Duration::from_secs(30)),
-            )?)
+            .diagnose_host(with_caller(message, &who, Some(Duration::from_secs(30)))?)
             .await
     }
 

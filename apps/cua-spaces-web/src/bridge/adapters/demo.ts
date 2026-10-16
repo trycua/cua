@@ -11,6 +11,7 @@ import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from 
 import type { AgentSetupRow, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
 import type { KvItem } from "../contracts/keyvault";
+import type { UpdateState } from "../contracts/settings";
 import type { SpaceOs, SpaceRow } from "../contracts/spaces";
 import {
   DEFAULT_SETTINGS,
@@ -76,12 +77,17 @@ export interface DemoOptions {
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
    * Electron shell passes its own system and architecture). */
   platform?: DemoPlatform;
+  /** Where the updater is at start (`?demo=update-ready`, `?demo=update-downloading`). */
+  update?: Partial<UpdateState>;
 }
+
+const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
 /** `?demo=fresh` (signed out, first run), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
- * SwiftUI host's shape) and `?demo=unenrolled` (this device not enrolled). */
+ * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
+ * `?demo=update-ready` (an update is downloaded) and `?demo=update-downloading`. */
 export function demoOptionsFromSearch(search: string): DemoOptions {
   const flags = new Set((new URLSearchParams(search).get("demo") ?? "").split(",").filter(Boolean));
   return {
@@ -93,6 +99,11 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
+    ...(flags.has("update-ready")
+      ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
+      : flags.has("update-downloading")
+        ? { update: { status: "downloading" as const, version: "0.9.3", percent: 42, notesUrl: DEMO_NOTES } }
+        : {}),
   };
 }
 
@@ -468,7 +479,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
-    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
+    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...demoRelayUsageHandlers(ctx),
     ...demoSpaceDetailHandlers(ctx),

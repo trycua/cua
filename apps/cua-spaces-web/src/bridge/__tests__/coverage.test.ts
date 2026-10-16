@@ -88,6 +88,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "about.get": {},
   "about.set": { channel: "beta" },
   "about.checkNow": {},
+  "update.get": {},
+  "update.install": {},
   "experiments.get": {},
   "experiments.set": { experiments: { cuaVolume: true } },
   "loginItem.get": {},

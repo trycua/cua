@@ -303,7 +303,7 @@ export class FixtureSystem implements SystemServices {
 export const HOST_METHODS = [
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
-  "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+  "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
@@ -315,7 +315,7 @@ export const HOST_METHODS = [
 export const HOST_OPS = [
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
-  "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+  "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",

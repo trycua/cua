@@ -52,7 +52,7 @@ import type {
   WizardEnv,
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
-import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput } from "./settings";
+import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry } from "./share";
 import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
@@ -256,6 +256,18 @@ const AboutShape = ref(
     channel: oneOf("stable", "beta"),
     lastCheck: nullable(str),
     checking: bool,
+  }),
+);
+
+const UpdateShape = ref(
+  "UpdateState",
+  obj<UpdateState>()({
+    status: oneOf("idle", "checking", "available", "downloading", "downloaded", "error"),
+    currentVersion: str,
+    version: nullable(str),
+    percent: nullable(num),
+    notesUrl: nullable(str),
+    message: nullable(str),
   }),
 );
 
@@ -842,6 +854,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "about.get": AboutShape,
   "about.set": AboutShape,
   "about.checkNow": AboutShape,
+  "update.get": UpdateShape,
+  "update.install": UpdateShape,
   "experiments.get": ExperimentsShape,
   "experiments.set": ExperimentsShape,
   "loginItem.get": LoginItemShape,
@@ -1155,6 +1169,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "about.get": AboutShape,
   "about.set": AboutShape,
   "about.checkNow": AboutShape,
+  "update.get": UpdateShape,
+  "update.install": UpdateShape,
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,

@@ -225,6 +225,7 @@ struct BridgeContractTests {
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
+            ("update.get", [:]), ("update.install", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
             ("devices.createPairingCode", ["team": NSNull()]), ("devices.pairingCodes", [:]),

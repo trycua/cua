@@ -319,6 +319,8 @@ export type HostEvent =
   | { type: "spaces.createProgress"; progress: CreateProgress }
   | { type: "machines.changed" }
   | { type: "settings.changed" }
+  /** The host's updater moved on (found, downloading, ready): ask `update.get` again. */
+  | { type: "update.changed" }
   | { type: "keyvault.changed" }
   /** Tauri `auth:signed-in`. */
   | { type: "session.signedIn"; identity?: string }
@@ -343,6 +345,7 @@ export const HOST_EVENTS = [
   "spaces.createProgress",
   "machines.changed",
   "settings.changed",
+  "update.changed",
   "keyvault.changed",
   "session.signedIn",
   "session.signInFailed",

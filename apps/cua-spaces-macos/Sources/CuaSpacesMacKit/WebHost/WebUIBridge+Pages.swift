@@ -89,6 +89,18 @@ extension WebUIBridge {
             input["checking"] = true
             return input
 
+        // The in-app update indicator: Sparkle downloads in the background,
+        // and the page asks to restart.
+        case "update.get": return model.updates.updateState.json
+        case "update.install":
+            guard model.updates.updater != nil else { throw Failure.unsupported("Updates are off in this build") }
+            // The app quits to install: answer first, then start.
+            let answer = model.updates.updateState.json
+            if model.updates.updateState.status == .downloaded {
+                DispatchQueue.main.async { [model] in model.updates.installUpdate() }
+            }
+            return answer
+
         // Settings, launch at login
         case "loginItem.get":
             model.readLoginItem()

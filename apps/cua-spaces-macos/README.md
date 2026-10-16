@@ -118,7 +118,7 @@ with `{id, ok: true, result}` or `{id, ok: false, error: {code, message}}`
 `native_only`, `forbidden`, `unsupported`, `failed`). `app.info` lists the
 methods. Native events arrive as `cua:event` window events (`spaces.changed`,
 `machines.changed`, `keyvault.changed`, `session.changed`, `settings.changed`,
-`agents.changed`, `spaces.createProgress`, `spaces.newRequested`,
+`agents.changed`, `update.changed`, `spaces.createProgress`, `spaces.newRequested`,
 `settings.openRequested`). Results are the
 core's records as the SwiftUI views get them (camelCase fields; enums as the
 case name, or `{type, ...}` with a payload). `keyvault.get` also carries the
@@ -341,7 +341,24 @@ component released last, so a `/releases/latest/download/` URL would not
 always be the Spaces feed; a fixed tag always is. The app is outside the App
 Sandbox, so it needs no `SUEnableInstallerLauncherService`.
 `SUVerifyUpdateBeforeExtraction` checks the signature before anything is
-unpacked.
+unpacked (Sparkle does this whatever the user driver).
+
+Sparkle shows no window of its own. `SparkleUpdater` runs an `SPUUpdater`
+with a custom user driver (`UpdateUserDriver`, over the plain-value
+`UpdateFlow` state machine in `UpdateDriver.swift`). It checks at launch and
+periodically (`SUEnableAutomaticChecks` is on; an explicit off is kept). An
+update found by a scheduled check downloads and extracts at once; Sparkle's
+ready-to-install reply is then held, and nothing restarts the app until the
+page calls `update.install` ("Restart to update"). With "install updates
+automatically" on, Sparkle's silent path reaches the same state through
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`. The page
+reads the state with `update.get` (`{status, currentVersion, version,
+percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
+`downloading`, `downloaded` or `error`) and refetches on the `update.changed`
+event. Check Now (Settings, About) is quiet too: nothing found ends silently,
+and only an error from a check the user started shows a small "Update Error!"
+alert; background errors are logged. Usage telemetry records `found`,
+`not_found`, `downloaded`, `installed` and `failed`.
 
 Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to
 "Update to: Beta" (`AppSettings.updateChannel`) are offered.

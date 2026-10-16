@@ -59,9 +59,9 @@ describe("relay.usage", () => {
     const past = relayUsageView(core, { ...demoRelayUsage(), hoursUsed: 20.24, softLimitReached: true, reasons: ["hours"], team: { id: "acme", seats: 3 } })!;
     expect(past.line).toBe("Live sessions 1 of 2 · Relay hours 20.2 of 20 this month · Team pool, 3 seats");
     expect(past.notice).toEqual({
-      text: "You've used your free relay allowance for this month. Your Spaces keep working. Upgrade for more.",
+      text: "You've used 20.2 of your 20 free relay hours this month. Your Spaces keep working. Upgrade for more.",
       upgrade: "Upgrade",
-      upgradeUrl: "https://cua.ai/pricing",
+      upgradeUrl: "https://app.cua.ai/buy/pro",
       dismiss: "Dismiss",
       dismissKey: "2026-10:hours",
     });

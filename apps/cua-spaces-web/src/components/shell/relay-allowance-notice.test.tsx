@@ -59,13 +59,36 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     const { view, opened } = host(reached);
     view();
     const notice = await screen.findByRole("status");
-    expect(notice.textContent).toContain("You've used your free relay allowance for this month. Your Spaces keep working.");
+    expect(notice.textContent).toContain("You've used 20.2 of your 20 free relay hours this month. Your Spaces keep working. Upgrade for more.");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-    await waitFor(() => expect(opened).toEqual(["https://cua.ai/pricing"]));
+    // A free account goes to Pro's checkout, not the pricing page.
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro"]));
   });
 
-  it("with no page from the relay, Upgrade opens the host's account app billing page", async () => {
-    const staging = host({ ...reached, upgradeUrl: null }, "https://app.staging.cua.ai");
+  it("Pro goes to the Teams checkout", async () => {
+    const { view, opened } = host({ ...reached, plan: "pro" });
+    view();
+    fireEvent.click(await screen.findByRole("button", { name: "Upgrade" }));
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams"]));
+  });
+
+  it("at 80% of the free hours it warns early, with the usage, and blocks nothing", async () => {
+    const { view } = host({ ...demoRelayUsage(), hoursUsed: 16.5 });
+    view();
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toContain("You've used 16.5 of your 20 free relay hours this month. Your Spaces keep working, even past the limit.");
+  });
+
+  it("says sessions apart from hours", async () => {
+    const { view } = host({ ...demoRelayUsage(), liveSessions: 3, softLimitReached: true, reasons: ["sessions"] });
+    view();
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toContain("You have 3 live sessions open. Your free plan includes 2 at once.");
+    expect(notice.textContent).not.toContain("relay hours");
+  });
+
+  it("with no plan named and no page from the relay, Upgrade opens the host's account app billing page", async () => {
+    const staging = host({ ...reached, plan: "", upgradeUrl: null }, "https://app.staging.cua.ai");
     staging.view();
     await waitFor(() => {
       fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
@@ -73,7 +96,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice>", () => {
     });
     cleanup();
     // A host that names none: the production account app.
-    const prod = host({ ...reached, upgradeUrl: null });
+    const prod = host({ ...reached, plan: "", upgradeUrl: null });
     prod.view();
     fireEvent.click(await screen.findByRole("button", { name: "Upgrade" }));
     await waitFor(() => expect(prod.opened).toEqual(["https://app.cua.ai/billing"]));

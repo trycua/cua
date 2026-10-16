@@ -144,6 +144,7 @@ function Notice({ children }: { children: ReactNode }) {
 /** The link, its QR code, the commands, and how long it lasts. */
 function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: Machine[] }) {
   const [shell, setShell] = useState<Shell>("sh");
+  const { openExternal } = useSession();
   const { phase, code } = pairing;
 
   if (phase === "idle" || phase === "minting" || !code) {
@@ -167,14 +168,19 @@ function PairingPanel({ pairing, machines }: { pairing: PairingHook; machines: M
     return (
       <div className="mt-5 flex items-center gap-2.5 rounded-lg border bg-card px-3 py-3 text-[13px]" data-pairing-added data-pairing-team={team?.phase}>
         <CheckIcon className="size-4 shrink-0 text-success" aria-hidden />
-        <span>
+        <span className="min-w-0 flex-1">
           {name ? `Added ${name}.` : "Added the computer."}{" "}
           {team?.phase === "added"
             ? "Your team can use it now."
             : team?.phase === "failed"
-              ? `It isn't on your team yet: ${team.error ?? "something went wrong"}`
+              ? `It isn't on your team yet. ${team.error ?? "Something went wrong."}`
               : "It shows in your machines."}
         </span>
+        {team?.phase === "failed" && team.upgradeUrl ? (
+          <Button size="sm" data-pairing-upgrade="" onClick={() => void openExternal(team.upgradeUrl!).catch(() => {})}>
+            Upgrade
+          </Button>
+        ) : null}
       </div>
     );
   }

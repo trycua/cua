@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.1](https://github.com/trycua/cua/compare/sandbox-v0.9.0...sandbox-v0.9.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* lock the cua SDK checkout at 0.3.1 ([#4593](https://github.com/trycua/cua/issues/4593)) ([fcb386f](https://github.com/trycua/cua/commit/fcb386f4f958d1357af31ccb0056376f06d9db37))
+* **sandbox:** report directory types in file listings ([#5175](https://github.com/trycua/cua/issues/5175)) ([1e53b1c](https://github.com/trycua/cua/commit/1e53b1cef43a650ff35a7299c470963244b84ce0))
+* **sandbox:** roll back partially opened tunnels ([#5174](https://github.com/trycua/cua/issues/5174)) ([ca6a0e2](https://github.com/trycua/cua/commit/ca6a0e21050966e8ed6a3404b7ba2843b1cf6878))
+
 ## [0.9.0](https://github.com/trycua/cua/compare/sandbox-v0.8.0...sandbox-v0.9.0) (2026-10-01)
 
 

@@ -63,6 +63,8 @@ cua-driver lands where its own installer puts it: `~/.local/bin/cua-driver` (or 
 
 On Linux and macOS, when the bin dir is not on PATH, install.sh in a terminal asks once ("Add ... to PATH in ~/.zshrc? [Y/n]", Enter = yes). Without a terminal, or with `--yes`, it prints the exact one-line command for your shell instead and never edits a profile unless you pass `--modify-path`; `--no-modify-path` never edits it. `--pair` runs the CLI by its absolute path, so it works before PATH changes. install.ps1 adds the user PATH by default (`-NoModifyPath` opts out). `--mode` writes `~/.cua/spaces-install-mode`, which the app reads on first launch.
 
+`--pair` (`-Pair`) on a computer that already has Cua reuses what is there: a `cua` that knows `host setup --pair` (on PATH, in `~/.local/bin`, or inside the Cua Spaces app) and, on macOS and Linux, the installed app. It then downloads nothing and does not read the release manifest. `--prefix`, `--version` and `CUA_INSTALL_REINSTALL=1` install anyway; an older `cua` without `--pair` is replaced as before.
+
 MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows Electron app (`apps/cua-spaces-desktop`) bundles it itself, and the Tauri bundles (disabled) carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
 
 ## Release manifest

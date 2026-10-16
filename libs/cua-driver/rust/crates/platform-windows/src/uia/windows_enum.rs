@@ -163,9 +163,6 @@ where
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
-/// Run a focused-document input probe through the same bounded UIA worker as
-/// window enumeration and hit testing. The caller decides whether a timeout
-/// may fall through to another input path.
 pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
 where
     T: Send + 'static,

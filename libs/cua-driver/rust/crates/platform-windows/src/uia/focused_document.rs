@@ -1,10 +1,3 @@
-//! Conservative text insertion for the exact currently focused UIA Document.
-//!
-//! This is a capability probe for no-element foreground typing. It never
-//! activates a window or selects a target. Before the write, every failed
-//! predicate leaves the existing input route available. Once SetValue starts,
-//! failures are unverifiable and must not be retried through another route.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -28,9 +21,6 @@ pub(crate) enum FocusedDocumentTypeOutcome {
     Unknown(&'static str),
 }
 
-/// Try the focused Document route on the bounded, single-flight UIA worker.
-/// A busy worker, or a failed worker before the write stage, preserves the
-/// existing input route. Once the write stage is reached, failures are unknown.
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
     expected_pid: Option<u32>,
@@ -78,7 +68,6 @@ fn try_type_focused_document_append_unbounded(
     if coinit.is_err() {
         return focused_document_not_applicable(thread_id, Some(coinit.0), "co_initialize_failed");
     }
-    // Declared before UIA interfaces so they drop before CoUninitialize.
     let _com = ComApartment;
     if cancelled.load(Ordering::Acquire) {
         return focused_document_not_applicable(
@@ -100,8 +89,6 @@ fn try_type_focused_document_append_unbounded(
         if expected_pid.is_some_and(|pid| pid != target_pid) {
             return not_applicable("target_pid_mismatch");
         }
-        // The existing type_text ValuePattern route distrusts Chromium UIA
-        // echoes because they do not prove that the renderer observed a write.
         if crate::input::is_chromium_target_window(target_hwnd) {
             return not_applicable("chromium_valuepattern_echo_untrusted");
         }
@@ -191,8 +178,6 @@ fn try_type_focused_document_append_unbounded(
                 Err(stage) => return not_applicable(stage),
             }
         }
-        // If the UIA deadline fired during pre-write checks, do not start a
-        // write after the caller has already stopped waiting for a result.
         write_started.store(true, Ordering::SeqCst);
         if cancelled.load(Ordering::SeqCst) {
             return not_applicable("cancelled_before_write");

@@ -1939,7 +1939,7 @@ mod tests {
     }
 
     async fn setup_names(
-        ready: bool,
+        report: cua_vmm::auto::DoctorReport,
         components: &[&str],
         dry_run: bool,
         installs: bool,
@@ -1950,7 +1950,7 @@ mod tests {
             false => Err(super::VmmError::PermissionDenied("sudo".into())),
         };
         let kvm = async |_| kvm_step();
-        super::setup_with(qemu_report(ready), &components, dry_run, install, kvm)
+        super::setup_with(report, &components, dry_run, install, kvm)
             .await
             .unwrap()
             .into_iter()
@@ -1960,25 +1960,48 @@ mod tests {
 
     #[tokio::test]
     async fn the_kvm_step_follows_qemu_once_it_is_present() {
-        assert_eq!(setup_names(false, &[], false, true).await, ["qemu", "kvm"]);
         assert_eq!(
-            setup_names(true, &["qemu"], false, true).await,
+            setup_names(qemu_report(false), &[], false, true).await,
             ["qemu", "kvm"]
         );
         assert_eq!(
-            setup_names(false, &["qemu"], true, true).await,
+            setup_names(qemu_report(true), &["qemu"], false, true).await,
+            ["qemu", "kvm"]
+        );
+        assert_eq!(
+            setup_names(qemu_report(false), &["qemu"], true, true).await,
             ["qemu", "kvm"]
         );
     }
 
     #[tokio::test]
     async fn a_failed_qemu_install_has_no_kvm_step() {
-        assert_eq!(setup_names(false, &["qemu"], false, false).await, ["qemu"]);
+        assert_eq!(
+            setup_names(qemu_report(false), &["qemu"], false, false).await,
+            ["qemu"]
+        );
     }
 
     #[tokio::test]
     async fn components_without_qemu_have_no_kvm_step() {
-        assert_eq!(setup_names(false, &["lume"], false, false).await, ["lume"]);
-        assert!(setup_names(true, &[], false, true).await.is_empty());
+        assert_eq!(
+            setup_names(qemu_report(false), &["lume"], false, false).await,
+            ["lume"]
+        );
+        assert!(
+            setup_names(qemu_report(true), &[], false, true)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn installed_qemu_denied_kvm_still_gets_a_kvm_step() {
+        let mut report = qemu_report(false);
+        report.backends[0].provisionable = false;
+        report.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+        let system = Some("/usr/bin/qemu-system-x86_64".into());
+        report.qemu.binaries.insert("x86_64".into(), system);
+        assert_eq!(setup_names(report, &[], false, true).await, ["kvm"]);
     }
 }

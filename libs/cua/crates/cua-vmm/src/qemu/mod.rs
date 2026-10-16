@@ -1785,6 +1785,7 @@ mod tests {
 
     fn recording(
         calls: &std::sync::Mutex<Vec<String>>,
+        group: &'static str,
         sudo_ok: bool,
     ) -> impl AsyncFn(&str, &[&str]) -> Result<String> {
         async move |program: &str, args: &[&str]| {
@@ -1793,7 +1794,7 @@ mod tests {
                 .unwrap()
                 .push(format!("{program} {}", args.join(" ")));
             match program {
-                "stat" => Ok("kvm\n".to_string()),
+                "stat" => Ok(format!("{group}\n")),
                 "id" => Ok("alice\n".to_string()),
                 _ if sudo_ok => Ok(String::new()),
                 _ => Err(VmmError::PermissionDenied("a password is required".into())),
@@ -1808,10 +1809,15 @@ mod tests {
     #[tokio::test]
     async fn denied_kvm_adds_the_user_to_the_kvm_group_with_sudo() {
         let calls = Default::default();
-        let note = grant_kvm(denied(), Some("bob".into()), false, recording(&calls, true))
-            .await
-            .unwrap()
-            .unwrap();
+        let note = grant_kvm(
+            denied(),
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", true),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let calls = calls.into_inner().unwrap();
         let sudo = calls.last().unwrap();
         assert!(sudo.starts_with("sudo -n usermod -aG kvm "), "{calls:?}");
@@ -1827,7 +1833,7 @@ mod tests {
             denied(),
             Some(String::new()),
             false,
-            recording(&calls, true),
+            recording(&calls, "kvm", true),
         )
         .await
         .unwrap()
@@ -1845,7 +1851,7 @@ mod tests {
             denied(),
             Some("bob".into()),
             false,
-            recording(&calls, false),
+            recording(&calls, "kvm", false),
         )
         .await
         .unwrap_err();
@@ -1854,13 +1860,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn kvm_owned_by_another_group_is_the_hint_without_sudo() {
+        let calls = Default::default();
+        let err = grant_kvm(
+            denied(),
+            Some("bob".into()),
+            false,
+            recording(&calls, "root", true),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
+        let calls = calls.into_inner().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("sudo")), "{calls:?}");
+    }
+
+    #[tokio::test]
     async fn missing_kvm_runs_nothing_and_is_only_a_note() {
         let calls = Default::default();
         let missing = Err(std::io::ErrorKind::NotFound.into());
-        let note = grant_kvm(missing, Some("bob".into()), false, recording(&calls, true))
-            .await
-            .unwrap()
-            .unwrap();
+        let note = grant_kvm(
+            missing,
+            Some("bob".into()),
+            false,
+            recording(&calls, "kvm", true),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(note.contains("/dev/kvm is missing"), "{note}");
         assert!(calls.lock().unwrap().is_empty());
     }
@@ -1868,10 +1895,15 @@ mod tests {
     #[tokio::test]
     async fn dry_run_only_says_it_would_add_the_user() {
         let calls = Default::default();
-        let note = grant_kvm(denied(), Some("bob".into()), true, recording(&calls, true))
-            .await
-            .unwrap()
-            .unwrap();
+        let note = grant_kvm(
+            denied(),
+            Some("bob".into()),
+            true,
+            recording(&calls, "kvm", true),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(note.starts_with("would: add "), "{note}");
         assert!(note.ends_with(" to the kvm group"), "{note}");
         assert!(calls.lock().unwrap().is_empty());

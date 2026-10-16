@@ -51,7 +51,7 @@
   /* Room for the window controls overlay on Windows and Linux (Electron's
      titleBarOverlay). 0 in browsers and on macOS, where there is no overlay. */
   --titlebar-right-inset: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
-  --titlebar-height: 44px;
+  --titlebar-height: 48px;
   --sidebar-width: 232px;
 }
 

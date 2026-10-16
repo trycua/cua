@@ -1266,8 +1266,24 @@ pub async fn setup(
     components: &[String],
     dry_run: bool,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
+    setup_with(
+        doctor_report().await,
+        components,
+        dry_run,
+        cua_vmm::qemu::install_qemu,
+        kvm_step,
+    )
+    .await
+}
+
+async fn setup_with(
+    report: DoctorReport,
+    components: &[String],
+    dry_run: bool,
+    install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
+    kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
+) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
     use cua_proto::daemon::v1::{CheckStatus, SetupStep};
-    let report = doctor_report().await;
     let wanted: Vec<String> = if components.is_empty() {
         report
             .backends
@@ -1311,7 +1327,7 @@ pub async fn setup(
             continue;
         }
         let result = match kind {
-            BackendKind::Qemu => cua_vmm::qemu::install_qemu().await,
+            BackendKind::Qemu => install_qemu().await,
             BackendKind::Lume => cua_vmm::lume::install_lume().await,
             _ => Err(VmmError::Unsupported {
                 backend: "container",
@@ -1331,7 +1347,40 @@ pub async fn setup(
             },
         });
     }
+    let qemu_installed = report.qemu.qemu_img.is_some()
+        && (report.qemu.binaries)
+            .get(report.host.arch.qemu())
+            .is_some_and(Option::is_some);
+    let qemu_present = match steps.iter().find(|s| s.name == "qemu") {
+        Some(s) => s.status != CheckStatus::Error as i32,
+        None => components.is_empty() && qemu_installed,
+    };
+    if qemu_present {
+        steps.extend(kvm(dry_run).await);
+    }
     Ok(steps)
+}
+
+async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
+    use cua_proto::daemon::v1::{CheckStatus, SetupStep};
+    if cua_vmm::host::HostOs::current() != cua_vmm::host::HostOs::Linux {
+        return None;
+    }
+    let denied = cua_vmm::host::kvm_usable()
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    let user = std::env::var("USER").ok();
+    let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
+    let (status, detail) =
+        match cua_vmm::qemu::grant_kvm(cua_vmm::host::kvm_usable, user, dry_run, run).await {
+            Ok(detail) if dry_run && denied => (CheckStatus::Installable, detail),
+            Ok(detail) => (CheckStatus::Ok, detail),
+            Err(e) => (CheckStatus::Error, Some(e.to_string())),
+        };
+    detail.map(|detail| SetupStep {
+        name: "kvm".into(),
+        status: status as i32,
+        detail,
+    })
 }
 
 // ------------------------------------------------------------------ images
@@ -1860,5 +1909,116 @@ mod tests {
         let r = place("localhost:5000/img:tag", "linux").unwrap();
         assert_eq!(r.image, ImageSource::oci("localhost:5000/img:tag"));
         assert!(place(" ", "linux").is_err());
+    }
+
+    fn qemu_report(ready: bool) -> cua_vmm::auto::DoctorReport {
+        use cua_vmm::auto::{BackendStatus, DoctorReport, HostReport};
+        DoctorReport {
+            host: HostReport {
+                os: cua_vmm::host::HostOs::Linux,
+                arch: cua_vmm::Arch::X86_64,
+                kvm: false,
+                accel: Default::default(),
+            },
+            backends: vec![BackendStatus {
+                backend: super::BackendKind::Qemu,
+                ready,
+                provisionable: true,
+                detail: String::new(),
+                missing: vec![],
+                provisioning: vec!["apt-get install qemu".into()],
+            }],
+            qemu: Default::default(),
+            lume: Default::default(),
+            container: Default::default(),
+        }
+    }
+
+    fn kvm_step() -> Option<cua_proto::daemon::v1::SetupStep> {
+        Some(cua_proto::daemon::v1::SetupStep {
+            name: "kvm".into(),
+            status: cua_proto::daemon::v1::CheckStatus::Ok as i32,
+            detail: "added".into(),
+        })
+    }
+
+    async fn setup_steps(
+        report: cua_vmm::auto::DoctorReport,
+        components: &[&str],
+        dry_run: bool,
+        installs: bool,
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        let components: Vec<String> = components.iter().map(|c| c.to_string()).collect();
+        let install = async || match installs {
+            true => Ok(()),
+            false => Err(super::VmmError::PermissionDenied("sudo".into())),
+        };
+        let kvm = async |_| kvm_step();
+        super::setup_with(report, &components, dry_run, install, kvm)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.name, s.status.try_into().unwrap()))
+            .collect()
+    }
+
+    fn steps(
+        steps: &[(&str, cua_proto::daemon::v1::CheckStatus)],
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        steps.iter().map(|(n, s)| (n.to_string(), *s)).collect()
+    }
+
+    #[tokio::test]
+    async fn the_kvm_step_follows_qemu_once_it_is_present() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        assert_eq!(
+            setup_steps(qemu_report(false), &[], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
+        );
+        assert_eq!(
+            setup_steps(qemu_report(true), &["qemu"], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
+        );
+        assert_eq!(
+            setup_steps(qemu_report(false), &["qemu"], true, true).await,
+            steps(&[("qemu", Installable), ("kvm", Ok)])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_qemu_install_has_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        assert_eq!(
+            setup_steps(qemu_report(false), &["qemu"], false, false).await,
+            steps(&[("qemu", Error)])
+        );
+    }
+
+    #[tokio::test]
+    async fn components_without_qemu_have_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        assert_eq!(
+            setup_steps(qemu_report(false), &["lume"], false, false).await,
+            steps(&[("lume", Error)])
+        );
+        assert!(
+            setup_steps(qemu_report(true), &[], false, true)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn installed_qemu_denied_kvm_still_gets_a_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
+        let mut report = qemu_report(false);
+        report.backends[0].provisionable = false;
+        report.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+        let system = Some("/usr/bin/qemu-system-x86_64".into());
+        report.qemu.binaries.insert("x86_64".into(), system);
+        assert_eq!(
+            setup_steps(report, &[], false, true).await,
+            steps(&[("kvm", Ok)])
+        );
     }
 }

@@ -481,10 +481,13 @@ impl QemuRuntime {
                     sandbox = %st.name,
                     "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
                 );
-                if let Some(pid) = st.pid.take() {
+                if let Some(pid) = st.pid {
                     let _ = host::run("kill", &["-9", &pid.to_string()]).await;
-                    Self::wait_exit(pid, Duration::from_secs(5)).await;
+                    if !Self::wait_exit(pid, Duration::from_secs(5)).await {
+                        return Err(e);
+                    }
                 }
+                st.pid = None;
                 self.launch_once(st, spec, loadvm, true).await
             }
             r => r,

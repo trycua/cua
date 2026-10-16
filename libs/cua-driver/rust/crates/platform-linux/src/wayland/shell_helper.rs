@@ -179,9 +179,6 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
     if comm.as_deref().map(str::trim) != Some("gnome-shell") {
         return false;
     }
-    // Judge the image the Shell is running, not the file now at its path: a
-    // package update replaces /usr/bin/gnome-shell, and the Shell keeps running
-    // the old, unlinked image until the next login.
     crate::proc_fs::running_executable(pid).is_some_and(|exe| exe.is_system_program("gnome-shell"))
 }
 
@@ -601,9 +598,6 @@ pub fn hide_cursor() {
 mod tests {
     use super::*;
 
-    /// A Shell left running after a package update replaced its binary is
-    /// judged by the image it runs. Run as root, or in `unshare -r` where our
-    /// files show as root-owned, the replaced copy is trusted; otherwise not.
     #[test]
     fn a_shell_whose_binary_was_replaced_is_judged_by_its_running_image() {
         use std::os::unix::fs::MetadataExt;

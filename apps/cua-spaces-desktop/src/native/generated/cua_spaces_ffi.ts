@@ -28550,8 +28550,8 @@ export type AppOnboardingView = {
     presentations: Array<AppPresentationCard>,
     /**
      * Done's example prompts ([`PROMPTS`]), one line each: shown under
-     * both columns, scrolling slowly, to suggest what to ask a coding
-     * agent. Not interactive.
+     * both columns under "Try asking your agent:", to suggest what to ask a
+     * coding agent. Each copies to the clipboard on click.
      */
     prompts: Array<string>,
     /**
@@ -30752,6 +30752,125 @@ const FfiConverterTypeAppPlacementOption = (() => {
     return new FFIConverter();
 })();
 
+export type AppPlanLink = {
+    /**
+     * "Get Pro".
+     */
+    label: string,
+    /**
+     * https, on the account app.
+     */
+    url: string
+}
+
+/**
+ * Generated factory for {@link AppPlanLink} record objects.
+ */
+export const AppPlanLink = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppPlanLink, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppPlanLink>,
+    });
+})();
+
+const FfiConverterTypeAppPlanLink = (() => {
+    type TypeName = AppPlanLink;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                label: FfiConverterString.read(from),
+                url: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.url, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.url);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppPlanCard = {
+    /**
+     * `free`, `pro` or `teams`.
+     */
+    plan: string,
+    /**
+     * "Free plan".
+     */
+    label: string,
+    /**
+     * What the plan includes, in one sentence.
+     */
+    detail: string,
+    /**
+     * The main button ("Get Pro"); none when there is nothing to buy.
+     */
+    primary?: AppPlanLink,
+    /**
+     * The other one ("Start a team").
+     */
+    secondary?: AppPlanLink
+}
+
+/**
+ * Generated factory for {@link AppPlanCard} record objects.
+ */
+export const AppPlanCard = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppPlanCard, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppPlanCard>,
+    });
+})();
+
+const FfiConverterTypeAppPlanCard = (() => {
+    type TypeName = AppPlanCard;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                plan: FfiConverterString.read(from),
+                label: FfiConverterString.read(from),
+                detail: FfiConverterString.read(from),
+                primary: FfiConverterOptionalTypeAppPlanLink.read(from),
+                secondary: FfiConverterOptionalTypeAppPlanLink.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.plan, into);
+            FfiConverterString.write(value.label, into);
+            FfiConverterString.write(value.detail, into);
+            FfiConverterOptionalTypeAppPlanLink.write(value.primary, into);
+            FfiConverterOptionalTypeAppPlanLink.write(value.secondary, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.plan) +
+             FfiConverterString.allocationSize(value.label) +
+             FfiConverterString.allocationSize(value.detail) +
+             FfiConverterOptionalTypeAppPlanLink.allocationSize(value.primary) +
+             FfiConverterOptionalTypeAppPlanLink.allocationSize(value.secondary);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppPowerButton = {
     /**
      * SF Symbol ([`POWER_SYMBOL`]).
@@ -31078,7 +31197,14 @@ export type AppRelayAllowanceNotice = {
      * What a dismissal remembers: the month and the reasons. A new month,
      * or another limit reached, shows the notice again.
      */
-    dismissKey: string
+    dismissKey: string,
+    /**
+     * `warn` (80% of the relay hours) or `limit` (the allowance is used).
+     * A `warn` is a prompt: the shells hold it back while a live session
+     * or an agent run is going ([`crate::upsell`]). A `limit` is only the
+     * status, so it always shows.
+     */
+    level: string
 }
 
 /**
@@ -31106,7 +31232,8 @@ const FfiConverterTypeAppRelayAllowanceNotice = (() => {
                 upgrade: FfiConverterString.read(from),
                 upgradeUrl: FfiConverterOptionalString.read(from),
                 dismiss: FfiConverterString.read(from),
-                dismissKey: FfiConverterString.read(from)
+                dismissKey: FfiConverterString.read(from),
+                level: FfiConverterString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -31115,13 +31242,15 @@ const FfiConverterTypeAppRelayAllowanceNotice = (() => {
             FfiConverterOptionalString.write(value.upgradeUrl, into);
             FfiConverterString.write(value.dismiss, into);
             FfiConverterString.write(value.dismissKey, into);
+            FfiConverterString.write(value.level, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.text) +
              FfiConverterString.allocationSize(value.upgrade) +
              FfiConverterOptionalString.allocationSize(value.upgradeUrl) +
              FfiConverterString.allocationSize(value.dismiss) +
-             FfiConverterString.allocationSize(value.dismissKey);
+             FfiConverterString.allocationSize(value.dismissKey) +
+             FfiConverterString.allocationSize(value.level);
 
         }
     };
@@ -31311,9 +31440,13 @@ export type AppRelayUsageView = {
      */
     plan: string,
     /**
-     * Past the allowance.
+     * At 80% of the relay hours, or past the allowance.
      */
-    notice?: AppRelayAllowanceNotice
+    notice?: AppRelayAllowanceNotice,
+    /**
+     * Settings' plan card.
+     */
+    planCard: AppPlanCard
 }
 
 /**
@@ -31340,7 +31473,8 @@ const FfiConverterTypeAppRelayUsageView = (() => {
                 label: FfiConverterString.read(from),
                 line: FfiConverterString.read(from),
                 plan: FfiConverterString.read(from),
-                notice: FfiConverterOptionalTypeAppRelayAllowanceNotice.read(from)
+                notice: FfiConverterOptionalTypeAppRelayAllowanceNotice.read(from),
+                planCard: FfiConverterTypeAppPlanCard.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -31348,12 +31482,14 @@ const FfiConverterTypeAppRelayUsageView = (() => {
             FfiConverterString.write(value.line, into);
             FfiConverterString.write(value.plan, into);
             FfiConverterOptionalTypeAppRelayAllowanceNotice.write(value.notice, into);
+            FfiConverterTypeAppPlanCard.write(value.planCard, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.label) +
              FfiConverterString.allocationSize(value.line) +
              FfiConverterString.allocationSize(value.plan) +
-             FfiConverterOptionalTypeAppRelayAllowanceNotice.allocationSize(value.notice);
+             FfiConverterOptionalTypeAppRelayAllowanceNotice.allocationSize(value.notice) +
+             FfiConverterTypeAppPlanCard.allocationSize(value.planCard);
 
         }
     };
@@ -59953,6 +60089,9 @@ const FfiConverterOptionalTypeAppTeleportRunReport = new FfiConverterOptional(Ff
 // FfiConverter for AppInstallCuaPrompt | undefined
 const FfiConverterOptionalTypeAppInstallCuaPrompt = new FfiConverterOptional(FfiConverterTypeAppInstallCuaPrompt);
 
+// FfiConverter for AppPlanLink | undefined
+const FfiConverterOptionalTypeAppPlanLink = new FfiConverterOptional(FfiConverterTypeAppPlanLink);
+
 // FfiConverter for AppNotchPreview | undefined
 const FfiConverterOptionalTypeAppNotchPreview = new FfiConverterOptional(FfiConverterTypeAppNotchPreview);
 
@@ -61629,6 +61768,8 @@ export default Object.freeze({
     FfiConverterTypeAppPipCommand,
     FfiConverterTypeAppPipEvent,
     FfiConverterTypeAppPlacementOption,
+    FfiConverterTypeAppPlanCard,
+    FfiConverterTypeAppPlanLink,
     FfiConverterTypeAppPlanStepView,
     FfiConverterTypeAppPlatformSize,
     FfiConverterTypeAppPowerButton,

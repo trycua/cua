@@ -1,0 +1,39 @@
+---
+title: Teleport a signed-in app into a Space
+description: 'Move an app you are already signed in to, with its tabs and sign-ins, from your Mac into a Space.'
+---
+
+Open an app in a Space that is already signed in, without signing in again.
+
+## You need
+
+- Cua Spaces, and a Space that is running.
+- An app on your Mac that you are signed in to. Firefox, Chrome, Slack, Discord, Visual Studio Code, Notion, Steam and WhatsApp can move their sign-in. An app that can't carry a sign-in moves without it, or is greyed out.
+- Your Touch ID or Mac password. macOS asks for it before sign-ins leave your Mac.
+
+## Steps
+
+1. Open Cua Spaces and click your Space in the sidebar.
+2. Click **Teleport an app**.
+3. Search for your app, click it, and click **Continue**.
+4. Choose **The app with its signed-in state**, then click **Review**.
+5. Read what will leave your Mac. For a browser, switch on **Keep me signed in** and pick the sites you want. Switch on **Send the secrets listed above**.
+6. Click **Teleport**, and approve with Touch ID or your password if macOS asks. The app opens in the Space when it's done.
+
+You can also drag the app from Finder or the Dock onto the Space. The same window opens with that app chosen.
+
+{/* capture: A 20 to 30 second screen recording of the Mac screen, cropped to the Cua Spaces window. Show the "Teleport an app" button, the app list narrowed to one app, the review screen with "Keep me signed in" switched on, and the Teleport button. Then show the Space's desktop with the app open and still signed in. Before recording, sign out of personal sites in the browser you use, or use a test account, so no private tabs or emails show. */}
+
+## It worked if
+
+- The app opens in the Space and shows you signed in, with no login screen.
+- The review window ends on **Done**.
+
+## If it didn't
+
+- **Your app isn't in the list, or is greyed out.** It can't move yet. A greyed-out app shows the reason under its name. Try another app from the list.
+- **The app opens but asks you to sign in.** Teleport again, and make sure you chose **The app with its signed-in state** and switched on **Keep me signed in** for that site. For Chrome, a saved password does not carry over, but **Keep me signed in** does.
+- **The Teleport button is greyed out.** Switch on **Send the secrets listed above**.
+
+Only teleport into Spaces you own. Anyone who can use the Space can use the
+signed-in app.

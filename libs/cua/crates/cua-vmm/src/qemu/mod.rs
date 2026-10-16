@@ -949,6 +949,7 @@ fn missing_tools(
 /// what was done or would be, or why `/dev/kvm` is not used.
 pub async fn grant_kvm(
     kvm: std::io::Result<()>,
+    user: Option<String>,
     dry_run: bool,
     run: impl AsyncFn(&str, &[&str]) -> Result<String>,
 ) -> Result<Option<String>> {
@@ -957,18 +958,14 @@ pub async fn grant_kvm(
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => e,
         Err(e) => return Ok(Some(host::kvm_hint(&e))),
     };
-    let user = std::env::var("USER").ok();
+    let user = user.filter(|user| !user.is_empty());
     if dry_run {
         let user = user.as_deref().unwrap_or("$USER");
         return Ok(Some(format!("would: add {user} to the kvm group")));
     }
     let denied = || VmmError::PermissionDenied(host::kvm_hint(&e));
-    if run("stat", &["-c", "%G", "/dev/kvm"])
-        .await
-        .map_err(|_| denied())?
-        .trim()
-        != "kvm"
-    {
+    let group = run("stat", &["-c", "%G", "/dev/kvm"]).await;
+    if group.map_err(|_| denied())?.trim() != "kvm" {
         return Err(denied());
     }
     let user = match user {
@@ -1811,7 +1808,7 @@ mod tests {
     #[tokio::test]
     async fn denied_kvm_adds_the_user_to_the_kvm_group_with_sudo() {
         let calls = Default::default();
-        let note = grant_kvm(denied(), false, recording(&calls, true))
+        let note = grant_kvm(denied(), Some("bob".into()), false, recording(&calls, true))
             .await
             .unwrap()
             .unwrap();
@@ -1824,11 +1821,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_empty_user_falls_back_to_id_un() {
+        let calls = Default::default();
+        let note = grant_kvm(
+            denied(),
+            Some(String::new()),
+            false,
+            recording(&calls, true),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert!(calls.contains(&"id -un".to_string()), "{calls:?}");
+        assert_eq!(calls.last().unwrap(), "sudo -n usermod -aG kvm alice");
+        assert!(note.starts_with("added alice "), "{note}");
+    }
+
+    #[tokio::test]
     async fn denied_kvm_without_sudo_is_an_error_naming_the_usermod_fix() {
         let calls = Default::default();
-        let err = grant_kvm(denied(), false, recording(&calls, false))
-            .await
-            .unwrap_err();
+        let err = grant_kvm(
+            denied(),
+            Some("bob".into()),
+            false,
+            recording(&calls, false),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.to_string(), host::kvm_hint(&denied().unwrap_err()));
         assert!(err.to_string().contains("sudo usermod -aG kvm"), "{err}");
     }
@@ -1837,7 +1857,7 @@ mod tests {
     async fn missing_kvm_runs_nothing_and_is_only_a_note() {
         let calls = Default::default();
         let missing = Err(std::io::ErrorKind::NotFound.into());
-        let note = grant_kvm(missing, false, recording(&calls, true))
+        let note = grant_kvm(missing, Some("bob".into()), false, recording(&calls, true))
             .await
             .unwrap()
             .unwrap();
@@ -1848,7 +1868,7 @@ mod tests {
     #[tokio::test]
     async fn dry_run_only_says_it_would_add_the_user() {
         let calls = Default::default();
-        let note = grant_kvm(denied(), true, recording(&calls, true))
+        let note = grant_kvm(denied(), Some("bob".into()), true, recording(&calls, true))
             .await
             .unwrap()
             .unwrap();

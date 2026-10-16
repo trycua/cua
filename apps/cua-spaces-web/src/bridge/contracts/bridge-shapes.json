@@ -4463,6 +4463,9 @@
     "host.action": {
       "$ref": "#/$defs/HostStatus"
     },
+    "host.joinWithCode": {
+      "$ref": "#/$defs/HostStatus"
+    },
     "host.openSettings": {
       "type": "null"
     },
@@ -5957,6 +5960,16 @@
       "type": "null"
     },
     "host.action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.joinWithCode": {
       "anyOf": [
         {
           "$ref": "#/$defs/WkHostState"

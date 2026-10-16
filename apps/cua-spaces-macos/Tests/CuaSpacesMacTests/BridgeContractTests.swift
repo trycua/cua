@@ -261,6 +261,7 @@ struct BridgeContractTests {
         "spaces.add": "needs a running cua-spacesd at the address",
         "host.setUp": "installs the host service", "host.action": "changes the host service",
         "host.openSettings": "opens System Settings",
+        "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",

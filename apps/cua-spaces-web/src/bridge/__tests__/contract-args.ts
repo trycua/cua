@@ -134,6 +134,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.droppedFiles": { names: ["notes.txt"] },
   "spaces.sendFiles": { spaceId: SPACE, paths: ["/tmp/cua-contract-notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
+  "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},

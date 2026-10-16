@@ -62,6 +62,9 @@ describe("Add a machine by link or QR code", () => {
     expect(document.querySelector("[data-pairing-qr] path")?.getAttribute("d")).toMatch(/^M\d/);
     expect(screen.getByText(/^https:\/\/cua\.ai\/add\/K7QM-4XPB-/)).toBeTruthy();
     expect(screen.getByText(/sh -s -- --pair K7QM-4XPB-/)).toBeTruthy();
+    // The bare code too, for Join with a code on a computer that has the app.
+    expect(document.querySelector("[data-pairing-code] code")?.textContent).toMatch(/^K7QM-4XPB-[0-9A-Z]{4}$/);
+    expect(screen.getByLabelText("Copy code")).toBeTruthy();
     expect(screen.getByText("Waiting for the computer…")).toBeTruthy();
     expect(document.querySelector("[data-pairing-expires]")?.textContent).toBe("Works once. Expires in 30 min");
 

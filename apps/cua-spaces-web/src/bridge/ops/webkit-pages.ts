@@ -95,6 +95,7 @@ export const WEBKIT_PAGE_OPS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
   "host.openSettings",
 ] as const satisfies readonly OpName[];
@@ -283,6 +284,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "spaces.sendFiles": list("spaces.sendFiles"),
 
     "host.setUp": host("host.setUp"),
+    "host.joinWithCode": ({ code, relay }) => request("host.joinWithCode", { code, relay: relay ?? null }),
     "host.action": host("host.action"),
     "host.openSettings": async ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");

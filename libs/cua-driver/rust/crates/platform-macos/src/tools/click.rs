@@ -259,9 +259,18 @@ pub(super) async fn restore_user_focus_after_background_pixel(
     // The prologue leaves the user's window key, but the input can still make
     // the target self-activate, and re-activating the prior app does not by
     // itself make its window key again. Post the focus record to the user's
-    // window in both cases so their typing keeps landing there.
+    // window only then, or when WindowServer's key focus left the user's app.
+    // Posting it while their window is still key re-activates their app
+    // (AppKit sends it didBecomeActive), which Bench v2 counted as a
+    // disturbance after every background pixel click.
     if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
-        if (focus_without_raise || reactivated) && apps::frontmost_pid() == Some(previous_pid) {
+        let key_moved = user_focus_needs_restore(
+            reactivated,
+            focus_without_raise,
+            crate::input::skylight::key_focus_pid(),
+            previous_pid,
+        );
+        if key_moved && apps::frontmost_pid() == Some(previous_pid) {
             let _ = tokio::task::spawn_blocking(move || {
                 crate::input::skylight::restore_focus_after_without_raise(
                     previous_pid,
@@ -273,6 +282,19 @@ pub(super) async fn restore_user_focus_after_background_pixel(
             .await;
         }
     }
+}
+
+/// Whether the user's window needs the focus record back after a background
+/// pixel action: their app was re-activated, or WindowServer's key focus
+/// (`key_focus`) left it. Not when it never moved, since the record then makes
+/// their app become active again.
+fn user_focus_needs_restore(
+    reactivated: bool,
+    focus_without_raise: bool,
+    key_focus: Option<i32>,
+    previous_pid: i32,
+) -> bool {
+    reactivated || (focus_without_raise && key_focus.is_some_and(|pid| pid != previous_pid))
 }
 
 /// Poll until `pid` is the frontmost application or `budget` runs out.
@@ -1956,6 +1978,17 @@ mod tests {
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
         );
+    }
+
+    /// Bench v2: re-posting the focus record to a user window that stayed key
+    /// re-activated the user's app after every background pixel click.
+    #[test]
+    fn user_focus_record_only_when_focus_moved() {
+        assert!(!user_focus_needs_restore(false, true, Some(7), 7));
+        assert!(!user_focus_needs_restore(false, true, None, 7));
+        assert!(!user_focus_needs_restore(false, false, Some(42), 7));
+        assert!(user_focus_needs_restore(false, true, Some(42), 7));
+        assert!(user_focus_needs_restore(true, false, Some(7), 7));
     }
 
     /// The no-foreground contract must not depend on the private activation
